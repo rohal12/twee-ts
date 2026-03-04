@@ -13,7 +13,7 @@ yarn add @rohal12/twee-ts         # yarn
 The `--init` command scaffolds a minimal Twine project:
 
 ```sh
-npx twee-ts --init
+npx @rohal12/twee-ts --init
 ```
 
 This creates:
@@ -31,13 +31,13 @@ your-project/
 With the config file in place, compile with no arguments:
 
 ```sh
-npx twee-ts
+npx @rohal12/twee-ts
 ```
 
 Or specify sources and output directly:
 
 ```sh
-npx twee-ts -o story.html src/
+npx @rohal12/twee-ts -o story.html src/
 ```
 
 ## Watch Mode
@@ -45,7 +45,7 @@ npx twee-ts -o story.html src/
 Automatically rebuild when files change:
 
 ```sh
-npx twee-ts -w -o story.html src/
+npx @rohal12/twee-ts -w -o story.html src/
 ```
 
 ## Project Structure

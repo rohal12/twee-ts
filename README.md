@@ -15,9 +15,9 @@ npm install @rohal12/twee-ts
 ## Quick Start
 
 ```sh
-npx twee-ts --init               # scaffold a new project
-npx twee-ts -o story.html src/   # compile
-npx twee-ts -w -o story.html src/ # watch mode
+npx @rohal12/twee-ts --init               # scaffold a new project
+npx @rohal12/twee-ts -o story.html src/   # compile
+npx @rohal12/twee-ts -w -o story.html src/ # watch mode
 ```
 
 Or with a config file (`twee-ts.config.json`):
@@ -30,7 +30,7 @@ Or with a config file (`twee-ts.config.json`):
 ```
 
 ```sh
-npx twee-ts
+npx @rohal12/twee-ts
 ```
 
 ## Programmatic API

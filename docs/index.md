@@ -38,10 +38,10 @@ features:
 npm install @rohal12/twee-ts
 
 # Initialize a project
-npx twee-ts --init
+npx @rohal12/twee-ts --init
 
 # Compile
-npx twee-ts -o story.html src/
+npx @rohal12/twee-ts -o story.html src/
 ```
 
 Or use the programmatic API:
