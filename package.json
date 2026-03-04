@@ -4,6 +4,9 @@
   "description": "TypeScript Twee-to-HTML compiler — a complete reimplementation of Tweego",
   "type": "module",
   "license": "Unlicense",
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "Rohal12",
   "repository": {
     "type": "git",
