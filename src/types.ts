@@ -48,6 +48,8 @@ export interface CompileOptions {
   formatUrls?: string[];
   /** Disable remote format fetching. Default: false. */
   noRemote?: boolean;
+  /** Map alias tags to canonical special tags (e.g. { library: 'script' }). */
+  tagAliases?: Record<string, string>;
 }
 
 export interface CompileToFileOptions extends CompileOptions {
@@ -199,4 +201,5 @@ export interface TweeTsConfig {
   twee2Compat?: boolean;
   testMode?: boolean;
   noRemote?: boolean;
+  tagAliases?: Record<string, string>;
 }

@@ -155,6 +155,24 @@ export function countWords(p: Passage): number {
   return count % 5 > 0 ? words + 1 : words;
 }
 
+/**
+ * Apply tag aliases: for each passage carrying an alias tag, add the canonical
+ * tag if not already present. Idempotent — safe to call multiple times.
+ */
+export function applyTagAliases(passages: Passage[], aliases: Record<string, string>): void {
+  const entries = Object.entries(aliases);
+  if (entries.length === 0) return;
+  for (const p of passages) {
+    // Snapshot original tags so we only iterate the author's tags
+    const original = [...p.tags];
+    for (const [alias, canonical] of entries) {
+      if (original.includes(alias) && !p.tags.includes(canonical)) {
+        p.tags.push(canonical);
+      }
+    }
+  }
+}
+
 function quote(s: string): string {
   return `"${s}"`;
 }

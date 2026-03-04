@@ -1,3 +1,7 @@
+---
+outline: deep
+---
+
 # Publishing a Twine Story Format as an npm Package
 
 This document describes how to package a Twine 2 story format as an npm package for use with twee-ts and TypeScript-based Twine projects.

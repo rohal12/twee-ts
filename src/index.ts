@@ -9,6 +9,9 @@ export { compile, compileToFile, watch, TweeTsError } from './compiler.js';
 // Story inspection (for unit testing)
 export { storyInspect } from './inspect.js';
 
+// Passage utilities
+export { applyTagAliases } from './passage.js';
+
 // Lower-level exports
 export { TweeLexer, tweeLexer } from './lexer.js';
 export { parseTwee } from './parser.js';

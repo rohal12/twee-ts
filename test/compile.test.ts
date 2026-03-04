@@ -105,6 +105,70 @@ describe('compile', () => {
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 
+  it('treats aliased tag as script in Twine 2 HTML', async () => {
+    const result = await compile({
+      sources: [
+        {
+          filename: 'alias.tw',
+          content: [
+            ':: StoryData',
+            '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}',
+            '',
+            ':: StoryTitle',
+            'Alias Test',
+            '',
+            ':: Start',
+            'Hello',
+            '',
+            ':: MyLib [library]',
+            'window.myLib = true;',
+          ].join('\n'),
+        },
+      ],
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      tagAliases: { library: 'script' },
+    });
+
+    // Library passage should be in the script block, not as passagedata
+    expect(result.output).toContain('id="twine-user-script"');
+    expect(result.output).toContain('window.myLib = true;');
+    // Should NOT appear as a regular passage
+    expect(result.output).not.toContain('name="MyLib"');
+  });
+
+  it('treats aliased tag as stylesheet in Twine 2 HTML', async () => {
+    const result = await compile({
+      sources: [
+        {
+          filename: 'alias-css.tw',
+          content: [
+            ':: StoryData',
+            '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}',
+            '',
+            ':: StoryTitle',
+            'CSS Alias Test',
+            '',
+            ':: Start',
+            'Hello',
+            '',
+            ':: Theme [theme]',
+            'body { color: red; }',
+          ].join('\n'),
+        },
+      ],
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      tagAliases: { theme: 'stylesheet' },
+    });
+
+    expect(result.output).toContain('id="twine-user-stylesheet"');
+    expect(result.output).toContain('body { color: red; }');
+    expect(result.output).not.toContain('name="Theme"');
+  });
+
   it('handles passage position metadata in output', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'storydata.tw')],
