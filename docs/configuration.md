@@ -11,7 +11,7 @@ twee-ts automatically loads `twee-ts.config.json` from the current working direc
 }
 ```
 
-With this in place, run `npx twee-ts` with no arguments.
+With this in place, run `npx @rohal12/twee-ts` with no arguments.
 
 ## Complete Reference
 
@@ -103,10 +103,10 @@ For `tagAliases`, CLI `--tag-alias` flags are **merged** on top of config values
 
 ## Scaffolding
 
-Run `npx twee-ts --init` to generate a starter config and source files:
+Run `npx @rohal12/twee-ts --init` to generate a starter config and source files:
 
 ```sh
-npx twee-ts --init
+npx @rohal12/twee-ts --init
 ```
 
 This creates:

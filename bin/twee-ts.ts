@@ -225,7 +225,7 @@ This is the starting passage. Edit this file to begin writing your story.
   console.log('Created:');
   console.log('  src/StoryData.tw');
   console.log('  src/Start.tw');
-  console.log('\nRun: npx twee-ts');
+  console.log('\nRun: npx @rohal12/twee-ts');
 }
 
 function printUsage(): void {
