@@ -1,0 +1,23 @@
+:: StoryData
+{
+	"ifid": "D674C58C-DEFA-4F70-B7A2-27742230C0FC"
+}
+
+:: StoryTitle
+Multi-Passage Story
+
+:: Start
+Welcome to the story!
+
+[[Go to room->Room]]
+
+:: Room [location]
+You are in a room.
+
+[[Go back->Start]]
+
+:: Secret Room [location hidden]
+You found the secret room!
+
+:: Ending
+The end.

@@ -1,0 +1,21 @@
+:: StoryData
+{
+	"ifid": "D674C58C-DEFA-4F70-B7A2-27742230C0FC",
+	"format": "SugarCube",
+	"format-version": "2.37.3",
+	"start": "Begin",
+	"tag-colors": {
+		"location": "green",
+		"character": "blue"
+	},
+	"zoom": 1
+}
+
+:: StoryTitle
+A Story With Metadata
+
+:: Begin [start] {"position":"100,100","size":"200,100"}
+This is the beginning.
+
+:: Middle [location] {"position":"300,100"}
+This is the middle.
