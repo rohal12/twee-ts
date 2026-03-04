@@ -52,6 +52,7 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
+  "packageManager": "pnpm@10.14.0",
   "engines": {
     "node": ">=22"
   },
