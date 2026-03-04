@@ -72,6 +72,22 @@ describe('validateConfig', () => {
     expect(errors.some((e) => e.includes('"outputMode"'))).toBe(true);
   });
 
+  it('accepts valid tagAliases', () => {
+    const errors = validateConfig({ tagAliases: { library: 'script', theme: 'stylesheet' } });
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects non-object tagAliases', () => {
+    expect(validateConfig({ tagAliases: 'bad' })).toContain('"tagAliases" must be an object.');
+    expect(validateConfig({ tagAliases: ['a'] })).toContain('"tagAliases" must be an object.');
+    expect(validateConfig({ tagAliases: null })).toContain('"tagAliases" must be an object.');
+  });
+
+  it('rejects non-string values in tagAliases', () => {
+    const errors = validateConfig({ tagAliases: { library: 42 } });
+    expect(errors).toContain('"tagAliases.library" must be a string.');
+  });
+
   it('accepts valid outputMode values', () => {
     for (const mode of ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json']) {
       const errors = validateConfig({ outputMode: mode });

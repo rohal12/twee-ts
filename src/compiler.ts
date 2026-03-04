@@ -13,6 +13,7 @@ import { createStory, storyHas, getStoryStats } from './story.js';
 import { getFilenames, watchFilesystem } from './filesystem.js';
 import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
 import { loadSources, loadInlineSources } from './loader.js';
+import { applyTagAliases } from './passage.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
@@ -100,6 +101,11 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
 
   loadSources(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles);
   loadInlineSources(story, inlineSources, { trim, twee2Compat }, diagnostics);
+
+  // Apply tag aliases (e.g. library → script)
+  if (options.tagAliases) {
+    applyTagAliases(story.passages, options.tagAliases);
+  }
 
   // Check for fatal parse errors
   const fatalErrors = diagnostics.filter((d) => d.level === 'error');

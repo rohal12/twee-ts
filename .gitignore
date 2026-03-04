@@ -7,5 +7,9 @@ examples/
 tweego/
 The Great Pizza Caper/
 
+# VitePress build output
+docs/.vitepress/dist
+docs/.vitepress/cache
+
 # Claude settings
 .claude/

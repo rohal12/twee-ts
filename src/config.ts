@@ -98,6 +98,20 @@ export function validateConfig(data: unknown): string[] {
     }
   }
 
+  // tagAliases validation
+  if ('tagAliases' in obj) {
+    if (typeof obj['tagAliases'] !== 'object' || obj['tagAliases'] === null || Array.isArray(obj['tagAliases'])) {
+      errors.push('"tagAliases" must be an object.');
+    } else {
+      const aliases = obj['tagAliases'] as Record<string, unknown>;
+      for (const [key, val] of Object.entries(aliases)) {
+        if (typeof val !== 'string') {
+          errors.push(`"tagAliases.${key}" must be a string.`);
+        }
+      }
+    }
+  }
+
   // OutputMode validation
   if ('outputMode' in obj) {
     if (typeof obj['outputMode'] !== 'string' || !VALID_OUTPUT_MODES.includes(obj['outputMode'] as OutputMode)) {

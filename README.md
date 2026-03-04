@@ -1,8 +1,10 @@
 # twee-ts
 
-TypeScript Twee-to-HTML compiler — a complete reimplementation of [Tweego](https://www.motoslave.net/tweego/).
+TypeScript reimplementation of [Tweego](https://www.motoslave.net/tweego/) — a command-line compiler for Twine/Twee interactive fiction projects.
 
 Zero runtime dependencies. Node.js 22+.
+
+**[Documentation](https://rohal12.github.io/twee-ts/)**
 
 ## Install
 
@@ -10,33 +12,15 @@ Zero runtime dependencies. Node.js 22+.
 npm install @rohal12/twee-ts
 ```
 
-## CLI
+## Quick Start
 
 ```sh
-# Compile a story
-npx twee-ts -o story.html src/
-
-# Initialize a new project
-npx twee-ts --init
-
-# Use a config file (twee-ts.config.json)
-npx twee-ts
-
-# Decompile HTML back to Twee
-npx twee-ts -d -o story.twee story.html
-
-# Watch mode
-npx twee-ts -w -o story.html src/
-
-# List available story formats
-npx twee-ts --list-formats
+npx twee-ts --init               # scaffold a new project
+npx twee-ts -o story.html src/   # compile
+npx twee-ts -w -o story.html src/ # watch mode
 ```
 
-Story formats are automatically downloaded from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) when not found locally.
-
-## Config File
-
-Create `twee-ts.config.json` in your project root:
+Or with a config file (`twee-ts.config.json`):
 
 ```json
 {
@@ -45,116 +29,57 @@ Create `twee-ts.config.json` in your project root:
 }
 ```
 
-Then just run `npx twee-ts` with no arguments.
-
-All options:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `sources` | `string[]` | Files and directories to compile |
-| `output` | `string` | Output file path |
-| `outputMode` | `string` | `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json` |
-| `formatId` | `string` | Story format directory ID (e.g. `sugarcube-2`) |
-| `startPassage` | `string` | Starting passage name (default: `Start`) |
-| `formatPaths` | `string[]` | Extra directories to search for story formats |
-| `modules` | `string[]` | Files to inject into `<head>` |
-| `headFile` | `string` | Raw HTML file to append to `<head>` |
-| `trim` | `boolean` | Trim passage whitespace (default: `true`) |
-| `twee2Compat` | `boolean` | Twee2 compatibility mode |
-| `testMode` | `boolean` | Enable debug/test mode |
-| `noRemote` | `boolean` | Disable remote format fetching |
-| `formatIndices` | `string[]` | Custom SFA-compatible index URLs |
-| `formatUrls` | `string[]` | Direct format.js URLs |
-
-## API
-
-```typescript
-import { compile, compileToFile, watch } from '@rohal12/twee-ts';
-
-// Compile to string
-const result = await compile({
-  sources: ['src/'],
-});
-console.log(result.output);
-
-// Compile to file
-await compileToFile({
-  sources: ['src/'],
-  outFile: 'story.html',
-});
-
-// Watch mode
-const controller = await watch({
-  sources: ['src/'],
-  outFile: 'story.html',
-  onBuild(result) {
-    console.log(`${result.stats.passages} passages`);
-  },
-});
-// controller.abort() to stop
+```sh
+npx twee-ts
 ```
 
-### Inline sources
+## Programmatic API
 
 ```typescript
+import { compile } from '@rohal12/twee-ts';
+
 const result = await compile({
-  sources: [
-    { filename: 'story.tw', content: ':: Start\nHello, world!' },
-  ],
+  sources: ['src/'],
+  tagAliases: { library: 'script' },
 });
 ```
 
-## Vite Plugin
+## Build Plugins
 
 ```typescript
 // vite.config.ts
 import { tweeTsPlugin } from '@rohal12/twee-ts/vite';
 
 export default {
-  plugins: [
-    tweeTsPlugin({
-      sources: ['src/story'],
-      outputFilename: 'index.html',
-    }),
-  ],
+  plugins: [tweeTsPlugin({ sources: ['src/'] })],
 };
 ```
 
-## Rollup Plugin
+Also available: `@rohal12/twee-ts/rollup`.
 
-```typescript
-// rollup.config.js
-import { tweeTsPlugin } from '@rohal12/twee-ts/rollup';
+## Documentation
 
-export default {
-  plugins: [
-    tweeTsPlugin({
-      sources: ['src/story'],
-    }),
-  ],
-};
+Full docs at **[rohal12.github.io/twee-ts](https://rohal12.github.io/twee-ts/)**:
+
+- [Getting Started](https://rohal12.github.io/twee-ts/getting-started)
+- [CLI Reference](https://rohal12.github.io/twee-ts/cli)
+- [Configuration](https://rohal12.github.io/twee-ts/configuration)
+- [Tag Aliases](https://rohal12.github.io/twee-ts/tag-aliases)
+- [Programmatic API](https://rohal12.github.io/twee-ts/api)
+- [Vite & Rollup Plugins](https://rohal12.github.io/twee-ts/plugins)
+- [Story Formats](https://rohal12.github.io/twee-ts/story-formats)
+- [Packaging Formats](https://rohal12.github.io/twee-ts/story-format-packages)
+
+## Development
+
+```sh
+pnpm install
+pnpm test            # run tests
+pnpm run typecheck   # type-check
+pnpm run build       # bundle
+pnpm run docs:dev    # local docs dev server
+pnpm run docs:build  # build docs for deployment
 ```
-
-## Output Modes
-
-| Mode | Flag | Description |
-|------|------|-------------|
-| HTML | (default) | Playable story compiled with a story format |
-| Twee 3 | `-d` | Decompile to Twee 3 source |
-| Twee 1 | `--decompile-twee1` | Decompile to Twee 1 source |
-| Twine 2 Archive | `-a` | Twine 2 archive XML |
-| Twine 1 Archive | `--archive-twine1` | Twine 1 archive HTML |
-| JSON | `--json` | Story data as JSON |
-
-## Remote Format Fetching
-
-When a story specifies a format that isn't installed locally, twee-ts automatically downloads it from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/). Downloaded formats are cached at `~/.cache/twee-ts/storyformats/`.
-
-Disable with `--no-remote` or `"noRemote": true` in the config file.
-
-## Compatibility
-
-twee-ts is a drop-in replacement for Tweego. It reads the same `.twee`, `.tw`, `.css`, `.js`, font, and media files. It respects `TWEEGO_PATH` and searches the same default directories for story formats. The `--twee2-compat` flag enables Twee2 syntax compatibility.
 
 ## License
 

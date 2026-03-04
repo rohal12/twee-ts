@@ -40,6 +40,7 @@ const { values, positionals } = parseArgs({
     'format-index': { type: 'string', multiple: true },
     'format-url': { type: 'string', multiple: true },
     'no-remote': { type: 'boolean' },
+    'tag-alias': { type: 'string', multiple: true },
     config: { type: 'string', short: 'c' },
     'no-config': { type: 'boolean' },
   },
@@ -93,6 +94,20 @@ async function main(): Promise<void> {
   else if (values['archive-twine1']) outputMode = 'twine1-archive';
   else if (values.json) outputMode = 'json';
 
+  // Parse --tag-alias flags (format: alias=target)
+  let tagAliases: Record<string, string> | undefined;
+  if (values['tag-alias'] || config?.tagAliases) {
+    tagAliases = { ...config?.tagAliases };
+    for (const pair of values['tag-alias'] ?? []) {
+      const eq = pair.indexOf('=');
+      if (eq < 1) {
+        console.error(`Error: Invalid --tag-alias "${pair}". Expected format: alias=target`);
+        process.exit(1);
+      }
+      tagAliases[pair.slice(0, eq)] = pair.slice(eq + 1);
+    }
+  }
+
   const compileOptions = {
     sources,
     outputMode,
@@ -108,6 +123,7 @@ async function main(): Promise<void> {
     formatIndices: values['format-index'] ?? config?.formatIndices,
     formatUrls: values['format-url'] ?? config?.formatUrls,
     noRemote: values['no-remote'] ?? config?.noRemote ?? false,
+    tagAliases,
   };
 
   const outFile = values.output ?? config?.output ?? '-';
@@ -238,6 +254,7 @@ Options:
   --init                    Initialize a new project
   --format-index <url>      SFA-compatible format index URL (repeatable)
   --format-url <url>        Direct format.js URL (repeatable)
+  --tag-alias <alias=target> Map a tag to a special tag (repeatable)
   --no-remote               Disable remote format fetching
   -c, --config <file>       Config file path (default: ${CONFIG_FILENAME})
   --no-config               Skip config file loading
