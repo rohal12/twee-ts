@@ -68,6 +68,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.0-beta",
     "vitepress": "^1.6.4",
-    "vitest": "^3.0.0"
+    "vitest": "^4.0.18"
   }
 }
