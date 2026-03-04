@@ -130,9 +130,7 @@ export function loadInlineSources(
       // Treat as a file path — handled externally
       continue;
     }
-    const content = typeof source.content === 'string'
-      ? source.content
-      : source.content.toString('utf-8');
+    const content = typeof source.content === 'string' ? source.content : source.content.toString('utf-8');
 
     const ext = normalizedFileExt(source.filename);
     if (ext === 'tw' || ext === 'twee' || ext === 'tw2' || ext === 'twee2' || !ext) {
@@ -171,11 +169,15 @@ function loadTagged(story: Story, tag: string, filename: string, diagnostics: Di
 function loadMedia(story: Story, tag: string, filename: string, diagnostics: Diagnostic[]): void {
   const source = readBase64(filename);
   const name = basename(filename).split('.')[0]!;
-  storyAdd(story, {
-    name,
-    tags: [tag],
-    text: `data:${mediaTypeFromFilename(filename)};base64,${source}`,
-  }, diagnostics);
+  storyAdd(
+    story,
+    {
+      name,
+      tags: [tag],
+      text: `data:${mediaTypeFromFilename(filename)};base64,${source}`,
+    },
+    diagnostics,
+  );
 }
 
 function loadFont(story: Story, filename: string, diagnostics: Diagnostic[]): void {
@@ -186,9 +188,13 @@ function loadFont(story: Story, filename: string, diagnostics: Diagnostic[]): vo
   const mediaType = mediaTypeFromExt(ext);
   const hint = fontFormatHint(ext);
 
-  storyAdd(story, {
-    name,
-    tags: ['stylesheet'],
-    text: `@font-face {\n\tfont-family: "${family}";\n\tsrc: url("data:${mediaType};base64,${source}") format("${hint}");\n}`,
-  }, diagnostics);
+  storyAdd(
+    story,
+    {
+      name,
+      tags: ['stylesheet'],
+      text: `@font-face {\n\tfont-family: "${family}";\n\tsrc: url("data:${mediaType};base64,${source}") format("${hint}");\n}`,
+    },
+    diagnostics,
+  );
 }

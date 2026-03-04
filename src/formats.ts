@@ -119,10 +119,7 @@ export function discoverFormats(searchDirs: string[]): Map<string, StoryFormatIn
 /**
  * Get the default format search directories.
  */
-export function getFormatSearchDirs(
-  extraPaths: string[] = [],
-  useTweegoPath = true,
-): string[] {
+export function getFormatSearchDirs(extraPaths: string[] = [], useTweegoPath = true): string[] {
   const subdirNames = ['storyformats', '.storyformats', 'story-formats', 'storyFormats', 'targets'];
   const basePaths = new Set<string>();
 
@@ -179,10 +176,7 @@ export function semverCompare(a: [number, number, number], b: [number, number, n
 }
 
 /** Get format ID from Twine 2 name, picking the greatest version. */
-export function getFormatIdByName(
-  formats: Map<string, StoryFormatInfo>,
-  name: string,
-): string | undefined {
+export function getFormatIdByName(formats: Map<string, StoryFormatInfo>, name: string): string | undefined {
   let bestVersion: [number, number, number] | null = null;
   let bestId: string | undefined;
 

@@ -4,13 +4,7 @@
 
 // --- Output modes ---
 
-export type OutputMode =
-  | 'html'
-  | 'twee3'
-  | 'twee1'
-  | 'twine2-archive'
-  | 'twine1-archive'
-  | 'json';
+export type OutputMode = 'html' | 'twee3' | 'twee1' | 'twine2-archive' | 'twine1-archive' | 'json';
 
 // --- Source input ---
 

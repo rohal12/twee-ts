@@ -45,9 +45,9 @@ describe('tweeLexer', () => {
   it('lexes multiple passages', () => {
     const input = ':: First\nContent 1\n\n:: Second\nContent 2';
     const items = collectItems(input);
-    const headers = items.filter(i => i.type === ItemType.Header);
+    const headers = items.filter((i) => i.type === ItemType.Header);
     expect(headers).toHaveLength(2);
-    const names = items.filter(i => i.type === ItemType.Name);
+    const names = items.filter((i) => i.type === ItemType.Name);
     expect(names).toHaveLength(2);
     expect(names[0]!.val).toBe(' First');
     expect(names[1]!.val).toBe(' Second');
@@ -73,7 +73,7 @@ describe('tweeLexer', () => {
 
   it('handles passage with no content', () => {
     const items = collectItems(':: Empty\n:: Next\nContent');
-    const names = items.filter(i => i.type === ItemType.Name);
+    const names = items.filter((i) => i.type === ItemType.Name);
     expect(names).toHaveLength(2);
   });
 
@@ -85,7 +85,7 @@ describe('tweeLexer', () => {
 
   it('reports error for unterminated tag block', () => {
     const items = collectItems(':: Test [unclosed\nContent');
-    const errors = items.filter(i => i.type === ItemType.Error);
+    const errors = items.filter((i) => i.type === ItemType.Error);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.val).toContain('unterminated tag block');
   });
@@ -93,14 +93,14 @@ describe('tweeLexer', () => {
   it('reports error for unterminated metadata block', () => {
     // Without a quoted string, the newline terminates the metadata block
     const items = collectItems(':: Test {no closing\nContent');
-    const errors = items.filter(i => i.type === ItemType.Error);
+    const errors = items.filter((i) => i.type === ItemType.Error);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.val).toContain('unterminated metadata block');
   });
 
   it('reports error for unterminated quoted string in metadata', () => {
     const items = collectItems(':: Test {"no closing\nContent');
-    const errors = items.filter(i => i.type === ItemType.Error);
+    const errors = items.filter((i) => i.type === ItemType.Error);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.val).toContain('unterminated quoted string');
   });
@@ -113,7 +113,7 @@ describe('tweeLexer', () => {
 
   it('handles quoted strings in metadata', () => {
     const items = collectItems(':: Test {"key":"value with \\\"escaped\\\""}\nContent');
-    const meta = items.find(i => i.type === ItemType.Metadata);
+    const meta = items.find((i) => i.type === ItemType.Metadata);
     expect(meta).toBeDefined();
   });
 });

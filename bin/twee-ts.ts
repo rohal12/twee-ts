@@ -192,7 +192,9 @@ function logDiagnostics(diagnostics: Array<{ level: string; message: string }>):
   }
 }
 
-function logStats(result: { stats: { passages: number; storyPassages?: number; words: number; files: string[] } }): void {
+function logStats(result: {
+  stats: { passages: number; storyPassages?: number; words: number; files: string[] };
+}): void {
   const s = result.stats;
   console.log(`\nStatistics:`);
   console.log(`  Passages: ${s.passages}`);
@@ -204,17 +206,23 @@ function runInit(): void {
   console.log('Initializing new twee-ts project...');
   mkdirSync('src', { recursive: true });
 
-  writeFileSync(join('src', 'StoryData.tw'), `:: StoryData
+  writeFileSync(
+    join('src', 'StoryData.tw'),
+    `:: StoryData
 {
 \t"ifid": "${crypto.randomUUID().toUpperCase()}"
 }
-`);
+`,
+  );
 
-  writeFileSync(join('src', 'Start.tw'), `:: Start
+  writeFileSync(
+    join('src', 'Start.tw'),
+    `:: Start
 Welcome to your new Twine story!
 
 This is the starting passage. Edit this file to begin writing your story.
-`);
+`,
+  );
 
   // Scaffold config file if it doesn't exist
   if (!existsSync(CONFIG_FILENAME)) {

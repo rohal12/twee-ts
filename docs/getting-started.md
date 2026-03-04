@@ -72,15 +72,15 @@ twee-ts recursively walks directories, so you can organize your `.tw` files howe
 
 ## Supported File Types
 
-| Extension | Treatment |
-|-----------|-----------|
-| `.tw`, `.twee` | Parsed as Twee source |
-| `.css` | Injected as stylesheet |
-| `.js` | Injected as script |
-| `.otf`, `.ttf`, `.woff`, `.woff2` | Embedded as base64 font |
-| `.gif`, `.jpeg`, `.jpg`, `.png`, `.svg`, `.tif`, `.tiff`, `.webp` | Embedded as base64 media |
+| Extension                                                                  | Treatment                |
+| -------------------------------------------------------------------------- | ------------------------ |
+| `.tw`, `.twee`                                                             | Parsed as Twee source    |
+| `.css`                                                                     | Injected as stylesheet   |
+| `.js`                                                                      | Injected as script       |
+| `.otf`, `.ttf`, `.woff`, `.woff2`                                          | Embedded as base64 font  |
+| `.gif`, `.jpeg`, `.jpg`, `.png`, `.svg`, `.tif`, `.tiff`, `.webp`          | Embedded as base64 media |
 | `.aac`, `.flac`, `.mp3`, `.m4a`, `.ogg`, `.opus`, `.wav`, `.wave`, `.weba` | Embedded as base64 audio |
-| `.mp4`, `.ogv`, `.webm` | Embedded as base64 video |
+| `.mp4`, `.ogv`, `.webm`                                                    | Embedded as base64 video |
 
 ## Compatibility with Tweego
 

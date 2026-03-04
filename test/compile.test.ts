@@ -61,7 +61,11 @@ describe('compile', () => {
   it('supports inline sources', async () => {
     const result = await compile({
       sources: [
-        { filename: 'inline.tw', content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nInline Story\n\n:: Start\nHello from inline!' },
+        {
+          filename: 'inline.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nInline Story\n\n:: Start\nHello from inline!',
+        },
       ],
       formatId: 'test-format-1',
       formatPaths: [FORMAT_DIR],

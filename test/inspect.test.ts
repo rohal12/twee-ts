@@ -83,10 +83,13 @@ describe('storyInspect', () => {
 
   it('detects broken links', async () => {
     const result = await compile({
-      sources: [{
-        filename: 'broken.tw',
-        content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n[[Go->MissingRoom]]\n\n:: Room\nSafe passage',
-      }],
+      sources: [
+        {
+          filename: 'broken.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n[[Go->MissingRoom]]\n\n:: Room\nSafe passage',
+        },
+      ],
       outputMode: 'json',
     });
     const map = storyInspect(result.story);
@@ -138,10 +141,13 @@ describe('storyInspect', () => {
 
   it('parses pipe-style links [[display|target]]', async () => {
     const result = await compile({
-      sources: [{
-        filename: 'pipe.tw',
-        content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n[[Go somewhere|Room]]\n\n:: Room\nYou arrived.',
-      }],
+      sources: [
+        {
+          filename: 'pipe.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n[[Go somewhere|Room]]\n\n:: Room\nYou arrived.',
+        },
+      ],
       outputMode: 'json',
     });
     const map = storyInspect(result.story);
@@ -151,10 +157,13 @@ describe('storyInspect', () => {
 
   it('parses SugarCube <<goto>> macros', async () => {
     const result = await compile({
-      sources: [{
-        filename: 'goto.tw',
-        content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<<goto "Redirect">>\n\n:: Redirect\nYou were redirected.',
-      }],
+      sources: [
+        {
+          filename: 'goto.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<<goto "Redirect">>\n\n:: Redirect\nYou were redirected.',
+        },
+      ],
       outputMode: 'json',
     });
     const map = storyInspect(result.story);
@@ -164,10 +173,13 @@ describe('storyInspect', () => {
 
   it('parses SugarCube <<link>> macros with passage target', async () => {
     const result = await compile({
-      sources: [{
-        filename: 'link.tw',
-        content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<<link "Click me" "Target">><</link>>\n\n:: Target\nTarget reached.',
-      }],
+      sources: [
+        {
+          filename: 'link.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<<link "Click me" "Target">><</link>>\n\n:: Target\nTarget reached.',
+        },
+      ],
       outputMode: 'json',
     });
     const map = storyInspect(result.story);
@@ -177,10 +189,12 @@ describe('storyInspect', () => {
 
   it('handles story with no links gracefully', async () => {
     const result = await compile({
-      sources: [{
-        filename: 'nolinks.tw',
-        content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nJust text, no links.',
-      }],
+      sources: [
+        {
+          filename: 'nolinks.tw',
+          content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nJust text, no links.',
+        },
+      ],
       outputMode: 'json',
     });
     const map = storyInspect(result.story);

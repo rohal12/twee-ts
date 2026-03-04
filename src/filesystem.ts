@@ -55,11 +55,7 @@ export interface WatchHandle {
  * Watch paths for changes, calling the build callback on known file type changes.
  * Uses debouncing to avoid rapid rebuilds.
  */
-export function watchFilesystem(
-  pathnames: string[],
-  outFilename: string,
-  callback: () => void,
-): WatchHandle {
+export function watchFilesystem(pathnames: string[], outFilename: string, callback: () => void): WatchHandle {
   const absOutFile = resolve(outFilename);
   const watchers: ReturnType<typeof fsWatch>[] = [];
   let buildTimer: ReturnType<typeof setTimeout> | null = null;

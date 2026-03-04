@@ -6,10 +6,7 @@
 /** Escape the minimum characters required for HTML attribute values. */
 export function attrEscape(s: string): string {
   if (s.length === 0) return s;
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /** Escape the minimum characters required for general HTML content. */
@@ -39,10 +36,7 @@ export function tiddlerEscape(s: string): string {
 /** Unescape from Twine 1 tiddler format. */
 export function tiddlerUnescape(s: string): string {
   if (s.length === 0) return s;
-  return s
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .replace(/\\s/g, '\\');
+  return s.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\s/g, '\\');
 }
 
 /** Escape characters that are special in Twee passage names/tags. */

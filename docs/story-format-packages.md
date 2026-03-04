@@ -53,7 +53,11 @@ The `"twine-story-format"` keyword is required. twee-ts uses it to identify form
 Your existing Twine 2 format.js file, unchanged:
 
 ```javascript
-window.storyFormat({"name":"My Format","version":"1.0.0","source":"<html>...{{STORY_NAME}}...{{STORY_DATA}}...</html>"});
+window.storyFormat({
+  name: 'My Format',
+  version: '1.0.0',
+  source: '<html>...{{STORY_NAME}}...{{STORY_DATA}}...</html>',
+});
 ```
 
 This is the standard format file as defined by the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md).
@@ -205,12 +209,12 @@ Now their story scripts get full type support:
 
 ```typescript
 // story-script.ts
-Config.passages.start = "Prologue";  // autocomplete, type-checked
+Config.passages.start = 'Prologue'; // autocomplete, type-checked
 
-Macro.add("greet", {
+Macro.add('greet', {
   handler() {
-    this.output.append("Hello!");    // `this` is typed as MacroContext
-  }
+    this.output.append('Hello!'); // `this` is typed as MacroContext
+  },
 });
 ```
 
@@ -284,12 +288,12 @@ Or use declaration maps (`"declarationMap": true` in tsconfig) if your types are
 
 twee-ts requires the following named exports from the package's main entry point:
 
-| Export     | Type      | Required | Description                                      |
-|------------|-----------|----------|--------------------------------------------------|
-| `name`     | `string`  | yes      | Format name (e.g. `"SugarCube"`)                 |
-| `version`  | `string`  | yes      | Semantic version (e.g. `"2.37.3"`)               |
+| Export     | Type      | Required | Description                                                                 |
+| ---------- | --------- | -------- | --------------------------------------------------------------------------- |
+| `name`     | `string`  | yes      | Format name (e.g. `"SugarCube"`)                                            |
+| `version`  | `string`  | yes      | Semantic version (e.g. `"2.37.3"`)                                          |
 | `source`   | `string`  | yes      | HTML template containing `{{STORY_NAME}}` and `{{STORY_DATA}}` placeholders |
-| `proofing` | `boolean` | no       | Whether this is a proofing format. Default: `false` |
+| `proofing` | `boolean` | no       | Whether this is a proofing format. Default: `false`                         |
 
 These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md).
 

@@ -5,9 +5,16 @@
  */
 import { writeFileSync } from 'node:fs';
 import type {
-  CompileOptions, CompileToFileOptions, WatchOptions,
-  CompileResult, CompileStats, Diagnostic, Story,
-  StoryFormatInfo, OutputMode, InlineSource,
+  CompileOptions,
+  CompileToFileOptions,
+  WatchOptions,
+  CompileResult,
+  CompileStats,
+  Diagnostic,
+  Story,
+  StoryFormatInfo,
+  OutputMode,
+  InlineSource,
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
 import { getFilenames, watchFilesystem } from './filesystem.js';
@@ -24,7 +31,10 @@ const DEFAULT_FORMAT_ID = 'sugarcube-2';
 const DEFAULT_START_NAME = 'Start';
 
 export class TweeTsError extends Error {
-  constructor(message: string, public diagnostics: Diagnostic[] = []) {
+  constructor(
+    message: string,
+    public diagnostics: Diagnostic[] = [],
+  ) {
     super(message);
     this.name = 'TweeTsError';
   }
@@ -58,12 +68,14 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
   const allPaths = [...filePaths, ...modulePaths];
 
   const handle = watchFilesystem(allPaths, options.outFile, () => {
-    buildOutput(options).then((result) => {
-      writeFileSync(options.outFile, result.output, 'utf-8');
-      options.onBuild?.(result);
-    }).catch((e) => {
-      options.onError?.(e instanceof Error ? e : new Error(String(e)));
-    });
+    buildOutput(options)
+      .then((result) => {
+        writeFileSync(options.outFile, result.output, 'utf-8');
+        options.onBuild?.(result);
+      })
+      .catch((e) => {
+        options.onError?.(e instanceof Error ? e : new Error(String(e)));
+      });
   });
 
   controller.signal.addEventListener('abort', () => handle.close());
@@ -118,10 +130,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
   let formatId = options.formatId ?? '';
 
   if (outputMode === 'html') {
-    const formatSearchDirs = getFormatSearchDirs(
-      options.formatPaths,
-      options.useTweegoPath ?? true,
-    );
+    const formatSearchDirs = getFormatSearchDirs(options.formatPaths, options.useTweegoPath ?? true);
     const formats = discoverFormats(formatSearchDirs);
 
     if (!formatId && story.twine2.format) {
@@ -140,12 +149,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
       const remoteVersion = story.twine2.formatVersion || '';
 
       try {
-        format = await resolveRemoteFormat(
-          remoteName,
-          remoteVersion,
-          options.formatIndices,
-          options.formatUrls,
-        );
+        format = await resolveRemoteFormat(remoteName, remoteVersion, options.formatIndices, options.formatUrls);
       } catch {
         // Remote fetch failed; fall through to error below
       }
@@ -213,7 +217,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
       if (format.isTwine2) {
         output = toTwine2HTML(story, format, startName, diagnostics);
       } else {
-        if ((story.name === '') && !storyHas(story, 'StoryTitle')) {
+        if (story.name === '' && !storyHas(story, 'StoryTitle')) {
           diagnostics.push({
             level: 'error',
             message: 'Special passage "StoryTitle" not found.',
@@ -239,22 +243,26 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
 }
 
 function storyToJSON(story: Story): string {
-  return JSON.stringify({
-    name: story.name,
-    ifid: story.ifid,
-    passages: story.passages.map((p) => ({
-      name: p.name,
-      tags: p.tags,
-      text: p.text,
-      metadata: p.metadata ?? null,
-    })),
-    twine2: {
-      format: story.twine2.format,
-      formatVersion: story.twine2.formatVersion,
-      start: story.twine2.start,
-      tagColors: Object.fromEntries(story.twine2.tagColors),
-      options: Object.fromEntries(story.twine2.options),
-      zoom: story.twine2.zoom,
+  return JSON.stringify(
+    {
+      name: story.name,
+      ifid: story.ifid,
+      passages: story.passages.map((p) => ({
+        name: p.name,
+        tags: p.tags,
+        text: p.text,
+        metadata: p.metadata ?? null,
+      })),
+      twine2: {
+        format: story.twine2.format,
+        formatVersion: story.twine2.formatVersion,
+        start: story.twine2.start,
+        tagColors: Object.fromEntries(story.twine2.tagColors),
+        options: Object.fromEntries(story.twine2.options),
+        zoom: story.twine2.zoom,
+      },
     },
-  }, null, 2);
+    null,
+    2,
+  );
 }
