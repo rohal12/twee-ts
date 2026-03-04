@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  attrEscape, htmlEscape, tiddlerEscape, tiddlerUnescape,
-  tweeEscape, tweeUnescape,
-} from '../src/escape.js';
+import { attrEscape, htmlEscape, tiddlerEscape, tiddlerUnescape, tweeEscape, tweeUnescape } from '../src/escape.js';
 
 describe('attrEscape', () => {
   it('escapes ampersands, quotes, and apostrophes', () => {
@@ -27,9 +24,7 @@ describe('htmlEscape', () => {
 
 describe('tiddlerEscape', () => {
   it('escapes tiddler special characters', () => {
-    expect(tiddlerEscape('a\\b\tc\nd&e<f>g"h')).toBe(
-      'a\\sb\\tc\\nd&amp;e&lt;f&gt;g&quot;h'
-    );
+    expect(tiddlerEscape('a\\b\tc\nd&e<f>g"h')).toBe('a\\sb\\tc\\nd&amp;e&lt;f&gt;g&quot;h');
   });
   it('returns empty string unchanged', () => {
     expect(tiddlerEscape('')).toBe('');

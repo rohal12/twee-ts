@@ -14,11 +14,7 @@ describe('applyTagAliases', () => {
   });
 
   it('handles multiple aliases', () => {
-    const passages = [
-      mkPassage('A', ['library']),
-      mkPassage('B', ['theme']),
-      mkPassage('C', ['other']),
-    ];
+    const passages = [mkPassage('A', ['library']), mkPassage('B', ['theme']), mkPassage('C', ['other'])];
     applyTagAliases(passages, { library: 'script', theme: 'stylesheet' });
     expect(passages[0].tags).toEqual(['library', 'script']);
     expect(passages[1].tags).toEqual(['theme', 'stylesheet']);

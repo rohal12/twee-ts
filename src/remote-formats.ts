@@ -46,11 +46,7 @@ export async function fetchIndex(url: string): Promise<SFAIndex> {
  * Find the best matching entry in an SFA index.
  * Exact version preferred, then highest version with same major.
  */
-export function findEntry(
-  index: SFAIndex,
-  name: string,
-  version: string,
-): SFAIndexEntry | undefined {
+export function findEntry(index: SFAIndex, name: string, version: string): SFAIndexEntry | undefined {
   const wanted = parseSemver(version);
   const entries = [...(index.twine2 ?? []), ...(index.twine1 ?? [])];
 
@@ -93,10 +89,7 @@ function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry): string {
 }
 
 /** Download a format, verify its checksum, write to cache, and return StoryFormatInfo. */
-export async function fetchAndCacheFormat(
-  entry: SFAIndexEntry,
-  downloadUrl: string,
-): Promise<StoryFormatInfo> {
+export async function fetchAndCacheFormat(entry: SFAIndexEntry, downloadUrl: string): Promise<StoryFormatInfo> {
   const res = await fetch(downloadUrl);
   if (!res.ok) {
     throw new Error(`Failed to download format from ${downloadUrl}: ${res.status} ${res.statusText}`);

@@ -22,10 +22,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   return {
     name: 'twee-ts',
 
-    async generateBundle(
-      _outputOptions: unknown,
-      _bundle: Record<string, unknown>,
-    ) {
+    async generateBundle(_outputOptions: unknown, _bundle: Record<string, unknown>) {
       const result = await compile({
         sources: options.sources,
         formatId: options.format,

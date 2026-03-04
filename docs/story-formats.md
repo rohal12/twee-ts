@@ -98,37 +98,37 @@ When the `StoryData` passage specifies a format by name and version, twee-ts mat
 
 twee-ts recognizes the following special passage names. These passages carry metadata or structural content and are excluded from the regular passage list and word count.
 
-| Passage | Purpose |
-|---------|---------|
-| `StoryTitle` | Story name (required for Twine 1) |
-| `StoryData` | JSON metadata: IFID, format, format version, tag colors |
-| `StoryAuthor` | Author name |
-| `StoryInit` | SugarCube initialization code |
-| `StoryMenu` | SugarCube sidebar menu items |
-| `StorySubtitle` | Story subtitle |
-| `StoryBanner` | SugarCube story banner |
-| `StoryCaption` | SugarCube sidebar caption |
-| `StoryInterface` | SugarCube custom UI template |
-| `StoryShare` | SugarCube sharing links |
-| `StorySettings` | SugarCube settings |
-| `StoryIncludes` | Additional source files to include |
-| `PassageReady` | SugarCube: runs before each passage |
-| `PassageDone` | SugarCube: runs after each passage |
-| `PassageHeader` | Prepended to every passage |
-| `PassageFooter` | Appended to every passage |
-| `MenuOptions` | Menu option passages |
-| `MenuShare` | Menu sharing passages |
-| `MenuStory` | Menu story passages |
+| Passage          | Purpose                                                 |
+| ---------------- | ------------------------------------------------------- |
+| `StoryTitle`     | Story name (required for Twine 1)                       |
+| `StoryData`      | JSON metadata: IFID, format, format version, tag colors |
+| `StoryAuthor`    | Author name                                             |
+| `StoryInit`      | SugarCube initialization code                           |
+| `StoryMenu`      | SugarCube sidebar menu items                            |
+| `StorySubtitle`  | Story subtitle                                          |
+| `StoryBanner`    | SugarCube story banner                                  |
+| `StoryCaption`   | SugarCube sidebar caption                               |
+| `StoryInterface` | SugarCube custom UI template                            |
+| `StoryShare`     | SugarCube sharing links                                 |
+| `StorySettings`  | SugarCube settings                                      |
+| `StoryIncludes`  | Additional source files to include                      |
+| `PassageReady`   | SugarCube: runs before each passage                     |
+| `PassageDone`    | SugarCube: runs after each passage                      |
+| `PassageHeader`  | Prepended to every passage                              |
+| `PassageFooter`  | Appended to every passage                               |
+| `MenuOptions`    | Menu option passages                                    |
+| `MenuShare`      | Menu sharing passages                                   |
+| `MenuStory`      | Menu story passages                                     |
 
 ## Special Tags
 
-| Tag | Effect |
-|-----|--------|
-| `script` | Passage content is combined into the JavaScript block |
-| `stylesheet` | Passage content is combined into the CSS block |
-| `annotation` | Passage is excluded from compiled output |
-| `widget` | Passage is treated as a SugarCube widget definition |
-| `Twine.*` | Any tag starting with `Twine.` marks an info passage |
+| Tag          | Effect                                                |
+| ------------ | ----------------------------------------------------- |
+| `script`     | Passage content is combined into the JavaScript block |
+| `stylesheet` | Passage content is combined into the CSS block        |
+| `annotation` | Passage is excluded from compiled output              |
+| `widget`     | Passage is treated as a SugarCube widget definition   |
+| `Twine.*`    | Any tag starting with `Twine.` marks an info passage  |
 
 Passages with special tags are classified as **info passages** and do not appear as regular `<tw-passagedata>` elements.
 

@@ -63,9 +63,7 @@ You can also use the lower-level `applyTagAliases` function directly:
 import { applyTagAliases } from '@rohal12/twee-ts';
 import type { Passage } from '@rohal12/twee-ts';
 
-const passages: Passage[] = [
-  { name: 'Utils', tags: ['library'], text: 'window.x = 1;' },
-];
+const passages: Passage[] = [{ name: 'Utils', tags: ['library'], text: 'window.x = 1;' }];
 
 applyTagAliases(passages, { library: 'script' });
 // passages[0].tags is now ['library', 'script']
@@ -109,33 +107,33 @@ With this config:
 
 The result:
 
-| Passage | Original Tags | Resolved Tags | Effect |
-|---------|--------------|---------------|--------|
-| Utils | `library` | `library`, `script` | Content goes into the `<style id="twine-user-script">` block |
-| Dark Theme | `theme` | `theme`, `stylesheet` | Content goes into the `<style id="twine-user-stylesheet">` block |
-| Design Notes | `dev-note` | `dev-note`, `annotation` | Excluded from compiled output entirely |
-| Start | *(none)* | *(none)* | Normal story passage, unaffected |
+| Passage      | Original Tags | Resolved Tags            | Effect                                                           |
+| ------------ | ------------- | ------------------------ | ---------------------------------------------------------------- |
+| Utils        | `library`     | `library`, `script`      | Content goes into the `<style id="twine-user-script">` block     |
+| Dark Theme   | `theme`       | `theme`, `stylesheet`    | Content goes into the `<style id="twine-user-stylesheet">` block |
+| Design Notes | `dev-note`    | `dev-note`, `annotation` | Excluded from compiled output entirely                           |
+| Start        | _(none)_      | _(none)_                 | Normal story passage, unaffected                                 |
 
 All three aliased passages are classified as **info passages** and won't appear as `<tw-passagedata>` elements. Their original tags are preserved, so decompiling back to Twee produces `[library]`, `[theme]`, and `[dev-note]` as written.
 
 ## Common Aliases
 
-| Alias | Target | Purpose |
-|-------|--------|---------|
-| `library` | `script` | Mark JavaScript utility passages |
-| `theme` | `stylesheet` | Mark CSS theme passages |
-| `dev-note` | `annotation` | Development notes excluded from output |
-| `macro` | `widget` | SugarCube widget/macro definition passages |
+| Alias      | Target       | Purpose                                    |
+| ---------- | ------------ | ------------------------------------------ |
+| `library`  | `script`     | Mark JavaScript utility passages           |
+| `theme`    | `stylesheet` | Mark CSS theme passages                    |
+| `dev-note` | `annotation` | Development notes excluded from output     |
+| `macro`    | `widget`     | SugarCube widget/macro definition passages |
 
 ## Special Tags Reference
 
 These are the built-in special tags that can be used as alias targets:
 
-| Tag | Effect |
-|-----|--------|
-| `script` | Passage content is combined into the `twine-user-script` block |
+| Tag          | Effect                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| `script`     | Passage content is combined into the `twine-user-script` block     |
 | `stylesheet` | Passage content is combined into the `twine-user-stylesheet` block |
-| `annotation` | Passage is excluded from compiled output |
-| `widget` | Passage is treated as a widget definition (SugarCube) |
+| `annotation` | Passage is excluded from compiled output                           |
+| `widget`     | Passage is treated as a widget definition (SugarCube)              |
 
 Any of these can be used as the target (right-hand side) of a tag alias. The alias (left-hand side) can be any string that is a valid Twee tag.

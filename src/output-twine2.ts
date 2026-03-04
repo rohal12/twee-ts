@@ -88,8 +88,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   // Normal passage elements
   pid = 1;
   for (const p of story.passages) {
-    if (p.name === 'StoryTitle' || p.name === 'StoryData' ||
-        hasAnyTag(p, 'script', 'stylesheet', 'Twine.private')) {
+    if (p.name === 'StoryTitle' || p.name === 'StoryData' || hasAnyTag(p, 'script', 'stylesheet', 'Twine.private')) {
       continue;
     }
     // Drop empty StorySettings
@@ -112,9 +111,8 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   const options = opts.join(' ');
 
   // Wrap in tw-storydata
-  const zoom = story.twine2.zoom === Math.floor(story.twine2.zoom)
-    ? story.twine2.zoom.toString()
-    : story.twine2.zoom.toFixed(1);
+  const zoom =
+    story.twine2.zoom === Math.floor(story.twine2.zoom) ? story.twine2.zoom.toString() : story.twine2.zoom.toFixed(1);
 
   const wrapper =
     `<!-- UUID://${story.ifid}// -->` +

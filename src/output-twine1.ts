@@ -86,12 +86,7 @@ function getTwine1PassageChunk(story: Story): { data: string; count: number } {
   return { data, count };
 }
 
-function tryReplaceComponent(
-  template: string,
-  placeholder: string,
-  componentPath: string,
-  _required: boolean,
-): string {
+function tryReplaceComponent(template: string, placeholder: string, componentPath: string, _required: boolean): string {
   if (!template.includes(placeholder)) return template;
   try {
     let content = readFileSync(componentPath, 'utf-8');

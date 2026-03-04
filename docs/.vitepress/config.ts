@@ -7,9 +7,7 @@ export default defineConfig({
   // Deploy to GitHub Pages at https://<user>.github.io/twee-ts/
   base: '/twee-ts/',
 
-  head: [
-    ['meta', { name: 'theme-color', content: '#6366f1' }],
-  ],
+  head: [['meta', { name: 'theme-color', content: '#6366f1' }]],
 
   themeConfig: {
     nav: [
@@ -55,9 +53,7 @@ export default defineConfig({
       },
     ],
 
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/rohal12/twee-ts' },
-    ],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/rohal12/twee-ts' }],
 
     footer: {
       message: 'Released under the Unlicense.',

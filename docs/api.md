@@ -17,11 +17,11 @@ const result = await compile({
   tagAliases: { library: 'script' },
 });
 
-console.log(result.output);       // compiled HTML string
-console.log(result.story);        // parsed Story model
-console.log(result.format);       // format info (undefined for non-HTML modes)
-console.log(result.diagnostics);  // warnings and errors
-console.log(result.stats);        // { passages, storyPassages, words, files }
+console.log(result.output); // compiled HTML string
+console.log(result.story); // parsed Story model
+console.log(result.format); // format info (undefined for non-HTML modes)
+console.log(result.diagnostics); // warnings and errors
+console.log(result.stats); // { passages, storyPassages, words, files }
 ```
 
 ### `compileToFile(options)`
@@ -66,19 +66,19 @@ All options for `compile()`. Only `sources` is required.
 ```typescript
 interface CompileOptions {
   sources: SourceInput[];
-  outputMode?: OutputMode;       // default: 'html'
-  formatId?: string;             // default: 'sugarcube-2'
-  startPassage?: string;         // default: 'Start'
+  outputMode?: OutputMode; // default: 'html'
+  formatId?: string; // default: 'sugarcube-2'
+  startPassage?: string; // default: 'Start'
   formatPaths?: string[];
-  useTweegoPath?: boolean;       // default: true
+  useTweegoPath?: boolean; // default: true
   modules?: string[];
   headFile?: string;
-  trim?: boolean;                // default: true
-  twee2Compat?: boolean;         // default: false
-  testMode?: boolean;            // default: false
+  trim?: boolean; // default: true
+  twee2Compat?: boolean; // default: false
+  testMode?: boolean; // default: false
   formatIndices?: string[];
   formatUrls?: string[];
-  noRemote?: boolean;            // default: false
+  noRemote?: boolean; // default: false
   tagAliases?: Record<string, string>;
 }
 ```
@@ -112,10 +112,7 @@ You can mix inline sources with file paths:
 
 ```typescript
 const result = await compile({
-  sources: [
-    'src/',
-    { filename: 'extra.tw', content: ':: Bonus\nSecret passage!' },
-  ],
+  sources: ['src/', { filename: 'extra.tw', content: ':: Bonus\nSecret passage!' }],
 });
 ```
 
@@ -123,18 +120,18 @@ const result = await compile({
 
 ```typescript
 interface CompileResult {
-  output: string;           // compiled HTML, Twee, or JSON string
-  story: Story;             // parsed story model
+  output: string; // compiled HTML, Twee, or JSON string
+  story: Story; // parsed story model
   format?: StoryFormatInfo; // format used (undefined for non-HTML modes)
   diagnostics: Diagnostic[];
   stats: CompileStats;
 }
 
 interface CompileStats {
-  passages: number;         // total passages
-  storyPassages: number;    // non-info passages
-  words: number;            // estimated word count
-  files: string[];          // processed file paths
+  passages: number; // total passages
+  storyPassages: number; // non-info passages
+  words: number; // estimated word count
+  files: string[]; // processed file paths
 }
 
 interface Diagnostic {
@@ -196,11 +193,7 @@ const passages = parseTwee(':: Start\nHello!', 'story.tw');
 ### Story Formats
 
 ```typescript
-import {
-  discoverFormats,
-  getFormatSearchDirs,
-  parseFormatJSON,
-} from '@rohal12/twee-ts';
+import { discoverFormats, getFormatSearchDirs, parseFormatJSON } from '@rohal12/twee-ts';
 
 const dirs = getFormatSearchDirs(['/my/formats']);
 const formats = discoverFormats(dirs);
@@ -213,11 +206,7 @@ for (const [id, format] of formats) {
 ### Remote Formats
 
 ```typescript
-import {
-  resolveRemoteFormat,
-  fetchAndCacheFormat,
-  discoverCachedFormats,
-} from '@rohal12/twee-ts';
+import { resolveRemoteFormat, fetchAndCacheFormat, discoverCachedFormats } from '@rohal12/twee-ts';
 
 // Auto-resolve from SFA indices
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
@@ -231,24 +220,19 @@ const cached = discoverCachedFormats();
 ```typescript
 import { generateIFID, validateIFID } from '@rohal12/twee-ts';
 
-const ifid = generateIFID();        // "A1B2C3D4-..."
-validateIFID(ifid);                  // true
+const ifid = generateIFID(); // "A1B2C3D4-..."
+validateIFID(ifid); // true
 ```
 
 ### Config
 
 ```typescript
-import {
-  loadConfig,
-  loadConfigFile,
-  validateConfig,
-  scaffoldConfig,
-} from '@rohal12/twee-ts';
+import { loadConfig, loadConfigFile, validateConfig, scaffoldConfig } from '@rohal12/twee-ts';
 
-const config = loadConfig();                    // from cwd
+const config = loadConfig(); // from cwd
 const config2 = loadConfigFile('my-config.json'); // from path
 const errors = validateConfig({ sources: 42 }); // validation
-const json = scaffoldConfig();                   // default config JSON
+const json = scaffoldConfig(); // default config JSON
 ```
 
 ### Story Inspection
@@ -259,8 +243,8 @@ import { compile, storyInspect } from '@rohal12/twee-ts';
 const result = await compile({ sources: ['src/'], outputMode: 'json' });
 const info = storyInspect(result.story);
 
-console.log(info.passageMap);   // Map of passage name → passage
-console.log(info.brokenLinks);  // passages with links to nonexistent passages
+console.log(info.passageMap); // Map of passage name → passage
+console.log(info.brokenLinks); // passages with links to nonexistent passages
 ```
 
 ## Types

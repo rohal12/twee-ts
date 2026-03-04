@@ -93,7 +93,8 @@ function acceptQuoted(ctx: LexerContext, quote: number): string | null {
   for (;;) {
     const ch = ctx.next();
     switch (ch) {
-      case 0x5c: { // backslash
+      case 0x5c: {
+        // backslash
         const r = ctx.next();
         if (r !== 0x0a && r !== EOF) break;
         // fall through
@@ -154,7 +155,8 @@ function lexName(ctx: LexerContext): StateFn {
   outer: for (;;) {
     r = ctx.next();
     switch (r) {
-      case 0x5c: { // backslash
+      case 0x5c: {
+        // backslash
         const next = ctx.next();
         if (next !== 0x0a && next !== EOF) break;
         // fall through to terminators
@@ -175,10 +177,14 @@ function lexName(ctx: LexerContext): StateFn {
   ctx.emit(ItemType.Name);
 
   switch (r) {
-    case 0x5b: return lexTags;           // [
-    case 0x5d: return ctx.errorf(`unexpected right square bracket ']'`);
-    case 0x7b: return lexMetadata;       // {
-    case 0x7d: return ctx.errorf(`unexpected right curly brace '}'`);
+    case 0x5b:
+      return lexTags; // [
+    case 0x5d:
+      return ctx.errorf(`unexpected right square bracket ']'`);
+    case 0x7b:
+      return lexMetadata; // {
+    case 0x7d:
+      return ctx.errorf(`unexpected right curly brace '}'`);
     case 0x0a: // newline
       ctx.pos++;
       ctx.ignore();
@@ -195,10 +201,14 @@ function lexNextOptionalBlock(ctx: LexerContext): StateFn {
 
   const r = ctx.peek();
   switch (r) {
-    case 0x5b: return lexTags;           // [
-    case 0x5d: return ctx.errorf(`unexpected right square bracket ']'`);
-    case 0x7b: return lexMetadata;       // {
-    case 0x7d: return ctx.errorf(`unexpected right curly brace '}'`);
+    case 0x5b:
+      return lexTags; // [
+    case 0x5d:
+      return ctx.errorf(`unexpected right square bracket ']'`);
+    case 0x7b:
+      return lexMetadata; // {
+    case 0x7d:
+      return ctx.errorf(`unexpected right curly brace '}'`);
     case 0x0a: // newline
       ctx.pos++;
       ctx.ignore();
@@ -217,7 +227,8 @@ function lexTags(ctx: LexerContext): StateFn {
   for (;;) {
     const r = ctx.next();
     switch (r) {
-      case 0x5c: { // backslash
+      case 0x5c: {
+        // backslash
         const next = ctx.next();
         if (next !== 0x0a && next !== EOF) break;
         // fall through
@@ -248,7 +259,8 @@ function lexMetadata(ctx: LexerContext): StateFn {
   for (;;) {
     const r = ctx.next();
     switch (r) {
-      case 0x22: { // double quote
+      case 0x22: {
+        // double quote
         const err = acceptQuoted(ctx, 0x22);
         if (err) return ctx.errorf(err);
         break;

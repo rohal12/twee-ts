@@ -22,7 +22,13 @@ export { generateIFID, validateIFID } from './ifid.js';
 export { loadConfig, loadConfigFile, validateConfig, scaffoldConfig, CONFIG_FILENAME } from './config.js';
 
 // Remote formats
-export { resolveRemoteFormat, fetchAndCacheFormat, fetchDirectFormat, getCacheDir, discoverCachedFormats } from './remote-formats.js';
+export {
+  resolveRemoteFormat,
+  fetchAndCacheFormat,
+  fetchDirectFormat,
+  getCacheDir,
+  discoverCachedFormats,
+} from './remote-formats.js';
 
 // Types
 export type {

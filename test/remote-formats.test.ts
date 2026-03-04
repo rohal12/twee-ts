@@ -1,13 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  getCacheDir,
-  findEntry,
-  verifySHA256,
-  clearIndexCache,
-  discoverCachedFormats,
-} from '../src/remote-formats.js';
+import { getCacheDir, findEntry, verifySHA256, clearIndexCache, discoverCachedFormats } from '../src/remote-formats.js';
 import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
 
 // Minimal format.js content for testing

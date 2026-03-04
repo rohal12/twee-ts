@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createStory, storyHas, storyGet, storyAdd,
-  marshalStoryData, unmarshalStoryData, unmarshalStorySettings,
+  createStory,
+  storyHas,
+  storyGet,
+  storyAdd,
+  marshalStoryData,
+  unmarshalStoryData,
+  unmarshalStorySettings,
 } from '../src/story.js';
 import type { Diagnostic, Passage } from '../src/types.js';
 
@@ -34,7 +39,7 @@ describe('Story', () => {
     storyAdd(story, mkPassage('Test', 'Second'), diag);
     expect(story.passages).toHaveLength(1);
     expect(storyGet(story, 'Test')?.text).toBe('Second');
-    expect(diag.some(d => d.message.includes('duplicate'))).toBe(true);
+    expect(diag.some((d) => d.message.includes('duplicate'))).toBe(true);
   });
 
   it('processes StoryTitle', () => {
@@ -48,12 +53,19 @@ describe('Story', () => {
   it('processes StoryData', () => {
     const story = createStory();
     const diag: Diagnostic[] = [];
-    storyAdd(story, mkPassage('StoryData', JSON.stringify({
-      ifid: 'd674c58c-defa-4f70-b7a2-27742230c0fc',
-      format: 'SugarCube',
-      'format-version': '2.37.3',
-      start: 'Begin',
-    })), diag);
+    storyAdd(
+      story,
+      mkPassage(
+        'StoryData',
+        JSON.stringify({
+          ifid: 'd674c58c-defa-4f70-b7a2-27742230c0fc',
+          format: 'SugarCube',
+          'format-version': '2.37.3',
+          start: 'Begin',
+        }),
+      ),
+      diag,
+    );
     expect(story.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
     expect(story.twine2.format).toBe('SugarCube');
     expect(story.twine2.formatVersion).toBe('2.37.3');
@@ -64,7 +76,7 @@ describe('Story', () => {
     const story = createStory();
     const diag: Diagnostic[] = [];
     storyAdd(story, mkPassage('StoryIncludes', 'file1.tw\nfile2.tw'), diag);
-    expect(diag.some(d => d.message.includes('StoryIncludes'))).toBe(true);
+    expect(diag.some((d) => d.message.includes('StoryIncludes'))).toBe(true);
   });
 });
 
@@ -99,7 +111,7 @@ describe('unmarshalStorySettings', () => {
     const story = createStory();
     const diag: Diagnostic[] = [];
     unmarshalStorySettings(story, 'ifid:D674C58C-DEFA-4F70-B7A2-27742230C0FC\nzoom:2', diag);
-    expect(diag.some(d => d.message.includes('obsolete'))).toBe(true);
+    expect(diag.some((d) => d.message.includes('obsolete'))).toBe(true);
     expect(story.legacyIFID).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
   });
 });

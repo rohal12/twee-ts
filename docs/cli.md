@@ -10,74 +10,74 @@ Sources can be files or directories. Directories are walked recursively for supp
 
 ### Input / Output
 
-| Flag | Description |
-|------|-------------|
-| `-o, --output <file>` | Output file path. Defaults to stdout. |
-| `-f, --format <id>` | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`. |
-| `-s, --start <name>` | Starting passage name. Default: `Start`. |
+| Flag                  | Description                                                                |
+| --------------------- | -------------------------------------------------------------------------- |
+| `-o, --output <file>` | Output file path. Defaults to stdout.                                      |
+| `-f, --format <id>`   | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`. |
+| `-s, --start <name>`  | Starting passage name. Default: `Start`.                                   |
 
 ### Output Modes
 
-| Flag | Description |
-|------|-------------|
-| *(default)* | Compile to playable HTML using a story format. |
-| `-d, --decompile-twee3` | Output as Twee 3 source. |
-| `--decompile-twee1` | Output as Twee 1 source. |
-| `-a, --archive-twine2` | Output as Twine 2 archive (XML, no format wrapper). |
-| `--archive-twine1` | Output as Twine 1 archive. |
-| `--json` | Output the story model as JSON. |
+| Flag                    | Description                                         |
+| ----------------------- | --------------------------------------------------- |
+| _(default)_             | Compile to playable HTML using a story format.      |
+| `-d, --decompile-twee3` | Output as Twee 3 source.                            |
+| `--decompile-twee1`     | Output as Twee 1 source.                            |
+| `-a, --archive-twine2`  | Output as Twine 2 archive (XML, no format wrapper). |
+| `--archive-twine1`      | Output as Twine 1 archive.                          |
+| `--json`                | Output the story model as JSON.                     |
 
 See [Output Modes](./output-modes) for details on each mode.
 
 ### Head Injection
 
-| Flag | Description |
-|------|-------------|
-| `-m, --module <file>` | JS or CSS file to inject into `<head>`. Repeatable. |
-| `--head <file>` | Raw HTML file whose contents are appended to `<head>`. |
+| Flag                  | Description                                            |
+| --------------------- | ------------------------------------------------------ |
+| `-m, --module <file>` | JS or CSS file to inject into `<head>`. Repeatable.    |
+| `--head <file>`       | Raw HTML file whose contents are appended to `<head>`. |
 
 ### Compilation Behavior
 
-| Flag | Description |
-|------|-------------|
-| `--twee2-compat` | Enable Twee2 syntax compatibility. |
-| `--no-trim` | Don't trim leading/trailing whitespace from passages. |
-| `-t, --test` | Enable test/debug mode (sets `debug` option in story data). |
+| Flag                         | Description                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `--twee2-compat`             | Enable Twee2 syntax compatibility.                                               |
+| `--no-trim`                  | Don't trim leading/trailing whitespace from passages.                            |
+| `-t, --test`                 | Enable test/debug mode (sets `debug` option in story data).                      |
 | `--tag-alias <alias=target>` | Map a custom tag to a special tag. Repeatable. See [Tag Aliases](./tag-aliases). |
 
 ### Story Formats
 
-| Flag | Description |
-|------|-------------|
-| `--list-formats` | List all available story formats and exit. |
+| Flag                   | Description                                        |
+| ---------------------- | -------------------------------------------------- |
+| `--list-formats`       | List all available story formats and exit.         |
 | `--format-index <url>` | URL to an SFA-compatible `index.json`. Repeatable. |
-| `--format-url <url>` | Direct URL to a `format.js` file. Repeatable. |
-| `--no-remote` | Disable remote format fetching. |
+| `--format-url <url>`   | Direct URL to a `format.js` file. Repeatable.      |
+| `--no-remote`          | Disable remote format fetching.                    |
 
 See [Format Discovery](./story-formats) for how formats are located.
 
 ### Watch & Logging
 
-| Flag | Description |
-|------|-------------|
-| `-w, --watch` | Watch for file changes and rebuild automatically. Requires `-o`. |
+| Flag              | Description                                                        |
+| ----------------- | ------------------------------------------------------------------ |
+| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`.   |
 | `-l, --log-stats` | Print passage count, word count, and file count after compilation. |
-| `--log-files` | Print the list of input files after compilation. |
+| `--log-files`     | Print the list of input files after compilation.                   |
 
 ### Config & Project
 
-| Flag | Description |
-|------|-------------|
-| `--init` | Scaffold a new project with `twee-ts.config.json` and starter files. |
-| `-c, --config <file>` | Path to config file. Default: `twee-ts.config.json` in cwd. |
-| `--no-config` | Skip loading the config file. |
+| Flag                  | Description                                                          |
+| --------------------- | -------------------------------------------------------------------- |
+| `--init`              | Scaffold a new project with `twee-ts.config.json` and starter files. |
+| `-c, --config <file>` | Path to config file. Default: `twee-ts.config.json` in cwd.          |
+| `--no-config`         | Skip loading the config file.                                        |
 
 ### Meta
 
-| Flag | Description |
-|------|-------------|
-| `-h, --help` | Show help text. |
-| `-v, --version` | Show version. |
+| Flag            | Description     |
+| --------------- | --------------- |
+| `-h, --help`    | Show help text. |
+| `-v, --version` | Show version.   |
 
 ## Examples
 

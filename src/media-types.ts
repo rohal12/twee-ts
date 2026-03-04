@@ -69,20 +69,50 @@ export function isKnownFileType(filename: string): boolean {
 }
 
 const KNOWN_EXTENSIONS = new Set([
-  'tw', 'twee', 'tw2', 'twee2', 'htm', 'html',
-  'css', 'js',
-  'otf', 'ttf', 'woff', 'woff2',
-  'gif', 'jpeg', 'jpg', 'png', 'svg', 'tif', 'tiff', 'webp',
-  'aac', 'flac', 'm4a', 'mp3', 'oga', 'ogg', 'opus', 'wav', 'wave', 'weba',
-  'mp4', 'ogv', 'webm',
+  'tw',
+  'twee',
+  'tw2',
+  'twee2',
+  'htm',
+  'html',
+  'css',
+  'js',
+  'otf',
+  'ttf',
+  'woff',
+  'woff2',
+  'gif',
+  'jpeg',
+  'jpg',
+  'png',
+  'svg',
+  'tif',
+  'tiff',
+  'webp',
+  'aac',
+  'flac',
+  'm4a',
+  'mp3',
+  'oga',
+  'ogg',
+  'opus',
+  'wav',
+  'wave',
+  'weba',
+  'mp4',
+  'ogv',
+  'webm',
   'vtt',
 ]);
 
 /** Font format hint for @font-face. */
 export function fontFormatHint(ext: string): string {
   switch (ext) {
-    case 'ttf': return 'truetype';
-    case 'otf': return 'opentype';
-    default: return ext;
+    case 'ttf':
+      return 'truetype';
+    case 'otf':
+      return 'opentype';
+    default:
+      return ext;
   }
 }

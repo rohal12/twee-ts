@@ -142,7 +142,10 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
     }
 
     const key = line.slice(0, colonIdx).trim().toLowerCase();
-    const val = line.slice(colonIdx + 1).trim().toLowerCase();
+    const val = line
+      .slice(colonIdx + 1)
+      .trim()
+      .toLowerCase();
 
     switch (key) {
       case 'ifid': {
@@ -181,7 +184,8 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
     case 'StoryIncludes':
       diagnostics.push({
         level: 'warning',
-        message: 'Ignoring "StoryIncludes" compiler special passage; twee-ts allows you to specify project files and/or directories to recursively search.',
+        message:
+          'Ignoring "StoryIncludes" compiler special passage; twee-ts allows you to specify project files and/or directories to recursively search.',
       });
       break;
 
