@@ -42,5 +42,5 @@ jobs:
             - Bug risks
             - Code quality and adherence to project conventions
           claude_args: |
-            --max-turns 20
+            --max-turns 100
             --model claude-sonnet-4-6
