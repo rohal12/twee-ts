@@ -3,13 +3,13 @@
  * Ported from storyout.go.
  */
 import type { Story, StoryFormatInfo, Diagnostic } from './types.js';
-import { attrEscape, htmlEscape } from './escape.js';
+import { attrEscape, htmlEscape, commentSanitize, htmlCommentSanitize } from './escape.js';
 import { passageToPassagedata, hasTag, hasAnyTag } from './passage.js';
 import { generateIFID } from './ifid.js';
 import { readFormatSource } from './formats.js';
+import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
-const CREATOR_VERSION = '0.1.0';
 
 export function toTwine2Archive(story: Story, startName: string, diagnostics: Diagnostic[]): string {
   return getTwine2DataChunk(story, startName, diagnostics) + '\n';
@@ -53,12 +53,12 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   // Style element
   let styleContent = '';
   if (stylesheets.length === 1) {
-    styleContent = stylesheets[0]!.text;
+    styleContent = stylesheets[0]?.text ?? '';
   } else if (stylesheets.length > 1) {
     let pidS = 1;
     for (const p of stylesheets) {
       if (pidS > 1 && !styleContent.endsWith('\n')) styleContent += '\n';
-      styleContent += `/* twine-user-stylesheet #${pidS}: "${p.name}" */\n`;
+      styleContent += `/* twine-user-stylesheet #${pidS}: "${commentSanitize(p.name)}" */\n`;
       styleContent += p.text;
       pidS++;
     }
@@ -68,12 +68,12 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   // Script element
   let scriptContent = '';
   if (scripts.length === 1) {
-    scriptContent = scripts[0]!.text;
+    scriptContent = scripts[0]?.text ?? '';
   } else if (scripts.length > 1) {
     let pidS = 1;
     for (const p of scripts) {
       if (pidS > 1 && !scriptContent.endsWith('\n')) scriptContent += '\n';
-      scriptContent += `/* twine-user-script #${pidS}: "${p.name}" */\n`;
+      scriptContent += `/* twine-user-script #${pidS}: "${commentSanitize(p.name)}" */\n`;
       scriptContent += p.text;
       pidS++;
     }
@@ -115,9 +115,9 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
     story.twine2.zoom === Math.floor(story.twine2.zoom) ? story.twine2.zoom.toString() : story.twine2.zoom.toFixed(1);
 
   const wrapper =
-    `<!-- UUID://${story.ifid}// -->` +
-    `<tw-storydata name="${attrEscape(story.name)}" startnode="${startID}" ` +
-    `creator="${attrEscape(CREATOR_NAME)}" creator-version="${attrEscape(CREATOR_VERSION)}" ` +
+    `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->` +
+    `<tw-storydata name="${attrEscape(story.name)}" startnode="${attrEscape(startID)}" ` +
+    `creator="${attrEscape(CREATOR_NAME)}" creator-version="${attrEscape(VERSION)}" ` +
     `ifid="${attrEscape(story.ifid)}" zoom="${attrEscape(zoom)}" ` +
     `format="${attrEscape(story.twine2.format)}" ` +
     `format-version="${attrEscape(story.twine2.formatVersion)}" ` +

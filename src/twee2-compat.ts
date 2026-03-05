@@ -16,11 +16,11 @@ function hasTwee2Syntax(s: string): boolean {
  */
 export function twee2ToV3(s: string): string {
   if (!hasTwee2Syntax(s)) return s;
-  s = s.replace(twee2HeaderRe, (_, p1: string, p2: string | undefined, p3: string | undefined) => {
+  let result = s.replace(twee2HeaderRe, (_, p1: string, p2: string | undefined, p3: string | undefined) => {
     const tags = p2 ?? '';
     const pos = p3 ?? '';
     return `${p1}${tags} {"position":"${pos}"}`;
   });
-  s = s.replace(twee2BadPosRe, '$1');
-  return s;
+  result = result.replace(twee2BadPosRe, '$1');
+  return result;
 }

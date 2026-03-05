@@ -22,14 +22,14 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   return {
     name: 'twee-ts',
 
-    async generateBundle(_outputOptions: unknown, _bundle: Record<string, unknown>) {
+    async generateBundle(this: { emitFile: (opts: { type: string; fileName: string; source: string }) => void }) {
       const result = await compile({
         sources: options.sources,
         formatId: options.format,
         ...options.compileOptions,
       });
 
-      (this as unknown as { emitFile: (opts: Record<string, unknown>) => void }).emitFile({
+      this.emitFile({
         type: 'asset',
         fileName: outputFilename,
         source: result.output,

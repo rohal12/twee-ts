@@ -28,6 +28,36 @@ export function clearIndexCache(): void {
   indexCache.clear();
 }
 
+/** Validate that a JSON value is a valid SFAIndexEntry. */
+function isValidEntry(val: unknown): val is SFAIndexEntry {
+  if (typeof val !== 'object' || val === null || Array.isArray(val)) return false;
+  const obj = val as Record<string, unknown>;
+  return (
+    typeof obj.name === 'string' &&
+    typeof obj.version === 'string' &&
+    typeof obj.checksums === 'object' &&
+    obj.checksums !== null &&
+    !Array.isArray(obj.checksums)
+  );
+}
+
+/** Validate that a JSON value conforms to the SFAIndex shape. */
+function validateSFAIndex(json: unknown): SFAIndex {
+  if (typeof json !== 'object' || json === null) {
+    throw new Error('SFA index is not an object');
+  }
+  const obj = json as Record<string, unknown>;
+  const twine1 = Array.isArray(obj['twine1']) ? (obj['twine1'] as unknown[]).filter(isValidEntry) : [];
+  const twine2 = Array.isArray(obj['twine2']) ? (obj['twine2'] as unknown[]).filter(isValidEntry) : [];
+  return { twine1, twine2 };
+}
+
+/** Generate a format ID from name and version. */
+function makeFormatId(name: string, version: string): string {
+  const major = parseSemver(version)?.[0] ?? '0';
+  return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
+}
+
 /** Fetch and parse an SFA index.json, with in-memory caching. */
 export async function fetchIndex(url: string): Promise<SFAIndex> {
   const cached = indexCache.get(url);
@@ -37,40 +67,51 @@ export async function fetchIndex(url: string): Promise<SFAIndex> {
   if (!res.ok) {
     throw new Error(`Failed to fetch format index from ${url}: ${res.status} ${res.statusText}`);
   }
-  const data = (await res.json()) as SFAIndex;
+  const data = validateSFAIndex(await res.json());
   indexCache.set(url, data);
   return data;
+}
+
+interface FindEntryResult {
+  entry: SFAIndexEntry;
+  formatType: 'twine1' | 'twine2';
 }
 
 /**
  * Find the best matching entry in an SFA index.
  * Exact version preferred, then highest version with same major.
  */
-export function findEntry(index: SFAIndex, name: string, version: string): SFAIndexEntry | undefined {
+export function findEntry(index: SFAIndex, name: string, version: string): FindEntryResult | undefined {
   const wanted = parseSemver(version);
-  const entries = [...(index.twine2 ?? []), ...(index.twine1 ?? [])];
 
-  let bestEntry: SFAIndexEntry | undefined;
+  const searchArrays: Array<{ entries: SFAIndexEntry[]; formatType: 'twine1' | 'twine2' }> = [
+    { entries: index.twine2 ?? [], formatType: 'twine2' },
+    { entries: index.twine1 ?? [], formatType: 'twine1' },
+  ];
+
+  let bestResult: FindEntryResult | undefined;
   let bestVersion: [number, number, number] | null = null;
 
-  for (const entry of entries) {
-    if (entry.name.toLowerCase() !== name.toLowerCase()) continue;
-    const have = parseSemver(entry.version);
-    if (!have) continue;
+  for (const { entries, formatType } of searchArrays) {
+    for (const entry of entries) {
+      if (entry.name.toLowerCase() !== name.toLowerCase()) continue;
+      const have = parseSemver(entry.version);
+      if (!have) continue;
 
-    // Exact match — return immediately
-    if (wanted && semverCompare(have, wanted) === 0) return entry;
+      // Exact match — return immediately
+      if (wanted && semverCompare(have, wanted) === 0) return { entry, formatType };
 
-    // Same-major, highest version
-    if (wanted === null || (have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-      if (!bestVersion || semverCompare(have, bestVersion) > 0) {
-        bestVersion = have;
-        bestEntry = entry;
+      // Same-major, highest version
+      if (wanted === null || (have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
+        if (!bestVersion || semverCompare(have, bestVersion) > 0) {
+          bestVersion = have;
+          bestResult = { entry, formatType };
+        }
       }
     }
   }
 
-  return bestEntry;
+  return bestResult;
 }
 
 /** Verify SHA-256 checksum using Web Crypto API (Node 22 built-in). */
@@ -83,9 +124,9 @@ export async function verifySHA256(content: Uint8Array<ArrayBuffer>, expectedHex
 }
 
 /** Derive the download URL for a format.js from the index URL and entry. */
-function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry): string {
+function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry, formatType: 'twine1' | 'twine2'): string {
   const base = indexUrl.replace(/\/index\.json$/, '');
-  return `${base}/twine2/${entry.name}/${entry.version}/format.js`;
+  return `${base}/${formatType}/${entry.name}/${entry.version}/format.js`;
 }
 
 /** Download a format, verify its checksum, write to cache, and return StoryFormatInfo. */
@@ -99,7 +140,8 @@ export async function fetchAndCacheFormat(entry: SFAIndexEntry, downloadUrl: str
   // Verify checksum if available
   const checksumKey = Object.keys(entry.checksums ?? {}).find((k) => k.endsWith('format.js'));
   if (checksumKey) {
-    const expected = entry.checksums[checksumKey]!;
+    const expected = entry.checksums[checksumKey];
+    if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
     const encoder = new TextEncoder();
     const valid = await verifySHA256(encoder.encode(text), expected);
     if (!valid) {
@@ -108,7 +150,7 @@ export async function fetchAndCacheFormat(entry: SFAIndexEntry, downloadUrl: str
   }
 
   // Parse format JSON to extract name/version/source
-  const id = `${entry.name.toLowerCase().replace(/\s+/g, '-')}-${parseSemver(entry.version)?.[0] ?? '0'}`;
+  const id = makeFormatId(entry.name, entry.version);
   const data = parseFormatJSON(text, id);
   if (!data) {
     throw new Error(`Failed to parse format JSON from ${downloadUrl}`);
@@ -145,7 +187,7 @@ export async function fetchDirectFormat(url: string): Promise<StoryFormatInfo> {
     throw new Error(`Failed to parse format JSON from ${url}`);
   }
 
-  const id = `${data.name.toLowerCase().replace(/\s+/g, '-')}-${parseSemver(data.version)?.[0] ?? '0'}`;
+  const id = makeFormatId(data.name, data.version);
 
   // Write to cache
   const cacheDir = getCacheDir();
@@ -176,6 +218,8 @@ export async function resolveRemoteFormat(
   indices?: string[],
   urls?: string[],
 ): Promise<StoryFormatInfo | undefined> {
+  let lastError: Error | undefined;
+
   // 1. Try direct URLs — check if any match by name
   if (urls) {
     for (const url of urls) {
@@ -188,8 +232,8 @@ export async function resolveRemoteFormat(
             return info;
           }
         }
-      } catch {
-        // Continue to next URL
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
       }
     }
   }
@@ -199,20 +243,22 @@ export async function resolveRemoteFormat(
   for (const indexUrl of allIndices) {
     try {
       const index = await fetchIndex(indexUrl);
-      const entry = findEntry(index, name, version);
-      if (entry) {
+      const result = findEntry(index, name, version);
+      if (result) {
         // Check cache first
-        const cached = getCachedFormat(entry.name, entry.version);
+        const cached = getCachedFormat(result.entry.name, result.entry.version);
         if (cached) return cached;
 
-        const downloadUrl = getDownloadUrl(indexUrl, entry);
-        return await fetchAndCacheFormat(entry, downloadUrl);
+        const downloadUrl = getDownloadUrl(indexUrl, result.entry, result.formatType);
+        return await fetchAndCacheFormat(result.entry, downloadUrl);
       }
-    } catch {
-      // Continue to next index
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
     }
   }
 
+  // If all sources failed with errors, propagate the last one
+  if (lastError) throw lastError;
   return undefined;
 }
 
@@ -222,7 +268,7 @@ function getCachedFormat(name: string, version: string): StoryFormatInfo | undef
   try {
     if (!existsSync(formatPath)) return undefined;
     const source = readFileSync(formatPath, 'utf-8');
-    const id = `${name.toLowerCase().replace(/\s+/g, '-')}-${parseSemver(version)?.[0] ?? '0'}`;
+    const id = makeFormatId(name, version);
     const data = parseFormatJSON(source, id);
     if (!data) return undefined;
     return {

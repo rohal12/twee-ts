@@ -5,12 +5,12 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Story, StoryFormatInfo, Diagnostic } from './types.js';
-import { hasTag } from './passage.js';
-import { passageToTiddler } from './passage.js';
+import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
+import { jsStringEscape, htmlCommentSanitize } from './escape.js';
+import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'twee-ts';
-const CREATOR_VERSION = '0.1.0';
 
 export function toTwine1Archive(story: Story, _startName: string): string {
   const { data, count } = getTwine1PassageChunk(story);
@@ -43,9 +43,9 @@ export function toTwine1HTML(
 
   // Story instance replacements
   const displayStart = startName === 'Start' ? '' : startName;
-  template = template.replace('"VERSION"', `Compiled with ${CREATOR_NAME}, ${CREATOR_VERSION}`);
+  template = template.replace('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`);
   template = template.replace('"TIME"', `Built on ${new Date().toUTCString()}`);
-  template = template.replace('"START_AT"', `"${displayStart}"`);
+  template = template.replace('"START_AT"', `"${jsStringEscape(displayStart)}"`);
   template = template.replace('"STORY_SIZE"', `"${count}"`);
 
   if (template.includes('"STORY"')) {
@@ -63,10 +63,11 @@ export function toTwine1HTML(
 
   // IFID replacement
   if (story.ifid) {
+    const safeIfid = htmlCommentSanitize(story.ifid);
     if (template.includes('<div id="store-area"')) {
-      template = template.replace('<div id="store-area"', `<!-- UUID://${story.ifid}// --><div id="store-area"`);
+      template = template.replace('<div id="store-area"', `<!-- UUID://${safeIfid}// --><div id="store-area"`);
     } else {
-      template = template.replace('<div id="storeArea"', `<!-- UUID://${story.ifid}// --><div id="storeArea"`);
+      template = template.replace('<div id="storeArea"', `<!-- UUID://${safeIfid}// --><div id="storeArea"`);
     }
   }
 
@@ -86,13 +87,18 @@ function getTwine1PassageChunk(story: Story): { data: string; count: number } {
   return { data, count };
 }
 
-function tryReplaceComponent(template: string, placeholder: string, componentPath: string, _required: boolean): string {
+function tryReplaceComponent(template: string, placeholder: string, componentPath: string, required: boolean): string {
   if (!template.includes(placeholder)) return template;
   try {
     let content = readFileSync(componentPath, 'utf-8');
     if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
     return template.replace(placeholder, content);
-  } catch {
+  } catch (e) {
+    if (required) {
+      throw new Error(
+        `Required format component not found: ${componentPath}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     return template;
   }
 }

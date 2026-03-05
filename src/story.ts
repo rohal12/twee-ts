@@ -97,28 +97,34 @@ export function marshalStoryData(story: Story): string {
 }
 
 export function unmarshalStoryData(story: Story, json: string): string | null {
-  let data: StoryDataJSON;
+  let raw: unknown;
   try {
-    data = JSON.parse(json) as StoryDataJSON;
+    raw = JSON.parse(json) as unknown;
   } catch (e) {
     return `Cannot unmarshal "StoryData"; ${e instanceof Error ? e.message : String(e)}`;
   }
 
-  if (data.ifid) story.ifid = data.ifid.toUpperCase();
-  if (data.format) story.twine2.format = data.format;
-  if (data['format-version']) story.twine2.formatVersion = data['format-version'];
-  if (data.options) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return 'Cannot unmarshal "StoryData"; expected a JSON object';
+  }
+  const data = raw as StoryDataJSON;
+
+  if (typeof data.ifid === 'string' && data.ifid) story.ifid = data.ifid.toUpperCase();
+  if (typeof data.format === 'string' && data.format) story.twine2.format = data.format;
+  if (typeof data['format-version'] === 'string' && data['format-version'])
+    story.twine2.formatVersion = data['format-version'];
+  if (Array.isArray(data.options)) {
     for (const opt of data.options) {
-      story.twine2.options.set(opt, true);
+      if (typeof opt === 'string') story.twine2.options.set(opt, true);
     }
   }
-  if (data.start) story.twine2.start = data.start;
-  if (data['tag-colors']) {
+  if (typeof data.start === 'string' && data.start) story.twine2.start = data.start;
+  if (typeof data['tag-colors'] === 'object' && data['tag-colors'] !== null && !Array.isArray(data['tag-colors'])) {
     for (const [tag, color] of Object.entries(data['tag-colors'])) {
-      story.twine2.tagColors.set(tag, color);
+      if (typeof color === 'string') story.twine2.tagColors.set(tag, color);
     }
   }
-  if (data.zoom != null && data.zoom !== 0) story.twine2.zoom = data.zoom;
+  if (typeof data.zoom === 'number' && data.zoom !== 0) story.twine2.zoom = data.zoom;
 
   return null;
 }
@@ -178,8 +184,11 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
 
 /**
  * Process a passage and add it to the story, handling special passages.
+ * Creates new passage objects where text is modified rather than mutating the input.
  */
 export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
+  let processed = p;
+
   switch (p.name) {
     case 'StoryIncludes':
       diagnostics.push({
@@ -203,7 +212,7 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
           }
         }
         // Rebuild passage contents to normalize.
-        p.text = marshalStoryData(story);
+        processed = { ...p, text: marshalStoryData(story) };
       } else {
         diagnostics.push({
           level: 'error',
@@ -217,13 +226,15 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
       unmarshalStorySettings(story, p.text, diagnostics);
       break;
 
-    case 'StoryTitle':
-      p.text = p.text.trim();
-      story.name = p.text;
+    case 'StoryTitle': {
+      const trimmed = p.text.trim();
+      processed = { ...p, text: trimmed };
+      story.name = trimmed;
       break;
+    }
   }
 
-  storyAppend(story, p, diagnostics);
+  storyAppend(story, processed, diagnostics);
 }
 
 /** Get story passage count and word count stats. */

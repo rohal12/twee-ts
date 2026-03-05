@@ -44,7 +44,7 @@ const MEDIA_TYPE_MAP: Record<string, string> = {
 };
 
 export function mediaTypeFromExt(ext: string): string {
-  return MEDIA_TYPE_MAP[ext] ?? '';
+  return MEDIA_TYPE_MAP[ext] ?? 'application/octet-stream';
 }
 
 export function mediaTypeFromFilename(filename: string): string {
@@ -73,8 +73,6 @@ const KNOWN_EXTENSIONS = new Set([
   'twee',
   'tw2',
   'twee2',
-  'htm',
-  'html',
   'css',
   'js',
   'otf',

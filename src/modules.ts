@@ -2,21 +2,9 @@
  * Module/head injection into <head>.
  * Ported from module.go + io.go:modifyHead().
  */
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
-
-/** Read a file as UTF-8 with BOM stripping. */
-function readUTF8(filename: string): string {
-  let content = readFileSync(filename, 'utf-8');
-  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-  return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-/** Read a file as base64. */
-function readBase64(filename: string): string {
-  return readFileSync(filename).toString('base64');
-}
+import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
 
 /**
  * Load modules and return HTML tags to inject before </head>.
@@ -59,7 +47,7 @@ function loadModuleTagged(tag: string, filename: string): string | null {
   const source = readUTF8(filename).trim();
   if (source.length === 0) return null;
 
-  const family = basename(filename).split('.')[0]!;
+  const family = baseNameWithoutExt(filename);
   const idSlug = `${tag}-module-${slugify(family)}`;
   const mimeType = tag === 'script' ? 'text/javascript' : 'text/css';
 
@@ -68,7 +56,7 @@ function loadModuleTagged(tag: string, filename: string): string | null {
 
 function loadModuleFont(filename: string): string | null {
   const source = readBase64(filename);
-  const family = basename(filename).split('.')[0]!;
+  const family = baseNameWithoutExt(filename);
   const idSlug = `style-module-${slugify(family)}`;
   const ext = normalizedFileExt(filename);
   const mediaType = mediaTypeFromExt(ext);
@@ -80,7 +68,7 @@ function loadModuleFont(filename: string): string | null {
 /**
  * Inject modules and head file content before </head>.
  */
-export function modifyHead(html: string, modulePaths: string[], headFile?: string): string {
+export function modifyHead(html: string, modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
   const parts: string[] = [];
 
   if (modulePaths.length > 0) {
@@ -92,8 +80,11 @@ export function modifyHead(html: string, modulePaths: string[], headFile?: strin
     try {
       const source = readUTF8(headFile).trim();
       if (source.length > 0) parts.push(source);
-    } catch {
-      // ignore missing head file
+    } catch (e) {
+      diagnostics?.push({
+        level: 'warning',
+        message: `Failed to read head file "${headFile}": ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   }
 

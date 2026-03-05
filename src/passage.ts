@@ -78,7 +78,11 @@ export function marshalMetadata(meta: PassageMetadata): string {
 }
 
 export function unmarshalMetadata(json: string): PassageMetadata {
-  const parsed = JSON.parse(json) as Record<string, unknown>;
+  const raw: unknown = JSON.parse(json);
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return {};
+  }
+  const parsed = raw as Record<string, unknown>;
   const meta: PassageMetadata = {};
   if (typeof parsed.position === 'string') meta.position = parsed.position;
   if (typeof parsed.size === 'string') meta.size = parsed.size;
@@ -116,17 +120,17 @@ export function passageToPassagedata(p: Passage, pid: number): string {
   let size: string;
 
   if (hasMetadataPosition(p)) {
-    position = p.metadata!.position!;
+    position = p.metadata?.position ?? '';
   } else {
     const x = pid % 10;
-    let y = Math.floor(pid / 10);
+    const y = Math.floor(pid / 10);
     const xp = x === 0 ? 10 : x;
     const yp = x === 0 ? y : y + 1;
     position = `${xp * 125 - 25},${yp * 125 - 25}`;
   }
 
   if (hasMetadataSize(p)) {
-    size = p.metadata!.size!;
+    size = p.metadata?.size ?? '';
   } else {
     size = '100,100';
   }
@@ -139,10 +143,10 @@ export function passageToTiddler(p: Passage, pid: number): string {
   let position: string;
 
   if (hasMetadataPosition(p)) {
-    position = p.metadata!.position!;
+    position = p.metadata?.position ?? '';
   } else {
     const x = pid % 10;
-    let y = Math.floor(pid / 10);
+    const y = Math.floor(pid / 10);
     const xp = x === 0 ? 10 : x;
     const yp = x === 0 ? y : y + 1;
     position = `${xp * 140 - 130},${yp * 140 - 130}`;
@@ -169,20 +173,22 @@ export function countWords(p: Passage): number {
 
 /**
  * Apply tag aliases: for each passage carrying an alias tag, add the canonical
- * tag if not already present. Idempotent — safe to call multiple times.
+ * tag if not already present. Returns new passage objects where tags changed;
+ * unchanged passages are returned as-is. Idempotent — safe to call multiple times.
  */
-export function applyTagAliases(passages: Passage[], aliases: Record<string, string>): void {
+export function applyTagAliases(passages: readonly Passage[], aliases: Record<string, string>): Passage[] {
   const entries = Object.entries(aliases);
-  if (entries.length === 0) return;
-  for (const p of passages) {
-    // Snapshot original tags so we only iterate the author's tags
-    const original = [...p.tags];
+  if (entries.length === 0) return [...passages];
+  return passages.map((p) => {
+    const original = p.tags;
+    const added: string[] = [];
     for (const [alias, canonical] of entries) {
-      if (original.includes(alias) && !p.tags.includes(canonical)) {
-        p.tags.push(canonical);
+      if (original.includes(alias) && !original.includes(canonical) && !added.includes(canonical)) {
+        added.push(canonical);
       }
     }
-  }
+    return added.length > 0 ? { ...p, tags: [...original, ...added] } : p;
+  });
 }
 
 function quote(s: string): string {

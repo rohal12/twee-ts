@@ -46,12 +46,49 @@ test/
 - No default exports; use named exports everywhere
 - Types go in `src/types.ts`; implementation files import from there
 
+## TypeScript best practices
+
+Follow type-first development: define data models and function signatures before implementation, then let the compiler guide completeness.
+
+### Make illegal states unrepresentable
+
+- Use discriminated unions for mutually exclusive states (e.g. `ItemType` enum, `OutputMode` literal union)
+- Use `const` assertions for literal unions that need both a runtime array and a type
+- Be explicit about required vs optional fields in interfaces
+
+### Exhaustive handling
+
+- Use exhaustive `switch` with a `never` check in the default case for union types:
+  ```ts
+  default: {
+    const _exhaustive: never = value;
+    throw new Error(`unhandled case: ${_exhaustive}`);
+  }
+  ```
+- Every code path must return a value or throw
+
+### Functional patterns
+
+- Prefer `const` over `let`; use `readonly` and `Readonly<T>` for immutable data
+- Prefer `array.map/filter/reduce` over `for` loops where readability allows
+- Write pure functions for business logic; isolate side effects in dedicated modules
+- Avoid mutating function parameters; return new objects/arrays instead
+
+### Error handling
+
+- Propagate errors with context; catching requires re-throwing or returning a meaningful result
+- Handle edge cases explicitly: empty arrays, `undefined` inputs, boundary values
+- Use `await` for async calls; wrap external calls with contextual error messages
+- Validate data at system boundaries (CLI args, file input, network responses) with manual checks (no Zod — zero runtime deps)
+
 ## Testing
 
 - Run: `pnpm test`
 - Tests use Vitest with `describe`/`it`/`expect`
 - Test fixtures in `test/fixtures/`
 - Real-world validation: the `../tweego/CleanSlate/` project (605 passages, 241K words) compiles successfully
+- Add or update focused tests when changing logic; test behavior, not implementation details
+- New features need tests; bug fixes need regression tests
 
 ## Commands
 
@@ -66,9 +103,11 @@ test/
 When reviewing PRs, check for:
 
 1. **Type safety** — no `any` casts, no `@ts-ignore`, no non-null assertions (`!`) without justification
-2. **Import style** — `import type` for types, `node:` prefix for builtins, `.js` extensions on relative imports
-3. **Error handling** — diagnostics collected in results, `TweeTsError` only for fatal errors
-4. **Test coverage** — new features need tests, bug fixes need regression tests
-5. **No runtime deps** — this is a zero-dependency package; dev dependencies only
-6. **Backwards compatibility** — public API changes in `src/types.ts` and `src/index.ts` must be intentional
-7. **Formatting** — code passes `pnpm run format:check`
+2. **Exhaustive handling** — switch statements on union types must have a `never` default case
+3. **Import style** — `import type` for types, `node:` prefix for builtins, `.js` extensions on relative imports
+4. **Error handling** — diagnostics collected in results, `TweeTsError` only for fatal errors, errors propagated with context
+5. **Immutability** — prefer `const`, `readonly`, and `Readonly<T>`; avoid mutating function parameters
+6. **Test coverage** — new features need tests, bug fixes need regression tests
+7. **No runtime deps** — this is a zero-dependency package; dev dependencies only
+8. **Backwards compatibility** — public API changes in `src/types.ts` and `src/index.ts` must be intentional
+9. **Formatting** — code passes `pnpm run format:check`

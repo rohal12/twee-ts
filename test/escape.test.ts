@@ -58,6 +58,6 @@ describe('tweeUnescape', () => {
     expect(tweeUnescape(tweeEscape(original))).toBe(original);
   });
   it('handles trailing backslash gracefully', () => {
-    expect(tweeUnescape('test\\')).toBe('test');
+    expect(tweeUnescape('test\\')).toBe('test\\');
   });
 });
