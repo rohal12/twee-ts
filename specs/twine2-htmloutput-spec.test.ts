@@ -722,9 +722,7 @@ describe('Twine 2 HTML Output Spec — Passages (<tw-passagedata>)', () => {
   });
 
   it('Twine.private-tagged passages are NOT rendered as <tw-passagedata>', async () => {
-    const source = minimalStory(
-      [':: Start', 'Hello', '', ':: Hidden [Twine.private]', 'Secret content'].join('\n'),
-    );
+    const source = minimalStory([':: Start', 'Hello', '', ':: Hidden [Twine.private]', 'Secret content'].join('\n'));
     const result = await compileToArchive(source);
     const passages = passageElements(result.output);
     const names = passages.map((p) => attr(p, 'name'));
@@ -772,9 +770,7 @@ describe('Twine 2 HTML Output Spec — Passages (<tw-passagedata>)', () => {
   });
 
   it('pid attribute: sequential numbering across passages', async () => {
-    const source = minimalStory(
-      [':: Start', 'Hello', '', ':: Second', 'World', '', ':: Third', 'Foo'].join('\n'),
-    );
+    const source = minimalStory([':: Start', 'Hello', '', ':: Second', 'World', '', ':: Third', 'Foo'].join('\n'));
     const result = await compileToArchive(source);
     const passages = passageElements(result.output);
     const pids = passages.map((p) => Number(attr(p, 'pid'))).sort((a, b) => a - b);

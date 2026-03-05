@@ -1173,10 +1173,7 @@ describe('Twine 2 Archive Spec -- Well-Formed Structure', () => {
   });
 
   it('passage name attribute values are properly escaped for HTML attributes', async () => {
-    const source = minimalStory(
-      'Name Escaping',
-      ':: Start\nHello\n\n:: A&B<C>"D\nContent',
-    );
+    const source = minimalStory('Name Escaping', ':: Start\nHello\n\n:: A&B<C>"D\nContent');
     const result = await compileToArchive(source);
     // The passage name with special chars must be escaped so the attribute is valid HTML
     const block = extractStoryDataBlock(result.output);

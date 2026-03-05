@@ -1754,16 +1754,9 @@ describe('Twine 1 HTML Output Spec -- Rot13 and Content Encoding Interaction', (
   it('obfuscate:rot13 applies rot13 then tiddler-encodes the result', async () => {
     // If passage content is "A & B", rot13 of letters gives "N & O" (& is not alphabetic),
     // then tiddler encoding gives "N &amp; O".
-    const source = [
-      ':: StoryTitle',
-      'Test',
-      '',
-      ':: StorySettings',
-      'obfuscate:rot13',
-      '',
-      ':: Start',
-      'A & B',
-    ].join('\n');
+    const source = [':: StoryTitle', 'Test', '', ':: StorySettings', 'obfuscate:rot13', '', ':: Start', 'A & B'].join(
+      '\n',
+    );
     const result = await compileToArchive(source);
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');

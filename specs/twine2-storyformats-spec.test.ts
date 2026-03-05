@@ -1904,7 +1904,9 @@ describe('Twine 2 Story Formats Spec -- Source Compilation Strictness', () => {
       useTweegoPath: false,
     });
     // The structure of the format template must be preserved
-    expect(result.output).toMatch(/<html><head><meta charset="utf-8"><title>.*<\/title><\/head><body>.*<\/body><\/html>/s);
+    expect(result.output).toMatch(
+      /<html><head><meta charset="utf-8"><title>.*<\/title><\/head><body>.*<\/body><\/html>/s,
+    );
   });
 
   it('format source with complex escaped HTML loads and compiles correctly', async () => {
