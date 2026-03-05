@@ -43,6 +43,32 @@ storyformats/
 
 The directory name serves as the **format ID** (e.g. `sugarcube-2`). Use this ID with `--format` or `formatId`.
 
+### Format Metadata
+
+Twine 2 `format.js` files contain a JSON object with the following fields:
+
+| Field         | Required | Description                                   |
+| ------------- | -------- | --------------------------------------------- |
+| `name`        | No       | Display name (defaults to "Untitled Story Format") |
+| `version`     | Yes      | SemVer version string (e.g. `"2.37.3"`)       |
+| `source`      | Yes      | HTML template source                           |
+| `proofing`    | No       | Whether this is a proofing format              |
+| `author`      | No       | Format author                                  |
+| `description` | No       | Format description                             |
+| `image`       | No       | Format icon/image URL                          |
+| `url`         | No       | Format homepage URL                            |
+| `license`     | No       | Format license                                 |
+
+twee-ts uses relaxed JSON parsing for `format.js`, tolerating trailing commas, single-quoted strings, and unquoted property keys found in some formats (e.g. older versions of Harlowe).
+
+### SemVer Version Pruning
+
+When multiple versions of the same format are discovered, twee-ts keeps only the highest `minor.patch` within each major version. For example, if both SugarCube `2.36.1` and `2.37.3` are found, only `2.37.3` is kept. Different major versions (e.g. Harlowe 2.x and 3.x) coexist as separate format IDs.
+
+### Twine 1 Formats
+
+Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name.
+
 ## Remote Format Fetching
 
 When a format is not found locally, twee-ts automatically downloads it from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/). Downloaded formats are cached at:
@@ -110,7 +136,7 @@ twee-ts recognizes the following special passage names. These passages carry met
 | `StoryCaption`   | SugarCube sidebar caption                               |
 | `StoryInterface` | SugarCube custom UI template                            |
 | `StoryShare`     | SugarCube sharing links                                 |
-| `StorySettings`  | SugarCube settings                                      |
+| `StorySettings`  | Twine 1 settings (see below)                            |
 | `StoryIncludes`  | Additional source files to include                      |
 | `PassageReady`   | SugarCube: runs before each passage                     |
 | `PassageDone`    | SugarCube: runs after each passage                      |
@@ -119,6 +145,35 @@ twee-ts recognizes the following special passage names. These passages carry met
 | `MenuOptions`    | Menu option passages                                    |
 | `MenuShare`      | Menu sharing passages                                   |
 | `MenuStory`      | Menu story passages                                     |
+
+### StorySettings (Twine 1)
+
+The `StorySettings` passage configures Twine 1-specific behavior using `key:value` pairs, one per line:
+
+```twee
+:: StorySettings
+jquery:off
+hash:off
+bookmark:on
+modernizr:off
+undo:off
+obfuscate:rot13
+exitprompt:off
+blankcss:off
+```
+
+| Setting       | Values      | Effect                                                     |
+| ------------- | ----------- | ---------------------------------------------------------- |
+| `jquery`      | `on`/`off`  | Include jQuery library in output                           |
+| `modernizr`   | `on`/`off`  | Include Modernizr library in output                        |
+| `obfuscate`   | `rot13`     | ROT13-encode tiddler content (except `StorySettings`)      |
+| `undo`        | `on`/`off`  | Enable undo support                                        |
+| `bookmark`    | `on`/`off`  | Enable bookmark support                                    |
+| `hash`        | `on`/`off`  | Enable URL hash-based navigation                           |
+| `exitprompt`  | `on`/`off`  | Prompt before navigating away                              |
+| `blankcss`    | `on`/`off`  | Start with blank CSS (no default styles)                   |
+
+The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
 
 ## Special Tags
 
