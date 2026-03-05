@@ -80,6 +80,7 @@ interface CompileOptions {
   formatUrls?: string[];
   noRemote?: boolean; // default: false
   tagAliases?: Record<string, string>;
+  sourceInfo?: boolean; // default: false
 }
 ```
 
@@ -270,6 +271,7 @@ import type {
   ItemType,
   SFAIndex,
   SFAIndexEntry,
+  SourceLocation,
   TweeTsConfig,
 } from '@rohal12/twee-ts';
 ```

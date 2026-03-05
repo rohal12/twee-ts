@@ -49,6 +49,7 @@ export type {
   ItemType,
   SFAIndex,
   SFAIndexEntry,
+  SourceLocation,
   TweeTsConfig,
 } from './types.js';
 export type { StoryMap, BrokenLink } from './inspect.js';

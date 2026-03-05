@@ -92,6 +92,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
   const twee2Compat = options.twee2Compat ?? false;
   const testMode = options.testMode ?? false;
   const noRemote = options.noRemote ?? false;
+  const sourceInfo = options.sourceInfo ?? false;
 
   // Clear per-compile index cache
   clearIndexCache();
@@ -182,7 +183,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
       break;
 
     case 'twine2-archive':
-      output = toTwine2Archive(story, startName, diagnostics);
+      output = toTwine2Archive(story, startName, diagnostics, { sourceInfo });
       break;
 
     case 'twine1-archive':
@@ -207,7 +208,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
       }
 
       if (format.isTwine2) {
-        output = toTwine2HTML(story, format, startName, diagnostics);
+        output = toTwine2HTML(story, format, startName, diagnostics, { sourceInfo });
       } else {
         if (story.name === '' && !storyHas(story, 'StoryTitle')) {
           diagnostics.push({

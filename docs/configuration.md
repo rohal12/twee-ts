@@ -34,7 +34,8 @@ Every key with its default value:
   "twee2Compat": false,
   "testMode": false,
   "noRemote": false,
-  "tagAliases": {}
+  "tagAliases": {},
+  "sourceInfo": false
 }
 ```
 
@@ -61,12 +62,13 @@ Every key with its default value:
 
 ### Compilation
 
-| Key            | Type      | Default   | Description                                                     |
-| -------------- | --------- | --------- | --------------------------------------------------------------- |
-| `startPassage` | `string`  | `"Start"` | Name of the starting passage.                                   |
-| `trim`         | `boolean` | `true`    | Trim leading and trailing whitespace from passage content.      |
-| `twee2Compat`  | `boolean` | `false`   | Enable Twee2 syntax compatibility mode.                         |
-| `testMode`     | `boolean` | `false`   | Enable test/debug mode (sets the `debug` option in story data). |
+| Key            | Type      | Default   | Description                                                       |
+| -------------- | --------- | --------- | ----------------------------------------------------------------- |
+| `startPassage` | `string`  | `"Start"` | Name of the starting passage.                                     |
+| `trim`         | `boolean` | `true`    | Trim leading and trailing whitespace from passage content.        |
+| `twee2Compat`  | `boolean` | `false`   | Enable Twee2 syntax compatibility mode.                           |
+| `testMode`     | `boolean` | `false`   | Enable test/debug mode (sets the `debug` option in story data).   |
+| `sourceInfo`   | `boolean` | `false`   | Embed source file/line as `data-` attributes on passage elements. |
 
 ### Head Injection
 

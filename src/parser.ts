@@ -61,7 +61,7 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
         if (pCount > 1 && current) {
           passages.push(current);
         }
-        current = { name: '', tags: [], text: '' };
+        current = { name: '', tags: [], text: '', source: { file: filename, line: item.line } };
         break;
 
       case ItemType.Name: {

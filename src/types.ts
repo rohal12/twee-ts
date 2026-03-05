@@ -44,6 +44,8 @@ export interface CompileOptions {
   noRemote?: boolean;
   /** Map alias tags to canonical special tags (e.g. { library: 'script' }). */
   tagAliases?: Record<string, string>;
+  /** Emit source file and line as data- attributes on passage elements. Default: false. */
+  sourceInfo?: boolean;
 }
 
 export interface CompileToFileOptions extends CompileOptions {
@@ -89,6 +91,11 @@ export interface CompileStats {
 
 // --- Passage ---
 
+export interface SourceLocation {
+  readonly file: string;
+  readonly line: number;
+}
+
 export interface PassageMetadata {
   position?: string;
   size?: string;
@@ -100,6 +107,7 @@ export interface Passage {
   tags: string[];
   text: string;
   metadata?: PassageMetadata;
+  source?: SourceLocation;
 }
 
 // --- Story ---
@@ -208,4 +216,5 @@ export interface TweeTsConfig {
   testMode?: boolean;
   noRemote?: boolean;
   tagAliases?: Record<string, string>;
+  sourceInfo?: boolean;
 }

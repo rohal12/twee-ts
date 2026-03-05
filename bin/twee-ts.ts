@@ -41,6 +41,7 @@ const { values, positionals } = parseArgs({
     'format-url': { type: 'string', multiple: true },
     'no-remote': { type: 'boolean' },
     'tag-alias': { type: 'string', multiple: true },
+    'source-info': { type: 'boolean' },
     config: { type: 'string', short: 'c' },
     'no-config': { type: 'boolean' },
   },
@@ -123,6 +124,7 @@ async function main(): Promise<void> {
     formatUrls: values['format-url'] ?? config?.formatUrls,
     noRemote: values['no-remote'] ?? config?.noRemote ?? false,
     tagAliases,
+    sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
   };
 
   const outFile = values.output ?? config?.output ?? '-';
@@ -262,6 +264,7 @@ Options:
   --format-index <url>      SFA-compatible format index URL (repeatable)
   --format-url <url>        Direct format.js URL (repeatable)
   --tag-alias <alias=target> Map a tag to a special tag (repeatable)
+  --source-info             Emit source file/line as data- attributes on passages
   --no-remote               Disable remote format fetching
   -c, --config <file>       Config file path (default: ${CONFIG_FILENAME})
   --no-config               Skip config file loading
