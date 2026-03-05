@@ -9,6 +9,11 @@ on:
     types: [opened, assigned]
   pull_request:
     types: [opened, synchronize]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'UNLICENSE'
+      - '.vitepress/**'
 
 permissions:
   contents: write
@@ -36,5 +41,5 @@ jobs:
             - Bug risks
             - Code quality
           claude_args: |
-            --max-turns 10
+            --max-turns 20
             --model claude-sonnet-4-6
