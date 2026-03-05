@@ -11,8 +11,13 @@ import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
 
-export function toTwine2Archive(story: Story, startName: string, diagnostics: Diagnostic[]): string {
-  return getTwine2DataChunk(story, startName, diagnostics) + '\n';
+export function toTwine2Archive(
+  story: Story,
+  startName: string,
+  diagnostics: Diagnostic[],
+  options?: { readonly sourceInfo?: boolean },
+): string {
+  return getTwine2DataChunk(story, startName, diagnostics, options) + '\n';
 }
 
 export function toTwine2HTML(
@@ -20,6 +25,7 @@ export function toTwine2HTML(
   format: StoryFormatInfo,
   startName: string,
   diagnostics: Diagnostic[],
+  options?: { readonly sourceInfo?: boolean },
 ): string {
   let template = readFormatSource(format);
 
@@ -27,13 +33,18 @@ export function toTwine2HTML(
     template = template.replaceAll('{{STORY_NAME}}', htmlEscape(story.name));
   }
   if (template.includes('{{STORY_DATA}}')) {
-    template = template.replace('{{STORY_DATA}}', getTwine2DataChunk(story, startName, diagnostics));
+    template = template.replace('{{STORY_DATA}}', getTwine2DataChunk(story, startName, diagnostics, options));
   }
 
   return template;
 }
 
-function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagnostic[]): string {
+function getTwine2DataChunk(
+  story: Story,
+  startName: string,
+  diagnostics: Diagnostic[],
+  options?: { readonly sourceInfo?: boolean },
+): string {
   // Check IFID status and generate if missing.
   ensureIFID(story, diagnostics);
 
@@ -100,7 +111,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
       continue;
     }
 
-    parts.push(passageToPassagedata(p, pid));
+    parts.push(passageToPassagedata(p, pid, options));
     if (startName === p.name) {
       startID = String(pid);
     }
@@ -112,7 +123,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   for (const [opt, val] of story.twine2.options) {
     if (val) opts.push(opt);
   }
-  const options = opts.join(' ');
+  const optionsStr = opts.join(' ');
 
   // Wrap in tw-storydata
   const zoom = String(story.twine2.zoom);
@@ -124,7 +135,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
     `ifid="${attrEscape(story.ifid)}" zoom="${attrEscape(zoom)}" ` +
     `format="${attrEscape(story.twine2.format)}" ` +
     `format-version="${attrEscape(story.twine2.formatVersion)}" ` +
-    `options="${attrEscape(options)}" tags="${attrEscape(story.twine2.tags)}" hidden>`;
+    `options="${attrEscape(optionsStr)}" tags="${attrEscape(story.twine2.tags)}" hidden>`;
 
   return wrapper + parts.join('') + '</tw-storydata>';
 }

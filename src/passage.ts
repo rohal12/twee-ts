@@ -118,7 +118,7 @@ export function passageToTwee(p: Passage, outMode: OutputMode): string {
 }
 
 /** Generate `<tw-passagedata>` HTML for Twine 2. */
-export function passageToPassagedata(p: Passage, pid: number): string {
+export function passageToPassagedata(p: Passage, pid: number, options?: { readonly sourceInfo?: boolean }): string {
   let position: string;
   let size: string;
 
@@ -138,7 +138,11 @@ export function passageToPassagedata(p: Passage, pid: number): string {
     size = '100,100';
   }
 
-  return `<tw-passagedata pid="${pid}" name=${quote(fullAttrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} position=${quote(attrEscape(position))} size=${quote(attrEscape(size))}>${htmlEscape(p.text)}</tw-passagedata>`;
+  let attrs = `<tw-passagedata pid="${pid}" name=${quote(fullAttrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} position=${quote(attrEscape(position))} size=${quote(attrEscape(size))}`;
+  if (options?.sourceInfo && p.source) {
+    attrs += ` data-source-file=${quote(attrEscape(p.source.file))} data-source-line="${p.source.line}"`;
+  }
+  return `${attrs}>${htmlEscape(p.text)}</tw-passagedata>`;
 }
 
 /** Generate `<div tiddler>` HTML for Twine 1. */

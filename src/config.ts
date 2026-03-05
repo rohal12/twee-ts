@@ -81,7 +81,7 @@ export function validateConfig(data: unknown): string[] {
   }
 
   // Boolean fields
-  for (const key of ['useTweegoPath', 'trim', 'twee2Compat', 'testMode', 'noRemote'] as const) {
+  for (const key of ['useTweegoPath', 'trim', 'twee2Compat', 'testMode', 'noRemote', 'sourceInfo'] as const) {
     if (key in obj && typeof obj[key] !== 'boolean') {
       errors.push(`"${key}" must be a boolean.`);
     }

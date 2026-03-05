@@ -88,6 +88,11 @@ describe('validateConfig', () => {
     expect(errors).toContain('"tagAliases.library" must be a string.');
   });
 
+  it('rejects wrong type for sourceInfo', () => {
+    const errors = validateConfig({ sourceInfo: 'not-a-bool' });
+    expect(errors).toContain('"sourceInfo" must be a boolean.');
+  });
+
   it('accepts valid outputMode values', () => {
     for (const mode of ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json']) {
       const errors = validateConfig({ outputMode: mode });
