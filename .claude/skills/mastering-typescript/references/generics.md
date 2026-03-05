@@ -25,12 +25,12 @@ function identity<T>(value: T): T {
   return value;
 }
 
-const str = identity("hello");   // string
-const num = identity(42);        // number
-const obj = identity({ x: 1 });  // { x: number }
+const str = identity('hello'); // string
+const num = identity(42); // number
+const obj = identity({ x: 1 }); // { x: number }
 
 // Explicit type argument (rarely needed)
-const explicit = identity<string>("hello");
+const explicit = identity<string>('hello');
 ```
 
 ### Generic Interfaces
@@ -104,10 +104,10 @@ function logLength<T extends HasLength>(item: T): T {
   return item;
 }
 
-logLength("hello");        // OK: string has length
-logLength([1, 2, 3]);      // OK: array has length
+logLength('hello'); // OK: string has length
+logLength([1, 2, 3]); // OK: array has length
 logLength({ length: 10 }); // OK: object has length
-logLength(42);             // Error: number has no length
+logLength(42); // Error: number has no length
 ```
 
 ### keyof Constraint
@@ -122,11 +122,11 @@ interface Person {
   age: number;
 }
 
-const person: Person = { name: "Alice", age: 30 };
+const person: Person = { name: 'Alice', age: 30 };
 
-const name = getProperty(person, "name"); // string
-const age = getProperty(person, "age");   // number
-const bad = getProperty(person, "email"); // Error: "email" not in Person
+const name = getProperty(person, 'name'); // string
+const age = getProperty(person, 'age'); // number
+const bad = getProperty(person, 'email'); // Error: "email" not in Person
 ```
 
 ### Multiple Constraints
@@ -165,7 +165,7 @@ const response2: ApiResponse<User> = { data: user, status: 200 };
 // Override both
 const response3: ApiResponse<User, ValidationError> = {
   error: new ValidationError(),
-  status: 400
+  status: 400,
 };
 ```
 
@@ -248,7 +248,7 @@ type Prefixed<T, P extends string> = {
   [K in keyof T as `${P}${Capitalize<string & K>}`]: T[K];
 };
 
-type PrefixedUser = Prefixed<User, "user">;
+type PrefixedUser = Prefixed<User, 'user'>;
 // { userName: string; userEmail: string }
 ```
 
@@ -262,14 +262,14 @@ type PrefixedUser = Prefixed<User, "user">;
 // T extends U ? X : Y
 type IsString<T> = T extends string ? true : false;
 
-type A = IsString<string>;  // true
-type B = IsString<number>;  // false
-type C = IsString<"hello">; // true
+type A = IsString<string>; // true
+type B = IsString<number>; // false
+type C = IsString<'hello'>; // true
 
 // Practical: Extract non-nullable type
 type NonNullable<T> = T extends null | undefined ? never : T;
 
-type D = NonNullable<string | null>;     // string
+type D = NonNullable<string | null>; // string
 type E = NonNullable<number | undefined>; // number
 ```
 
@@ -317,9 +317,7 @@ type First = FirstParam<(name: string, age: number) => void>; // string
 
 ```typescript
 // API response helper
-type ApiResult<T> =
-  | { success: true; data: T }
-  | { success: false; error: string };
+type ApiResult<T> = { success: true; data: T } | { success: false; error: string };
 
 // Extract data type from result
 type ExtractData<T> = T extends { success: true; data: infer D } ? D : never;
@@ -328,11 +326,9 @@ type UserResult = ApiResult<User>;
 type UserData = ExtractData<UserResult>; // User
 
 // Type-safe event handlers
-type EventHandler<T> = T extends `on${infer Event}`
-  ? (event: Event) => void
-  : never;
+type EventHandler<T> = T extends `on${infer Event}` ? (event: Event) => void : never;
 
-type ClickHandler = EventHandler<"onClick">; // (event: "Click") => void
+type ClickHandler = EventHandler<'onClick'>; // (event: "Click") => void
 ```
 
 ---
@@ -344,12 +340,12 @@ type ClickHandler = EventHandler<"onClick">; // (event: "Click") => void
 ```typescript
 type Greeting = `Hello, ${string}!`;
 
-const valid: Greeting = "Hello, World!";   // OK
-const invalid: Greeting = "Hi, World!";    // Error
+const valid: Greeting = 'Hello, World!'; // OK
+const invalid: Greeting = 'Hi, World!'; // Error
 
 // Combine with unions
-type Size = "small" | "medium" | "large";
-type Color = "red" | "blue" | "green";
+type Size = 'small' | 'medium' | 'large';
+type Color = 'red' | 'blue' | 'green';
 
 type ColoredSize = `${Color}-${Size}`;
 // "red-small" | "red-medium" | "red-large" |
@@ -361,18 +357,18 @@ type ColoredSize = `${Color}-${Size}`;
 
 ```typescript
 // Built-in string manipulation types
-type Upper = Uppercase<"hello">;     // "HELLO"
-type Lower = Lowercase<"HELLO">;     // "hello"
-type Cap = Capitalize<"hello">;      // "Hello"
-type Uncap = Uncapitalize<"Hello">; // "hello"
+type Upper = Uppercase<'hello'>; // "HELLO"
+type Lower = Lowercase<'HELLO'>; // "hello"
+type Cap = Capitalize<'hello'>; // "Hello"
+type Uncap = Uncapitalize<'Hello'>; // "hello"
 
 // Practical: Generate event names
-type Event = "click" | "hover" | "focus";
+type Event = 'click' | 'hover' | 'focus';
 type EventHandler = `on${Capitalize<Event>}`;
 // "onClick" | "onHover" | "onFocus"
 
 // CSS property with vendor prefixes
-type CSSProp = "transform" | "transition";
+type CSSProp = 'transform' | 'transition';
 type Prefixed = `-webkit-${CSSProp}` | `-moz-${CSSProp}` | CSSProp;
 ```
 
@@ -380,30 +376,28 @@ type Prefixed = `-webkit-${CSSProp}` | `-moz-${CSSProp}` | CSSProp;
 
 ```typescript
 // Parse dot-notation paths
-type PathSegment<T> = T extends `${infer Head}.${infer Tail}`
-  ? Head | PathSegment<Tail>
-  : T;
+type PathSegment<T> = T extends `${infer Head}.${infer Tail}` ? Head | PathSegment<Tail> : T;
 
-type Segments = PathSegment<"user.profile.name">;
+type Segments = PathSegment<'user.profile.name'>;
 // "user" | "profile" | "name"
 
 // HTTP methods with paths
-type Method = "GET" | "POST" | "PUT" | "DELETE";
-type Endpoint = "/users" | "/posts" | "/comments";
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type Endpoint = '/users' | '/posts' | '/comments';
 
 type Route = `${Method} ${Endpoint}`;
 // "GET /users" | "GET /posts" | "GET /comments" |
 // "POST /users" | ... etc
 
 // Type-safe SQL column references
-type Table = "users" | "posts";
-type Column<T extends Table> = T extends "users"
-  ? "id" | "name" | "email"
-  : T extends "posts"
-  ? "id" | "title" | "content"
-  : never;
+type Table = 'users' | 'posts';
+type Column<T extends Table> = T extends 'users'
+  ? 'id' | 'name' | 'email'
+  : T extends 'posts'
+    ? 'id' | 'title' | 'content'
+    : never;
 
-type UserColumn = `users.${Column<"users">}`;
+type UserColumn = `users.${Column<'users'>}`;
 // "users.id" | "users.name" | "users.email"
 ```
 
@@ -450,9 +444,9 @@ function add(a: number, b: number, c: number): number {
 }
 
 const curriedAdd = curry(add);
-const add1 = curriedAdd(1);     // (arg: number) => Curry<...>
-const add1and2 = add1(2);       // (arg: number) => number
-const result = add1and2(3);     // number (6)
+const add1 = curriedAdd(1); // (arg: number) => Curry<...>
+const add1and2 = add1(2); // (arg: number) => number
+const result = add1and2(3); // number (6)
 
 // Typed pipe function
 type Pipe<T extends unknown[], R> = T extends [infer First, ...infer Rest]
@@ -461,16 +455,14 @@ type Pipe<T extends unknown[], R> = T extends [infer First, ...infer Rest]
     : never
   : R;
 
-function pipe<T extends ((arg: any) => any)[]>(
-  ...fns: T
-): (arg: Parameters<T[0]>[0]) => Pipe<T, Parameters<T[0]>[0]> {
+function pipe<T extends ((arg: any) => any)[]>(...fns: T): (arg: Parameters<T[0]>[0]) => Pipe<T, Parameters<T[0]>[0]> {
   return (arg) => fns.reduce((acc, fn) => fn(acc), arg);
 }
 
 const process = pipe(
   (n: number) => n * 2,
   (n: number) => n.toString(),
-  (s: string) => s.length
+  (s: string) => s.length,
 );
 
 const length = process(5); // number (2 - length of "10")
@@ -480,20 +472,20 @@ const length = process(5); // number (2 - length of "10")
 
 ## Built-in Utility Types Reference
 
-| Utility | Purpose | Example |
-|---------|---------|---------|
-| `Partial<T>` | All properties optional | `Partial<User>` |
-| `Required<T>` | All properties required | `Required<Partial<User>>` |
-| `Readonly<T>` | All properties readonly | `Readonly<User>` |
-| `Pick<T, K>` | Select properties | `Pick<User, "id" \| "name">` |
-| `Omit<T, K>` | Exclude properties | `Omit<User, "password">` |
-| `Record<K, V>` | Create object type | `Record<string, User>` |
-| `Exclude<T, U>` | Remove union members | `Exclude<"a" \| "b", "a">` |
-| `Extract<T, U>` | Keep union members | `Extract<"a" \| "b", "a">` |
-| `NonNullable<T>` | Remove null/undefined | `NonNullable<string \| null>` |
-| `Parameters<F>` | Function parameters | `Parameters<typeof fn>` |
-| `ReturnType<F>` | Function return | `ReturnType<typeof fn>` |
-| `ConstructorParameters<C>` | Constructor params | `ConstructorParameters<typeof Date>` |
-| `InstanceType<C>` | Instance type | `InstanceType<typeof Date>` |
-| `Awaited<T>` | Unwrap Promise | `Awaited<Promise<User>>` |
-| `NoInfer<T>` | Prevent inference | `NoInfer<T>` (TS 5.4+) |
+| Utility                    | Purpose                 | Example                              |
+| -------------------------- | ----------------------- | ------------------------------------ |
+| `Partial<T>`               | All properties optional | `Partial<User>`                      |
+| `Required<T>`              | All properties required | `Required<Partial<User>>`            |
+| `Readonly<T>`              | All properties readonly | `Readonly<User>`                     |
+| `Pick<T, K>`               | Select properties       | `Pick<User, "id" \| "name">`         |
+| `Omit<T, K>`               | Exclude properties      | `Omit<User, "password">`             |
+| `Record<K, V>`             | Create object type      | `Record<string, User>`               |
+| `Exclude<T, U>`            | Remove union members    | `Exclude<"a" \| "b", "a">`           |
+| `Extract<T, U>`            | Keep union members      | `Extract<"a" \| "b", "a">`           |
+| `NonNullable<T>`           | Remove null/undefined   | `NonNullable<string \| null>`        |
+| `Parameters<F>`            | Function parameters     | `Parameters<typeof fn>`              |
+| `ReturnType<F>`            | Function return         | `ReturnType<typeof fn>`              |
+| `ConstructorParameters<C>` | Constructor params      | `ConstructorParameters<typeof Date>` |
+| `InstanceType<C>`          | Instance type           | `InstanceType<typeof Date>`          |
+| `Awaited<T>`               | Unwrap Promise          | `Awaited<Promise<User>>`             |
+| `NoInfer<T>`               | Prevent inference       | `NoInfer<T>` (TS 5.4+)               |

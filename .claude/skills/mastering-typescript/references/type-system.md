@@ -21,21 +21,21 @@ Complete guide to TypeScript's structural type system.
 
 ```typescript
 // Explicit type annotations
-const name: string = "Alice";
+const name: string = 'Alice';
 const age: number = 30;
 const active: boolean = true;
 
 // Type inference (preferred when obvious)
-const inferredName = "Bob";  // TypeScript infers string
-const inferredAge = 25;      // TypeScript infers number
+const inferredName = 'Bob'; // TypeScript infers string
+const inferredAge = 25; // TypeScript infers number
 
 // Arrays
 const numbers: number[] = [1, 2, 3];
-const strings: Array<string> = ["a", "b", "c"];
+const strings: Array<string> = ['a', 'b', 'c'];
 
 // Tuples (fixed-length arrays with specific types)
-const pair: [string, number] = ["age", 30];
-const triple: [string, number, boolean] = ["name", 1, true];
+const pair: [string, number] = ['age', 30];
+const triple: [string, number, boolean] = ['name', 1, true];
 ```
 
 ### Function Annotations
@@ -51,11 +51,11 @@ const add = (a: number, b: number): number => a + b;
 
 // Optional parameters
 function greetOptional(name: string, greeting?: string): string {
-  return `${greeting ?? "Hello"}, ${name}!`;
+  return `${greeting ?? 'Hello'}, ${name}!`;
 }
 
 // Default parameters
-function greetDefault(name: string, greeting: string = "Hello"): string {
+function greetDefault(name: string, greeting: string = 'Hello'): string {
   return `${greeting}, ${name}!`;
 }
 
@@ -96,7 +96,7 @@ class Manager implements Employee {
     public name: string,
     public email: string,
     public employeeId: string,
-    public department: string
+    public department: string,
   ) {}
 }
 
@@ -116,7 +116,7 @@ interface Config {
 
 ```typescript
 // Type aliases for unions
-type Status = "pending" | "approved" | "rejected";
+type Status = 'pending' | 'approved' | 'rejected';
 
 // Type aliases for complex types
 type Handler = (event: Event) => void;
@@ -134,16 +134,16 @@ type RGB = [red: number, green: number, blue: number];
 
 ### Decision Guide
 
-| Use Case | Prefer |
-|----------|--------|
-| Object shapes | `interface` |
+| Use Case          | Prefer      |
+| ----------------- | ----------- |
+| Object shapes     | `interface` |
 | Extending objects | `interface` |
-| Class contracts | `interface` |
-| Union types | `type` |
-| Tuple types | `type` |
-| Mapped types | `type` |
-| Conditional types | `type` |
-| Primitive aliases | `type` |
+| Class contracts   | `interface` |
+| Union types       | `type`      |
+| Tuple types       | `type`      |
+| Mapped types      | `type`      |
+| Conditional types | `type`      |
+| Primitive aliases | `type`      |
 
 ---
 
@@ -157,12 +157,12 @@ type StringOrNumber = string | number;
 
 // Discriminated unions (tagged unions)
 interface Dog {
-  kind: "dog";
+  kind: 'dog';
   bark(): void;
 }
 
 interface Cat {
-  kind: "cat";
+  kind: 'cat';
   meow(): void;
 }
 
@@ -170,10 +170,10 @@ type Pet = Dog | Cat;
 
 function speak(pet: Pet): void {
   switch (pet.kind) {
-    case "dog":
+    case 'dog':
       pet.bark();
       break;
-    case "cat":
+    case 'cat':
       pet.meow();
       break;
   }
@@ -195,8 +195,8 @@ interface HasAge {
 type Person = HasName & HasAge;
 
 const person: Person = {
-  name: "Alice",
-  age: 30
+  name: 'Alice',
+  age: 30,
 };
 
 // Practical: Extending with additional properties
@@ -218,15 +218,15 @@ type TimestampedArticle = WithTimestamp<Article>;
 
 ```typescript
 // Specific string values
-type Direction = "north" | "south" | "east" | "west";
-type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+type Direction = 'north' | 'south' | 'east' | 'west';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 function move(direction: Direction): void {
   console.log(`Moving ${direction}`);
 }
 
-move("north"); // OK
-move("up");    // Error: Argument of type '"up"' is not assignable
+move('north'); // OK
+move('up'); // Error: Argument of type '"up"' is not assignable
 ```
 
 ### Numeric Literals
@@ -244,17 +244,17 @@ function roll(): DiceRoll {
 
 ```typescript
 // Construct string literal types
-type EventName = "click" | "hover" | "focus";
+type EventName = 'click' | 'hover' | 'focus';
 type HandlerName = `on${Capitalize<EventName>}`;
 // "onClick" | "onHover" | "onFocus"
 
 // CSS unit types
-type CSSUnit = "px" | "em" | "rem" | "%";
+type CSSUnit = 'px' | 'em' | 'rem' | '%';
 type CSSValue = `${number}${CSSUnit}`;
 
-const width: CSSValue = "100px";   // OK
-const height: CSSValue = "50%";    // OK
-const bad: CSSValue = "100";       // Error
+const width: CSSValue = '100px'; // OK
+const height: CSSValue = '50%'; // OK
+const bad: CSSValue = '100'; // Error
 ```
 
 ---
@@ -266,18 +266,18 @@ const bad: CSSValue = "100";       // Error
 ```typescript
 function process(value: string | number | null): string {
   // typeof guard
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     return value.toUpperCase();
   }
 
   // typeof guard for number
-  if (typeof value === "number") {
+  if (typeof value === 'number') {
     return value.toFixed(2);
   }
 
   // null/undefined narrowing
   if (value === null) {
-    return "null";
+    return 'null';
   }
 
   // Exhaustiveness check
@@ -290,14 +290,17 @@ function process(value: string | number | null): string {
 
 ```typescript
 class ApiError extends Error {
-  constructor(public statusCode: number, message: string) {
+  constructor(
+    public statusCode: number,
+    message: string,
+  ) {
     super(message);
   }
 }
 
 class ValidationError extends Error {
   constructor(public fields: string[]) {
-    super("Validation failed");
+    super('Validation failed');
   }
 }
 
@@ -305,7 +308,7 @@ function handleError(error: Error): void {
   if (error instanceof ApiError) {
     console.log(`API Error ${error.statusCode}: ${error.message}`);
   } else if (error instanceof ValidationError) {
-    console.log(`Validation Error on fields: ${error.fields.join(", ")}`);
+    console.log(`Validation Error on fields: ${error.fields.join(', ')}`);
   } else {
     console.log(`Unknown error: ${error.message}`);
   }
@@ -316,12 +319,12 @@ function handleError(error: Error): void {
 
 ```typescript
 interface User {
-  type: "user";
+  type: 'user';
   name: string;
 }
 
 interface Admin {
-  type: "admin";
+  type: 'admin';
   name: string;
   permissions: string[];
 }
@@ -330,7 +333,7 @@ type Account = User | Admin;
 
 // Type predicate: returns boolean but narrows type
 function isAdmin(account: Account): account is Admin {
-  return account.type === "admin";
+  return account.type === 'admin';
 }
 
 function getPermissions(account: Account): string[] {
@@ -351,7 +354,7 @@ function assertDefined<T>(value: T | undefined, message: string): asserts value 
 }
 
 function processUser(user: User | undefined): void {
-  assertDefined(user, "User is required");
+  assertDefined(user, 'User is required');
   // After assertion, user is narrowed to User
   console.log(user.name);
 }
@@ -367,7 +370,7 @@ function processUser(user: User | undefined): void {
 // Using 'as' can hide type errors
 const config = {
   port: 3000,
-  host: "localhost"
+  host: 'localhost',
 } as Record<string, string | number>;
 
 // No error, but port is now string | number
@@ -380,12 +383,12 @@ const portString = config.port.toFixed(2); // Runtime error if port is string!
 // satisfies checks conformance but preserves literal types
 const config = {
   port: 3000,
-  host: "localhost"
+  host: 'localhost',
 } satisfies Record<string, string | number>;
 
 // TypeScript knows port is number, host is string
-config.port.toFixed(2);      // OK - port is number
-config.host.toUpperCase();   // OK - host is string
+config.port.toFixed(2); // OK - port is number
+config.host.toUpperCase(); // OK - host is string
 ```
 
 ### Practical Use Cases
@@ -393,24 +396,24 @@ config.host.toUpperCase();   // OK - host is string
 ```typescript
 // Color palette with constrained values
 const palette = {
-  primary: "#007bff",
-  secondary: "#6c757d",
-  success: "#28a745"
+  primary: '#007bff',
+  secondary: '#6c757d',
+  success: '#28a745',
 } satisfies Record<string, `#${string}`>;
 
 // TypeScript knows each property exists and is a hex string
-palette.primary.startsWith("#"); // OK
+palette.primary.startsWith('#'); // OK
 
 // Route configuration
 type RouteConfig = {
   path: string;
-  method: "GET" | "POST";
+  method: 'GET' | 'POST';
   handler: () => void;
 };
 
 const routes = {
-  home: { path: "/", method: "GET", handler: () => {} },
-  login: { path: "/login", method: "POST", handler: () => {} }
+  home: { path: '/', method: 'GET', handler: () => {} },
+  login: { path: '/login', method: 'POST', handler: () => {} },
 } satisfies Record<string, RouteConfig>;
 
 // TypeScript preserves literal types for each route
@@ -425,15 +428,15 @@ routes.home.method; // "GET" (not "GET" | "POST")
 
 ```typescript
 // any: Opt out of type checking (avoid)
-let anyValue: any = "hello";
+let anyValue: any = 'hello';
 anyValue.toFixed(2); // No error, but crashes at runtime
 
 // unknown: Type-safe any (prefer)
-let unknownValue: unknown = "hello";
+let unknownValue: unknown = 'hello';
 unknownValue.toFixed(2); // Error: Object is of type 'unknown'
 
 // Must narrow unknown before use
-if (typeof unknownValue === "string") {
+if (typeof unknownValue === 'string') {
   unknownValue.toUpperCase(); // OK after narrowing
 }
 ```
@@ -447,13 +450,13 @@ function fail(message: string): never {
 }
 
 // Exhaustiveness checking with never
-type Shape = "circle" | "square";
+type Shape = 'circle' | 'square';
 
 function getArea(shape: Shape): number {
   switch (shape) {
-    case "circle":
+    case 'circle':
       return Math.PI;
-    case "square":
+    case 'square':
       return 1;
     default:
       // If we add a new shape, this will error

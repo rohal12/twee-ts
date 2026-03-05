@@ -23,6 +23,7 @@ Types define the contract before implementation. Follow this workflow:
 Use the type system to prevent invalid states at compile time.
 
 **Discriminated unions for mutually exclusive states:**
+
 ```ts
 // Good: only valid combinations possible
 type RequestState<T> =
@@ -40,12 +41,15 @@ type RequestState<T> = {
 ```
 
 **Branded types for domain primitives:**
+
 ```ts
 type UserId = string & { readonly __brand: 'UserId' };
 type OrderId = string & { readonly __brand: 'OrderId' };
 
 // Compiler prevents passing OrderId where UserId expected
-function getUser(id: UserId): Promise<User> { /* ... */ }
+function getUser(id: UserId): Promise<User> {
+  /* ... */
+}
 
 function createUserId(id: string): UserId {
   return id as UserId;
@@ -53,9 +57,10 @@ function createUserId(id: string): UserId {
 ```
 
 **Const assertions for literal unions:**
+
 ```ts
 const ROLES = ['admin', 'user', 'guest'] as const;
-type Role = typeof ROLES[number]; // 'admin' | 'user' | 'guest'
+type Role = (typeof ROLES)[number]; // 'admin' | 'user' | 'guest'
 
 // Array and type stay in sync automatically
 function isValidRole(role: string): role is Role {
@@ -64,6 +69,7 @@ function isValidRole(role: string): role is Role {
 ```
 
 **Required vs optional fields - be explicit:**
+
 ```ts
 // Creation: some fields required
 type CreateUser = {
@@ -104,6 +110,7 @@ Prefer smaller, focused files: one component, hook, or utility per file. Split w
 ## Examples
 
 Explicit failure for unimplemented logic:
+
 ```ts
 export function buildWidget(widgetType: string): never {
   throw new Error(`buildWidget not implemented for type: ${widgetType}`);
@@ -111,15 +118,16 @@ export function buildWidget(widgetType: string): never {
 ```
 
 Exhaustive switch with never check:
+
 ```ts
-type Status = "active" | "inactive";
+type Status = 'active' | 'inactive';
 
 export function processStatus(status: Status): string {
   switch (status) {
-    case "active":
-      return "processing";
-    case "inactive":
-      return "skipped";
+    case 'active':
+      return 'processing';
+    case 'inactive':
+      return 'skipped';
     default: {
       const _exhaustive: never = status;
       throw new Error(`unhandled status: ${_exhaustive}`);
@@ -129,6 +137,7 @@ export function processStatus(status: Status): string {
 ```
 
 Wrap external calls with context:
+
 ```ts
 export async function fetchWidget(id: string): Promise<Widget> {
   const response = await fetch(`/api/widgets/${id}`);
@@ -140,15 +149,16 @@ export async function fetchWidget(id: string): Promise<Widget> {
 ```
 
 Debug logging with namespaced logger:
-```ts
-import debug from "debug";
 
-const log = debug("myapp:widgets");
+```ts
+import debug from 'debug';
+
+const log = debug('myapp:widgets');
 
 export function createWidget(name: string): Widget {
-  log("creating widget: %s", name);
+  log('creating widget: %s', name);
   const widget = { id: crypto.randomUUID(), name };
-  log("created widget: %s", widget.id);
+  log('created widget: %s', widget.id);
   return widget;
 }
 ```
@@ -164,8 +174,9 @@ export function createWidget(name: string): Widget {
 ### Examples
 
 Schema as source of truth with type inference:
+
 ```ts
-import { z } from "zod";
+import { z } from 'zod';
 
 const UserSchema = z.object({
   id: z.string().uuid(),
@@ -178,8 +189,9 @@ type User = z.infer<typeof UserSchema>;
 ```
 
 Return parse results to callers (never swallow errors):
+
 ```ts
-import { z, SafeParseReturnType } from "zod";
+import { z, SafeParseReturnType } from 'zod';
 
 export function parseUserInput(raw: unknown): SafeParseReturnType<unknown, User> {
   return UserSchema.safeParse(raw);
@@ -195,6 +207,7 @@ await submitUser(result.data);
 ```
 
 Strict parsing at trust boundaries:
+
 ```ts
 export async function fetchUser(id: string): Promise<User> {
   const response = await fetch(`/api/users/${id}`);
@@ -207,6 +220,7 @@ export async function fetchUser(id: string): Promise<User> {
 ```
 
 Schema composition:
+
 ```ts
 const CreateUserSchema = UserSchema.omit({ id: true, createdAt: true });
 const UpdateUserSchema = CreateUserSchema.partial();
@@ -224,22 +238,24 @@ const UserWithPostsSchema = UserSchema.extend({
 ### Examples
 
 Typed config with Zod validation:
+
 ```ts
-import { z } from "zod";
+import { z } from 'zod';
 
 const ConfigSchema = z.object({
   PORT: z.coerce.number().default(3000),
   DATABASE_URL: z.string().url(),
   API_KEY: z.string().min(1),
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 
 export const config = ConfigSchema.parse(process.env);
 ```
 
 Access config values (not process.env directly):
+
 ```ts
-import { config } from "./config";
+import { config } from './config';
 
 const server = app.listen(config.PORT);
 const db = connect(config.DATABASE_URL);

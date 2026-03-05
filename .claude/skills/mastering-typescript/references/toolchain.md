@@ -136,12 +136,12 @@ Modern TypeScript toolchain configuration for 2025.
 
 ### Why pnpm
 
-| Feature | npm | pnpm |
-|---------|-----|------|
-| Disk usage | Duplicates packages | Shared store, symlinks |
-| Install speed | Slower | 2-3x faster |
-| Strictness | Allows phantom deps | Strict by default |
-| Monorepo support | Basic workspaces | First-class support |
+| Feature          | npm                 | pnpm                   |
+| ---------------- | ------------------- | ---------------------- |
+| Disk usage       | Duplicates packages | Shared store, symlinks |
+| Install speed    | Slower              | 2-3x faster            |
+| Strictness       | Allows phantom deps | Strict by default      |
+| Monorepo support | Basic workspaces    | First-class support    |
 
 ### Basic Commands
 
@@ -204,13 +204,10 @@ import react from '@vitejs/plugin-react';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [
-    react(),
-    tsconfigPaths()
-  ],
+  plugins: [react(), tsconfigPaths()],
   server: {
     port: 3000,
-    host: true
+    host: true,
   },
   build: {
     target: 'es2022',
@@ -219,16 +216,16 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
-          utils: ['lodash-es', 'date-fns']
-        }
-      }
-    }
+          utils: ['lodash-es', 'date-fns'],
+        },
+      },
+    },
   },
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts']
-  }
+    setupFiles: ['./src/test/setup.ts'],
+  },
 });
 ```
 
@@ -245,21 +242,19 @@ export default defineConfig({
       entry: './src/index.ts',
       name: 'MyLibrary',
       fileName: 'my-library',
-      formats: ['es', 'cjs']
+      formats: ['es', 'cjs'],
     },
     rollupOptions: {
       external: ['react', 'react-dom'],
       output: {
         globals: {
           react: 'React',
-          'react-dom': 'ReactDOM'
-        }
-      }
-    }
+          'react-dom': 'ReactDOM',
+        },
+      },
+    },
   },
-  plugins: [
-    dts({ insertTypesEntry: true })
-  ]
+  plugins: [dts({ insertTypesEntry: true })],
 });
 ```
 
@@ -289,9 +284,9 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname
-      }
-    }
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
   },
 
   // React configuration
@@ -299,37 +294,43 @@ export default tseslint.config(
     files: ['**/*.tsx'],
     plugins: {
       react: reactPlugin,
-      'react-hooks': reactHooksPlugin
+      'react-hooks': reactHooksPlugin,
     },
     rules: {
       ...reactPlugin.configs.recommended.rules,
       ...reactHooksPlugin.configs.recommended.rules,
-      'react/react-in-jsx-scope': 'off'
+      'react/react-in-jsx-scope': 'off',
     },
     settings: {
-      react: { version: 'detect' }
-    }
+      react: { version: 'detect' },
+    },
   },
 
   // Custom rules
   {
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_'
-      }],
-      '@typescript-eslint/consistent-type-imports': ['error', {
-        prefer: 'type-imports'
-      }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+        },
+      ],
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        {
+          prefer: 'type-imports',
+        },
+      ],
       '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error'
-    }
+      '@typescript-eslint/await-thenable': 'error',
+    },
   },
 
   // Ignore patterns
   {
-    ignores: ['dist/**', 'node_modules/**', '*.config.js']
-  }
+    ignores: ['dist/**', 'node_modules/**', '*.config.js'],
+  },
 );
 ```
 
@@ -391,12 +392,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      exclude: ['**/*.d.ts', '**/*.config.*', '**/test/**']
+      exclude: ['**/*.d.ts', '**/*.config.*', '**/test/**'],
     },
     typecheck: {
-      enabled: true
-    }
-  }
+      enabled: true,
+    },
+  },
 });
 ```
 
@@ -490,7 +491,7 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   // ... other configs
-  eslintConfigPrettier // Must be last to disable conflicting rules
+  eslintConfigPrettier, // Must be last to disable conflicting rules
 );
 ```
 

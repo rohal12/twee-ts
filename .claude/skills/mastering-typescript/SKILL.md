@@ -63,6 +63,7 @@ EOF
 ## When to Use This Skill
 
 Use when:
+
 - Building type-safe React, NestJS, or Node.js applications
 - Migrating JavaScript codebases to TypeScript
 - Implementing advanced type patterns (generics, mapped types, conditional types)
@@ -88,26 +89,24 @@ Before starting any TypeScript project:
 ### Primitive Types
 
 ```typescript
-const name: string = "Alice";
+const name: string = 'Alice';
 const age: number = 30;
 const active: boolean = true;
 const id: bigint = 9007199254740991n;
-const key: symbol = Symbol("unique");
+const key: symbol = Symbol('unique');
 ```
 
 ### Union and Intersection Types
 
 ```typescript
 // Union: value can be one of several types
-type Status = "pending" | "approved" | "rejected";
+type Status = 'pending' | 'approved' | 'rejected';
 
 // Intersection: value must satisfy all types
 type Employee = Person & { employeeId: string };
 
 // Discriminated union for type-safe handling
-type Result<T> =
-  | { success: true; data: T }
-  | { success: false; error: string };
+type Result<T> = { success: true; data: T } | { success: false; error: string };
 
 function handleResult<T>(result: Result<T>): T | null {
   if (result.success) {
@@ -123,18 +122,24 @@ function handleResult<T>(result: Result<T>): T | null {
 ```typescript
 // typeof guard
 function process(value: string | number): string {
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     return value.toUpperCase();
   }
   return value.toFixed(2);
 }
 
 // Custom type guard
-interface User { type: "user"; name: string }
-interface Admin { type: "admin"; permissions: string[] }
+interface User {
+  type: 'user';
+  name: string;
+}
+interface Admin {
+  type: 'admin';
+  permissions: string[];
+}
 
 function isAdmin(person: User | Admin): person is Admin {
-  return person.type === "admin";
+  return person.type === 'admin';
 }
 ```
 
@@ -145,16 +150,16 @@ Validate type conformance while preserving inference:
 ```typescript
 // Problem: Type assertion loses specific type info
 const colors1 = {
-  red: "#ff0000",
-  green: "#00ff00"
+  red: '#ff0000',
+  green: '#00ff00',
 } as Record<string, string>;
 
 colors1.red.toUpperCase(); // OK, but red could be undefined
 
 // Solution: satisfies preserves literal types
 const colors2 = {
-  red: "#ff0000",
-  green: "#00ff00"
+  red: '#ff0000',
+  green: '#00ff00',
 } satisfies Record<string, string>;
 
 colors2.red.toUpperCase(); // OK, and TypeScript knows red exists
@@ -169,8 +174,8 @@ function first<T>(items: T[]): T | undefined {
   return items[0];
 }
 
-const num = first([1, 2, 3]);     // number | undefined
-const str = first(["a", "b"]);   // string | undefined
+const num = first([1, 2, 3]); // number | undefined
+const str = first(['a', 'b']); // string | undefined
 ```
 
 ### Constrained Generics
@@ -185,9 +190,9 @@ function logLength<T extends HasLength>(item: T): T {
   return item;
 }
 
-logLength("hello");     // OK: string has length
-logLength([1, 2, 3]);   // OK: array has length
-logLength(42);          // Error: number has no length
+logLength('hello'); // OK: string has length
+logLength([1, 2, 3]); // OK: array has length
+logLength(42); // Error: number has no length
 ```
 
 ### Generic API Response Wrapper
@@ -205,23 +210,23 @@ async function fetchUser(id: string): Promise<ApiResponse<User>> {
   return {
     data,
     status: response.status,
-    timestamp: new Date()
+    timestamp: new Date(),
   };
 }
 ```
 
 ## Utility Types Reference
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| `Partial<T>` | All properties optional | `Partial<User>` |
-| `Required<T>` | All properties required | `Required<Config>` |
-| `Pick<T, K>` | Select specific properties | `Pick<User, "id" \| "name">` |
-| `Omit<T, K>` | Exclude specific properties | `Omit<User, "password">` |
-| `Record<K, V>` | Object with typed keys/values | `Record<string, number>` |
-| `ReturnType<F>` | Extract function return type | `ReturnType<typeof fn>` |
-| `Parameters<F>` | Extract function parameters | `Parameters<typeof fn>` |
-| `Awaited<T>` | Unwrap Promise type | `Awaited<Promise<User>>` |
+| Type            | Purpose                       | Example                      |
+| --------------- | ----------------------------- | ---------------------------- |
+| `Partial<T>`    | All properties optional       | `Partial<User>`              |
+| `Required<T>`   | All properties required       | `Required<Config>`           |
+| `Pick<T, K>`    | Select specific properties    | `Pick<User, "id" \| "name">` |
+| `Omit<T, K>`    | Exclude specific properties   | `Omit<User, "password">`     |
+| `Record<K, V>`  | Object with typed keys/values | `Record<string, number>`     |
+| `ReturnType<F>` | Extract function return type  | `ReturnType<typeof fn>`      |
+| `Parameters<F>` | Extract function parameters   | `Parameters<typeof fn>`      |
+| `Awaited<T>`    | Unwrap Promise type           | `Awaited<Promise<User>>`     |
 
 ## Conditional Types
 
@@ -257,7 +262,10 @@ type Getters<T> = {
   [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];
 };
 
-interface Person { name: string; age: number }
+interface Person {
+  name: string;
+  age: number;
+}
 type PersonGetters = Getters<Person>;
 // { getName: () => string; getAge: () => number }
 ```
@@ -305,7 +313,7 @@ import { z } from 'zod';
 
 const CreateUserSchema = z.object({
   name: z.string().min(2),
-  email: z.string().email()
+  email: z.string().email(),
 });
 
 type CreateUserDto = z.infer<typeof CreateUserSchema>;
@@ -323,8 +331,8 @@ const UserSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(100),
   email: z.string().email(),
-  role: z.enum(["user", "admin", "moderator"]),
-  createdAt: z.coerce.date()
+  role: z.enum(['user', 'admin', 'moderator']),
+  createdAt: z.coerce.date(),
 });
 
 // Infer TypeScript type from schema
@@ -346,15 +354,15 @@ if (result.success) {
 
 ## Modern Toolchain (2025)
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| TypeScript | 5.9+ | Type checking and compilation |
-| Node.js | 22 LTS | Runtime environment |
-| Vite | 7.x | Build tool and dev server |
-| pnpm | 9.x | Package manager |
-| ESLint | 9.x | Linting with flat config |
-| Vitest | 3.x | Testing framework |
-| Prettier | 3.x | Code formatting |
+| Tool       | Version | Purpose                       |
+| ---------- | ------- | ----------------------------- |
+| TypeScript | 5.9+    | Type checking and compilation |
+| Node.js    | 22 LTS  | Runtime environment           |
+| Vite       | 7.x     | Build tool and dev server     |
+| pnpm       | 9.x     | Package manager               |
+| ESLint     | 9.x     | Linting with flat config      |
+| Vitest     | 3.x     | Testing framework             |
+| Prettier   | 3.x     | Code formatting               |
 
 ### ESLint Flat Config (ESLint 9+)
 
@@ -363,18 +371,14 @@ if (result.success) {
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
-  eslint.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
-  {
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
+export default tseslint.config(eslint.configs.recommended, ...tseslint.configs.strictTypeChecked, {
+  languageOptions: {
+    parserOptions: {
+      projectService: true,
+      tsconfigRootDir: import.meta.dirname,
     },
-  }
-);
+  },
+});
 ```
 
 ## Migration Strategies
@@ -404,23 +408,23 @@ See [enterprise-patterns.md](references/enterprise-patterns.md) for comprehensiv
 
 ## Common Mistakes
 
-| Mistake | Problem | Fix |
-|---------|---------|-----|
-| Using `any` liberally | Defeats type safety | Use `unknown` and narrow |
-| Ignoring strict mode | Misses null/undefined bugs | Enable all strict options |
-| Type assertions (`as`) | Can hide type errors | Use `satisfies` or guards |
-| Enum for simple unions | Generates runtime code | Use literal unions instead |
-| Not validating API data | Runtime type mismatches | Use Zod at boundaries |
+| Mistake                 | Problem                    | Fix                        |
+| ----------------------- | -------------------------- | -------------------------- |
+| Using `any` liberally   | Defeats type safety        | Use `unknown` and narrow   |
+| Ignoring strict mode    | Misses null/undefined bugs | Enable all strict options  |
+| Type assertions (`as`)  | Can hide type errors       | Use `satisfies` or guards  |
+| Enum for simple unions  | Generates runtime code     | Use literal unions instead |
+| Not validating API data | Runtime type mismatches    | Use Zod at boundaries      |
 
 ## Cross-Language Comparison
 
-| Feature | TypeScript | Java | Python |
-|---------|------------|------|--------|
-| Type System | Structural | Nominal | Gradual (duck typing) |
-| Nullability | Explicit (`T \| null`) | `@Nullable` annotations | Optional via typing |
-| Generics | Type-level, erased | Type-level, erased | Runtime via typing |
-| Interfaces | Structural matching | Must implement | Protocol (3.8+) |
-| Enums | Avoid (use unions) | First-class | Enum class |
+| Feature     | TypeScript             | Java                    | Python                |
+| ----------- | ---------------------- | ----------------------- | --------------------- |
+| Type System | Structural             | Nominal                 | Gradual (duck typing) |
+| Nullability | Explicit (`T \| null`) | `@Nullable` annotations | Optional via typing   |
+| Generics    | Type-level, erased     | Type-level, erased      | Runtime via typing    |
+| Interfaces  | Structural matching    | Must implement          | Protocol (3.8+)       |
+| Enums       | Avoid (use unions)     | First-class             | Enum class            |
 
 ## Reference Files
 

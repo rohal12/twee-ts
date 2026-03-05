@@ -22,9 +22,7 @@ Instead of throwing exceptions, return typed results:
 
 ```typescript
 // Define Result type
-type Result<T, E = Error> =
-  | { success: true; data: T }
-  | { success: false; error: E };
+type Result<T, E = Error> = { success: true; data: T } | { success: false; error: E };
 
 // Helper functions
 function ok<T>(data: T): Result<T, never> {
@@ -45,7 +43,7 @@ function parseEmail(input: string): Result<string, ValidationError> {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   if (!emailRegex.test(input)) {
-    return err({ field: "email", message: "Invalid email format" });
+    return err({ field: 'email', message: 'Invalid email format' });
   }
 
   return ok(input.toLowerCase());
@@ -78,7 +76,7 @@ abstract class AppError extends Error {
 
 // Specific error types
 class NotFoundError extends AppError {
-  readonly code = "NOT_FOUND";
+  readonly code = 'NOT_FOUND';
   readonly statusCode = 404;
 
   constructor(resource: string, id: string) {
@@ -87,22 +85,22 @@ class NotFoundError extends AppError {
 }
 
 class ValidationError extends AppError {
-  readonly code = "VALIDATION_ERROR";
+  readonly code = 'VALIDATION_ERROR';
   readonly statusCode = 400;
 
   constructor(
     message: string,
-    public readonly fields: Record<string, string[]>
+    public readonly fields: Record<string, string[]>,
   ) {
     super(message);
   }
 }
 
 class UnauthorizedError extends AppError {
-  readonly code = "UNAUTHORIZED";
+  readonly code = 'UNAUTHORIZED';
   readonly statusCode = 401;
 
-  constructor(message = "Authentication required") {
+  constructor(message = 'Authentication required') {
     super(message);
   }
 }
@@ -120,15 +118,15 @@ function handleError(error: unknown): { status: number; body: object } {
       body: {
         code: error.code,
         message: error.message,
-        ...(error instanceof ValidationError && { fields: error.fields })
-      }
+        ...(error instanceof ValidationError && { fields: error.fields }),
+      },
     };
   }
 
-  console.error("Unexpected error:", error);
+  console.error('Unexpected error:', error);
   return {
     status: 500,
-    body: { code: "INTERNAL_ERROR", message: "Internal server error" }
+    body: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
   };
 }
 ```
@@ -148,8 +146,8 @@ const UserSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email(),
   age: z.number().int().min(0).max(150).optional(),
-  role: z.enum(["user", "admin", "moderator"]),
-  metadata: z.record(z.string()).optional()
+  role: z.enum(['user', 'admin', 'moderator']),
+  metadata: z.record(z.string()).optional(),
 });
 
 // Infer TypeScript type
@@ -178,7 +176,7 @@ function formatZodError(error: z.ZodError): Record<string, string[]> {
   const formatted: Record<string, string[]> = {};
 
   for (const issue of error.issues) {
-    const path = issue.path.join(".");
+    const path = issue.path.join('.');
     if (!formatted[path]) {
       formatted[path] = [];
     }
@@ -203,7 +201,7 @@ type UserId = string & { readonly [UserIdBrand]: true };
 function validateEmail(input: string): Email {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(input)) {
-    throw new ValidationError("Invalid email", { email: ["Invalid format"] });
+    throw new ValidationError('Invalid email', { email: ['Invalid format'] });
   }
   return input as Email;
 }
@@ -211,7 +209,7 @@ function validateEmail(input: string): Email {
 function validateUserId(input: string): UserId {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(input)) {
-    throw new ValidationError("Invalid user ID", { id: ["Must be UUID"] });
+    throw new ValidationError('Invalid user ID', { id: ['Must be UUID'] });
   }
   return input as UserId;
 }
@@ -226,8 +224,8 @@ function getUser(id: UserId): Promise<User> {
 }
 
 // Compiler enforces validation
-sendEmail("invalid", "Hello");           // Error: string not assignable to Email
-sendEmail(validateEmail("a@b.com"), "Hello"); // OK
+sendEmail('invalid', 'Hello'); // Error: string not assignable to Email
+sendEmail(validateEmail('a@b.com'), 'Hello'); // OK
 ```
 
 ---
@@ -437,15 +435,12 @@ const SanitizedString = z.string().transform((val) => {
 const HtmlContentSchema = z.string().transform((val) => {
   return DOMPurify.sanitize(val, {
     ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'p', 'br'],
-    ALLOWED_ATTR: ['href', 'target']
+    ALLOWED_ATTR: ['href', 'target'],
   });
 });
 
 // SQL-safe identifier
-const SafeIdentifierSchema = z.string().regex(
-  /^[a-zA-Z_][a-zA-Z0-9_]*$/,
-  "Invalid identifier"
-);
+const SafeIdentifierSchema = z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Invalid identifier');
 ```
 
 ### Type-Safe Environment Variables
@@ -458,7 +453,7 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3000),
   DATABASE_URL: z.string().url(),
   JWT_SECRET: z.string().min(32),
-  REDIS_URL: z.string().url().optional()
+  REDIS_URL: z.string().url().optional(),
 });
 
 // Validate on startup
@@ -477,9 +472,9 @@ function loadEnv() {
 export const env = loadEnv();
 
 // Usage: fully typed
-env.PORT;        // number
-env.NODE_ENV;    // "development" | "production" | "test"
-env.REDIS_URL;   // string | undefined
+env.PORT; // number
+env.NODE_ENV; // "development" | "production" | "test"
+env.REDIS_URL; // string | undefined
 ```
 
 ### Secure API Response Types
@@ -509,7 +504,7 @@ function toPublicUser(user: InternalUser): UserResponse {
   return {
     id: user.id,
     name: user.name,
-    email: user.email
+    email: user.email,
   };
 }
 ```
@@ -531,6 +526,6 @@ interface RateLimitResult {
 const rateLimits: Record<string, RateLimitConfig> = {
   api: { windowMs: 60000, maxRequests: 100 },
   auth: { windowMs: 300000, maxRequests: 5 },
-  upload: { windowMs: 3600000, maxRequests: 10 }
+  upload: { windowMs: 3600000, maxRequests: 10 },
 } as const satisfies Record<string, RateLimitConfig>;
 ```
