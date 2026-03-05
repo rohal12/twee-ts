@@ -36,7 +36,7 @@ Decompiles to Twee 1 notation (legacy format).
 twee-ts -a -o archive.html src/
 ```
 
-Outputs the `<tw-storydata>` XML block without wrapping it in a story format's HTML template. This is the format used by Twine 2's import/export feature.
+Outputs the `<tw-storydata>` XML block without wrapping it in a story format's HTML template. This is the format used by Twine 2's import/export feature. The output conforms to the [Twine 2 HTML Output Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-htmloutput-spec.md), including `tags`, `options`, and `<tw-tag>` elements for tag colors.
 
 ## Twine 1 Archive
 
@@ -44,7 +44,9 @@ Outputs the `<tw-storydata>` XML block without wrapping it in a story format's H
 twee-ts --archive-twine1 -o archive.html src/
 ```
 
-Outputs a Twine 1-compatible archive with `<div tiddler>` elements.
+Outputs a Twine 1-compatible archive with `<div tiddler>` elements. Each tiddler includes `tiddler`, `tags`, `created`, `modifier`, and `twine-position` attributes per the [Twine 1 HTML Output Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-1-htmloutput-doc.md).
+
+If a `StorySettings` passage contains `obfuscate:rot13`, tiddler content is ROT13-encoded (except for `StorySettings` itself).
 
 ## JSON
 
@@ -52,30 +54,31 @@ Outputs a Twine 1-compatible archive with `<div tiddler>` elements.
 twee-ts --json -o story.json src/
 ```
 
-Outputs the story model as JSON. Useful for tooling, analysis, or custom processing:
+Outputs the story model as JSON per the [Twine 2 JSON Output Specification](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md). Useful for tooling, analysis, or custom processing:
 
 ```json
 {
   "name": "My Story",
   "ifid": "D674C58C-DEFA-4F70-B7A2-27742230C0FC",
+  "format": "SugarCube",
+  "format-version": "2.37.3",
+  "start": "Start",
+  "tag-colors": {},
+  "creator": "Twee-ts",
+  "creator-version": "1.4.0",
+  "style": "",
+  "script": "",
   "passages": [
     {
       "name": "Start",
       "tags": [],
-      "text": "Hello, world!",
-      "metadata": null
+      "text": "Hello, world!"
     }
-  ],
-  "twine2": {
-    "format": "SugarCube",
-    "formatVersion": "2.37.3",
-    "start": "Start",
-    "tagColors": {},
-    "options": {},
-    "zoom": 1
-  }
+  ]
 }
 ```
+
+`StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present.
 
 ## Config File
 

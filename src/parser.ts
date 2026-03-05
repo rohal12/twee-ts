@@ -115,8 +115,11 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
           }
           const parsed = raw as Record<string, unknown>;
           const meta: PassageMetadata = {};
-          if (typeof parsed.position === 'string') meta.position = parsed.position;
-          if (typeof parsed.size === 'string') meta.size = parsed.size;
+          for (const [key, value] of Object.entries(parsed)) {
+            if (typeof value === 'string') {
+              meta[key] = value;
+            }
+          }
           current.metadata = meta;
         } catch (e) {
           diagnostics.push({
@@ -131,7 +134,12 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
 
       case ItemType.Content: {
         if (!current) break;
-        current.text = trim ? item.val.trim() : item.val;
+        if (trim) {
+          current.text = item.val.trim();
+        } else {
+          // Per spec: trailing blank lines MUST be stripped regardless of trim option
+          current.text = item.val.replace(/\n\s*$/, '');
+        }
         break;
       }
 

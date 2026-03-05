@@ -14,7 +14,7 @@ const CREATOR_NAME = 'twee-ts';
 
 export function toTwine1Archive(story: Story, _startName: string): string {
   const { data, count } = getTwine1PassageChunk(story);
-  return `<div id="storeArea" data-size="${count}" hidden>${data}</div>\n`;
+  return `<div id="storeArea" data-size="${count}">${data}</div>\n`;
 }
 
 export function toTwine1HTML(
@@ -75,13 +75,14 @@ export function toTwine1HTML(
 }
 
 function getTwine1PassageChunk(story: Story): { data: string; count: number } {
+  const obfuscateRot13 = story.twine1.settings.get('obfuscate') === 'rot13';
   let data = '';
   let count = 0;
 
   for (const p of story.passages) {
     if (hasTag(p, 'Twine.private')) continue;
     count++;
-    data += passageToTiddler(p, count);
+    data += passageToTiddler(p, count, obfuscateRot13);
   }
 
   return { data, count };

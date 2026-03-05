@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-05
+
+### Added
+
+- ROT13 obfuscation support for Twine 1 output — when `obfuscate:rot13` is set in `StorySettings`, tiddler content is ROT13-encoded (except `StorySettings` itself, per spec)
+- `created` and `modifier` attributes on Twine 1 tiddler elements per the Twine 1 HTML output spec
+- `fullAttrEscape()` utility for spec-compliant attribute escaping (escapes `<`, `>`, `&`, `"`, `'`)
+- `rot13()` utility function for ROT13 encoding
+- `tags` attribute on `<tw-storydata>` element per the Twine 2 HTML output spec
+- Relaxed JSON parsing for story format metadata — handles trailing commas, single-quoted strings, and unquoted property keys (e.g. Harlowe)
+- SemVer-based format version pruning — within each `(name, major)` group, only the highest `minor.patch` version is kept
+- Optional story format metadata fields: `author`, `description`, `image`, `url`, `license`
+- Twine 1 formats now use the folder name as a default format name
+- Unnamed Twine 2 story formats default to `"Untitled Story Format"` per spec
+- Arbitrary passage metadata keys preserved through parsing, marshalling, and JSON output (not just `position`/`size`)
+
+### Changed
+
+- Tag colors in `<tw-tag>` elements are now validated against the spec: only the 7 named colors (`gray`, `red`, `orange`, `yellow`, `green`, `blue`, `purple`) and hex color values are emitted
+- Trailing blank lines are stripped from passage content regardless of the `trim` option, per the Twee 3 spec (MUST requirement)
+- `StoryData` JSON decode errors downgraded from `error` to `warning` diagnostic level
+- IFID missing error message simplified to `"Story IFID not found. Add an IFID to your story: ..."`
+- Twine 1 `storeArea` div no longer includes the `hidden` attribute
+
 ## [1.3.0] - 2026-03-05
 
 ### Added

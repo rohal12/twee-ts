@@ -3,7 +3,7 @@
  * Ported from passage.go / passagedata.go.
  */
 import type { Passage, PassageMetadata, OutputMode } from './types.js';
-import { attrEscape, htmlEscape, tiddlerEscape, tweeEscape } from './escape.js';
+import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13, commentSanitize } from './escape.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
 const INFO_PASSAGE_NAMES = new Set([
@@ -67,13 +67,15 @@ export function hasMetadataSize(p: Passage): boolean {
 }
 
 export function hasAnyMetadata(p: Passage): boolean {
-  return hasMetadataPosition(p) || hasMetadataSize(p);
+  if (!p.metadata) return false;
+  return Object.values(p.metadata).some((v) => v != null && v !== '');
 }
 
 export function marshalMetadata(meta: PassageMetadata): string {
   const obj: Record<string, string> = {};
-  if (meta.position) obj.position = meta.position;
-  if (meta.size) obj.size = meta.size;
+  for (const [key, value] of Object.entries(meta)) {
+    if (typeof value === 'string' && value) obj[key] = value;
+  }
   return JSON.stringify(obj);
 }
 
@@ -84,8 +86,9 @@ export function unmarshalMetadata(json: string): PassageMetadata {
   }
   const parsed = raw as Record<string, unknown>;
   const meta: PassageMetadata = {};
-  if (typeof parsed.position === 'string') meta.position = parsed.position;
-  if (typeof parsed.size === 'string') meta.size = parsed.size;
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === 'string') meta[key] = value;
+  }
   return meta;
 }
 
@@ -135,11 +138,11 @@ export function passageToPassagedata(p: Passage, pid: number): string {
     size = '100,100';
   }
 
-  return `<tw-passagedata pid="${pid}" name=${quote(attrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} position=${quote(attrEscape(position))} size=${quote(attrEscape(size))}>${htmlEscape(p.text)}</tw-passagedata>`;
+  return `<tw-passagedata pid="${pid}" name=${quote(fullAttrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} position=${quote(attrEscape(position))} size=${quote(attrEscape(size))}>${htmlEscape(p.text)}</tw-passagedata>`;
 }
 
 /** Generate `<div tiddler>` HTML for Twine 1. */
-export function passageToTiddler(p: Passage, pid: number): string {
+export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false): string {
   let position: string;
 
   if (hasMetadataPosition(p)) {
@@ -152,7 +155,10 @@ export function passageToTiddler(p: Passage, pid: number): string {
     position = `${xp * 140 - 130},${yp * 140 - 130}`;
   }
 
-  return `<div tiddler=${quote(attrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} twine-position=${quote(attrEscape(position))}>${tiddlerEscape(p.text)}</div>`;
+  const created = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+  const content = obfuscateRot13 && p.name !== 'StorySettings' ? tiddlerEscape(rot13(p.text)) : tiddlerEscape(p.text);
+  const nameComment = obfuscateRot13 ? `<!-- ${commentSanitize(p.name)} -->` : '';
+  return `<div tiddler=${quote(attrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${nameComment}${content}</div>`;
 }
 
 /**

@@ -9,8 +9,36 @@ import type { StoryFormatInfo, Twine2FormatJSON } from './types.js';
 import { readUTF8 } from './util.js';
 
 /**
+ * Attempt to fix non-strict JSON (trailing commas, single quotes, unquoted keys).
+ */
+function relaxedJSONParse(json: string): unknown {
+  // First try standard parse
+  try {
+    return JSON.parse(json);
+  } catch {
+    // fall through to relaxed parsing
+  }
+
+  let fixed = json;
+
+  // Replace single-quoted string values with double-quoted
+  // Match single-quoted strings: 'value' -> "value"
+  fixed = fixed.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"');
+
+  // Add quotes around unquoted property names
+  // Match word chars before a colon that aren't already quoted
+  fixed = fixed.replace(/(?<=^|[{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/gm, '"$1":');
+
+  // Remove trailing commas before } or ]
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+
+  return JSON.parse(fixed);
+}
+
+/**
  * Parse the Twine 2 format.js JSON chunk.
  * Handles Harlowe's malformed JSON by stripping the "setup" function property.
+ * Per spec, the name key is Optional.
  */
 export function parseFormatJSON(source: string, formatId: string): Twine2FormatJSON | null {
   const first = source.indexOf('{');
@@ -20,11 +48,26 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
   let chunk = source.slice(first, last + 1);
 
   const parse = (json: string): Twine2FormatJSON | null => {
-    const raw: unknown = JSON.parse(json);
+    const raw: unknown = relaxedJSONParse(json);
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
     const obj = raw as Record<string, unknown>;
-    if (typeof obj.name !== 'string' || typeof obj.version !== 'string' || typeof obj.source !== 'string') return null;
-    return { name: obj.name, version: obj.version, source: obj.source, proofing: obj.proofing === true };
+    // version and source are required; name is optional per spec
+    if (typeof obj.version !== 'string' || typeof obj.source !== 'string') return null;
+    // Validate version is semver
+    if (!parseSemver(obj.version)) return null;
+    const name = typeof obj.name === 'string' ? obj.name : 'Untitled Story Format';
+    const result: Twine2FormatJSON = {
+      name,
+      version: obj.version,
+      source: obj.source,
+      proofing: obj.proofing === true,
+    };
+    if (typeof obj.author === 'string') result.author = obj.author;
+    if (typeof obj.description === 'string') result.description = obj.description;
+    if (typeof obj.image === 'string') result.image = obj.image;
+    if (typeof obj.url === 'string') result.url = obj.url;
+    if (typeof obj.license === 'string') result.license = obj.license;
+    return result;
   };
 
   try {
@@ -48,6 +91,8 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
 
 /**
  * Discover all story formats in the given search directories.
+ * Implements SemVer-based version pruning: within each (name, major) group,
+ * only the highest minor.patch survives.
  */
 export function discoverFormats(searchDirs: string[]): Map<string, StoryFormatInfo> {
   const formats = new Map<string, StoryFormatInfo>();
@@ -103,9 +148,17 @@ export function discoverFormats(searchDirs: string[]): Map<string, StoryFormatIn
             format.name = data.name;
             format.version = data.version;
             format.proofing = data.proofing ?? false;
+            if (data.author) format.author = data.author;
+            if (data.description) format.description = data.description;
+            if (data.image) format.image = data.image;
+            if (data.url) format.url = data.url;
+            if (data.license) format.license = data.license;
           } catch {
             continue;
           }
+        } else {
+          // Twine 1 format: use folder name as default name
+          format.name = entry;
         }
 
         formats.set(entry, format);
@@ -114,7 +167,56 @@ export function discoverFormats(searchDirs: string[]): Map<string, StoryFormatIn
     }
   }
 
+  // SemVer pruning: for formats with the same name, within each major version
+  // keep only the highest minor.patch. Also, same name+version from different
+  // directories: keep the first one found.
+  pruneFormats(formats);
+
   return formats;
+}
+
+/**
+ * Prune formats by SemVer: within each (name, major) group,
+ * keep only the highest version. First-found wins for same name+version.
+ */
+function pruneFormats(formats: Map<string, StoryFormatInfo>): void {
+  // Group by (name, major) -> best entry
+  const bestByNameMajor = new Map<string, { id: string; version: [number, number, number] }>();
+  // Track seen name+version combos (first wins)
+  const seenNameVersion = new Set<string>();
+
+  for (const [id, f] of formats) {
+    if (!f.isTwine2 || !f.name || !f.version) continue;
+    const v = parseSemver(f.version);
+    if (!v) continue;
+
+    const nameVersionKey = `${f.name}@${f.version}`;
+    if (seenNameVersion.has(nameVersionKey)) {
+      // Duplicate name+version: remove the later one
+      formats.delete(id);
+      continue;
+    }
+    seenNameVersion.add(nameVersionKey);
+
+    const groupKey = `${f.name}@${v[0]}`;
+    const existing = bestByNameMajor.get(groupKey);
+    if (!existing || semverCompare(v, existing.version) > 0) {
+      bestByNameMajor.set(groupKey, { id, version: v });
+    }
+  }
+
+  // Remove all non-best entries within each group
+  for (const [id, f] of [...formats]) {
+    if (!f.isTwine2 || !f.name || !f.version) continue;
+    const v = parseSemver(f.version);
+    if (!v) continue;
+
+    const groupKey = `${f.name}@${v[0]}`;
+    const best = bestByNameMajor.get(groupKey);
+    if (best && best.id !== id) {
+      formats.delete(id);
+    }
+  }
 }
 
 /**
