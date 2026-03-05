@@ -45,6 +45,28 @@ export function tweeEscape(s: string): string {
   return s.replace(/[\\[\]{}]/g, (ch) => '\\' + ch);
 }
 
+/** Escape a string for safe inclusion in a JavaScript string literal. */
+export function jsStringEscape(s: string): string {
+  if (s.length === 0) return s;
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
+/** Sanitize a string for safe inclusion in a CSS or JS block comment. */
+export function commentSanitize(s: string): string {
+  return s.replace(/\*\//g, '* /');
+}
+
+/** Sanitize a string for safe inclusion in an HTML comment. */
+export function htmlCommentSanitize(s: string): string {
+  return s.replace(/-->/g, '-- >');
+}
+
 /** Unescape backslash-escaped Twee characters. */
 export function tweeUnescape(s: string): string {
   if (s.length === 0) return s;
@@ -52,7 +74,10 @@ export function tweeUnescape(s: string): string {
   for (let i = 0; i < s.length; i++) {
     if (s[i] === '\\') {
       i++;
-      if (i >= s.length) break;
+      if (i >= s.length) {
+        result += '\\';
+        break;
+      }
     }
     result += s[i];
   }

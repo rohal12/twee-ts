@@ -9,9 +9,9 @@ import { compile, compileToFile, watch } from '../src/compiler.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 import { discoverCachedFormats } from '../src/remote-formats.js';
-import type { TweeTsConfig } from '../src/types.js';
+import type { TweeTsConfig, OutputMode } from '../src/types.js';
 
-const VERSION = '0.1.0';
+import { VERSION } from '../src/version.js';
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -86,8 +86,7 @@ async function main(): Promise<void> {
   }
 
   // Determine output mode: CLI flag > config > default
-  type OutputModeType = 'html' | 'twee3' | 'twee1' | 'twine2-archive' | 'twine1-archive' | 'json';
-  let outputMode: OutputModeType = (config?.outputMode as OutputModeType | undefined) ?? 'html';
+  let outputMode: OutputMode = config?.outputMode ?? 'html';
   if (values['decompile-twee3']) outputMode = 'twee3';
   else if (values['decompile-twee1']) outputMode = 'twee1';
   else if (values['archive-twine2']) outputMode = 'twine2-archive';
@@ -270,7 +269,7 @@ Options:
   -v, --version             Show version`);
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
+main().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

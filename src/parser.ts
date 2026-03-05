@@ -109,7 +109,11 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
           return { passages, diagnostics };
         }
         try {
-          const parsed = JSON.parse(item.val) as Record<string, unknown>;
+          const raw: unknown = JSON.parse(item.val);
+          if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+            throw new Error('expected a JSON object');
+          }
+          const parsed = raw as Record<string, unknown>;
           const meta: PassageMetadata = {};
           if (typeof parsed.position === 'string') meta.position = parsed.position;
           if (typeof parsed.size === 'string') meta.size = parsed.size;
@@ -129,6 +133,17 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
         if (!current) break;
         current.text = trim ? item.val.trim() : item.val;
         break;
+      }
+
+      default: {
+        const _exhaustive: never = item.type;
+        diagnostics.push({
+          level: 'error',
+          message: `line ${item.line}: Unhandled lexer item type: ${_exhaustive}.`,
+          file: filename,
+          line: item.line,
+        });
+        return { passages, diagnostics };
       }
     }
 

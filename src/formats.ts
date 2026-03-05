@@ -2,10 +2,11 @@
  * Story format discovery, loading, and SemVer matching.
  * Ported from formats.go + config.go.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { StoryFormatInfo, Twine2FormatJSON } from './types.js';
+import { readUTF8 } from './util.js';
 
 /**
  * Parse the Twine 2 format.js JSON chunk.
@@ -18,8 +19,16 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
 
   let chunk = source.slice(first, last + 1);
 
+  const parse = (json: string): Twine2FormatJSON | null => {
+    const raw: unknown = JSON.parse(json);
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.name !== 'string' || typeof obj.version !== 'string' || typeof obj.source !== 'string') return null;
+    return { name: obj.name, version: obj.version, source: obj.source, proofing: obj.proofing === true };
+  };
+
   try {
-    return JSON.parse(chunk) as Twine2FormatJSON;
+    return parse(chunk);
   } catch {
     // Harlowe workaround: strip the "setup" function property
     if (formatId.toLowerCase().startsWith('harlowe')) {
@@ -27,7 +36,7 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
       if (setupIdx !== -1) {
         chunk = chunk.slice(0, setupIdx) + '}';
         try {
-          return JSON.parse(chunk) as Twine2FormatJSON;
+          return parse(chunk);
         } catch {
           // fall through
         }
@@ -35,14 +44,6 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
     }
     return null;
   }
-}
-
-/** Read a file as UTF-8 with BOM stripping and line ending normalization. */
-function readUTF8(filename: string): string {
-  let content = readFileSync(filename, 'utf-8');
-  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-  content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  return content;
 }
 
 /**
@@ -169,9 +170,11 @@ export function parseSemver(v: string): [number, number, number] | null {
 }
 
 export function semverCompare(a: [number, number, number], b: [number, number, number]): number {
-  for (let i = 0; i < 3; i++) {
-    if (a[i]! !== b[i]!) return a[i]! - b[i]!;
-  }
+  const [aMajor, aMinor, aPatch] = a;
+  const [bMajor, bMinor, bPatch] = b;
+  if (aMajor !== bMajor) return aMajor - bMajor;
+  if (aMinor !== bMinor) return aMinor - bMinor;
+  if (aPatch !== bPatch) return aPatch - bPatch;
   return 0;
 }
 
@@ -230,7 +233,5 @@ export function readFormatSource(format: StoryFormatInfo): string {
   return source;
 }
 
-/** Read a file as UTF-8 (exported for loader use). */
-export function readFileUTF8(filename: string): string {
-  return readUTF8(filename);
-}
+/** Read a file as UTF-8 (re-exported for loader use). */
+export { readUTF8 as readFileUTF8 } from './util.js';

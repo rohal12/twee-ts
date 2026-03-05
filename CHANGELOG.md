@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-05
+
+### Added
+
+- `jsStringEscape()`, `commentSanitize()`, and `htmlCommentSanitize()` escape utilities for safe injection into JS strings, block comments, and HTML comments
+- `src/util.ts` — shared file I/O utilities (`readUTF8`, `readBase64`, `baseNameWithoutExt`)
+- `src/version.ts` — single source of truth for the package version constant
+- Exhaustive `never` default cases in output mode switch (compiler) and lexer item type switch (parser)
+- SFA index validation (`validateSFAIndex`, `isValidEntry`) with structural type checks
+- Test for non-mutation of original passages in `applyTagAliases`
+
+### Changed
+
+- `applyTagAliases` now returns new passage array instead of mutating input (immutable API)
+- `storyAdd` creates new passage objects instead of mutating input passages
+- `findEntry` now returns `{ entry, formatType }` so download URLs use the correct twine1/twine2 path
+- All `JSON.parse` calls validated with runtime type checks before casting
+- Replaced non-null assertions (`!`) with optional chaining and defaults throughout
+- Replaced `basename(f).split('.')[0]!` pattern with `baseNameWithoutExt()`
+- Deduplicated `readUTF8`/`readBase64` from formats.ts, loader.ts, and modules.ts into shared util
+- Plugin `generateBundle` uses typed `this` parameter instead of `this as unknown as ...` cast
+- Error handlers now use typed `catch (e: unknown)` with `instanceof Error` checks
+- Remote format errors propagated with context instead of silently swallowed
+- Head file read errors reported as diagnostics instead of silently ignored
+- Unknown file extensions return `application/octet-stream` instead of empty string
+- CLAUDE.md expanded with TypeScript best practices and PR review guidelines
+
+### Fixed
+
+- `tweeUnescape` now preserves trailing backslash instead of silently dropping it
+- Remote format download URL uses correct `twine1`/`twine2` path based on format type
+- Removed `htm`/`html` from known source extensions (not valid Twee source files)
+- Output escaping: passage names sanitized in CSS/JS block comments, HTML comments, and JS string literals
+
 ## [1.1.2] - 2026-03-04
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "@rohal12/twee-ts",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "TypeScript Twee-to-HTML compiler — a complete reimplementation of Tweego",
   "type": "module",
   "license": "Unlicense",

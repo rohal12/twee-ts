@@ -45,33 +45,34 @@ describe('findEntry', () => {
   const index = makeSFAIndex(entries);
 
   it('finds exact version match', () => {
-    const entry = findEntry(index, 'SugarCube', '2.37.3');
-    expect(entry?.version).toBe('2.37.3');
+    const result = findEntry(index, 'SugarCube', '2.37.3');
+    expect(result?.entry.version).toBe('2.37.3');
+    expect(result?.formatType).toBe('twine2');
   });
 
   it('finds highest same-major version when exact not available', () => {
-    const entry = findEntry(index, 'SugarCube', '2.35.0');
-    expect(entry?.version).toBe('2.38.0');
+    const result = findEntry(index, 'SugarCube', '2.35.0');
+    expect(result?.entry.version).toBe('2.38.0');
   });
 
   it('does not cross major versions', () => {
-    const entry = findEntry(index, 'SugarCube', '3.0.0');
-    expect(entry).toBeUndefined();
+    const result = findEntry(index, 'SugarCube', '3.0.0');
+    expect(result).toBeUndefined();
   });
 
   it('is case-insensitive on name', () => {
-    const entry = findEntry(index, 'sugarcube', '2.37.3');
-    expect(entry?.version).toBe('2.37.3');
+    const result = findEntry(index, 'sugarcube', '2.37.3');
+    expect(result?.entry.version).toBe('2.37.3');
   });
 
   it('returns undefined for unknown format', () => {
-    const entry = findEntry(index, 'Unknown', '1.0.0');
-    expect(entry).toBeUndefined();
+    const result = findEntry(index, 'Unknown', '1.0.0');
+    expect(result).toBeUndefined();
   });
 
   it('finds Harlowe', () => {
-    const entry = findEntry(index, 'Harlowe', '3.3.9');
-    expect(entry?.version).toBe('3.3.9');
+    const result = findEntry(index, 'Harlowe', '3.3.9');
+    expect(result?.entry.version).toBe('3.3.9');
   });
 });
 

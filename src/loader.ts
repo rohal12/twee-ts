@@ -2,29 +2,16 @@
  * File loading: dispatch by file extension.
  * Ported from storyload.go.
  */
-import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Story, Diagnostic, InlineSource } from './types.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
 import { storyAdd, storyPrepend } from './story.js';
 import { parseTwee } from './parser.js';
+import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
 
 interface LoadOptions {
   trim?: boolean;
   twee2Compat?: boolean;
-}
-
-/** Read a file as UTF-8 with BOM stripping and line ending normalization. */
-function readUTF8(filename: string): string {
-  let content = readFileSync(filename, 'utf-8');
-  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-  content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  return content;
-}
-
-/** Read a file as base64. */
-function readBase64(filename: string): string {
-  return readFileSync(filename).toString('base64');
 }
 
 /**
@@ -168,7 +155,7 @@ function loadTagged(story: Story, tag: string, filename: string, diagnostics: Di
 
 function loadMedia(story: Story, tag: string, filename: string, diagnostics: Diagnostic[]): void {
   const source = readBase64(filename);
-  const name = basename(filename).split('.')[0]!;
+  const name = baseNameWithoutExt(filename);
   storyAdd(
     story,
     {
@@ -183,7 +170,7 @@ function loadMedia(story: Story, tag: string, filename: string, diagnostics: Dia
 function loadFont(story: Story, filename: string, diagnostics: Diagnostic[]): void {
   const source = readBase64(filename);
   const name = basename(filename);
-  const family = name.split('.')[0]!;
+  const family = baseNameWithoutExt(filename);
   const ext = normalizedFileExt(filename);
   const mediaType = mediaTypeFromExt(ext);
   const hint = fontFormatHint(ext);

@@ -116,13 +116,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
 
   // Apply tag aliases (e.g. library → script)
   if (options.tagAliases) {
-    applyTagAliases(story.passages, options.tagAliases);
-  }
-
-  // Check for fatal parse errors
-  const fatalErrors = diagnostics.filter((d) => d.level === 'error');
-  if (fatalErrors.length > 0 && outputMode === 'html') {
-    // Continue if possible, but won't produce valid output
+    story.passages = applyTagAliases(story.passages, options.tagAliases);
   }
 
   // Resolve format
@@ -150,8 +144,11 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
 
       try {
         format = await resolveRemoteFormat(remoteName, remoteVersion, options.formatIndices, options.formatUrls);
-      } catch {
-        // Remote fetch failed; fall through to error below
+      } catch (e) {
+        diagnostics.push({
+          level: 'warning',
+          message: `Remote format fetch failed for "${remoteName}": ${e instanceof Error ? e.message : String(e)}`,
+        });
       }
     }
 
@@ -165,14 +162,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
   }
 
   // Merge config from StoryData: command-line > StoryData > default
-  let startName: string;
-  if (options.startPassage) {
-    startName = options.startPassage;
-  } else if (story.twine2.start) {
-    startName = story.twine2.start;
-  } else {
-    startName = DEFAULT_START_NAME;
-  }
+  const startName = options.startPassage || story.twine2.start || DEFAULT_START_NAME;
 
   // Apply test mode
   if (testMode) {
@@ -200,8 +190,7 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
       output = storyToJSON(story);
       break;
 
-    case 'html':
-    default: {
+    case 'html': {
       // Sanity checks for HTML mode
       if (!storyHas(story, startName)) {
         diagnostics.push({
@@ -228,8 +217,13 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
 
       // Inject modules and head file
       const modulePaths = options.modules ? getFilenames(options.modules) : [];
-      output = modifyHead(output, modulePaths, options.headFile);
+      output = modifyHead(output, modulePaths, options.headFile, diagnostics);
       break;
+    }
+
+    default: {
+      const _exhaustive: never = outputMode;
+      throw new TweeTsError(`Unhandled output mode: ${_exhaustive as string}`, diagnostics);
     }
   }
 
