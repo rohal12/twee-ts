@@ -34,7 +34,8 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+          claude_account_id: ${{ secrets.CLAUDE_ACCOUNT_ID }}
           prompt: |
             Review this PR using the TypeScript skills in .claude/skills/ and the guidelines in CLAUDE.md. Check for:
             - Type safety (no `any`, no `@ts-ignore`, exhaustive switch handling)
