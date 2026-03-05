@@ -111,8 +111,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   const options = opts.join(' ');
 
   // Wrap in tw-storydata
-  const zoom =
-    story.twine2.zoom === Math.floor(story.twine2.zoom) ? story.twine2.zoom.toString() : story.twine2.zoom.toFixed(1);
+  const zoom = String(story.twine2.zoom);
 
   const wrapper =
     `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->` +
@@ -130,16 +129,17 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
   if (story.ifid !== '') return;
 
   if (story.legacyIFID !== '') {
+    story.ifid = story.legacyIFID;
     diagnostics.push({
       level: 'warning',
       message: 'Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.',
     });
-    story.ifid = story.legacyIFID;
   } else {
-    story.ifid = generateIFID();
+    const ifid = generateIFID();
+    story.ifid = ifid;
     diagnostics.push({
-      level: 'warning',
-      message: `Story IFID not found; generated ${story.ifid} for your project. Add it to a StoryData passage.`,
+      level: 'error',
+      message: `Story IFID not found. Add a StoryData passage with: {"ifid":"${ifid}"}`,
     });
   }
 }

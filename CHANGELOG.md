@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-05
+
+### Added
+
+- Twine spec compliance test suites in `specs/` validated against the official [iftechfoundation/twine-specs](https://github.com/iftechfoundation/twine-specs):
+  - `twine1-htmloutput-spec.test.ts` — 34 tests covering Twine 1 HTML output (root structure, passage attributes, tiddler escaping, special passages, Twine.private filtering)
+  - `twine2-htmloutput-spec.test.ts` — 59 tests covering Twine 2 HTML output
+  - `twine2-archive-spec.test.ts` — 20 tests covering Twine 2 archive output
+  - `twine2-jsonoutput-spec.test.ts` — 39 tests covering Twine 2 JSON output
+  - `twine2-storyformats-spec.test.ts` — 21 tests covering story format discovery
+  - `twee3-spec.test.ts` — 125 tests covering Twee 3 syntax
+- Spec test suites included in vitest config (`specs/**/*.test.ts`)
+
+### Changed
+
+- JSON output now follows the [Twine 2 JSON Output Specification](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md): top-level `format`, `format-version`, `start`, `tag-colors`, `zoom`, `creator`, `creator-version`, `style`, `script` keys instead of nested `twine2` object
+- JSON output excludes `StoryTitle`, `StoryData`, `Twine.private`, `script`, and `stylesheet` passages from the passages array (scripts/stylesheets merged into top-level `style`/`script` fields)
+- Missing IFID diagnostic changed from `warning` to `error` with actionable message showing the required StoryData JSON
+- Twine 2 zoom attribute uses `String()` instead of conditional `toFixed(1)` for simpler, lossless formatting
+
+### Fixed
+
+- IFID is now set on the story object before the diagnostic is pushed (consistent ordering)
+- `.vscode-diagnostics.json` added to `.gitignore`
+
 ## [1.2.0] - 2026-03-05
 
 ### Added
