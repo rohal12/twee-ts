@@ -1,5 +1,14 @@
 # twee-ts
 
+[![npm](https://img.shields.io/npm/v/@rohal12/twee-ts)](https://www.npmjs.com/package/@rohal12/twee-ts)
+[![CI](https://img.shields.io/github/actions/workflow/status/rohal12/twee-ts/ci.yml)](https://github.com/rohal12/twee-ts/actions)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@rohal12/twee-ts)](https://bundlephobia.com/package/@rohal12/twee-ts)
+[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
+[![node](https://img.shields.io/node/v/@rohal12/twee-ts)](https://nodejs.org/)
+[![last commit](https://img.shields.io/github/last-commit/rohal12/twee-ts)](https://github.com/rohal12/twee-ts/commits)
+[![license](https://img.shields.io/npm/l/@rohal12/twee-ts)](./UNLICENSE)
+
 TypeScript reimplementation of [Tweego](https://www.motoslave.net/tweego/) — a command-line compiler for Twine/Twee interactive fiction projects.
 
 Zero runtime dependencies. Node.js 22+.
