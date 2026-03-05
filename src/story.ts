@@ -18,6 +18,7 @@ export function createStory(): Story {
       formatVersion: '',
       options: new Map(),
       start: '',
+      tags: '',
       tagColors: new Map(),
       zoom: 1,
     },
@@ -70,6 +71,7 @@ interface StoryDataJSON {
   'format-version'?: string;
   options?: string[];
   start?: string;
+  tags?: string;
   'tag-colors'?: Record<string, string>;
   zoom?: number;
 }
@@ -87,6 +89,7 @@ export function marshalStoryData(story: Story): string {
   if (options.length > 0) data.options = options;
 
   if (story.twine2.start) data.start = story.twine2.start;
+  if (story.twine2.tags) data.tags = story.twine2.tags;
 
   if (story.twine2.tagColors.size > 0) {
     data['tag-colors'] = Object.fromEntries(story.twine2.tagColors);
@@ -119,6 +122,7 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
     }
   }
   if (typeof data.start === 'string' && data.start) story.twine2.start = data.start;
+  if (typeof data.tags === 'string') story.twine2.tags = data.tags;
   if (typeof data['tag-colors'] === 'object' && data['tag-colors'] !== null && !Array.isArray(data['tag-colors'])) {
     for (const [tag, color] of Object.entries(data['tag-colors'])) {
       if (typeof color === 'string') story.twine2.tagColors.set(tag, color);
@@ -215,7 +219,7 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
         processed = { ...p, text: marshalStoryData(story) };
       } else {
         diagnostics.push({
-          level: 'error',
+          level: 'warning',
           message: `Cannot unmarshal "StoryData" compiler special passage; ${err}.`,
         });
       }

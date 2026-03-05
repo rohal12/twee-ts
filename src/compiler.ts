@@ -263,11 +263,14 @@ function storyToJSON(story: Story): string {
         tags: p.tags,
         text: p.text,
       };
-      if (p.metadata && (p.metadata.position || p.metadata.size)) {
+      if (p.metadata) {
         const meta: Record<string, string> = {};
-        if (p.metadata.position) meta.position = p.metadata.position;
-        if (p.metadata.size) meta.size = p.metadata.size;
-        entry.metadata = meta;
+        for (const [key, value] of Object.entries(p.metadata)) {
+          if (typeof value === 'string') meta[key] = value;
+        }
+        if (Object.keys(meta).length > 0) {
+          entry.metadata = meta;
+        }
       }
       storyPassages.push(entry);
     }

@@ -9,6 +9,17 @@ export function attrEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/** Escape for HTML attribute values including < and > (for spec-compliant output). */
+export function fullAttrEscape(s: string): string {
+  if (s.length === 0) return s;
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** Escape the minimum characters required for general HTML content. */
 export function htmlEscape(s: string): string {
   if (s.length === 0) return s;
@@ -65,6 +76,15 @@ export function commentSanitize(s: string): string {
 /** Sanitize a string for safe inclusion in an HTML comment. */
 export function htmlCommentSanitize(s: string): string {
   return s.replace(/-->/g, '-- >');
+}
+
+/** Apply ROT13 encoding to a string (only affects [A-Za-z]). */
+export function rot13(s: string): string {
+  if (s.length === 0) return s;
+  return s.replace(/[A-Za-z]/g, (ch) => {
+    const base = ch <= 'Z' ? 65 : 97;
+    return String.fromCharCode(((ch.charCodeAt(0) - base + 13) % 26) + base);
+  });
 }
 
 /** Unescape backslash-escaped Twee characters. */

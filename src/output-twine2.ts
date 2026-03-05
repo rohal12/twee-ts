@@ -80,9 +80,13 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
   }
   parts.push(`<script role="script" id="twine-user-script" type="text/twine-javascript">${scriptContent}</script>`);
 
-  // Tag color elements
+  // Tag color elements (only spec-valid colors: 7 named colors or hex values)
+  const validTagColors = new Set(['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple']);
+  const hexColorPattern = /^#[0-9a-fA-F]{3,8}$/;
   for (const [tag, color] of story.twine2.tagColors) {
-    parts.push(`<tw-tag name="${attrEscape(tag)}" color="${attrEscape(color)}"></tw-tag>`);
+    if (validTagColors.has(color) || hexColorPattern.test(color)) {
+      parts.push(`<tw-tag name="${attrEscape(tag)}" color="${attrEscape(color)}"></tw-tag>`);
+    }
   }
 
   // Normal passage elements
@@ -120,7 +124,7 @@ function getTwine2DataChunk(story: Story, startName: string, diagnostics: Diagno
     `ifid="${attrEscape(story.ifid)}" zoom="${attrEscape(zoom)}" ` +
     `format="${attrEscape(story.twine2.format)}" ` +
     `format-version="${attrEscape(story.twine2.formatVersion)}" ` +
-    `options="${attrEscape(options)}" hidden>`;
+    `options="${attrEscape(options)}" tags="${attrEscape(story.twine2.tags)}" hidden>`;
 
   return wrapper + parts.join('') + '</tw-storydata>';
 }
@@ -139,7 +143,7 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
     story.ifid = ifid;
     diagnostics.push({
       level: 'error',
-      message: `Story IFID not found. Add a StoryData passage with: {"ifid":"${ifid}"}`,
+      message: `Story IFID not found. Add an IFID to your story: {"ifid":"${ifid}"}`,
     });
   }
 }

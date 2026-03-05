@@ -92,6 +92,7 @@ export interface CompileStats {
 export interface PassageMetadata {
   position?: string;
   size?: string;
+  [key: string]: string | undefined;
 }
 
 export interface Passage {
@@ -112,6 +113,7 @@ export interface Twine2Metadata {
   formatVersion: string;
   options: Map<string, boolean>;
   start: string;
+  tags: string;
   tagColors: Map<string, string>;
   zoom: number;
 }
@@ -134,6 +136,11 @@ export interface StoryFormatInfo {
   name: string;
   version: string;
   proofing: boolean;
+  author?: string;
+  description?: string;
+  image?: string;
+  url?: string;
+  license?: string;
 }
 
 export interface Twine2FormatJSON {
@@ -141,6 +148,11 @@ export interface Twine2FormatJSON {
   version: string;
   proofing?: boolean;
   source: string;
+  author?: string;
+  description?: string;
+  image?: string;
+  url?: string;
+  license?: string;
 }
 
 // --- Lexer ---
