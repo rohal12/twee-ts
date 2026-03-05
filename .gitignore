@@ -12,4 +12,5 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 
 # Claude settings
-.claude/
+.claude/*
+!.claude/skills/

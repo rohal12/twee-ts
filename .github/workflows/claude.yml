@@ -36,10 +36,11 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Review this PR for:
+            Review this PR using the TypeScript skills in .claude/skills/ and the guidelines in CLAUDE.md. Check for:
+            - Type safety (no `any`, no `@ts-ignore`, exhaustive switch handling)
             - Security issues
             - Bug risks
-            - Code quality
+            - Code quality and adherence to project conventions
           claude_args: |
-            --max-turns 20
+            --max-turns 100
             --model claude-sonnet-4-6
