@@ -47,17 +47,17 @@ The directory name serves as the **format ID** (e.g. `sugarcube-2`). Use this ID
 
 Twine 2 `format.js` files contain a JSON object with the following fields:
 
-| Field         | Required | Description                                   |
-| ------------- | -------- | --------------------------------------------- |
+| Field         | Required | Description                                        |
+| ------------- | -------- | -------------------------------------------------- |
 | `name`        | No       | Display name (defaults to "Untitled Story Format") |
-| `version`     | Yes      | SemVer version string (e.g. `"2.37.3"`)       |
-| `source`      | Yes      | HTML template source                           |
-| `proofing`    | No       | Whether this is a proofing format              |
-| `author`      | No       | Format author                                  |
-| `description` | No       | Format description                             |
-| `image`       | No       | Format icon/image URL                          |
-| `url`         | No       | Format homepage URL                            |
-| `license`     | No       | Format license                                 |
+| `version`     | Yes      | SemVer version string (e.g. `"2.37.3"`)            |
+| `source`      | Yes      | HTML template source                               |
+| `proofing`    | No       | Whether this is a proofing format                  |
+| `author`      | No       | Format author                                      |
+| `description` | No       | Format description                                 |
+| `image`       | No       | Format icon/image URL                              |
+| `url`         | No       | Format homepage URL                                |
+| `license`     | No       | Format license                                     |
 
 twee-ts uses relaxed JSON parsing for `format.js`, tolerating trailing commas, single-quoted strings, and unquoted property keys found in some formats (e.g. older versions of Harlowe).
 
@@ -162,16 +162,16 @@ exitprompt:off
 blankcss:off
 ```
 
-| Setting       | Values      | Effect                                                     |
-| ------------- | ----------- | ---------------------------------------------------------- |
-| `jquery`      | `on`/`off`  | Include jQuery library in output                           |
-| `modernizr`   | `on`/`off`  | Include Modernizr library in output                        |
-| `obfuscate`   | `rot13`     | ROT13-encode tiddler content (except `StorySettings`)      |
-| `undo`        | `on`/`off`  | Enable undo support                                        |
-| `bookmark`    | `on`/`off`  | Enable bookmark support                                    |
-| `hash`        | `on`/`off`  | Enable URL hash-based navigation                           |
-| `exitprompt`  | `on`/`off`  | Prompt before navigating away                              |
-| `blankcss`    | `on`/`off`  | Start with blank CSS (no default styles)                   |
+| Setting      | Values     | Effect                                                |
+| ------------ | ---------- | ----------------------------------------------------- |
+| `jquery`     | `on`/`off` | Include jQuery library in output                      |
+| `modernizr`  | `on`/`off` | Include Modernizr library in output                   |
+| `obfuscate`  | `rot13`    | ROT13-encode tiddler content (except `StorySettings`) |
+| `undo`       | `on`/`off` | Enable undo support                                   |
+| `bookmark`   | `on`/`off` | Enable bookmark support                               |
+| `hash`       | `on`/`off` | Enable URL hash-based navigation                      |
+| `exitprompt` | `on`/`off` | Prompt before navigating away                         |
+| `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)              |
 
 The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
 
