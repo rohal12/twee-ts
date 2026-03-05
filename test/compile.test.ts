@@ -87,17 +87,17 @@ describe('compile', () => {
     expect(result.output).not.toContain('<html>');
   });
 
-  it('preserves story metadata', async () => {
+  it('preserves story metadata in JSON output (spec-compliant keys)', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'storydata.tw')],
       outputMode: 'json',
     });
 
     const json = JSON.parse(result.output);
-    expect(json.twine2.format).toBe('SugarCube');
-    expect(json.twine2.formatVersion).toBe('2.37.3');
-    expect(json.twine2.start).toBe('Begin');
-    expect(json.twine2.tagColors).toEqual({ location: 'green', character: 'blue' });
+    expect(json.format).toBe('SugarCube');
+    expect(json['format-version']).toBe('2.37.3');
+    expect(json.start).toBe('Begin');
+    expect(json['tag-colors']).toEqual({ location: 'green', character: 'blue' });
   });
 
   it('reports diagnostics rather than throwing', async () => {

@@ -20,12 +20,15 @@ import { createStory, storyHas, getStoryStats } from './story.js';
 import { getFilenames, watchFilesystem } from './filesystem.js';
 import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
 import { loadSources, loadInlineSources } from './loader.js';
-import { applyTagAliases } from './passage.js';
+import { applyTagAliases, hasTag } from './passage.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { modifyHead } from './modules.js';
 import { resolveRemoteFormat, clearIndexCache } from './remote-formats.js';
+import { VERSION } from './version.js';
+
+const CREATOR_NAME = 'Twee-ts';
 
 const DEFAULT_FORMAT_ID = 'sugarcube-2';
 const DEFAULT_START_NAME = 'Start';
@@ -236,27 +239,55 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
   return { output, story, format, diagnostics, stats };
 }
 
+/**
+ * Serialize a Story to JSON per the Twine 2 JSON Output Specification (v1.0):
+ * https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md
+ */
 function storyToJSON(story: Story): string {
-  return JSON.stringify(
-    {
-      name: story.name,
-      ifid: story.ifid,
-      passages: story.passages.map((p) => ({
+  // Gather script and stylesheet content, excluding them from passages.
+  const scripts: string[] = [];
+  const stylesheets: string[] = [];
+  const storyPassages: { name: string; tags: string[]; text: string; metadata?: Record<string, string> }[] = [];
+
+  for (const p of story.passages) {
+    if (p.name === 'StoryTitle' || p.name === 'StoryData') continue;
+    if (hasTag(p, 'Twine.private')) continue;
+
+    if (hasTag(p, 'script')) {
+      scripts.push(p.text);
+    } else if (hasTag(p, 'stylesheet')) {
+      stylesheets.push(p.text);
+    } else {
+      const entry: { name: string; tags: string[]; text: string; metadata?: Record<string, string> } = {
         name: p.name,
         tags: p.tags,
         text: p.text,
-        metadata: p.metadata ?? null,
-      })),
-      twine2: {
-        format: story.twine2.format,
-        formatVersion: story.twine2.formatVersion,
-        start: story.twine2.start,
-        tagColors: Object.fromEntries(story.twine2.tagColors),
-        options: Object.fromEntries(story.twine2.options),
-        zoom: story.twine2.zoom,
-      },
-    },
-    null,
-    2,
-  );
+      };
+      if (p.metadata && (p.metadata.position || p.metadata.size)) {
+        const meta: Record<string, string> = {};
+        if (p.metadata.position) meta.position = p.metadata.position;
+        if (p.metadata.size) meta.size = p.metadata.size;
+        entry.metadata = meta;
+      }
+      storyPassages.push(entry);
+    }
+  }
+
+  const obj: Record<string, unknown> = {
+    name: story.name,
+  };
+
+  if (story.ifid) obj.ifid = story.ifid;
+  if (story.twine2.format) obj.format = story.twine2.format;
+  if (story.twine2.formatVersion) obj['format-version'] = story.twine2.formatVersion;
+  if (story.twine2.start) obj.start = story.twine2.start;
+  if (story.twine2.tagColors.size > 0) obj['tag-colors'] = Object.fromEntries(story.twine2.tagColors);
+  if (story.twine2.zoom !== 1) obj.zoom = story.twine2.zoom;
+  obj.creator = CREATOR_NAME;
+  obj['creator-version'] = VERSION;
+  obj.style = stylesheets.join('\n');
+  obj.script = scripts.join('\n');
+  obj.passages = storyPassages;
+
+  return JSON.stringify(obj, null, 2);
 }
