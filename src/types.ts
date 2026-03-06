@@ -197,6 +197,14 @@ export interface SFAIndex {
   twine2: SFAIndexEntry[];
 }
 
+// --- Incremental compilation cache ---
+
+export interface FileCacheEntry {
+  readonly mtimeMs: number;
+  readonly passages: readonly Passage[];
+  readonly diagnostics: readonly Diagnostic[];
+}
+
 // --- Config file ---
 
 export interface TweeTsConfig {

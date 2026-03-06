@@ -32,7 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if workflow file was modified
+        if: github.event_name == 'pull_request'
+        id: check-workflow
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep -c '^\.github/workflows/claude\.yml$' || true)
+          if [ "$CHANGED" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - uses: anthropics/claude-code-action@v1
+        if: steps.check-workflow.outputs.skip != 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |

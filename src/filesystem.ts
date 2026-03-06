@@ -55,17 +55,25 @@ export interface WatchHandle {
  * Watch paths for changes, calling the build callback on known file type changes.
  * Uses debouncing to avoid rapid rebuilds.
  */
-export function watchFilesystem(pathnames: string[], outFilename: string, callback: () => void): WatchHandle {
+export function watchFilesystem(
+  pathnames: string[],
+  outFilename: string,
+  callback: (changedFiles?: ReadonlySet<string>) => void,
+): WatchHandle {
   const absOutFile = resolve(outFilename);
   const watchers: ReturnType<typeof fsWatch>[] = [];
   let buildTimer: ReturnType<typeof setTimeout> | null = null;
   const BUILD_DEBOUNCE = 500;
+  const pendingFiles = new Set<string>();
 
-  function scheduleBuild(): void {
+  function scheduleBuild(changedFile?: string): void {
+    if (changedFile) pendingFiles.add(changedFile);
     if (buildTimer) clearTimeout(buildTimer);
     buildTimer = setTimeout(() => {
       buildTimer = null;
-      callback();
+      const files = pendingFiles.size > 0 ? new Set(pendingFiles) : undefined;
+      pendingFiles.clear();
+      callback(files);
     }, BUILD_DEBOUNCE);
   }
 
@@ -76,7 +84,8 @@ export function watchFilesystem(pathnames: string[], outFilename: string, callba
         const abs = resolve(pathname, filename);
         if (abs === absOutFile) return;
         if (isKnownFileType(filename)) {
-          scheduleBuild();
+          const rel = relative(process.cwd(), abs);
+          scheduleBuild(rel || abs);
         }
       });
       watchers.push(watcher);
@@ -85,7 +94,7 @@ export function watchFilesystem(pathnames: string[], outFilename: string, callba
     }
   }
 
-  // Build once initially.
+  // Build once initially (no changedFiles = full build).
   callback();
 
   return {
