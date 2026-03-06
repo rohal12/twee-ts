@@ -68,18 +68,15 @@ export interface WatchOptions extends CompileToFileOptions {
 
 // --- Compile result ---
 
-export interface Diagnostic {
-  level: 'warning' | 'error';
-  message: string;
-  file?: string;
-  line?: number;
-}
+export type Diagnostic =
+  | { level: 'warning'; message: string; file?: string; line?: number }
+  | { level: 'error'; message: string; file?: string; line?: number; fatal?: boolean };
 
 export interface CompileResult {
   /** The compiled output string (HTML, Twee, JSON, etc.). */
   output: string;
-  /** The parsed story model. */
-  story: Story;
+  /** The parsed story model (read-only after compilation). */
+  story: ReadonlyStory;
   /** The format used for compilation (undefined for non-HTML modes). */
   format?: StoryFormatInfo;
   /** Collected diagnostics. */
@@ -116,6 +113,10 @@ export interface Passage {
   source?: SourceLocation;
 }
 
+// --- Branded types ---
+
+export type IFID = string & { readonly __brand: 'IFID' };
+
 // --- Story ---
 
 export interface Twine1Metadata {
@@ -134,12 +135,29 @@ export interface Twine2Metadata {
 
 export interface Story {
   name: string;
-  ifid: string;
+  ifid: IFID;
   passages: Passage[];
-  legacyIFID: string;
+  legacyIFID: IFID;
   twine1: Twine1Metadata;
   twine2: Twine2Metadata;
 }
+
+// --- Readonly story (post-construction) ---
+
+export type ReadonlyPassage = Readonly<Passage> & {
+  readonly tags: readonly string[];
+};
+
+export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2'>> & {
+  readonly passages: readonly ReadonlyPassage[];
+  readonly twine1: Readonly<Omit<Twine1Metadata, 'settings'>> & {
+    readonly settings: ReadonlyMap<string, string>;
+  };
+  readonly twine2: Readonly<Omit<Twine2Metadata, 'options' | 'tagColors'>> & {
+    readonly options: ReadonlyMap<string, boolean>;
+    readonly tagColors: ReadonlyMap<string, string>;
+  };
+};
 
 // --- Story format ---
 
@@ -171,15 +189,16 @@ export interface Twine2FormatJSON {
 
 // --- Lexer ---
 
-export const enum ItemType {
-  Error = 0,
-  EOF = 1,
-  Header = 2,
-  Name = 3,
-  Tags = 4,
-  Metadata = 5,
-  Content = 6,
-}
+export const ItemType = {
+  Error: 0,
+  EOF: 1,
+  Header: 2,
+  Name: 3,
+  Tags: 4,
+  Metadata: 5,
+  Content: 6,
+} as const;
+export type ItemType = (typeof ItemType)[keyof typeof ItemType];
 
 export interface LexerItem {
   type: ItemType;

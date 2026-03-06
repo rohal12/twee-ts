@@ -8,6 +8,7 @@ export { compile, compileIncremental, compileToFile, watch, TweeTsError } from '
 
 // Story inspection (for unit testing)
 export { storyInspect } from './inspect.js';
+export { StoryBuilder } from './story.js';
 
 // HTML decompiler
 export { decompileHTML } from './html-parser.js';
@@ -22,7 +23,7 @@ export { applyTagAliases } from './passage.js';
 export { TweeLexer, tweeLexer } from './lexer.js';
 export { parseTwee } from './parser.js';
 export { discoverFormats, getFormatSearchDirs, parseSemver, semverCompare, parseFormatJSON } from './formats.js';
-export { generateIFID, validateIFID } from './ifid.js';
+export { generateIFID, validateIFID, createIFID } from './ifid.js';
 
 // Config
 export { loadConfig, loadConfigFile, validateConfig, scaffoldConfig, CONFIG_FILENAME } from './config.js';
@@ -38,6 +39,9 @@ export {
   clearCachedFormats,
   getCacheSize,
 } from './remote-formats.js';
+
+// Runtime values
+export { ItemType } from './types.js';
 
 // Types
 export type {
@@ -55,7 +59,9 @@ export type {
   SourceInput,
   InlineSource,
   LexerItem,
-  ItemType,
+  IFID,
+  ReadonlyStory,
+  ReadonlyPassage,
   SFAIndex,
   SFAIndexEntry,
   SourceLocation,

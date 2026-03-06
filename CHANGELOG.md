@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-03-06
+
+### Added
+
+- Branded `IFID` type for compile-time safety — prevents passing unvalidated strings where an IFID is expected ([#25](https://github.com/rohal12/twee-ts/issues/25))
+- `createIFID()` function to validate and brand an IFID string
+- `ReadonlyStory` and `ReadonlyPassage` types for immutable post-construction access ([#26](https://github.com/rohal12/twee-ts/issues/26))
+- `StoryBuilder` class that separates mutable construction from immutable consumption ([#8](https://github.com/rohal12/twee-ts/issues/8))
+- `Diagnostic` is now a discriminated union on `level`, with optional `fatal` field on error diagnostics ([#9](https://github.com/rohal12/twee-ts/issues/9))
+- `ItemType` converted from `const enum` to `const` object pattern for runtime access and `--isolatedModules` compatibility ([#11](https://github.com/rohal12/twee-ts/issues/11))
+
+### Changed
+
+- `CompileResult.story` now returns `ReadonlyStory` instead of `Story`
+- Output renderers (`toTwine2HTML`, `toTwine2Archive`, `toTwine1HTML`, `toTwee`) now accept `ReadonlyStory` and no longer take `diagnostics` parameter — they are pure transforms ([#12](https://github.com/rohal12/twee-ts/issues/12))
+- `ensureIFID()` moved from output phase to compilation phase in `buildOutput()` ([#12](https://github.com/rohal12/twee-ts/issues/12))
+- `storyInspect()` now accepts `ReadonlyStory`
+- Lexer `emit()` now has a comment block explaining the line-counting invariant ([#10](https://github.com/rohal12/twee-ts/issues/10))
+
 ## [1.12.0] - 2026-03-06
 
 ### Added
