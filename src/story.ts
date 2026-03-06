@@ -6,8 +6,25 @@ import type { Story, Passage, Diagnostic } from './types.js';
 import { validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
 
+/** Module-level index: maps passage names to their array indices for O(1) lookups. */
+const passageIndex = new WeakMap<Story, Map<string, number>>();
+
+function getIndex(story: Story): Map<string, number> {
+  let index = passageIndex.get(story);
+  if (!index) {
+    // Rebuild for stories not created via createStory() (e.g., tests, external code)
+    index = new Map();
+    for (let i = 0; i < story.passages.length; i++) {
+      const passage = story.passages[i];
+      if (passage) index.set(passage.name, i);
+    }
+    passageIndex.set(story, index);
+  }
+  return index;
+}
+
 export function createStory(): Story {
-  return {
+  const story: Story = {
     name: '',
     ifid: '',
     passages: [],
@@ -23,23 +40,28 @@ export function createStory(): Story {
       zoom: 1,
     },
   };
+  passageIndex.set(story, new Map());
+  return story;
 }
 
 export function storyHas(story: Story, name: string): boolean {
-  return story.passages.some((p) => p.name === name);
+  return getIndex(story).has(name);
 }
 
 export function storyIndex(story: Story, name: string): number {
-  return story.passages.findIndex((p) => p.name === name);
+  return getIndex(story).get(name) ?? -1;
 }
 
 export function storyGet(story: Story, name: string): Passage | undefined {
-  return story.passages.find((p) => p.name === name);
+  const i = storyIndex(story, name);
+  return i === -1 ? undefined : story.passages[i];
 }
 
 export function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const i = storyIndex(story, p.name);
+  const index = getIndex(story);
+  const i = index.get(p.name) ?? -1;
   if (i === -1) {
+    index.set(p.name, story.passages.length);
     story.passages.push(p);
   } else {
     diagnostics.push({
@@ -51,9 +73,16 @@ export function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[])
 }
 
 export function storyPrepend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const i = storyIndex(story, p.name);
+  const index = getIndex(story);
+  const i = index.get(p.name) ?? -1;
   if (i === -1) {
     story.passages.unshift(p);
+    // Rebuild index: unshift shifts all existing indices by 1
+    index.clear();
+    for (let j = 0; j < story.passages.length; j++) {
+      const passage = story.passages[j];
+      if (passage) index.set(passage.name, j);
+    }
   } else {
     diagnostics.push({
       level: 'warning',
