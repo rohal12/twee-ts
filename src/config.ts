@@ -3,11 +3,12 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { TweeTsConfig, OutputMode } from './types.js';
+import type { TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
 
 export const CONFIG_FILENAME = 'twee-ts.config.json';
 
 const VALID_OUTPUT_MODES: OutputMode[] = ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json'];
+const VALID_WORD_COUNT_METHODS: WordCountMethod[] = ['tweego', 'whitespace'];
 
 /** Load a config file from the given directory (default: cwd). Returns null if not found. */
 export function loadConfig(dir?: string): TweeTsConfig | null {
@@ -116,6 +117,16 @@ export function validateConfig(data: unknown): string[] {
   if ('outputMode' in obj) {
     if (typeof obj['outputMode'] !== 'string' || !VALID_OUTPUT_MODES.includes(obj['outputMode'] as OutputMode)) {
       errors.push(`"outputMode" must be one of: ${VALID_OUTPUT_MODES.join(', ')}.`);
+    }
+  }
+
+  // WordCountMethod validation
+  if ('wordCountMethod' in obj) {
+    if (
+      typeof obj['wordCountMethod'] !== 'string' ||
+      !VALID_WORD_COUNT_METHODS.includes(obj['wordCountMethod'] as WordCountMethod)
+    ) {
+      errors.push(`"wordCountMethod" must be one of: ${VALID_WORD_COUNT_METHODS.join(', ')}.`);
     }
   }
 

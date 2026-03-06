@@ -2,7 +2,7 @@
  * Story model + StoryData JSON marshal/unmarshal.
  * Ported from story.go + storydata.go.
  */
-import type { Story, Passage, Diagnostic } from './types.js';
+import type { Story, Passage, Diagnostic, WordCountMethod } from './types.js';
 import { validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
 
@@ -271,13 +271,16 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
 }
 
 /** Get story passage count and word count stats. */
-export function getStoryStats(story: Story): { passages: number; storyPassages: number; words: number } {
+export function getStoryStats(
+  story: Story,
+  wordCountMethod: WordCountMethod = 'tweego',
+): { passages: number; storyPassages: number; words: number } {
   let storyPassages = 0;
   let words = 0;
   for (const p of story.passages) {
     if (isStoryPassage(p)) {
       storyPassages++;
-      words += countWords(p);
+      words += countWords(p, wordCountMethod);
     }
   }
   return { passages: story.passages.length, storyPassages, words };

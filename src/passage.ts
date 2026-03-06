@@ -2,7 +2,7 @@
  * Passage helpers and output methods.
  * Ported from passage.go / passagedata.go.
  */
-import type { Passage, PassageMetadata, OutputMode } from './types.js';
+import type { Passage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
 import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13, commentSanitize } from './escape.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
@@ -166,19 +166,41 @@ export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false
 }
 
 /**
- * Count words in a passage using the Tweego method:
- * Strip newlines, strip comments, count NFKD-normalized characters, divide by 5.
+ * Count words in a passage.
+ *
+ * - `'tweego'` (default): Strip newlines, strip comments, count NFKD-normalized characters, divide by 5.
+ * - `'whitespace'`: Strip comments and markup, split on whitespace, count tokens.
  */
-export function countWords(p: Passage): number {
-  let text = p.text;
-  text = text.replace(/\n/g, '');
-  text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
-  // Normalize to NFKD and count characters
-  const normalized = text.normalize('NFKD');
-  const count = [...normalized].length;
-  if (count === 0) return 0;
-  const words = Math.floor(count / 5);
-  return count % 5 > 0 ? words + 1 : words;
+export function countWords(p: Passage, method: WordCountMethod = 'tweego'): number {
+  switch (method) {
+    case 'tweego': {
+      let text = p.text;
+      text = text.replace(/\n/g, '');
+      text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
+      const normalized = text.normalize('NFKD');
+      const count = [...normalized].length;
+      if (count === 0) return 0;
+      const words = Math.floor(count / 5);
+      return count % 5 > 0 ? words + 1 : words;
+    }
+    case 'whitespace': {
+      let text = p.text;
+      // Strip comments
+      text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
+      // Strip Twine macros <<...>>
+      text = text.replace(/<<[^>]*>>/g, '');
+      // Strip Twine links [[...]] — keep display text
+      text = text.replace(/\[\[([^\]|]*?)(?:\|[^\]]*?)?\]\]/g, '$1');
+      // Strip HTML tags
+      text = text.replace(/<[^>]+>/g, '');
+      const tokens = text.split(/\s+/).filter((t) => t.length > 0);
+      return tokens.length;
+    }
+    default: {
+      const _exhaustive: never = method;
+      throw new Error(`Unhandled word count method: ${_exhaustive as string}`);
+    }
+  }
 }
 
 /**
