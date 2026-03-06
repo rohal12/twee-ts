@@ -16,7 +16,7 @@ import {
   clearCachedFormats,
   getCacheSize,
 } from '../src/remote-formats.js';
-import type { TweeTsConfig, OutputMode } from '../src/types.js';
+import type { TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
 
 import { VERSION } from '../src/version.js';
 
@@ -50,6 +50,7 @@ const { values, positionals } = parseArgs({
     'no-remote': { type: 'boolean' },
     'tag-alias': { type: 'string', multiple: true },
     'source-info': { type: 'boolean' },
+    'word-count-method': { type: 'string' },
     config: { type: 'string', short: 'c' },
     'no-config': { type: 'boolean' },
   },
@@ -121,6 +122,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // Word count method: CLI flag > config > default
+  const VALID_WORD_COUNT_METHODS: WordCountMethod[] = ['tweego', 'whitespace'];
+  const wordCountMethod: WordCountMethod | undefined = (() => {
+    const raw = values['word-count-method'] ?? config?.wordCountMethod;
+    if (raw === undefined) return undefined;
+    if (!VALID_WORD_COUNT_METHODS.includes(raw as WordCountMethod)) {
+      console.error(`Error: Invalid --word-count-method "${raw}". Expected: ${VALID_WORD_COUNT_METHODS.join(', ')}`);
+      process.exit(1);
+    }
+    return raw as WordCountMethod;
+  })();
+
   // Lint mode: compile + inspect, no output
   if (values.lint) {
     const lintResult = await lint({
@@ -138,6 +151,7 @@ async function main(): Promise<void> {
       noRemote: values['no-remote'] ?? config?.noRemote ?? false,
       tagAliases,
       sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
+      wordCountMethod,
     });
     console.log(formatLintReport(lintResult));
     const hasErrors = lintResult.brokenLinks.length > 0 || lintResult.diagnostics.some((d) => d.level === 'error');
@@ -161,6 +175,7 @@ async function main(): Promise<void> {
     noRemote: values['no-remote'] ?? config?.noRemote ?? false,
     tagAliases,
     sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
+    wordCountMethod,
   };
 
   const outFile = values.output ?? config?.output ?? '-';
@@ -362,6 +377,7 @@ Options:
   --format-url <url>        Direct format.js URL (repeatable)
   --tag-alias <alias=target> Map a tag to a special tag (repeatable)
   --source-info             Emit source file/line as data- attributes on passages
+  --word-count-method <m>   Word counting method: tweego (default), whitespace
   --no-remote               Disable remote format fetching
   -c, --config <file>       Config file path (default: ${CONFIG_FILENAME})
   --no-config               Skip config file loading

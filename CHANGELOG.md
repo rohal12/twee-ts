@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-03-06
+
+### Added
+
+- Configurable word counting method via `wordCountMethod` option ([#21](https://github.com/rohal12/twee-ts/issues/21))
+  - `"tweego"` (default): NFKD normalize, divide character count by 5 (matches Tweego output)
+  - `"whitespace"`: standard whitespace-based word count after stripping comments, macros, links, and HTML tags
+- `--word-count-method` CLI flag
+- `wordCountMethod` config file option
+- `WordCountMethod` type exported from the public API
+- JSON Schema section in the configuration docs explaining `$schema` usage and SchemaStore integration
+
 ## [1.10.0] - 2026-03-06
 
 ### Added

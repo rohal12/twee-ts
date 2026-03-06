@@ -2,6 +2,20 @@
 
 twee-ts automatically loads `twee-ts.config.json` from the current working directory. Use `-c <file>` to specify a different path, or `--no-config` to skip loading entirely.
 
+## JSON Schema
+
+The config file has a [JSON Schema](https://json-schema.org/) that provides autocompletion, validation, and inline documentation in editors like VS Code. Add a `$schema` key to enable it:
+
+```json
+{
+  "$schema": "https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json",
+  "sources": ["src/"],
+  "output": "story.html"
+}
+```
+
+The schema is also submitted to [SchemaStore](https://www.schemastore.org/), so editors that use SchemaStore will automatically associate `twee-ts.config.json` files with the schema — no `$schema` key needed.
+
 ## Minimal Config
 
 ```json
@@ -35,7 +49,8 @@ Every key with its default value:
   "testMode": false,
   "noRemote": false,
   "tagAliases": {},
-  "sourceInfo": false
+  "sourceInfo": false,
+  "wordCountMethod": "tweego"
 }
 ```
 
@@ -62,13 +77,14 @@ Every key with its default value:
 
 ### Compilation
 
-| Key            | Type      | Default   | Description                                                       |
-| -------------- | --------- | --------- | ----------------------------------------------------------------- |
-| `startPassage` | `string`  | `"Start"` | Name of the starting passage.                                     |
-| `trim`         | `boolean` | `true`    | Trim leading and trailing whitespace from passage content.        |
-| `twee2Compat`  | `boolean` | `false`   | Enable Twee2 syntax compatibility mode.                           |
-| `testMode`     | `boolean` | `false`   | Enable test/debug mode (sets the `debug` option in story data).   |
-| `sourceInfo`   | `boolean` | `false`   | Embed source file/line as `data-` attributes on passage elements. |
+| Key               | Type      | Default    | Description                                                                                    |
+| ----------------- | --------- | ---------- | ---------------------------------------------------------------------------------------------- |
+| `startPassage`    | `string`  | `"Start"`  | Name of the starting passage.                                                                  |
+| `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content.                                     |
+| `twee2Compat`     | `boolean` | `false`    | Enable Twee2 syntax compatibility mode.                                                        |
+| `testMode`        | `boolean` | `false`    | Enable test/debug mode (sets the `debug` option in story data).                                |
+| `sourceInfo`      | `boolean` | `false`    | Embed source file/line as `data-` attributes on passage elements.                              |
+| `wordCountMethod` | `string`  | `"tweego"` | Word counting: `"tweego"` (chars / 5, matches Tweego) or `"whitespace"` (standard word count). |
 
 ### Head Injection
 

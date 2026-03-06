@@ -58,6 +58,7 @@ export type {
   SourceLocation,
   TweeTsConfig,
   FileCacheEntry,
+  WordCountMethod,
 } from './types.js';
 export type { CachedFormatEntry } from './remote-formats.js';
 export type { StoryMap, BrokenLink } from './inspect.js';

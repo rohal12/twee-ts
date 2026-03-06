@@ -255,7 +255,7 @@ async function buildOutput(
 
   // Compute stats
   const stats: CompileStats = {
-    ...getStoryStats(story),
+    ...getStoryStats(story, options.wordCountMethod),
     files: [...processedFiles],
   };
 

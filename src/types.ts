@@ -6,6 +6,10 @@
 
 export type OutputMode = 'html' | 'twee3' | 'twee1' | 'twine2-archive' | 'twine1-archive' | 'json';
 
+// --- Word count ---
+
+export type WordCountMethod = 'tweego' | 'whitespace';
+
 // --- Source input ---
 
 export type InlineSource = { filename: string; content: string | Buffer };
@@ -46,6 +50,8 @@ export interface CompileOptions {
   tagAliases?: Record<string, string>;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
   sourceInfo?: boolean;
+  /** Word counting method. Default: 'tweego'. */
+  wordCountMethod?: WordCountMethod;
 }
 
 export interface CompileToFileOptions extends CompileOptions {
@@ -225,4 +231,5 @@ export interface TweeTsConfig {
   noRemote?: boolean;
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean;
+  wordCountMethod?: WordCountMethod;
 }
