@@ -4,7 +4,7 @@
  */
 
 // Primary API
-export { compile, compileToFile, watch, TweeTsError } from './compiler.js';
+export { compile, compileIncremental, compileToFile, watch, TweeTsError } from './compiler.js';
 
 // Story inspection (for unit testing)
 export { storyInspect } from './inspect.js';
@@ -57,6 +57,7 @@ export type {
   SFAIndexEntry,
   SourceLocation,
   TweeTsConfig,
+  FileCacheEntry,
 } from './types.js';
 export type { CachedFormatEntry } from './remote-formats.js';
 export type { StoryMap, BrokenLink } from './inspect.js';

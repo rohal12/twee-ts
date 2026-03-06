@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-06
+
+### Added
+
+- Vite plugin incremental compilation — persistent cache across rebuilds, dev server middleware serving compiled output, and incremental recompilation on `.tw`/`.twee` file changes via HMR ([#38](https://github.com/rohal12/twee-ts/issues/38))
+- `compileIncremental()` public API function for plugins and advanced users to manage their own cache and changed-file tracking
+- `FileCacheEntry` type exported from the public API
+- CI test coverage reporting with `@vitest/coverage-v8`
+
 ## [1.8.0] - 2026-03-06
 
 ### Added

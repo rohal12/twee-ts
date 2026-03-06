@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { attrEscape, htmlEscape, tiddlerEscape, tiddlerUnescape, tweeEscape, tweeUnescape } from '../src/escape.js';
+import {
+  attrEscape,
+  fullAttrEscape,
+  htmlEscape,
+  tiddlerEscape,
+  tiddlerUnescape,
+  tweeEscape,
+  tweeUnescape,
+  jsStringEscape,
+  commentSanitize,
+  htmlCommentSanitize,
+  rot13,
+} from '../src/escape.js';
 
 describe('attrEscape', () => {
   it('escapes ampersands, quotes, and apostrophes', () => {
@@ -46,6 +58,54 @@ describe('tweeEscape', () => {
   });
   it('returns empty string unchanged', () => {
     expect(tweeEscape('')).toBe('');
+  });
+});
+
+describe('fullAttrEscape', () => {
+  it('escapes all HTML special chars including angle brackets', () => {
+    expect(fullAttrEscape('a&b<c>d"e\'f')).toBe('a&amp;b&lt;c&gt;d&quot;e&#39;f');
+  });
+  it('returns empty string unchanged', () => {
+    expect(fullAttrEscape('')).toBe('');
+  });
+});
+
+describe('jsStringEscape', () => {
+  it('escapes backslashes, quotes, and control characters', () => {
+    expect(jsStringEscape('a\\b"c\'d\ne\r\tf')).toBe('a\\\\b\\"c\\\'d\\ne\\r\\tf');
+  });
+  it('returns empty string unchanged', () => {
+    expect(jsStringEscape('')).toBe('');
+  });
+});
+
+describe('commentSanitize', () => {
+  it('breaks closing comment sequences', () => {
+    expect(commentSanitize('code */ more')).toBe('code * / more');
+  });
+});
+
+describe('htmlCommentSanitize', () => {
+  it('breaks closing HTML comment sequences', () => {
+    expect(htmlCommentSanitize('text --> end')).toBe('text -- > end');
+  });
+});
+
+describe('rot13', () => {
+  it('encodes uppercase letters', () => {
+    expect(rot13('ABC')).toBe('NOP');
+  });
+  it('encodes lowercase letters', () => {
+    expect(rot13('abc')).toBe('nop');
+  });
+  it('is self-inverse', () => {
+    expect(rot13(rot13('Hello, World!'))).toBe('Hello, World!');
+  });
+  it('leaves non-alphabetic characters unchanged', () => {
+    expect(rot13('123!@#')).toBe('123!@#');
+  });
+  it('returns empty string unchanged', () => {
+    expect(rot13('')).toBe('');
   });
 });
 
