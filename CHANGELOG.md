@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-03-06
+
+### Added
+
+- HTML decompiler: parse compiled Twine 2 and Twine 1 HTML files back into a `Story` model ([#18](https://github.com/rohal12/twee-ts/issues/18))
+  - Twine 2: parses `<tw-storydata>`, `<tw-passagedata>`, `<style>`, `<script>`, and `<tw-tag>` elements
+  - Twine 1: parses `<div id="store-area">` / `<div id="storeArea">` with `<div tiddler="...">` children, including tiddler unescape
+  - Resolves start passage from `startnode` pid, preserves passage metadata (position, size, tags)
+- `decompileHTML()` and `DecompileResult` type exported from the public API
+- `.htm` and `.html` files now supported as compile inputs — enables `twee-ts -d story.html -o story.twee` round-trip workflow
+- `htmlparser2` bundled as a dev dependency (zero runtime deps maintained via tsup bundling)
+
 ## [1.11.0] - 2026-03-06
 
 ### Added

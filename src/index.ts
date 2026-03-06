@@ -9,6 +9,9 @@ export { compile, compileIncremental, compileToFile, watch, TweeTsError } from '
 // Story inspection (for unit testing)
 export { storyInspect } from './inspect.js';
 
+// HTML decompiler
+export { decompileHTML } from './html-parser.js';
+
 // Lint
 export { lint, formatLintReport } from './lint.js';
 
@@ -61,5 +64,6 @@ export type {
   WordCountMethod,
 } from './types.js';
 export type { CachedFormatEntry } from './remote-formats.js';
+export type { DecompileResult } from './html-parser.js';
 export type { StoryMap, BrokenLink } from './inspect.js';
 export type { LintResult } from './lint.js';
