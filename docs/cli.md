@@ -104,6 +104,38 @@ Lint failed.
 | `-h, --help`    | Show help text. |
 | `-v, --version` | Show version.   |
 
+### Cache Management
+
+Manage the local cache of downloaded remote story formats.
+
+```
+twee-ts cache <subcommand>
+```
+
+| Subcommand     | Description                                             |
+| -------------- | ------------------------------------------------------- |
+| `list`         | List cached formats with name, version, size, and date. |
+| `clear`        | Delete all cached formats.                              |
+| `clear <name>` | Delete cached formats matching a name.                  |
+| `size`         | Show total cache size and format count.                 |
+| `path`         | Print the cache directory path.                         |
+
+```sh
+$ twee-ts cache list
+SugarCube         2.37.3       245K   2026-02-15
+Harlowe           3.3.9        512K   2026-01-20
+Chapbook          2.2.0        189K   2026-03-01
+
+$ twee-ts cache size
+Total: 946K (3 formats)
+
+$ twee-ts cache clear Harlowe
+Cleared 1 cached format.
+
+$ twee-ts cache path
+/home/user/.cache/twee-ts/storyformats
+```
+
 ## Examples
 
 ```sh

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-06
+
+### Added
+
+- `twee-ts cache` CLI subcommand for managing the remote format cache ([#24](https://github.com/rohal12/twee-ts/issues/24)):
+  - `cache list` — list cached formats with name, version, size, and modification date
+  - `cache clear [name]` — delete all cached formats or only those matching a name
+  - `cache size` — show total cache size and format count
+  - `cache path` — print the cache directory path
+- `listCachedFormats()`, `clearCachedFormats()`, `getCacheSize()` programmatic API functions
+- `CachedFormatEntry` type exported from the public API
+
 ## [1.7.0] - 2026-03-06
 
 ### Added

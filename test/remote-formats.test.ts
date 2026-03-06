@@ -1,7 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { getCacheDir, findEntry, verifySHA256, clearIndexCache, discoverCachedFormats } from '../src/remote-formats.js';
+import {
+  getCacheDir,
+  findEntry,
+  verifySHA256,
+  clearIndexCache,
+  discoverCachedFormats,
+  listCachedFormats,
+  clearCachedFormats,
+  getCacheSize,
+} from '../src/remote-formats.js';
 import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
 
 // Minimal format.js content for testing
@@ -155,5 +164,176 @@ describe('discoverCachedFormats', () => {
         delete process.env['XDG_CACHE_HOME'];
       }
     }
+  });
+});
+
+/** Helper: set XDG_CACHE_HOME for a test, restore afterward. */
+function withCacheHome(tmpDir: string, fn: () => void): void {
+  const orig = process.env['XDG_CACHE_HOME'];
+  process.env['XDG_CACHE_HOME'] = tmpDir;
+  try {
+    fn();
+  } finally {
+    if (orig !== undefined) {
+      process.env['XDG_CACHE_HOME'] = orig;
+    } else {
+      delete process.env['XDG_CACHE_HOME'];
+    }
+  }
+}
+
+describe('listCachedFormats', () => {
+  const TMP_CACHE = join(__dirname, '.tmp-cache-list');
+
+  beforeEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  it('lists cached formats with size and date', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      const formatDir = join(cacheDir, 'MockFormat', '2.1.0');
+      mkdirSync(formatDir, { recursive: true });
+      writeFileSync(join(formatDir, 'format.js'), MOCK_FORMAT_SOURCE);
+
+      const entries = listCachedFormats();
+      expect(entries.length).toBe(1);
+      expect(entries[0]!.name).toBe('MockFormat');
+      expect(entries[0]!.version).toBe('2.1.0');
+      expect(entries[0]!.sizeBytes).toBeGreaterThan(0);
+      expect(entries[0]!.modifiedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  it('returns empty array when cache does not exist', () => {
+    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+      expect(listCachedFormats()).toEqual([]);
+    });
+  });
+
+  it('lists multiple formats', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      for (const [name, version] of [
+        ['FormatA', '1.0.0'],
+        ['FormatB', '3.2.1'],
+      ] as const) {
+        const dir = join(cacheDir, name, version);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, 'format.js'),
+          `window.storyFormat({"name":"${name}","version":"${version}","proofing":false,"source":"<html></html>"});`,
+        );
+      }
+
+      const entries = listCachedFormats();
+      expect(entries.length).toBe(2);
+      const names = entries.map((e) => e.name).sort();
+      expect(names).toEqual(['FormatA', 'FormatB']);
+    });
+  });
+});
+
+describe('clearCachedFormats', () => {
+  const TMP_CACHE = join(__dirname, '.tmp-cache-clear');
+
+  beforeEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  it('clears all cached formats', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      const dir = join(cacheDir, 'MockFormat', '2.1.0');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
+
+      const count = clearCachedFormats();
+      expect(count).toBe(1);
+      expect(listCachedFormats()).toEqual([]);
+    });
+  });
+
+  it('clears formats by name', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      for (const [name, version] of [
+        ['FormatA', '1.0.0'],
+        ['FormatB', '3.2.1'],
+      ] as const) {
+        const dir = join(cacheDir, name, version);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, 'format.js'),
+          `window.storyFormat({"name":"${name}","version":"${version}","proofing":false,"source":"<html></html>"});`,
+        );
+      }
+
+      const count = clearCachedFormats('FormatA');
+      expect(count).toBe(1);
+
+      const remaining = listCachedFormats();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0]!.name).toBe('FormatB');
+    });
+  });
+
+  it('returns 0 when cache does not exist', () => {
+    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+      expect(clearCachedFormats()).toBe(0);
+    });
+  });
+
+  it('returns 0 when name does not match', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      const dir = join(cacheDir, 'MockFormat', '2.1.0');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
+
+      expect(clearCachedFormats('NonExistent')).toBe(0);
+      expect(listCachedFormats().length).toBe(1);
+    });
+  });
+});
+
+describe('getCacheSize', () => {
+  const TMP_CACHE = join(__dirname, '.tmp-cache-size');
+
+  beforeEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    rmSync(TMP_CACHE, { recursive: true, force: true });
+  });
+
+  it('returns total size and count', () => {
+    withCacheHome(TMP_CACHE, () => {
+      const cacheDir = getCacheDir();
+      const dir = join(cacheDir, 'MockFormat', '2.1.0');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
+
+      const { totalBytes, count } = getCacheSize();
+      expect(count).toBe(1);
+      expect(totalBytes).toBe(MOCK_FORMAT_SOURCE.length);
+    });
+  });
+
+  it('returns zero for empty cache', () => {
+    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+      const { totalBytes, count } = getCacheSize();
+      expect(totalBytes).toBe(0);
+      expect(count).toBe(0);
+    });
   });
 });

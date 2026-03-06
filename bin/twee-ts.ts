@@ -9,7 +9,13 @@ import { compile, compileToFile, watch } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
-import { discoverCachedFormats } from '../src/remote-formats.js';
+import {
+  discoverCachedFormats,
+  getCacheDir,
+  listCachedFormats,
+  clearCachedFormats,
+  getCacheSize,
+} from '../src/remote-formats.js';
 import type { TweeTsConfig, OutputMode } from '../src/types.js';
 
 import { VERSION } from '../src/version.js';
@@ -67,6 +73,11 @@ async function main(): Promise<void> {
 
   if (values.init) {
     runInit();
+    return;
+  }
+
+  if (positionals[0] === 'cache') {
+    runCache(positionals.slice(1));
     return;
   }
 
@@ -262,6 +273,66 @@ This is the starting passage. Edit this file to begin writing your story.
   console.log('\nRun: npx @rohal12/twee-ts');
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)}K`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)}M`;
+}
+
+function runCache(args: string[]): void {
+  const subcommand = args[0];
+
+  switch (subcommand) {
+    case 'list': {
+      const entries = listCachedFormats();
+      if (entries.length === 0) {
+        console.log('No cached formats.');
+        return;
+      }
+      for (const e of entries) {
+        const date = e.modifiedAt.toISOString().slice(0, 10);
+        console.log(`${e.name.padEnd(16)} ${e.version.padEnd(10)} ${formatBytes(e.sizeBytes).padStart(6)}   ${date}`);
+      }
+      return;
+    }
+    case 'clear': {
+      const name = args[1];
+      const count = clearCachedFormats(name);
+      if (count === 0) {
+        console.log(name ? `No cached formats matching "${name}".` : 'Cache is already empty.');
+      } else {
+        console.log(`Cleared ${count} cached format${count === 1 ? '' : 's'}.`);
+      }
+      return;
+    }
+    case 'size': {
+      const { totalBytes, count } = getCacheSize();
+      if (count === 0) {
+        console.log('Cache is empty.');
+      } else {
+        console.log(`Total: ${formatBytes(totalBytes)} (${count} format${count === 1 ? '' : 's'})`);
+      }
+      return;
+    }
+    case 'path': {
+      console.log(getCacheDir());
+      return;
+    }
+    default: {
+      console.error(`Usage: twee-ts cache <list|clear|size|path>
+
+  list          List cached formats with name, version, size
+  clear         Delete all cached formats
+  clear <name>  Delete cached formats matching name
+  size          Show total cache size
+  path          Print cache directory path`);
+      process.exit(subcommand ? 1 : 0);
+    }
+  }
+}
+
 function printUsage(): void {
   console.log(`twee-ts v${VERSION} — TypeScript Twee-to-HTML compiler
 
@@ -295,7 +366,13 @@ Options:
   -c, --config <file>       Config file path (default: ${CONFIG_FILENAME})
   --no-config               Skip config file loading
   -h, --help                Show this help
-  -v, --version             Show version`);
+  -v, --version             Show version
+
+Subcommands:
+  cache list                List cached remote formats
+  cache clear [name]        Clear cached formats (all or by name)
+  cache size                Show total cache size
+  cache path                Print cache directory path`);
 }
 
 main().catch((err: unknown) => {
