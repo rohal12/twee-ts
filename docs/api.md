@@ -207,13 +207,39 @@ for (const [id, format] of formats) {
 ### Remote Formats
 
 ```typescript
-import { resolveRemoteFormat, fetchAndCacheFormat, discoverCachedFormats } from '@rohal12/twee-ts';
+import {
+  resolveRemoteFormat,
+  fetchAndCacheFormat,
+  discoverCachedFormats,
+  listCachedFormats,
+  clearCachedFormats,
+  getCacheSize,
+  getCacheDir,
+} from '@rohal12/twee-ts';
 
 // Auto-resolve from SFA indices
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
 
-// List cached formats
+// List cached formats (Map<id, StoryFormatInfo>)
 const cached = discoverCachedFormats();
+
+// List cached formats with size and modification date
+const entries = listCachedFormats();
+for (const e of entries) {
+  console.log(`${e.name} ${e.version} — ${e.sizeBytes} bytes, modified ${e.modifiedAt.toISOString()}`);
+}
+
+// Clear all cached formats (returns count removed)
+clearCachedFormats();
+
+// Clear cached formats by name
+clearCachedFormats('SugarCube');
+
+// Get total cache size
+const { totalBytes, count } = getCacheSize();
+
+// Get cache directory path
+const cacheDir = getCacheDir();
 ```
 
 ### IFID
@@ -289,5 +315,6 @@ import type {
   SourceLocation,
   TweeTsConfig,
   LintResult,
+  CachedFormatEntry,
 } from '@rohal12/twee-ts';
 ```

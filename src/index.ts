@@ -31,6 +31,9 @@ export {
   fetchDirectFormat,
   getCacheDir,
   discoverCachedFormats,
+  listCachedFormats,
+  clearCachedFormats,
+  getCacheSize,
 } from './remote-formats.js';
 
 // Types
@@ -55,5 +58,6 @@ export type {
   SourceLocation,
   TweeTsConfig,
 } from './types.js';
+export type { CachedFormatEntry } from './remote-formats.js';
 export type { StoryMap, BrokenLink } from './inspect.js';
 export type { LintResult } from './lint.js';

@@ -2,7 +2,7 @@
  * Remote story format fetching, caching, and checksum verification.
  * Uses the Story Formats Archive (SFA) as the default source.
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
@@ -326,4 +326,97 @@ export function discoverCachedFormats(): Map<string, StoryFormatInfo> {
   }
 
   return formats;
+}
+
+/** Info about a cached format entry with size and modification date. */
+export interface CachedFormatEntry {
+  readonly name: string;
+  readonly version: string;
+  readonly sizeBytes: number;
+  readonly modifiedAt: Date;
+}
+
+/** List all cached formats with size and modification date. */
+export function listCachedFormats(): readonly CachedFormatEntry[] {
+  const cacheDir = getCacheDir();
+  const entries: CachedFormatEntry[] = [];
+
+  try {
+    if (!existsSync(cacheDir)) return entries;
+  } catch {
+    return entries;
+  }
+
+  let names: string[];
+  try {
+    names = readdirSync(cacheDir);
+  } catch {
+    return entries;
+  }
+
+  for (const name of names) {
+    const nameDir = join(cacheDir, name);
+    try {
+      if (!statSync(nameDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    let versions: string[];
+    try {
+      versions = readdirSync(nameDir);
+    } catch {
+      continue;
+    }
+
+    for (const version of versions) {
+      const formatPath = join(nameDir, version, 'format.js');
+      try {
+        const stat = statSync(formatPath);
+        entries.push({
+          name,
+          version,
+          sizeBytes: stat.size,
+          modifiedAt: stat.mtime,
+        });
+      } catch {
+        // Skip entries without a valid format.js
+      }
+    }
+  }
+
+  return entries;
+}
+
+/** Clear all cached formats, or only those matching a given name. Returns the number of entries removed. */
+export function clearCachedFormats(name?: string): number {
+  const cacheDir = getCacheDir();
+  if (!existsSync(cacheDir)) return 0;
+
+  if (!name) {
+    const entries = listCachedFormats();
+    const count = entries.length;
+    rmSync(cacheDir, { recursive: true, force: true });
+    return count;
+  }
+
+  const nameDir = join(cacheDir, name);
+  if (!existsSync(nameDir)) return 0;
+
+  let versions: string[];
+  try {
+    versions = readdirSync(nameDir);
+  } catch {
+    return 0;
+  }
+  const count = versions.length;
+  rmSync(nameDir, { recursive: true, force: true });
+  return count;
+}
+
+/** Get total cache size in bytes and format count. */
+export function getCacheSize(): { totalBytes: number; count: number } {
+  const entries = listCachedFormats();
+  const totalBytes = entries.reduce((sum, e) => sum + e.sizeBytes, 0);
+  return { totalBytes, count: entries.length };
 }
