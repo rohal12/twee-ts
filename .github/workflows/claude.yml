@@ -27,15 +27,14 @@ jobs:
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'pull_request')
+      (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: anthropics/claude-code-action@v1
         with:
-          claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
-          claude_account_id: ${{ secrets.CLAUDE_ACCOUNT_ID }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review this PR using the TypeScript skills in .claude/skills/ and the guidelines in CLAUDE.md. Check for:
             - Type safety (no `any`, no `@ts-ignore`, exhaustive switch handling)
