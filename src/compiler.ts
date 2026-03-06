@@ -61,6 +61,18 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
 }
 
 /**
+ * Compile with incremental caching support.
+ * Plugins and advanced users can manage their own cache and changed-file tracking.
+ */
+export async function compileIncremental(
+  options: CompileOptions,
+  cache: Map<string, FileCacheEntry>,
+  changedFiles?: ReadonlySet<string>,
+): Promise<CompileResult> {
+  return buildOutput(options, cache, changedFiles);
+}
+
+/**
  * Watch for file changes and recompile.
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
