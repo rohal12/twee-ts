@@ -15,11 +15,12 @@ import type {
   StoryFormatInfo,
   OutputMode,
   InlineSource,
+  FileCacheEntry,
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
 import { getFilenames, watchFilesystem } from './filesystem.js';
 import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
-import { loadSources, loadInlineSources } from './loader.js';
+import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag } from './passage.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
@@ -64,14 +65,15 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
   const controller = new AbortController();
+  const cache = new Map<string, FileCacheEntry>();
 
   // Separate file paths from inline sources
   const filePaths = options.sources.filter((s): s is string => typeof s === 'string');
   const modulePaths = options.modules ?? [];
   const allPaths = [...filePaths, ...modulePaths];
 
-  const handle = watchFilesystem(allPaths, options.outFile, () => {
-    buildOutput(options)
+  const handle = watchFilesystem(allPaths, options.outFile, (changedFiles) => {
+    buildOutput(options, cache, changedFiles)
       .then((result) => {
         writeFileSync(options.outFile, result.output, 'utf-8');
         options.onBuild?.(result);
@@ -85,7 +87,11 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
   return controller;
 }
 
-async function buildOutput(options: CompileOptions): Promise<CompileResult> {
+async function buildOutput(
+  options: CompileOptions,
+  cache?: Map<string, FileCacheEntry>,
+  changedFiles?: ReadonlySet<string>,
+): Promise<CompileResult> {
   const diagnostics: Diagnostic[] = [];
   const outputMode: OutputMode = options.outputMode ?? 'html';
   const trim = options.trim ?? true;
@@ -115,7 +121,11 @@ async function buildOutput(options: CompileOptions): Promise<CompileResult> {
   const story = createStory();
   const processedFiles = new Set<string>();
 
-  loadSources(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles);
+  if (cache) {
+    loadSourcesCached(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles, cache, changedFiles);
+  } else {
+    loadSources(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles);
+  }
   loadInlineSources(story, inlineSources, { trim, twee2Compat }, diagnostics);
 
   // Apply tag aliases (e.g. library → script)
