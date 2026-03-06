@@ -43,7 +43,8 @@
     "twee-ts": "./dist/bin/twee-ts.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "schemas"
   ],
   "scripts": {
     "build": "tsup",

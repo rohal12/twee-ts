@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { validateConfig, loadConfig, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 
 const TMP_DIR = join(__dirname, '.tmp-config-test');
@@ -145,10 +145,52 @@ describe('loadConfig', () => {
 });
 
 describe('scaffoldConfig', () => {
-  it('returns valid JSON with sources and output', () => {
+  it('returns valid JSON with $schema, sources, and output', () => {
     const json = scaffoldConfig();
     const parsed = JSON.parse(json);
+    expect(parsed.$schema).toBe('https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json');
     expect(parsed.sources).toEqual(['src/']);
     expect(parsed.output).toBe('story.html');
+  });
+});
+
+describe('JSON Schema', () => {
+  it('is valid JSON and covers all TweeTsConfig fields', () => {
+    const schemaPath = join(__dirname, '..', 'schemas', 'twee-ts.config.schema.json');
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
+
+    expect(schema.type).toBe('object');
+
+    const expectedFields = [
+      'sources',
+      'output',
+      'outputMode',
+      'formatId',
+      'startPassage',
+      'formatPaths',
+      'formatIndices',
+      'formatUrls',
+      'useTweegoPath',
+      'modules',
+      'headFile',
+      'trim',
+      'twee2Compat',
+      'testMode',
+      'noRemote',
+      'tagAliases',
+      'sourceInfo',
+    ];
+
+    for (const field of expectedFields) {
+      expect(schema.properties).toHaveProperty(field);
+    }
+  });
+
+  it('accepts $schema field in config validation', () => {
+    const errors = validateConfig({
+      $schema: 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
+      sources: ['src/'],
+    });
+    expect(errors).toEqual([]);
   });
 });
