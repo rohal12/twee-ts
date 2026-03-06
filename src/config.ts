@@ -124,7 +124,8 @@ export function validateConfig(data: unknown): string[] {
 
 /** Return a default config JSON string for --init scaffolding. */
 export function scaffoldConfig(): string {
-  const config: TweeTsConfig = {
+  const config = {
+    $schema: 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
     sources: ['src/'],
     output: 'story.html',
   };
