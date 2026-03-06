@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { Story, StoryFormatInfo, Diagnostic } from './types.js';
+import type { ReadonlyStory, StoryFormatInfo } from './types.js';
 import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { jsStringEscape, htmlCommentSanitize } from './escape.js';
@@ -12,17 +12,12 @@ import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'twee-ts';
 
-export function toTwine1Archive(story: Story, _startName: string): string {
+export function toTwine1Archive(story: ReadonlyStory, _startName: string): string {
   const { data, count } = getTwine1PassageChunk(story);
   return `<div id="storeArea" data-size="${count}">${data}</div>\n`;
 }
 
-export function toTwine1HTML(
-  story: Story,
-  format: StoryFormatInfo,
-  startName: string,
-  _diagnostics: Diagnostic[],
-): string {
+export function toTwine1HTML(story: ReadonlyStory, format: StoryFormatInfo, startName: string): string {
   const formatDir = dirname(format.filename);
   const parentDir = dirname(formatDir);
   let template = readFormatSource(format);
@@ -74,7 +69,7 @@ export function toTwine1HTML(
   return template;
 }
 
-function getTwine1PassageChunk(story: Story): { data: string; count: number } {
+function getTwine1PassageChunk(story: ReadonlyStory): { data: string; count: number } {
   const obfuscateRot13 = story.twine1.settings.get('obfuscate') === 'rot13';
   let data = '';
   let count = 0;

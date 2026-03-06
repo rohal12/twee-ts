@@ -10,7 +10,7 @@
  *   expect(map.passages).toContain('Start');
  *   expect(map.brokenLinks).toHaveLength(0);
  */
-import type { Story } from './types.js';
+import type { ReadonlyStory } from './types.js';
 import { isInfoPassage, isStoryPassage } from './passage.js';
 
 export interface StoryMap {
@@ -115,7 +115,7 @@ function extractLinksFromText(text: string): string[] {
  * expect(map.deadEnds).not.toContain('Start');
  * ```
  */
-export function storyInspect(story: Story): StoryMap {
+export function storyInspect(story: ReadonlyStory): StoryMap {
   const allNames = new Set(story.passages.map((p) => p.name));
 
   const passages: string[] = [];

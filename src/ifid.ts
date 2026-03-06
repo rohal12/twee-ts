@@ -3,10 +3,18 @@
  * Ported from ifid.go.
  */
 import { randomUUID } from 'node:crypto';
+import type { IFID } from './types.js';
 
 /** Generate a new IFID (UUID v4, uppercase). */
-export function generateIFID(): string {
-  return randomUUID().toUpperCase();
+export function generateIFID(): IFID {
+  return randomUUID().toUpperCase() as IFID;
+}
+
+/** Validate and brand an IFID string. Throws on invalid input. */
+export function createIFID(value: string): IFID {
+  const err = validateIFID(value);
+  if (err) throw new Error(`Invalid IFID: ${err}`);
+  return value.toUpperCase() as IFID;
 }
 
 /**

@@ -22,6 +22,7 @@ import { getFilenames, watchFilesystem } from './filesystem.js';
 import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag } from './passage.js';
+import { generateIFID } from './ifid.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
@@ -195,6 +196,9 @@ async function buildOutput(
     story.twine2.options.set('debug', true);
   }
 
+  // Ensure IFID is set before output generation
+  ensureIFID(story, diagnostics);
+
   // Generate output
   let output: string;
 
@@ -205,7 +209,7 @@ async function buildOutput(
       break;
 
     case 'twine2-archive':
-      output = toTwine2Archive(story, startName, diagnostics, { sourceInfo });
+      output = toTwine2Archive(story, startName, { sourceInfo });
       break;
 
     case 'twine1-archive':
@@ -230,7 +234,7 @@ async function buildOutput(
       }
 
       if (format.isTwine2) {
-        output = toTwine2HTML(story, format, startName, diagnostics, { sourceInfo });
+        output = toTwine2HTML(story, format, startName, { sourceInfo });
       } else {
         if (story.name === '' && !storyHas(story, 'StoryTitle')) {
           diagnostics.push({
@@ -238,7 +242,7 @@ async function buildOutput(
             message: 'Special passage "StoryTitle" not found.',
           });
         }
-        output = toTwine1HTML(story, format, startName, diagnostics);
+        output = toTwine1HTML(story, format, startName);
       }
 
       // Inject modules and head file
@@ -260,6 +264,25 @@ async function buildOutput(
   };
 
   return { output, story, format, diagnostics, stats };
+}
+
+function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
+  if (story.ifid !== '') return;
+
+  if (story.legacyIFID !== '') {
+    story.ifid = story.legacyIFID;
+    diagnostics.push({
+      level: 'warning',
+      message: 'Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.',
+    });
+  } else {
+    const ifid = generateIFID();
+    story.ifid = ifid;
+    diagnostics.push({
+      level: 'error',
+      message: `Story IFID not found. Add an IFID to your story: {"ifid":"${ifid}"}`,
+    });
+  }
 }
 
 /**

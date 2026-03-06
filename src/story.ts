@@ -2,7 +2,7 @@
  * Story model + StoryData JSON marshal/unmarshal.
  * Ported from story.go + storydata.go.
  */
-import type { Story, Passage, Diagnostic, WordCountMethod } from './types.js';
+import type { Story, ReadonlyStory, Passage, Diagnostic, WordCountMethod, IFID } from './types.js';
 import { validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
 
@@ -26,9 +26,9 @@ function getIndex(story: Story): Map<string, number> {
 export function createStory(): Story {
   const story: Story = {
     name: '',
-    ifid: '',
+    ifid: '' as IFID,
     passages: [],
-    legacyIFID: '',
+    legacyIFID: '' as IFID,
     twine1: { settings: new Map() },
     twine2: {
       format: '',
@@ -141,7 +141,7 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
   }
   const data = raw as StoryDataJSON;
 
-  if (typeof data.ifid === 'string' && data.ifid) story.ifid = data.ifid.toUpperCase();
+  if (typeof data.ifid === 'string' && data.ifid) story.ifid = data.ifid.toUpperCase() as IFID;
   if (typeof data.format === 'string' && data.format) story.twine2.format = data.format;
   if (typeof data['format-version'] === 'string' && data['format-version'])
     story.twine2.formatVersion = data['format-version'];
@@ -190,7 +190,7 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
       case 'ifid': {
         const err = validateIFID(val);
         if (err === null) {
-          story.legacyIFID = val.toUpperCase();
+          story.legacyIFID = val.toUpperCase() as IFID;
         }
         obsolete.push('"ifid"');
         continue;
@@ -284,4 +284,33 @@ export function getStoryStats(
     }
   }
   return { passages: story.passages.length, storyPassages, words };
+}
+
+/**
+ * Builder that separates the mutable construction phase from the immutable consumption phase.
+ * During construction, the internal `Story` is mutable via `add()` and direct access.
+ * After `build()`, the story is returned as `ReadonlyStory`.
+ */
+export class StoryBuilder {
+  /** The mutable story, accessible during construction for loader functions. */
+  readonly story: Story;
+
+  constructor() {
+    this.story = createStory();
+  }
+
+  /** Add a passage, handling special passages (StoryData, StoryTitle, etc.). */
+  add(passage: Passage, diagnostics: Diagnostic[]): void {
+    storyAdd(this.story, passage, diagnostics);
+  }
+
+  /** Check if a passage name exists. */
+  has(name: string): boolean {
+    return storyHas(this.story, name);
+  }
+
+  /** Finalize and return the story as read-only. */
+  build(): ReadonlyStory {
+    return this.story;
+  }
 }

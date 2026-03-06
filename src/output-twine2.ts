@@ -2,29 +2,26 @@
  * Twine 2 HTML and archive output.
  * Ported from storyout.go.
  */
-import type { Story, StoryFormatInfo, Diagnostic } from './types.js';
+import type { ReadonlyStory, ReadonlyPassage, StoryFormatInfo } from './types.js';
 import { attrEscape, htmlEscape, commentSanitize, htmlCommentSanitize } from './escape.js';
 import { passageToPassagedata, hasTag, hasAnyTag } from './passage.js';
-import { generateIFID } from './ifid.js';
 import { readFormatSource } from './formats.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
 
 export function toTwine2Archive(
-  story: Story,
+  story: ReadonlyStory,
   startName: string,
-  diagnostics: Diagnostic[],
   options?: { readonly sourceInfo?: boolean },
 ): string {
-  return getTwine2DataChunk(story, startName, diagnostics, options) + '\n';
+  return getTwine2DataChunk(story, startName, options) + '\n';
 }
 
 export function toTwine2HTML(
-  story: Story,
+  story: ReadonlyStory,
   format: StoryFormatInfo,
   startName: string,
-  diagnostics: Diagnostic[],
   options?: { readonly sourceInfo?: boolean },
 ): string {
   let template = readFormatSource(format);
@@ -33,28 +30,24 @@ export function toTwine2HTML(
     template = template.replaceAll('{{STORY_NAME}}', htmlEscape(story.name));
   }
   if (template.includes('{{STORY_DATA}}')) {
-    template = template.replace('{{STORY_DATA}}', getTwine2DataChunk(story, startName, diagnostics, options));
+    template = template.replace('{{STORY_DATA}}', getTwine2DataChunk(story, startName, options));
   }
 
   return template;
 }
 
 function getTwine2DataChunk(
-  story: Story,
+  story: ReadonlyStory,
   startName: string,
-  diagnostics: Diagnostic[],
   options?: { readonly sourceInfo?: boolean },
 ): string {
-  // Check IFID status and generate if missing.
-  ensureIFID(story, diagnostics);
-
   const parts: string[] = [];
   let startID = '';
   let pid = 0;
 
   // Gather script and stylesheet passages.
-  const scripts: typeof story.passages = [];
-  const stylesheets: typeof story.passages = [];
+  const scripts: ReadonlyPassage[] = [];
+  const stylesheets: ReadonlyPassage[] = [];
   for (const p of story.passages) {
     if (hasTag(p, 'Twine.private')) continue;
     if (hasTag(p, 'script')) scripts.push(p);
@@ -138,23 +131,4 @@ function getTwine2DataChunk(
     `options="${attrEscape(optionsStr)}" tags="${attrEscape(story.twine2.tags)}" hidden>`;
 
   return wrapper + parts.join('') + '</tw-storydata>';
-}
-
-function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
-  if (story.ifid !== '') return;
-
-  if (story.legacyIFID !== '') {
-    story.ifid = story.legacyIFID;
-    diagnostics.push({
-      level: 'warning',
-      message: 'Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.',
-    });
-  } else {
-    const ifid = generateIFID();
-    story.ifid = ifid;
-    diagnostics.push({
-      level: 'error',
-      message: `Story IFID not found. Add an IFID to your story: {"ifid":"${ifid}"}`,
-    });
-  }
 }

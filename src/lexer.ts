@@ -44,10 +44,15 @@ class LexerContext {
     }
   }
 
+  // Line-counting invariant: next() increments this.line for each newline during
+  // character-by-character scanning. However, Content items are produced by jumping
+  // this.pos directly (e.g. via indexOf) without calling next(), so those newlines
+  // haven't been counted yet. emit() re-counts newlines in [start, pos) for Content
+  // items to compensate. This is safe because this.start is reset to this.pos after
+  // every emit(), so no range is ever counted twice.
   emit(type: ItemType): void {
     const val = this.input.slice(this.start, this.pos);
     this.items.push({ type, line: this.line, pos: this.start, val });
-    // Content items may contain newlines that must be counted.
     if (type === ItemType.Content) {
       for (let i = this.start; i < this.pos; i++) {
         if (this.input.charCodeAt(i) === 0x0a) this.line++;
