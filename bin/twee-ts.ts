@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { compile, compileToFile, watch } from '../src/compiler.js';
+import { lint, formatLintReport } from '../src/lint.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 import { discoverCachedFormats } from '../src/remote-formats.js';
@@ -27,6 +28,7 @@ const { values, positionals } = parseArgs({
     'archive-twine1': { type: 'boolean' },
     'twee2-compat': { type: 'boolean' },
     'no-trim': { type: 'boolean' },
+    lint: { type: 'boolean' },
     test: { type: 'boolean', short: 't' },
     watch: { type: 'boolean', short: 'w' },
     'log-stats': { type: 'boolean', short: 'l' },
@@ -106,6 +108,29 @@ async function main(): Promise<void> {
       }
       tagAliases[pair.slice(0, eq)] = pair.slice(eq + 1);
     }
+  }
+
+  // Lint mode: compile + inspect, no output
+  if (values.lint) {
+    const lintResult = await lint({
+      sources,
+      formatId: values.format ?? config?.formatId,
+      startPassage: values.start ?? config?.startPassage,
+      formatPaths: config?.formatPaths,
+      modules: values.module ?? config?.modules,
+      headFile: values.head ?? config?.headFile,
+      trim: values['no-trim'] ? false : (config?.trim ?? true),
+      twee2Compat: values['twee2-compat'] ?? config?.twee2Compat ?? false,
+      testMode: values.test ?? config?.testMode ?? false,
+      formatIndices: values['format-index'] ?? config?.formatIndices,
+      formatUrls: values['format-url'] ?? config?.formatUrls,
+      noRemote: values['no-remote'] ?? config?.noRemote ?? false,
+      tagAliases,
+      sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
+    });
+    console.log(formatLintReport(lintResult));
+    const hasErrors = lintResult.brokenLinks.length > 0 || lintResult.diagnostics.some((d) => d.level === 'error');
+    process.exit(hasErrors ? 1 : 0);
   }
 
   const compileOptions = {
@@ -254,6 +279,7 @@ Options:
   --archive-twine1          Output as Twine 1 archive
   --json                    Output as JSON
   --twee2-compat            Enable Twee2 syntax compatibility
+  --lint                    Lint story structure (broken links, dead ends, orphans)
   --no-trim                 Don't trim passage whitespace
   -t, --test                Enable test/debug mode
   -w, --watch               Watch for changes and rebuild

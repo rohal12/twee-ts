@@ -9,6 +9,9 @@ export { compile, compileToFile, watch, TweeTsError } from './compiler.js';
 // Story inspection (for unit testing)
 export { storyInspect } from './inspect.js';
 
+// Lint
+export { lint, formatLintReport } from './lint.js';
+
 // Passage utilities
 export { applyTagAliases } from './passage.js';
 
@@ -53,3 +56,4 @@ export type {
   TweeTsConfig,
 } from './types.js';
 export type { StoryMap, BrokenLink } from './inspect.js';
+export type { LintResult } from './lint.js';

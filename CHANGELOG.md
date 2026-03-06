@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-03-06
+
+### Added
+
+- `--lint` CLI flag for linting story structure without producing output — reports broken links, dead ends, orphans, and compilation diagnostics ([#16](https://github.com/rohal12/twee-ts/issues/16), [#20](https://github.com/rohal12/twee-ts/issues/20))
+- `lint()` and `formatLintReport()` programmatic API functions for CI/CD integration
+- `LintResult` type exported from the public API
+- Exit code 1 when lint finds errors (broken links, compilation errors); warnings do not cause non-zero exit
+
 ## [1.6.0] - 2026-03-06
 
 ### Added

@@ -57,6 +57,30 @@ See [Output Modes](./output-modes) for details on each mode.
 
 See [Format Discovery](./story-formats) for how formats are located.
 
+### Linting
+
+| Flag     | Description                                                             |
+| -------- | ----------------------------------------------------------------------- |
+| `--lint` | Lint story structure (broken links, dead ends, orphans) without output. |
+
+Exits with code 1 if errors are found (broken links, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit.
+
+```sh
+$ twee-ts --lint ./story/
+Format: SugarCube 2.37.3
+Passages: 42 total (38 story, 4 info), 12,345 words, 15 files
+Start: Start
+
+Broken links (1):
+  Kitchen -> Pantry (passage "Pantry" does not exist)
+
+Dead ends (2): Ending1, Ending2
+
+Orphans (1): UnusedRoom
+
+Lint failed.
+```
+
 ### Watch & Logging
 
 | Flag              | Description                                                        |

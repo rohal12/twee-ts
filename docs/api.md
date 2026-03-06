@@ -236,6 +236,21 @@ const errors = validateConfig({ sources: 42 }); // validation
 const json = scaffoldConfig(); // default config JSON
 ```
 
+### Lint
+
+```typescript
+import { lint, formatLintReport } from '@rohal12/twee-ts';
+
+const result = await lint({ sources: ['src/'] });
+
+console.log(result.brokenLinks); // [{ from: 'Kitchen', to: 'Pantry' }]
+console.log(result.deadEnds); // ['Ending1', 'Ending2']
+console.log(result.orphans); // ['UnusedRoom']
+
+// Human-readable report
+console.log(formatLintReport(result));
+```
+
 ### Story Inspection
 
 ```typescript
@@ -273,5 +288,6 @@ import type {
   SFAIndexEntry,
   SourceLocation,
   TweeTsConfig,
+  LintResult,
 } from '@rohal12/twee-ts';
 ```
