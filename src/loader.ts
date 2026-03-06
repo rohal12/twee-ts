@@ -8,6 +8,7 @@ import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from '.
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
 import { storyAdd, storyPrepend } from './story.js';
 import { parseTwee } from './parser.js';
+import { decompileHTML } from './html-parser.js';
 import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
 
 interface LoadOptions {
@@ -41,6 +42,10 @@ export function loadSources(
         case 'tw2':
         case 'twee2':
           loadTwee(story, filename, { ...opts, twee2Compat: true }, diagnostics);
+          break;
+        case 'htm':
+        case 'html':
+          loadHTML(story, filename, diagnostics);
           break;
         case 'css':
           loadTagged(story, 'stylesheet', filename, diagnostics);
@@ -184,6 +189,12 @@ function parseFontFile(filename: string): ParseResult {
   };
 }
 
+function parseHTMLFile(filename: string): ParseResult {
+  const source = readUTF8(filename);
+  const result = decompileHTML(source);
+  return { passages: result.story.passages, diagnostics: [...result.diagnostics] };
+}
+
 function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined {
   const ext = normalizedFileExt(filename);
   switch (ext) {
@@ -193,6 +204,9 @@ function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined
     case 'tw2':
     case 'twee2':
       return parseTweeFile(filename, { ...opts, twee2Compat: true });
+    case 'htm':
+    case 'html':
+      return parseHTMLFile(filename);
     case 'css':
       return parseTaggedFile('stylesheet', filename);
     case 'js':
@@ -230,6 +244,14 @@ function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined
       return parseMediaFile('Twine.vtt', filename);
     default:
       return undefined;
+  }
+}
+
+function loadHTML(story: Story, filename: string, diagnostics: Diagnostic[]): void {
+  const result = parseHTMLFile(filename);
+  diagnostics.push(...result.diagnostics);
+  for (const p of result.passages) {
+    storyAdd(story, p, diagnostics);
   }
 }
 

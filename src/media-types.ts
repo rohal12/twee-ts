@@ -73,6 +73,8 @@ const KNOWN_EXTENSIONS = new Set([
   'twee',
   'tw2',
   'twee2',
+  'htm',
+  'html',
   'css',
   'js',
   'otf',
