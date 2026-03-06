@@ -4,6 +4,7 @@ import {
   storyHas,
   storyGet,
   storyAdd,
+  storyPrepend,
   marshalStoryData,
   unmarshalStoryData,
   unmarshalStorySettings,
@@ -70,6 +71,33 @@ describe('Story', () => {
     expect(story.twine2.format).toBe('SugarCube');
     expect(story.twine2.formatVersion).toBe('2.37.3');
     expect(story.twine2.start).toBe('Begin');
+  });
+
+  it('lookups work after storyPrepend', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('A', 'alpha'), diag);
+    storyAdd(story, mkPassage('B', 'beta'), diag);
+    storyPrepend(story, mkPassage('Z', 'zulu'), diag);
+    expect(story.passages).toHaveLength(3);
+    expect(storyHas(story, 'Z')).toBe(true);
+    expect(storyHas(story, 'A')).toBe(true);
+    expect(storyHas(story, 'B')).toBe(true);
+    expect(storyGet(story, 'Z')?.text).toBe('zulu');
+    expect(storyGet(story, 'A')?.text).toBe('alpha');
+    expect(storyGet(story, 'B')?.text).toBe('beta');
+    expect(story.passages[0].name).toBe('Z');
+  });
+
+  it('storyPrepend replaces existing passage in place', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('A', 'first'), diag);
+    storyAdd(story, mkPassage('B', 'second'), diag);
+    storyPrepend(story, mkPassage('A', 'replaced'), diag);
+    expect(story.passages).toHaveLength(2);
+    expect(storyGet(story, 'A')?.text).toBe('replaced');
+    expect(diag.some((d) => d.message.includes('duplicate'))).toBe(true);
   });
 
   it('warns on StoryIncludes', () => {

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-03-06
+
+### Changed
+
+- Passage lookups (`storyHas`, `storyGet`, `storyIndex`) now use an O(1) name index instead of linear scans, improving performance for large projects ([#27](https://github.com/rohal12/twee-ts/issues/27))
+
 ## [1.5.0] - 2026-03-06
 
 ### Added
