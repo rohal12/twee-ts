@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This is the root instruction file for Claude Code and Claude Code GitHub Actions.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
 
@@ -18,22 +18,38 @@ This is the root instruction file for Claude Code and Claude Code GitHub Actions
 
 ## Architecture
 
+### Compilation pipeline
+
+`.twee` files → **lexer** (generator/yield state machine) → **parser** (tokens → Passage[]) → **StoryBuilder** (assembles Story model) → **output renderer** (Twine 2 HTML, Twine 1 HTML, or Twee source)
+
+The **compiler** (`compile()`, `compileToFile()`, `watch()`) orchestrates this pipeline end-to-end. The **loader** handles file I/O for all input types (twee, css, js, media, fonts).
+
+### Key source layout
+
 ```
 src/
+  types.ts        — All public interfaces (single source of truth for types)
+  index.ts        — Public API surface (re-exports from implementation modules)
   lexer.ts        — State-machine generator (function* + yield), ports Go's goroutine+channel pattern
   parser.ts       — Consumes lexer items → Passage[]
-  story.ts        — Story builder, StoryData JSON marshal/unmarshal
+  story.ts        — StoryBuilder: assembles Story model, StoryData JSON marshal/unmarshal
   compiler.ts     — Main orchestrator: compile(), compileToFile(), watch()
   output-twine2.ts, output-twine1.ts, output-twee.ts — Output renderers
   formats.ts      — Story format discovery with SemVer matching
   remote-formats.ts — Remote format fetching from Story Format Archive
   loader.ts       — File loading (twee, css, js, media, fonts)
-  types.ts        — All public interfaces (single source of truth)
+  html-parser.ts  — Decompile Twine HTML back to Story model
+  inspect.ts      — Story inspection (passage map, broken links)
+  lint.ts         — Linter for story validation
+  config.ts       — Config file loading and validation
   plugins/        — Vite and Rollup plugins
 bin/
   twee-ts.ts      — CLI entry point
 test/
+  *.test.ts       — Unit tests (one per src module)
   fixtures/       — Test fixtures including minimal story formats
+specs/
+  *.test.ts       — Specification conformance tests (Twee3, Twine HTML output, etc.)
 ```
 
 ## Code style
@@ -92,11 +108,58 @@ Follow type-first development: define data models and function signatures before
 
 ## Commands
 
-- `pnpm test` — run tests
+- `pnpm test` — run all tests (unit + spec conformance)
+- `pnpm test test/lexer.test.ts` — run a single test file
+- `pnpm test -t "test name"` — run tests matching a name pattern
+- `pnpm run test:watch` — run tests in watch mode
+- `pnpm run test:coverage` — run tests with V8 coverage report
 - `pnpm run typecheck` — strict type checking
-- `pnpm run build` — production build
+- `pnpm run build` — production build (ESM + CJS via tsup)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
+- `pnpm run docs:dev` — local VitePress dev server
+
+## Releasing
+
+Releases use `tobua/release-npm-action@v3` (`.github/workflows/release.yml`), which runs on every push to `main`. It reads `CHANGELOG.md` to detect whether a new version exists vs what's published on npm. If the latest changelog version is newer, it bumps `package.json`, creates a git tag, and publishes to npm.
+
+### How to release
+
+1. **Create a release branch** named `release/X.Y.Z`
+2. **Rebase onto latest main** before committing — ensures clean history
+3. **Run all checks**: `pnpm run format && pnpm run typecheck && pnpm test && pnpm run build`
+4. **Update `CHANGELOG.md`** with a new version section using [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
+
+   ```markdown
+   ## [X.Y.Z] - YYYY-MM-DD
+
+   ### Added
+
+   - ...
+   ```
+
+   Do NOT update `package.json` version manually — the action handles that.
+
+5. **Open a PR** with title `release: vX.Y.Z` and reviewer `rohal12`
+6. **CRITICAL**: The PR body MUST contain `release-npm` as a standalone line. The action looks for this annotation in the merge commit message body to trigger a publish. Without it, the action skips with `No release requested.`
+7. **After merge**, the release workflow runs typecheck + tests + build, then publishes. Verify: `npm view @rohal12/twee-ts version`
+
+### SemVer rules
+
+- **patch** (X.Y.Z+1): bug fixes, test additions, formatting
+- **minor** (X.Y+1.0): new features, new exports, new CLI flags
+- **major** (X+1.0.0): breaking API changes, removed exports, changed behavior
+
+### Commit message conventions
+
+| Prefix   | Use for                    |
+| -------- | -------------------------- |
+| `feat:`  | New features, new exports  |
+| `fix:`   | Bug fixes                  |
+| `docs:`  | Documentation only         |
+| `style:` | Formatting, no code change |
+| `test:`  | Adding/updating tests      |
+| `chore:` | Tooling, CI, dependencies  |
 
 ## PR review guidelines
 
