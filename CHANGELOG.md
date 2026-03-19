@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-03-19
+
+### Fixed
+
+- `String.replace` `$&` corruption when inlining JS modules — `$&`, `` $` ``, `$'`, and `$<digits>` in module content were silently replaced by `String.replace()` special patterns, corrupting bundled JavaScript ([#46](https://github.com/rohal12/twee-ts/issues/46))
+- Same `String.replace` corruption in Twine 2 and Twine 1 HTML output renderers when story content contains replacement patterns
+
 ## [1.13.0] - 2026-03-06
 
 ### Added

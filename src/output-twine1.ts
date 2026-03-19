@@ -40,11 +40,12 @@ export function toTwine1HTML(story: ReadonlyStory, format: StoryFormatInfo, star
   const displayStart = startName === 'Start' ? '' : startName;
   template = template.replace('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`);
   template = template.replace('"TIME"', `Built on ${new Date().toUTCString()}`);
-  template = template.replace('"START_AT"', `"${jsStringEscape(displayStart)}"`);
+  const startAtValue = `"${jsStringEscape(displayStart)}"`;
+  template = template.replace('"START_AT"', () => startAtValue);
   template = template.replace('"STORY_SIZE"', `"${count}"`);
 
   if (template.includes('"STORY"')) {
-    template = template.replace('"STORY"', data);
+    template = template.replace('"STORY"', () => data);
   } else {
     // Pre-1.4 format: append data + footer
     let footer: string;
@@ -88,7 +89,7 @@ function tryReplaceComponent(template: string, placeholder: string, componentPat
   try {
     let content = readFileSync(componentPath, 'utf-8');
     if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-    return template.replace(placeholder, content);
+    return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) {
       throw new Error(
