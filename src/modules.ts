@@ -90,7 +90,8 @@ export function modifyHead(html: string, modulePaths: string[], headFile?: strin
 
   if (parts.length > 0) {
     parts.push('</head>');
-    return html.replace('</head>', parts.join('\n'));
+    const replacement = parts.join('\n');
+    return html.replace('</head>', () => replacement);
   }
   return html;
 }

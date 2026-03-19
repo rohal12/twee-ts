@@ -27,10 +27,12 @@ export function toTwine2HTML(
   let template = readFormatSource(format);
 
   if (template.includes('{{STORY_NAME}}')) {
-    template = template.replaceAll('{{STORY_NAME}}', htmlEscape(story.name));
+    const name = htmlEscape(story.name);
+    template = template.replaceAll('{{STORY_NAME}}', () => name);
   }
   if (template.includes('{{STORY_DATA}}')) {
-    template = template.replace('{{STORY_DATA}}', getTwine2DataChunk(story, startName, options));
+    const data = getTwine2DataChunk(story, startName, options);
+    template = template.replace('{{STORY_DATA}}', () => data);
   }
 
   return template;

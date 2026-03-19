@@ -93,6 +93,22 @@ describe('modifyHead', () => {
     expect(modifyHead(baseHtml, [])).toBe(baseHtml);
   });
 
+  it('preserves $& and other replacement patterns in module content', () => {
+    const file = join(TMP_DIR, 'regex-lib.js');
+    writeFileSync(file, 'var x = "test".replace(/t/, "$&$&");');
+    const result = modifyHead(baseHtml, [file]);
+    expect(result).toContain('$&$&');
+    expect(result).not.toContain('</head></head>');
+  });
+
+  it("preserves $` and $' replacement patterns in module content", () => {
+    const file = join(TMP_DIR, 'patterns.js');
+    writeFileSync(file, 'var a = "$`"; var b = "$\'";');
+    const result = modifyHead(baseHtml, [file]);
+    expect(result).toContain('$`');
+    expect(result).toContain("$'");
+  });
+
   it('collects diagnostics for missing head file', () => {
     const diagnostics: Diagnostic[] = [];
     const result = modifyHead(baseHtml, [], join(TMP_DIR, 'missing.html'), diagnostics);
