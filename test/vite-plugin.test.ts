@@ -1,8 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { build } from 'vite';
+import { createServer as createNetServer, type AddressInfo } from 'node:net';
+import { pathToFileURL } from 'node:url';
+import { build, createServer, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
@@ -142,5 +144,202 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
         }),
       ),
     ).rejects.toThrow(/main\.ts/);
+  });
+});
+
+async function freePort(): Promise<number> {
+  return new Promise((done) => {
+    const probe = createNetServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => done(port));
+    });
+  });
+}
+
+describe('vite plugin: dev server', { timeout: 30_000 }, () => {
+  let server: ViteDevServer | undefined;
+
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+  });
+
+  async function start(dir: string, plugin?: ReturnType<typeof tweeTsPlugin>, configFile?: string): Promise<string> {
+    const port = await freePort();
+    server = await createServer({
+      configFile: configFile ?? false,
+      root: dir,
+      logLevel: 'silent',
+      server: { host: '127.0.0.1', port, strictPort: true },
+      plugins: plugin ? [plugin] : [],
+    });
+    await server.listen();
+    return `http://127.0.0.1:${port}/`;
+  }
+
+  async function page(url: string): Promise<string> {
+    return (await fetch(url)).text();
+  }
+
+  function plugin(
+    dir: string,
+    extra: Partial<Parameters<typeof tweeTsPlugin>[0]> = {},
+  ): ReturnType<typeof tweeTsPlugin> {
+    return tweeTsPlugin({
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+      ...extra,
+    });
+  }
+
+  it("serves the story with Vite's client and the bundled entry", async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const html = await page(url);
+    expect(html).toContain('<script type="module" src="/@vite/client"></script>');
+    expect(html).toContain('Hello from the story.');
+    expect(userScript(html)).toContain('entry-ok');
+    expect(userStylesheet(html)).toContain('--entry-marker');
+    expect(await page(`${url}?ignored=1`)).toContain('Hello from the story.');
+  });
+
+  it('recompiles after a passage changes and tells the page to reload', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const send = vi.spyOn(server!.ws, 'send');
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Changed text.'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('Changed text.'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+    expect(send).toHaveBeenCalledWith({ type: 'full-reload' });
+  });
+
+  it('rebundles when CSS imported by the entry changes', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    writeFileSync(join(dir, 'app/style.css'), ':root { --entry-marker: 2; }\n');
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toMatch(/--entry-marker:\s*2/), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('recompiles when the head file changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': ENTRY,
+      'app/style.css': STYLE,
+      'head.html': '<meta name="head-marker" content="one">',
+    });
+    const url = await start(dir, plugin(dir, { compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') } }));
+    expect(await page(url)).toContain('content="one"');
+    writeFileSync(join(dir, 'head.html'), '<meta name="head-marker" content="two">');
+    await vi.waitFor(async () => expect(await page(url)).toContain('content="two"'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('drops a deleted passage', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'story/extra.tw': ':: Extra\nExtra passage text.\n',
+      'app/main.ts': ENTRY,
+      'app/style.css': STYLE,
+    });
+    const url = await start(dir, plugin(dir));
+    expect(await page(url)).toContain('Extra passage text.');
+    unlinkSync(join(dir, 'story/extra.tw'));
+    await vi.waitFor(async () => expect(await page(url)).not.toContain('Extra passage text.'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('coalesces rapid saves and ends on the latest content', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const file = join(dir, 'story/start.tw');
+    unlinkSync(file);
+    writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
+    writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
+  });
+
+  it('shows a malformed passage in the overlay and keeps serving the last good story', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const send = vi.spyOn(server!.ws, 'send');
+    writeFileSync(join(dir, 'story/start.tw'), `${STORY}\n:: Broken [unclosed\nText\n`);
+    await vi.waitFor(
+      () =>
+        expect(send).toHaveBeenCalledWith({
+          type: 'error',
+          err: expect.objectContaining({
+            message: expect.stringMatching(/Malformed twee source/),
+            loc: expect.objectContaining({ file: expect.stringMatching(/start\.tw$/) }),
+          }),
+        }),
+      { timeout: 10_000, interval: 100 },
+    );
+    expect(await page(url)).toContain('Hello from the story.');
+  });
+
+  it('recovers after a broken entry is fixed', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const send = vi.spyOn(server!.ws, 'send');
+    writeFileSync(join(dir, 'app/main.ts'), 'const = ;\n');
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' })), {
+      timeout: 10_000,
+      interval: 100,
+    });
+    writeFileSync(join(dir, 'app/main.ts'), ENTRY.replace('entry-ok', 'entry-fixed'));
+    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-fixed'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('serves a waiting page with the client when the first compile fails', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'const = ;\n' });
+    const url = await start(dir, plugin(dir));
+    const html = await page(url);
+    expect(html).toContain('<script type="module" src="/@vite/client"></script>');
+    expect(html).not.toContain('Hello from the story.');
+  });
+
+  it('keeps working without an entry (existing users)', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    const url = await start(dir, plugin(dir, { entry: undefined }));
+    const html = await page(url);
+    expect(html).toContain('/@vite/client');
+    expect(html).toContain('Hello from the story.');
+  });
+
+  it("works from a config file: the entry build loads the user's config and the plugin stands aside", async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+    writeFileSync(
+      join(dir, 'vite.config.mjs'),
+      `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};
+export default {
+  plugins: [tweeTsPlugin({
+    sources: [${JSON.stringify(join(dir, 'story'))}],
+    format: 'test-format-1',
+    entry: ${JSON.stringify(join(dir, 'app/main.ts'))},
+    compileOptions: ${JSON.stringify(COMPILE)},
+  })],
+};
+`,
+    );
+    const url = await start(dir, undefined, join(dir, 'vite.config.mjs'));
+    const html = await page(url);
+    expect(userScript(html)).toContain('entry-ok');
+    expect(html).toContain('Hello from the story.');
   });
 });

@@ -4,10 +4,15 @@
  * Compiles Twee sources into the story HTML. With `entry`, Vite also bundles a
  * script, and the CSS it imports, into the story as its Story JavaScript and
  * Story Stylesheet.
+ *
+ * In dev the compiled HTML is served at the base URL with Vite's client added.
+ * Every change to a source, the head file, a module or a file the entry imports
+ * recompiles it and reloads the page, and errors appear in Vite's overlay.
  */
-import { resolve } from 'node:path';
-import { version as viteVersion } from 'vite';
-import type { InlineConfig, Plugin } from 'vite';
+import { dirname, resolve, sep } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
+import { build, version as viteVersion } from 'vite';
+import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
 
@@ -131,6 +136,76 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
   return entry;
 }
 
+/** Absolute paths whose changes recompile the story: sources, head file, modules. */
+function watchedInputs(options: TweeTsVitePluginOptions): string[] {
+  const extra = options.compileOptions;
+  return [...options.sources, ...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) =>
+    resolve(p),
+  );
+}
+
+function isInside(file: string, paths: readonly string[]): boolean {
+  return paths.some((p) => file === p || file.startsWith(p + sep));
+}
+
+/** Adds Vite's client to the page so reloads and the error overlay reach it. */
+function injectViteClient(html: string, base: string): string {
+  const tag = `<script type="module" src="${base}@vite/client"></script>`;
+  const head = /<head[^>]*>/i.exec(html);
+  if (!head) return tag + html;
+  const at = head.index + head[0].length;
+  return html.slice(0, at) + tag + html.slice(at);
+}
+
+/** Served until the first successful compile, so the overlay has a page to appear on. */
+function waitingPage(base: string): string {
+  return (
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    `<script type="module" src="${base}@vite/client"></script>` +
+    '<title>twee-ts</title></head><body><p>The story has not compiled yet.</p></body></html>'
+  );
+}
+
+function toOverlayError(e: unknown): ErrorPayload['err'] {
+  const error = fatalError(e);
+  return {
+    // Bundler messages carry terminal colour codes; the overlay would show them raw.
+    message: stripVTControlCharacters(error.message),
+    stack: '',
+    plugin: 'twee-ts',
+    ...(error.id ? { id: error.id } : {}),
+    ...(error.loc ? { loc: error.loc } : {}),
+  };
+}
+
+/** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
+async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Promise<EntryBundle> {
+  const inline: InlineConfig & Record<string, unknown> = {
+    configFile: config.configFile ?? false,
+    root: config.root,
+    mode: config.mode,
+    logLevel: 'error',
+    publicDir: false,
+    build: {
+      ...entryBuildOptions(entryPath),
+      write: false,
+      minify: false,
+      sourcemap: 'inline',
+      emptyOutDir: false,
+      copyPublicDir: false,
+      watch: null,
+    },
+    [INNER_BUILD_FLAG]: true,
+  };
+  const out = await build(inline);
+  const bundle: Record<string, BundleItem> = {};
+  for (const result of Array.isArray(out) ? out : [out]) {
+    if (!('output' in result)) throw new Error('twee-ts: the entry build returned a watcher instead of a bundle.');
+    for (const item of result.output) bundle[item.fileName] = item;
+  }
+  return takeEntryFromBundle(bundle);
+}
+
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const outputFilename = options.outputFilename ?? 'index.html';
   const cache = new Map<string, FileCacheEntry>();
@@ -171,26 +246,76 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       },
     },
 
-    // Dev behaviour as in 1.14.0; Task 4 replaces these two hooks.
     async configureServer(server) {
-      for (const source of options.sources) {
-        server.watcher.add(source);
-      }
-      let compiledHtml = (await compileIncremental(buildCompileOptions(options, undefined), cache)).output;
-      const servePath = outputFilename === 'index.html' ? '/' : `/${outputFilename}`;
+      if (innerBuild) return;
+      const base = server.config.base;
+      const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
+      const inputs = watchedInputs(options);
+      const entryPath = options.entry ? resolve(options.entry) : undefined;
+      const entryDir = entryPath ? dirname(entryPath) : undefined;
+      server.watcher.add(inputs);
+
+      let html = '';
+      let lastError: ErrorPayload['err'] | undefined;
+      let entry: EntryBundle | undefined; // last good bundle
+      let entryStale = true; // bundle again on the next rebuild
+      let queue: Promise<void> = Promise.resolve();
+      let pending = new Set<string>();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const touchesEntry = (file: string): boolean =>
+        (entry?.files.has(file) ?? false) || (entryDir !== undefined && isInside(file, [entryDir]));
+
+      // `initial`: the compile at server start. No page is open yet, and Vite would
+      // hold a full-reload for the first page that connects and reload it once.
+      const rebuild = async (changed: ReadonlySet<string>, initial = false): Promise<void> => {
+        try {
+          if (entryPath && (entryStale || [...changed].some(touchesEntry))) {
+            entryStale = true;
+            entry = await bundleEntryForDev(server.config, entryPath);
+            entryStale = false;
+          }
+          const result = await compileIncremental(buildCompileOptions(options, entry), cache);
+          for (const w of splitDiagnostics(result)) server.config.logger.warn(`[twee-ts] ${formatDiagnostic(w)}`);
+          html = injectViteClient(result.output, base);
+          lastError = undefined;
+          if (!initial) server.ws.send({ type: 'full-reload' });
+        } catch (e) {
+          lastError = toOverlayError(e);
+          server.config.logger.error(`[twee-ts] ${lastError.message}`);
+          server.ws.send({ type: 'error', err: lastError });
+        }
+      };
+
+      await rebuild(new Set(), true);
+
+      server.watcher.on('all', (event, file) => {
+        if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
+        const changed = resolve(file);
+        if (!isInside(changed, inputs) && !touchesEntry(changed)) return;
+        pending.add(changed);
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const files = pending;
+          pending = new Set();
+          queue = queue.then(() => rebuild(files));
+        }, 50);
+      });
+      server.httpServer?.on('close', () => clearTimeout(timer));
+
+      server.ws.on('connection', () => {
+        if (lastError) server.ws.send({ type: 'error', err: lastError });
+      });
+
       server.middlewares.use((req, res, next) => {
-        if (req.url === servePath || (servePath === '/' && req.url === '/index.html')) {
-          res.end(compiledHtml);
+        const path = (req.url ?? '').split('?')[0] ?? '';
+        if (!servePaths.includes(path)) {
+          next();
           return;
         }
-        next();
-      });
-      server.watcher.on('change', (file) => {
-        if (!file.endsWith('.tw') && !file.endsWith('.twee')) return;
-        void compileIncremental(buildCompileOptions(options, undefined), cache).then((result) => {
-          compiledHtml = result.output;
-          server.ws.send({ type: 'full-reload' });
-        });
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(html || waitingPage(base));
       });
     },
   };
