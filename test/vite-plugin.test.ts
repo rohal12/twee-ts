@@ -297,13 +297,14 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     extra: InlineConfig = {},
   ): Promise<string> {
     const port = await freePort();
+    const { server: serverOptions, ...rest } = extra;
     server = await createServer({
       configFile: configFile ?? false,
       root: dir,
       logLevel: 'silent',
-      server: { host: '127.0.0.1', port, strictPort: true },
       plugins: plugin ? [plugin] : [],
-      ...extra,
+      ...rest,
+      server: { host: '127.0.0.1', port, strictPort: true, ...serverOptions },
     });
     await server.listen();
     return `http://127.0.0.1:${port}/`;
@@ -557,16 +558,29 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
 
   it('coalesces rapid saves into one reload and ends on the latest content', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
-    const url = await start(dir, plugin(dir));
+    // No file watcher: the test delivers the watcher events itself. With real events, how
+    // far apart they arrive depends on the runner's load and chokidar, not on the plugin.
+    const url = await start(dir, plugin(dir), undefined, { server: { watch: null } });
     const send = vi.spyOn(server!.ws, 'send');
     const file = join(dir, 'story/start.tw');
-    // Saves 15 ms apart, as an editor that writes by unlink and add produces them.
-    const pause = () => new Promise((done) => setTimeout(done, 15));
-    unlinkSync(file);
-    await pause();
-    writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
-    await pause();
-    writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
+    const emit = (event: 'add' | 'change' | 'unlink'): void => void server!.watcher.emit('all', event, file);
+    // Saves 15 ms apart, as an editor that writes by unlink and add produces them. Fake timers
+    // drive the plugin's debounce, so the gaps are exactly 15 ms however loaded the machine is.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      unlinkSync(file);
+      emit('unlink');
+      vi.advanceTimersByTime(15);
+      writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
+      emit('add');
+      vi.advanceTimersByTime(15);
+      writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
+      emit('change');
+      vi.advanceTimersByTime(50);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
     await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
     await new Promise((done) => setTimeout(done, 300));
     expect(reloadsSent(send)).toBe(1);
