@@ -35,7 +35,6 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      # Publishes through npm trusted publishing (OIDC, id-token: write above); no npm token.
       - name: Release to npm
-        uses: tobua/release-npm-action@v4
-        with:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: tobua/release-npm-action@v5

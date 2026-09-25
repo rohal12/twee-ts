@@ -121,7 +121,9 @@ Follow type-first development: define data models and function signatures before
 
 ## Releasing
 
-Releases use `tobua/release-npm-action@v3` (`.github/workflows/release.yml`), which runs on every push to `main` but publishes only when the head commit's message contains the annotation `release-npm` (see step 6). It then runs semantic-release: the version bump comes from the Conventional Commit types since the last tag (`feat:` → minor, `fix:` → patch), and it publishes to npm and creates a git tag and a GitHub release. Nothing is committed back, so `package.json` in git keeps its old version; `src/version.ts` reads the published version at runtime. The `CHANGELOG.md` section is for readers; it does not decide the version.
+Releases use `tobua/release-npm-action@v5` (`.github/workflows/release.yml`), which runs on every push to `main` but publishes only when the head commit's message contains the annotation `release-npm` (see step 6). It then runs semantic-release: the version bump comes from the Conventional Commit types since the last tag (`feat:` → minor, `fix:` → patch), and it publishes to npm and creates a git tag and a GitHub release. Nothing is committed back, so `package.json` in git keeps its old version; `src/version.ts` reads the published version at runtime. The `CHANGELOG.md` section is for readers; it does not decide the version.
+
+It publishes through npm trusted publishing (OIDC): there is no npm token, the workflow needs `id-token: write`, and the release job must run on Node 24 or later, because OIDC publishing needs npm 11.5.1+. semantic-release pushes the git tag before `npm publish`, so if a publish fails, the tag stays and the next release takes the following version.
 
 ### How to release
 
