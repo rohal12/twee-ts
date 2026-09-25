@@ -200,6 +200,13 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(userStylesheet(html)).not.toContain('sourceMappingURL');
   });
 
+  it("keeps an inline source map inside the story with build.sourcemap: 'inline'", async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const outDir = await buildProject(dir, entryPlugin(dir), { sourcemap: 'inline' });
+    expect(readdirSync(outDir)).toEqual(['index.html']);
+    expect(userScript(readFileSync(join(outDir, 'index.html'), 'utf-8'))).toContain('sourceMappingURL=data:');
+  });
+
   it('fails the build on a malformed passage, naming file and line', async () => {
     const dir = makeProject({
       'story/start.tw': `${STORY}\n:: Broken [unclosed\nText\n`,
