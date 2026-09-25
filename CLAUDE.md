@@ -144,6 +144,9 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
 5. **Open a PR** with title `release: vX.Y.Z` and reviewer `rohal12`
 6. **CRITICAL**: The PR body MUST contain `release-npm` as a standalone line. The action looks for this annotation in the merge commit message body to trigger a publish. Without it, the action skips with `No release requested.`
+
+   The reverse matters too: the action treats `release-npm` **anywhere** in the merge commit message as a release request, including inside its own name `release-npm-action`. In any PR that should not release, don't write that string in the title or body, or in commit messages; call it "the release action". A Dependabot PR that bumps the action always contains it, so merging one releases any `fix:`/`feat:` commits already waiting on `main`. When there is nothing to release, the run passes (`FAIL_ON_SKIP: 'false'`).
+
 7. **After merge**, the release workflow runs typecheck + tests + build, then publishes. Verify: `npm view @rohal12/twee-ts version`
 
 ### SemVer rules

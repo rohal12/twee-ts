@@ -38,3 +38,7 @@ jobs:
       # Publishes through npm trusted publishing (OIDC, id-token: write above); no npm token.
       - name: Release to npm
         uses: tobua/release-npm-action@v5
+        with:
+          # The release trigger matches anywhere in the commit message, including inside this
+          # action's name. When it fires with only chore/docs commits to release, pass instead of failing.
+          FAIL_ON_SKIP: 'false'
