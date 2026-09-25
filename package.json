@@ -64,13 +64,13 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3",
+    "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.2",
     "htmlparser2": "^12.0.0",
-    "prettier": "^3.8.1",
+    "prettier": "^3.8.3",
     "tsup": "^8.4.0",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
+    "tsx": "^4.22.0",
+    "typescript": "^6.0.3",
     "vite": "^8.3.1",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.2"
@@ -85,7 +85,7 @@
   },
   "pnpm": {
     "overrides": {
-      "vitepress>vite": "^6.4.1"
+      "vitepress>vite": "^6.4.2"
     }
   }
 }
