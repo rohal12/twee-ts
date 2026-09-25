@@ -1,10 +1,19 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
-import { build, createServer, type ViteDevServer } from 'vite';
+import { build, createLogger, createServer, type InlineConfig, type Logger, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
@@ -207,7 +216,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
           compileOptions: COMPILE,
         }),
       ),
-    ).rejects.toThrow(/start\.tw:\d+: .*Malformed twee source/);
+    ).rejects.toThrow(/start\.tw:\d+: Malformed twee source/);
   });
 
   it('fails the build when the story format is missing', async () => {
@@ -274,7 +283,12 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     server = undefined;
   });
 
-  async function start(dir: string, plugin?: ReturnType<typeof tweeTsPlugin>, configFile?: string): Promise<string> {
+  async function start(
+    dir: string,
+    plugin?: ReturnType<typeof tweeTsPlugin>,
+    configFile?: string,
+    extra: InlineConfig = {},
+  ): Promise<string> {
     const port = await freePort();
     server = await createServer({
       configFile: configFile ?? false,
@@ -282,6 +296,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       logLevel: 'silent',
       server: { host: '127.0.0.1', port, strictPort: true },
       plugins: plugin ? [plugin] : [],
+      ...extra,
     });
     await server.listen();
     return `http://127.0.0.1:${port}/`;
@@ -356,6 +371,107 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/png');
     expect((await response.arrayBuffer()).byteLength).toBe(8192);
+  });
+
+  it('picks up a save that keeps the old modification time', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const file = join(dir, 'story/start.tw');
+    const coarse = new Date('2026-01-01T00:00:00Z');
+    utimesSync(file, coarse, coarse);
+    const url = await start(dir, plugin(dir));
+    writeFileSync(file, STORY.replace('Hello from the story.', 'Same-second save.'));
+    utimesSync(file, coarse, coarse);
+    await vi.waitFor(async () => expect(await page(url)).toContain('Same-second save.'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('keeps rebuilding after reporting an error fails', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    let broken = true;
+    const quiet = createLogger('silent');
+    const customLogger: Logger = {
+      ...quiet,
+      error(message, options) {
+        if (broken && message.includes('[twee-ts]')) {
+          broken = false;
+          throw new Error('the logger broke');
+        }
+        quiet.error(message, options);
+      },
+    };
+    const url = await start(dir, plugin(dir), undefined, { customLogger });
+    const file = join(dir, 'story/start.tw');
+    writeFileSync(file, `${STORY}\n:: Broken [unclosed\nText\n`);
+    await vi.waitFor(() => expect(broken).toBe(false), { timeout: 10_000, interval: 50 });
+    writeFileSync(file, STORY.replace('Hello from the story.', 'Recovered text.'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('Recovered text.'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('runs no rebuild after the server closes, in middleware mode too', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const mw = await createServer({
+      configFile: false,
+      root: dir,
+      logLevel: 'silent',
+      server: { middlewareMode: true, hmr: false },
+      plugins: [plugin(dir)],
+    });
+    const send = vi.spyOn(mw.ws, 'send');
+    const changed = new Promise<void>((done) => mw.watcher.once('change', () => done()));
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Late save.'));
+    await changed;
+    await mw.close();
+    await new Promise((done) => setTimeout(done, 500));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("without a config file, bundles the entry with the server's define and aliases", async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'lib/mark.ts': "export const libMark = 'alias-ok';\n",
+      'app/main.ts':
+        "import { libMark } from '@lib/mark';\ndeclare const __DEFINED__: string;\n(window as unknown as Record<string, string>).marks = __DEFINED__ + libMark;\n",
+    });
+    const url = await start(dir, plugin(dir), undefined, {
+      define: { __DEFINED__: JSON.stringify('define-ok') },
+      resolve: { alias: { '@lib': join(dir, 'lib') } },
+    });
+    const script = userScript(await page(url));
+    expect(script).toContain('define-ok');
+    expect(script).toContain('alias-ok');
+  });
+
+  it("bundles the entry even when the user's config turns on build.watch", async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const configFile = writeConfig(
+      dir,
+      {
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        entry: join(dir, 'app/main.ts'),
+        compileOptions: COMPILE,
+      },
+      '  build: { watch: {} },\n',
+    );
+    const url = await start(dir, undefined, configFile);
+    expect(userScript(await page(url))).toContain('entry-ok');
+  });
+
+  it("does not print the entry build's own failure message", async () => {
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'const = ;\n' });
+      const url = await start(dir, plugin(dir));
+      expect(await page(url)).toContain('/@vite/client');
+      expect(printed.mock.calls.flat().join('\n')).not.toMatch(/Build failed/);
+    } finally {
+      printed.mockRestore();
+    }
   });
 
   it("serves the story with Vite's client and the bundled entry", async () => {

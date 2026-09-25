@@ -12,7 +12,7 @@
 import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
-import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig, UserConfig } from 'vite';
+import type { ErrorPayload, InlineConfig, Logger, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
 import { mediaTypeFromFilename } from '../media-types.js';
@@ -82,7 +82,9 @@ interface LocatedError extends Error {
 
 function formatDiagnostic(d: Diagnostic): string {
   const where = d.file ? `${d.file}${d.line ? `:${d.line}` : ''}: ` : '';
-  return `${where}${d.message}`;
+  // The parser starts its messages with "line N: "; the location already says it.
+  const message = d.file && d.line ? d.message.replace(/^line \d+: /, '') : d.message;
+  return `${where}${message}`;
 }
 
 /** Returns the warnings; throws a LocatedError when the compile reported errors. */
@@ -225,13 +227,48 @@ function toOverlayError(e: unknown): ErrorPayload['err'] {
 }
 
 /** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
+/**
+ * The entry build's logger: its warnings go to the dev server's logger; its
+ * progress lines and its own "build failed" line are dropped, because the plugin
+ * reports a failed bundle itself.
+ */
+function entryBuildLogger(outer: Logger): Logger {
+  return {
+    info: () => {},
+    warn: (message, options) => outer.warn(message, options),
+    warnOnce: (message, options) => outer.warnOnce(message, options),
+    error: () => {},
+    clearScreen: () => {},
+    hasErrorLogged: () => false,
+    get hasWarned() {
+      return outer.hasWarned;
+    },
+  };
+}
+
+/**
+ * Keeps the entry build a one-off even when the user's config sets build.watch:
+ * Vite's config merge skips a null, so the inline `watch: null` alone can't.
+ */
+const oneOffEntryBuild: Plugin = {
+  name: 'twee-ts:one-off-entry-build',
+  enforce: 'post',
+  config(userConfig) {
+    if (userConfig.build) userConfig.build.watch = null;
+  },
+};
+
+/** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
 async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Promise<EntryBundle> {
   const inline: InlineConfig & Record<string, unknown> = {
     configFile: config.configFile ?? false,
     root: config.root,
     mode: config.mode,
-    logLevel: 'error',
+    customLogger: entryBuildLogger(config.logger),
     publicDir: false,
+    // With a config file the entry build reads it again, plugins and all. Without
+    // one, the settings that change how code bundles come across from the server.
+    ...(config.configFile ? {} : { define: config.define, resolve: { alias: config.resolve.alias } }),
     build: {
       ...entryBuildOptions(entryPath),
       write: false,
@@ -241,12 +278,16 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
       copyPublicDir: false,
       watch: null,
     },
+    plugins: [oneOffEntryBuild],
     [INNER_BUILD_FLAG]: true,
   };
   const out = await build(inline);
   const bundle: Record<string, BundleItem> = {};
   for (const result of Array.isArray(out) ? out : [out]) {
-    if (!('output' in result)) throw new Error('twee-ts: the entry build returned a watcher instead of a bundle.');
+    if (!('output' in result)) {
+      await result.close();
+      throw new Error('twee-ts: the entry build returned a watcher instead of a bundle.');
+    }
     for (const item of result.output) bundle[item.fileName] = item;
   }
   return takeEntryFromBundle(bundle);
@@ -256,6 +297,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const outputFilename = options.outputFilename ?? 'index.html';
   const cache = new Map<string, FileCacheEntry>();
   let innerBuild = false;
+  let stopDev: (() => void) | undefined;
 
   if (options.entry && viteMajor < 8) {
     throw new Error(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`);
@@ -323,6 +365,12 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       let queue: Promise<void> = Promise.resolve();
       let pending = new Set<string>();
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let closed = false;
+      stopDev = () => {
+        closed = true;
+        clearTimeout(timer);
+        pending.clear();
+      };
 
       // The files that belong to the entry: after a good bundle, exactly the modules
       // it was built from; while there is none, or the last one failed, anything in
@@ -333,6 +381,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // `initial`: the compile at server start. No page is open yet, and Vite would
       // hold a full-reload for the first page that connects and reload it once.
       const rebuild = async (changed: ReadonlySet<string>, initial = false): Promise<void> => {
+        if (closed) return;
+        // The compile cache trusts modification times, which a quick save may leave
+        // unchanged (coarse file-system timestamps); forget the files that changed.
+        for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
         try {
           if (entryPath && (entryStale || [...changed].some(touchesEntry))) {
             entryStale = true;
@@ -351,6 +403,16 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }
       };
 
+      // rebuild() reports its own errors; this catches a failure while reporting,
+      // so one bad report doesn't stop every later rebuild.
+      const keepQueueAlive = (e: unknown): void => {
+        try {
+          server.config.logger.error(`[twee-ts] ${fatalError(e).message}`);
+        } catch {
+          // Nothing left to report with.
+        }
+      };
+
       await rebuild(new Set(), true);
 
       server.watcher.on('all', (event, file) => {
@@ -365,10 +427,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         timer = setTimeout(() => {
           const files = pending;
           pending = new Set();
-          queue = queue.then(() => rebuild(files));
+          queue = queue.then(() => rebuild(files)).catch(keepQueueAlive);
         }, 50);
       });
-      server.httpServer?.on('close', () => clearTimeout(timer));
 
       server.ws.on('connection', () => {
         if (lastError) server.ws.send({ type: 'error', err: lastError });
@@ -392,6 +453,12 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }
         next();
       });
+    },
+
+    // Vite runs this when the dev server closes (and after a build); no rebuild may
+    // start after it, including one whose timer is still pending in middleware mode.
+    closeBundle() {
+      stopDev?.();
     },
   };
 }
