@@ -6,6 +6,38 @@ const FIXTURES_DIR = join(__dirname, 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
 
 describe('compile', () => {
+  it('warns about a source path that does not exist instead of dropping it silently', async () => {
+    const missing = join(FIXTURES_DIR, 'no-such-story');
+    const result = await compile({
+      sources: [join(FIXTURES_DIR, 'minimal.tw'), missing],
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+    });
+
+    expect(result.output).toContain('Minimal Story');
+    expect(result.diagnostics).toContainEqual({
+      level: 'warning',
+      message: expect.stringContaining(`path ${missing}: ENOENT`),
+    });
+  });
+
+  it('warns about a module path that does not exist', async () => {
+    const missing = join(FIXTURES_DIR, 'no-such-module.js');
+    const result = await compile({
+      sources: [join(FIXTURES_DIR, 'minimal.tw')],
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      modules: [missing],
+    });
+
+    expect(result.diagnostics).toContainEqual({
+      level: 'warning',
+      message: expect.stringContaining(`path ${missing}: ENOENT`),
+    });
+  });
+
   it('compiles a minimal twee file to HTML', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'minimal.tw')],

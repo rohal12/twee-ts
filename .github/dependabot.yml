@@ -9,8 +9,12 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
-  - package-ecosystem: "bun" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "github-actions"
+    directory: "/" # Checks the workflows in .github/workflows
     schedule:
       interval: "weekly"
-
+    ignore:
+      # v5 publishes through npm trusted publishing instead of NPM_TOKEN. Remove this
+      # once a trusted publisher for @rohal12/twee-ts is configured on npmjs.com.
+      - dependency-name: "tobua/release-npm-action"
+        update-types: ["version-update:semver-major"]

@@ -9,9 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - Node.js 22+, zero runtime dependencies
-- TypeScript 5.9+ with strict mode (`noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`)
+- TypeScript 7 (native compiler) with strict mode (`noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`)
 - pnpm package manager
-- tsup for bundling (ESM + CJS dual output)
+- tsdown for bundling (ESM + CJS dual output)
 - Vitest for testing
 - Prettier for formatting
 - VitePress for documentation
@@ -114,7 +114,7 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run test:watch` — run tests in watch mode
 - `pnpm run test:coverage` — run tests with V8 coverage report
 - `pnpm run typecheck` — strict type checking
-- `pnpm run build` — production build (ESM + CJS via tsup)
+- `pnpm run build` — production build (ESM + CJS via tsdown)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
