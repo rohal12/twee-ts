@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] - 2026-09-25
+
+### Fixed
+
+- A source or module path that does not exist or cannot be read is reported as a warning (`path <p>: …`), as Tweego does, instead of being skipped silently. Before, the first sign was often an unrelated error such as "Story IFID not found"
+
+### Changed
+
+- Built with tsdown instead of tsup, which is no longer maintained. The published files, exports and types are unchanged, and the TypeScript 6 `ignoreDeprecations` workaround is gone (#57)
+- Development dependencies updated to their latest versions, including TypeScript 7 and Vitest 5. This clears all open Dependabot alerts; none affected the published package, which has no runtime dependencies
+- GitHub Actions updated to their Node 24 releases
+
 ## [1.15.0] - 2026-09-25
 
 ### Added
