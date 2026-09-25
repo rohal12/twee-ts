@@ -524,6 +524,42 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     });
   });
 
+  it('rebundles when CSS reached through a nested @import changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "import './styles/index.css';\n",
+      'app/styles/index.css': "@import './base.css';\n",
+      'app/styles/base.css': ':root { --nested-marker: 1; }\n',
+    });
+    const url = await start(dir, plugin(dir));
+    expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*1/);
+    writeFileSync(join(dir, 'app/styles/base.css'), ':root { --nested-marker: 2; }\n');
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*2/), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('rebundles when a file the entry CSS references with url() changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "import './styles/index.css';\n",
+      'app/styles/index.css': "@import './base.css';\n",
+      'app/styles/base.css': 'body { background: url(../img/bg.png); }\n',
+    });
+    const image = join(dir, 'app/img/bg.png');
+    mkdirSync(dirname(image), { recursive: true });
+    writeFileSync(image, Buffer.from('first-image'));
+    const url = await start(dir, plugin(dir));
+    const encoded = (text: string): string => Buffer.from(text).toString('base64');
+    expect(userStylesheet(await page(url))).toContain(encoded('first-image'));
+    writeFileSync(image, Buffer.from('second-image'));
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toContain(encoded('second-image')), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
   it('recompiles when the head file changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,

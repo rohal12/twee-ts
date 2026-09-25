@@ -258,8 +258,51 @@ const oneOffEntryBuild: Plugin = {
   },
 };
 
+/** Plugin hooks that may call `this.addWatchFile`. */
+const WATCH_FILE_HOOKS = ['buildStart', 'resolveId', 'load', 'transform', 'buildEnd', 'renderChunk', 'generateBundle'];
+
+/** A plugin context whose `addWatchFile` also records the file in `files`. */
+function recordingContext(context: object, files: Set<string>): object {
+  return new Proxy(context, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== 'function') return value;
+      if (key !== 'addWatchFile') return value.bind(target);
+      return (id: string) => {
+        if (!id.startsWith('\0')) files.add(toPosix(resolve(id)));
+        return value.call(target, id);
+      };
+    },
+  });
+}
+
+/**
+ * Collects the files the entry build's plugins add with `addWatchFile`. These
+ * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
+ * in by `@import` and the files `url()` points at this way.
+ */
+function recordWatchFiles(files: Set<string>): Plugin {
+  return {
+    name: 'twee-ts:record-watch-files',
+    configResolved(config) {
+      for (const plugin of config.plugins as unknown as Record<string, unknown>[]) {
+        for (const name of WATCH_FILE_HOOKS) {
+          const hook = plugin[name];
+          const handler = typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
+          if (typeof handler !== 'function') continue;
+          const wrapped = function (this: object, ...args: unknown[]): unknown {
+            return handler.apply(recordingContext(this, files), args);
+          };
+          plugin[name] = typeof hook === 'function' ? wrapped : { ...(hook as object), handler: wrapped };
+        }
+      }
+    },
+  };
+}
+
 /** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
 async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Promise<EntryBundle> {
+  const watchFiles = new Set<string>();
   const inline: InlineConfig & Record<string, unknown> = {
     configFile: config.configFile ?? false,
     root: config.root,
@@ -278,7 +321,7 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
       copyPublicDir: false,
       watch: null,
     },
-    plugins: [oneOffEntryBuild],
+    plugins: [oneOffEntryBuild, recordWatchFiles(watchFiles)],
     [INNER_BUILD_FLAG]: true,
   };
   const out = await build(inline);
@@ -290,7 +333,9 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
     }
     for (const item of result.output) bundle[item.fileName] = item;
   }
-  return takeEntryFromBundle(bundle);
+  const entry = takeEntryFromBundle(bundle);
+  for (const file of watchFiles) entry.files.add(file);
+  return entry;
 }
 
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
@@ -384,8 +429,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         pending.clear();
       };
 
-      // The files that belong to the entry: after a good bundle, exactly the modules
-      // it was built from; while there is none, or the last one failed, anything in
+      // The files that belong to the entry: after a good bundle, the modules it was
+      // built from and the files its plugins watch (such as CSS @imports and url()
+      // targets); while there is none, or the last one failed, anything in
       // the project, so that creating a missing import brings it back.
       const touchesEntry = (file: string): boolean =>
         entryPath !== undefined && (entryStale ? isInside(file, [root]) : (entry?.files.has(file) ?? false));
