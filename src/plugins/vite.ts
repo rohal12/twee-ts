@@ -171,7 +171,7 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
     if (item.type === 'chunk') {
       if (item.isEntry) {
         entry.script = dropFileSourceMapComment(item.code);
-        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(toPosix(id));
+        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(fileOfId(id));
       }
       delete bundle[fileName];
     } else if (fileName.endsWith('.css')) {
@@ -258,8 +258,21 @@ const oneOffEntryBuild: Plugin = {
   },
 };
 
-/** Plugin hooks that may call `this.addWatchFile`. */
-const WATCH_FILE_HOOKS = ['buildStart', 'resolveId', 'load', 'transform', 'buildEnd', 'renderChunk', 'generateBundle'];
+/** Build-phase plugin hooks that may call `this.addWatchFile`. */
+const WATCH_FILE_HOOKS = [
+  'buildStart',
+  'resolveId',
+  'resolveDynamicImport',
+  'load',
+  'transform',
+  'moduleParsed',
+  'buildEnd',
+];
+
+/** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
+function fileOfId(id: string): string {
+  return toPosix(id.replace(/[?#].*$/s, ''));
+}
 
 /** A plugin context whose `addWatchFile` also records the file in `files`. */
 function recordingContext(context: object, files: Set<string>): object {
@@ -269,7 +282,7 @@ function recordingContext(context: object, files: Set<string>): object {
       if (typeof value !== 'function') return value;
       if (key !== 'addWatchFile') return value.bind(target);
       return (id: string) => {
-        if (!id.startsWith('\0')) files.add(toPosix(resolve(id)));
+        if (!id.startsWith('\0')) files.add(fileOfId(resolve(id)));
         return value.call(target, id);
       };
     },
@@ -280,16 +293,22 @@ function recordingContext(context: object, files: Set<string>): object {
  * A copy of `plugin` whose hooks record `addWatchFile` calls in `files`. The
  * original stays untouched, so a plugin object shared across entry builds never
  * collects wrappers. The copy keeps the prototype, so class-based plugins keep
- * their methods, and object-form hooks keep `order`, `filter` and the rest.
+ * their methods, and object-form hooks keep `order`, `filter` and the rest. A
+ * plugin with no such hooks (a built-in one, for instance) is returned as is.
  */
-function recordingPlugin(plugin: Readonly<Record<string, unknown>>, files: Set<string>): Record<string, unknown> {
+function recordingPlugin(plugin: unknown, files: Set<string>): unknown {
+  if (typeof plugin !== 'object' || plugin === null) return plugin;
+  const hooks = plugin as Readonly<Record<string, unknown>>;
+  const hookHandler = (hook: unknown): unknown =>
+    typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
+  if (!WATCH_FILE_HOOKS.some((name) => typeof hookHandler(hooks[name]) === 'function')) return plugin;
   const copy = Object.create(
     Object.getPrototypeOf(plugin) as object | null,
     Object.getOwnPropertyDescriptors(plugin),
   ) as Record<string, unknown>;
   for (const name of WATCH_FILE_HOOKS) {
-    const hook = plugin[name];
-    const handler = typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
+    const hook = hooks[name];
+    const handler = hookHandler(hook);
     if (typeof handler !== 'function') continue;
     const wrapped = function (this: object, ...args: unknown[]): unknown {
       return handler.apply(recordingContext(this, files), args);
@@ -303,16 +322,28 @@ function recordingPlugin(plugin: Readonly<Record<string, unknown>>, files: Set<s
  * Collects the files the entry build's plugins add with `addWatchFile`. These
  * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
  * in by `@import` and the files `url()` points at this way. The build runs on
- * recording copies of its plugins.
+ * recording copies of its plugins. They are made in the bundler's `options`
+ * hook, which sees the final plugin list, including the plugins Vite resolves
+ * per environment (`applyToEnvironment`) after `configResolved`.
  */
 function recordWatchFiles(files: Set<string>): Plugin {
   return {
     name: 'twee-ts:record-watch-files',
-    configResolved(config) {
-      const plugins = config.plugins as unknown as Record<string, unknown>[];
-      for (const [i, plugin] of plugins.entries()) plugins[i] = recordingPlugin(plugin, files);
+    options: {
+      order: 'post',
+      async handler(inputOptions) {
+        const plugins = (await flattenPlugins(inputOptions.plugins)).map((p) => recordingPlugin(p, files));
+        return { ...inputOptions, plugins: plugins as typeof inputOptions.plugins };
+      },
     },
   };
+}
+
+/** A plugin option (nested arrays, promises, falsy entries) as one flat list. */
+async function flattenPlugins(option: unknown): Promise<unknown[]> {
+  const value: unknown = await option;
+  if (Array.isArray(value)) return (await Promise.all(value.map(flattenPlugins))).flat();
+  return value ? [value] : [];
 }
 
 /** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
