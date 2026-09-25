@@ -147,6 +147,21 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
   });
 });
 
+/** Writes a vite.config.mjs that loads the plugin from source, as a project's config file would. */
+function writeConfig(dir: string, options: Record<string, unknown>, extra = ''): string {
+  const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+  const file = join(dir, 'vite.config.mjs');
+  writeFileSync(
+    file,
+    `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\nexport default {\n${extra}  plugins: [tweeTsPlugin(${JSON.stringify(options)})],\n};\n`,
+  );
+  return file;
+}
+
+function reloadsSent(send: { mock: { calls: unknown[][] } }): number {
+  return send.mock.calls.filter(([payload]) => (payload as { type?: string }).type === 'full-reload').length;
+}
+
 async function freePort(): Promise<number> {
   return new Promise((done) => {
     const probe = createNetServer();
@@ -194,6 +209,42 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       ...extra,
     });
   }
+
+  it('does not loop when the entry sits next to the config file', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'main.ts': ENTRY, 'style.css': STYLE });
+    const configFile = writeConfig(dir, {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'main.ts'),
+      compileOptions: COMPILE,
+    });
+    const url = await start(dir, undefined, configFile);
+    expect(userScript(await page(url))).toContain('entry-ok');
+    const send = vi.spyOn(server!.ws, 'send');
+    writeFileSync(join(dir, 'main.ts'), ENTRY.replace('entry-ok', 'entry-saved'));
+    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-saved'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+    await new Promise((done) => setTimeout(done, 1500));
+    expect(reloadsSent(send)).toBe(1);
+  });
+
+  it("recovers when a missing import outside the entry's folder is created", async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts':
+        "import { mark } from '../shared/util';\n(window as unknown as Record<string, string>).marker = mark;\n",
+    });
+    const url = await start(dir, plugin(dir));
+    expect(await page(url)).not.toContain('Hello from the story.');
+    mkdirSync(join(dir, 'shared'));
+    writeFileSync(join(dir, 'shared/util.ts'), "export const mark = 'shared-ok';\n");
+    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('shared-ok'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
 
   it("serves the story with Vite's client and the bundled entry", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });

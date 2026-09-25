@@ -9,12 +9,13 @@
  * Every change to a source, the head file, a module or a file the entry imports
  * recompiles it and reloads the page, and errors appear in Vite's overlay.
  */
-import { dirname, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
+import { isInside, isViteConfigTemp, toPosix } from './paths.js';
 
 export interface TweeTsVitePluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
@@ -45,7 +46,7 @@ const ENTRY_STYLE_NAME = 'twee-ts-entry.css';
  */
 const INNER_BUILD_FLAG = '__tweeTsEntryBuild';
 
-/** The bundled entry: its script, its stylesheet, and the files it was built from. */
+/** The bundled entry: its script, its stylesheet, and the files it was built from (forward-slash paths). */
 interface EntryBundle {
   script: string;
   style: string;
@@ -122,7 +123,7 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
     if (item.type === 'chunk') {
       if (item.isEntry) {
         entry.script = item.code;
-        for (const id of item.moduleIds) entry.files.add(id);
+        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(toPosix(id));
       }
       delete bundle[fileName];
     } else if (fileName.endsWith('.css')) {
@@ -136,16 +137,12 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
   return entry;
 }
 
-/** Absolute paths whose changes recompile the story: sources, head file, modules. */
+/** Absolute forward-slash paths whose changes recompile the story: sources, head file, modules. */
 function watchedInputs(options: TweeTsVitePluginOptions): string[] {
   const extra = options.compileOptions;
   return [...options.sources, ...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) =>
-    resolve(p),
+    toPosix(resolve(p)),
   );
-}
-
-function isInside(file: string, paths: readonly string[]): boolean {
-  return paths.some((p) => file === p || file.startsWith(p + sep));
 }
 
 /** Adds Vite's client to the page so reloads and the error overlay reach it. */
@@ -252,7 +249,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
       const inputs = watchedInputs(options);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
-      const entryDir = entryPath ? dirname(entryPath) : undefined;
+      const root = toPosix(server.config.root);
       server.watcher.add(inputs);
 
       let html = '';
@@ -263,8 +260,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       let pending = new Set<string>();
       let timer: ReturnType<typeof setTimeout> | undefined;
 
+      // The files that belong to the entry: after a good bundle, exactly the modules
+      // it was built from; while there is none, or the last one failed, anything in
+      // the project, so that creating a missing import brings it back.
       const touchesEntry = (file: string): boolean =>
-        (entry?.files.has(file) ?? false) || (entryDir !== undefined && isInside(file, [entryDir]));
+        entryPath !== undefined && (entryStale ? isInside(file, [root]) : (entry?.files.has(file) ?? false));
 
       // `initial`: the compile at server start. No page is open yet, and Vite would
       // hold a full-reload for the first page that connects and reload it once.
@@ -291,7 +291,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
       server.watcher.on('all', (event, file) => {
         if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
-        const changed = resolve(file);
+        const changed = toPosix(resolve(file));
+        // Loading the config for the entry build writes and deletes one of these;
+        // reacting to it would bundle again, and again.
+        if (isViteConfigTemp(changed)) return;
         if (!isInside(changed, inputs) && !touchesEntry(changed)) return;
         pending.add(changed);
         clearTimeout(timer);
