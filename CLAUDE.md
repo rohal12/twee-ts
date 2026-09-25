@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - Node.js 22+, zero runtime dependencies
-- TypeScript 5.9+ with strict mode (`noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`)
+- TypeScript 7 (native compiler) with strict mode (`noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`)
 - pnpm package manager
 - tsdown for bundling (ESM + CJS dual output)
 - Vitest for testing
