@@ -15,6 +15,7 @@ import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
+import { mediaTypeFromFilename } from '../media-types.js';
 import { isInside, isViteConfigTemp, toPosix } from './paths.js';
 
 export interface TweeTsVitePluginOptions {
@@ -56,11 +57,16 @@ const RESOLVED_EMPTY_INPUT = '\0' + EMPTY_INPUT;
 
 const viteMajor = Number.parseInt(viteVersion, 10);
 
-/** The bundled entry: its script, its stylesheet, and the files it was built from (forward-slash paths). */
+/**
+ * The bundled entry: its script, its stylesheet, the files it was built from
+ * (forward-slash paths), and any files the bundler still emits separately
+ * (by output file name).
+ */
 interface EntryBundle {
   script: string;
   style: string;
   files: Set<string>;
+  assets: Map<string, string | Uint8Array>;
 }
 
 /** The parts of a Vite output bundle this plugin reads. */
@@ -127,10 +133,15 @@ function inputOnly(input: string): NonNullable<InlineConfig['build']> {
   >;
 }
 
-/** Build settings that turn the entry into one IIFE script and one stylesheet. */
+/**
+ * Build settings that turn the entry into one IIFE script and one stylesheet.
+ * Fonts and images the entry uses are inlined as data URLs, so the story stays
+ * one file; only an import marked `?no-inline` is still emitted separately.
+ */
 function entryBuildOptions(entryPath: string): NonNullable<InlineConfig['build']> {
   return {
     cssCodeSplit: false,
+    assetsInlineLimit: () => true,
     rolldownOptions: {
       input: entryPath,
       output: { format: 'iife', entryFileNames: ENTRY_SCRIPT_NAME, assetFileNames: '[name][extname]' },
@@ -138,22 +149,37 @@ function entryBuildOptions(entryPath: string): NonNullable<InlineConfig['build']
   };
 }
 
-/** Removes the entry's script, stylesheet and script map from the bundle and returns them. */
+/** Removes a trailing source-map comment that points at a file (a data: URL map stays). */
+function dropFileSourceMapComment(code: string): string {
+  return code
+    .replace(/\n?\/\/# sourceMappingURL=(?!data:)\S*\s*$/, '')
+    .replace(/\n?\/\*# sourceMappingURL=(?!data:)[^*]*\*\/\s*$/, '');
+}
+
+/**
+ * Takes the entry's script and stylesheet out of the bundle, together with
+ * their map files, which the story cannot ship. Anything else the bundler
+ * emitted stays in the bundle, so a build writes it next to the HTML, and is
+ * also returned, so the dev server can serve it.
+ */
 function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
-  const entry: EntryBundle = { script: '', style: '', files: new Set() };
+  const entry: EntryBundle = { script: '', style: '', files: new Set(), assets: new Map() };
   const styles: string[] = [];
   for (const [fileName, item] of Object.entries(bundle)) {
     if (item.type === 'chunk') {
       if (item.isEntry) {
-        entry.script = item.code;
+        entry.script = dropFileSourceMapComment(item.code);
         for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(toPosix(id));
       }
       delete bundle[fileName];
     } else if (fileName.endsWith('.css')) {
-      styles.push(typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source));
+      const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
+      styles.push(dropFileSourceMapComment(css));
       delete bundle[fileName];
-    } else if (fileName.endsWith('.js.map')) {
+    } else if (fileName.endsWith('.map')) {
       delete bundle[fileName];
+    } else {
+      entry.assets.set(fileName, item.source);
     }
   }
   entry.style = styles.join('\n');
@@ -350,13 +376,21 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
       server.middlewares.use((req, res, next) => {
         const path = (req.url ?? '').split('?')[0] ?? '';
-        if (!servePaths.includes(path)) {
-          next();
+        if (servePaths.includes(path)) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end(html || waitingPage(base));
           return;
         }
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(html || waitingPage(base));
+        // Files the entry's bundle still emits separately, where the build writes them.
+        const asset = path.startsWith(base) ? entry?.assets.get(path.slice(base.length)) : undefined;
+        if (asset !== undefined) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', mediaTypeFromFilename(path));
+          res.end(asset);
+          return;
+        }
+        next();
       });
     },
   };

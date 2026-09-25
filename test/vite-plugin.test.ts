@@ -47,14 +47,59 @@ export function userStylesheet(html: string): string {
   return /<style[^>]*id="twine-user-stylesheet"[^>]*>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
 }
 
+function writeBinary(dir: string, name: string, bytes: number): void {
+  const path = join(dir, name);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, Buffer.alloc(bytes, 7));
+}
+
+const ASSET_ENTRY = `import './style.css';
+import logo from './img/logo.png';
+(window as unknown as Record<string, string>).logo = logo;
+`;
+
+const ASSET_STYLE = `@font-face { font-family: t; src: url(./fonts/f.woff2); }
+body { background: url(./img/bg.png); }
+`;
+
+const KEEP_ENTRY = `import keep from './img/keep.png?no-inline';
+(window as unknown as Record<string, string>).keep = keep;
+`;
+
+/** A project whose entry uses a font and two images, each above Vite's 4 KiB inline limit. */
+function assetProject(): string {
+  const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ASSET_ENTRY, 'app/style.css': ASSET_STYLE });
+  for (const file of ['app/fonts/f.woff2', 'app/img/bg.png', 'app/img/logo.png']) writeBinary(dir, file, 8192);
+  return dir;
+}
+
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function buildProject(dir: string, plugin: ReturnType<typeof tweeTsPlugin>): Promise<string> {
+async function buildProject(
+  dir: string,
+  plugin: ReturnType<typeof tweeTsPlugin>,
+  buildOptions: Record<string, unknown> = {},
+): Promise<string> {
   const outDir = join(dir, 'dist');
-  await build({ configFile: false, root: dir, logLevel: 'silent', build: { outDir }, plugins: [plugin] });
+  await build({
+    configFile: false,
+    root: dir,
+    logLevel: 'silent',
+    build: { outDir, ...buildOptions },
+    plugins: [plugin],
+  });
   return outDir;
+}
+
+function entryPlugin(dir: string): ReturnType<typeof tweeTsPlugin> {
+  return tweeTsPlugin({
+    sources: [join(dir, 'story')],
+    format: 'test-format-1',
+    entry: join(dir, 'app/main.ts'),
+    compileOptions: COMPILE,
+  });
 }
 
 describe('vite plugin: build', { timeout: 30_000 }, () => {
@@ -118,6 +163,32 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     );
     expect(readdirSync(outDir)).toEqual(['index.html']);
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('inlines the fonts and images the entry uses, so the HTML stays the only file', async () => {
+    const dir = assetProject();
+    const outDir = await buildProject(dir, entryPlugin(dir));
+    expect(readdirSync(outDir)).toEqual(['index.html']);
+    const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+    expect(userStylesheet(html)).toContain('data:font/woff2;base64,');
+    expect(userStylesheet(html)).toContain('data:image/png;base64,');
+    expect(userScript(html)).toContain('data:image/png;base64,');
+  });
+
+  it('writes an asset the bundler still emits next to the HTML', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': KEEP_ENTRY });
+    writeBinary(dir, 'app/img/keep.png', 8192);
+    const outDir = await buildProject(dir, entryPlugin(dir));
+    expect(readdirSync(outDir).sort()).toEqual(['index.html', 'keep.png']);
+  });
+
+  it('leaves no source-map comment pointing at a file the build does not write', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const outDir = await buildProject(dir, entryPlugin(dir), { sourcemap: true });
+    expect(readdirSync(outDir)).toEqual(['index.html']);
+    const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+    expect(userScript(html)).not.toContain('sourceMappingURL');
+    expect(userStylesheet(html)).not.toContain('sourceMappingURL');
   });
 
   it('fails the build on a malformed passage, naming file and line', async () => {
@@ -267,6 +338,24 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       timeout: 10_000,
       interval: 100,
     });
+  });
+
+  it("inlines the entry's fonts and images in dev too", async () => {
+    const dir = assetProject();
+    const url = await start(dir, plugin(dir));
+    const html = await page(url);
+    expect(userStylesheet(html)).toContain('data:font/woff2;base64,');
+    expect(userScript(html)).toContain('data:image/png;base64,');
+  });
+
+  it('serves an asset the bundler still emits', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': KEEP_ENTRY });
+    writeBinary(dir, 'app/img/keep.png', 8192);
+    const url = await start(dir, plugin(dir));
+    const response = await fetch(`${url}keep.png`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect((await response.arrayBuffer()).byteLength).toBe(8192);
   });
 
   it("serves the story with Vite's client and the bundled entry", async () => {
