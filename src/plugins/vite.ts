@@ -12,7 +12,7 @@
 import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
-import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig } from 'vite';
+import type { ErrorPayload, InlineConfig, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
 import { isInside, isViteConfigTemp, toPosix } from './paths.js';
@@ -45,6 +45,16 @@ const ENTRY_STYLE_NAME = 'twee-ts-entry.css';
  * sees it and stands aside.
  */
 const INNER_BUILD_FLAG = '__tweeTsEntryBuild';
+
+/**
+ * A build input that stands in when there is no entry, so Vite does not look
+ * for an index.html (whose page would replace the story). Its empty chunk is
+ * dropped from the output.
+ */
+const EMPTY_INPUT = 'virtual:twee-ts-empty-input';
+const RESOLVED_EMPTY_INPUT = '\0' + EMPTY_INPUT;
+
+const viteMajor = Number.parseInt(viteVersion, 10);
 
 /** The bundled entry: its script, its stylesheet, and the files it was built from (forward-slash paths). */
 interface EntryBundle {
@@ -102,6 +112,19 @@ function buildCompileOptions(options: TweeTsVitePluginOptions, entry: EntryBundl
     sources: [...options.sources, ...inline],
     formatId: options.format ?? options.compileOptions?.formatId,
   };
+}
+
+/** Whether the user's config names build inputs of its own. */
+function hasUserInput(userConfig: UserConfig): boolean {
+  const build = userConfig.build as Record<string, { input?: unknown } | undefined> | undefined;
+  return build?.['rolldownOptions']?.input !== undefined || build?.['rollupOptions']?.input !== undefined;
+}
+
+/** Build settings naming one input, under the option name this Vite version reads. */
+function inputOnly(input: string): NonNullable<InlineConfig['build']> {
+  return (viteMajor >= 8 ? { rolldownOptions: { input } } : { rollupOptions: { input } }) as NonNullable<
+    InlineConfig['build']
+  >;
 }
 
 /** Build settings that turn the entry into one IIFE script and one stylesheet. */
@@ -208,7 +231,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const cache = new Map<string, FileCacheEntry>();
   let innerBuild = false;
 
-  if (options.entry && Number.parseInt(viteVersion, 10) < 8) {
+  if (options.entry && viteMajor < 8) {
     throw new Error(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`);
   }
 
@@ -217,14 +240,29 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     config(userConfig, env) {
       innerBuild = (userConfig as Record<string, unknown>)[INNER_BUILD_FLAG] === true;
-      if (innerBuild || !options.entry || env.command !== 'build') return undefined;
-      return { build: entryBuildOptions(resolve(options.entry)) };
+      if (innerBuild || env.command !== 'build') return undefined;
+      if (options.entry) return { build: entryBuildOptions(resolve(options.entry)) };
+      if (hasUserInput(userConfig)) return undefined;
+      return { build: inputOnly(EMPTY_INPUT) };
+    },
+
+    resolveId(id) {
+      return id === EMPTY_INPUT ? RESOLVED_EMPTY_INPUT : undefined;
+    },
+
+    load(id) {
+      // A statement app builds keep (they drop unused exports), so Rollup in Vite 5
+      // doesn't warn about an empty chunk. The chunk is removed from the output.
+      return id === RESOLVED_EMPTY_INPUT ? 'globalThis.tweeTsEmptyInput = true;' : undefined;
     },
 
     generateBundle: {
       order: 'post',
       async handler(_outputOptions, bundle) {
         if (innerBuild) return;
+        for (const [fileName, item] of Object.entries(bundle)) {
+          if (item.type === 'chunk' && item.facadeModuleId === RESOLVED_EMPTY_INPUT) delete bundle[fileName];
+        }
         const entry = options.entry ? takeEntryFromBundle(bundle) : undefined;
         let result: CompileResult;
         try {

@@ -97,6 +97,29 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(userScript(html)).toContain('window.n');
   });
 
+  it('without an entry: needs no index.html and writes only the story', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    const outDir = await buildProject(
+      dir,
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
+    );
+    expect(readdirSync(outDir)).toEqual(['index.html']);
+    expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('without an entry: a root index.html does not replace the story', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'index.html': '<!doctype html><html><head></head><body>vite page</body></html>',
+    });
+    const outDir = await buildProject(
+      dir,
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
+    );
+    expect(readdirSync(outDir)).toEqual(['index.html']);
+    expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
   it('fails the build on a malformed passage, naming file and line', async () => {
     const dir = makeProject({
       'story/start.tw': `${STORY}\n:: Broken [unclosed\nText\n`,
