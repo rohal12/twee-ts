@@ -277,25 +277,40 @@ function recordingContext(context: object, files: Set<string>): object {
 }
 
 /**
+ * A copy of `plugin` whose hooks record `addWatchFile` calls in `files`. The
+ * original stays untouched, so a plugin object shared across entry builds never
+ * collects wrappers. The copy keeps the prototype, so class-based plugins keep
+ * their methods, and object-form hooks keep `order`, `filter` and the rest.
+ */
+function recordingPlugin(plugin: Readonly<Record<string, unknown>>, files: Set<string>): Record<string, unknown> {
+  const copy = Object.create(
+    Object.getPrototypeOf(plugin) as object | null,
+    Object.getOwnPropertyDescriptors(plugin),
+  ) as Record<string, unknown>;
+  for (const name of WATCH_FILE_HOOKS) {
+    const hook = plugin[name];
+    const handler = typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
+    if (typeof handler !== 'function') continue;
+    const wrapped = function (this: object, ...args: unknown[]): unknown {
+      return handler.apply(recordingContext(this, files), args);
+    };
+    copy[name] = typeof hook === 'function' ? wrapped : { ...(hook as object), handler: wrapped };
+  }
+  return copy;
+}
+
+/**
  * Collects the files the entry build's plugins add with `addWatchFile`. These
  * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
- * in by `@import` and the files `url()` points at this way.
+ * in by `@import` and the files `url()` points at this way. The build runs on
+ * recording copies of its plugins.
  */
 function recordWatchFiles(files: Set<string>): Plugin {
   return {
     name: 'twee-ts:record-watch-files',
     configResolved(config) {
-      for (const plugin of config.plugins as unknown as Record<string, unknown>[]) {
-        for (const name of WATCH_FILE_HOOKS) {
-          const hook = plugin[name];
-          const handler = typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
-          if (typeof handler !== 'function') continue;
-          const wrapped = function (this: object, ...args: unknown[]): unknown {
-            return handler.apply(recordingContext(this, files), args);
-          };
-          plugin[name] = typeof hook === 'function' ? wrapped : { ...(hook as object), handler: wrapped };
-        }
-      }
+      const plugins = config.plugins as unknown as Record<string, unknown>[];
+      for (const [i, plugin] of plugins.entries()) plugins[i] = recordingPlugin(plugin, files);
     },
   };
 }
