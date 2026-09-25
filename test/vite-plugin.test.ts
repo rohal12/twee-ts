@@ -548,12 +548,33 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     });
   });
 
-  it('coalesces rapid saves and ends on the latest content', async () => {
+  it('coalesces rapid saves into one reload and ends on the latest content', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir));
+    const send = vi.spyOn(server!.ws, 'send');
+    const file = join(dir, 'story/start.tw');
+    // Saves 15 ms apart, as an editor that writes by unlink and add produces them.
+    const pause = () => new Promise((done) => setTimeout(done, 15));
+    unlinkSync(file);
+    await pause();
+    writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
+    await pause();
+    writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
+    await new Promise((done) => setTimeout(done, 300));
+    expect(reloadsSent(send)).toBe(1);
+    expect(send.mock.calls.some(([payload]) => (payload as { type?: string }).type === 'error')).toBe(false);
+  });
+
+  it('ends on the latest content when saves come further apart than the debounce', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
     const file = join(dir, 'story/start.tw');
+    const pause = () => new Promise((done) => setTimeout(done, 80));
     unlinkSync(file);
+    await pause();
     writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
+    await pause();
     writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
     await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
   });
@@ -611,23 +632,24 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
 
   it("works from a config file: the entry build loads the user's config and the plugin stands aside", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
-    const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
-    writeFileSync(
-      join(dir, 'vite.config.mjs'),
-      `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};
-export default {
-  plugins: [tweeTsPlugin({
-    sources: [${JSON.stringify(join(dir, 'story'))}],
-    format: 'test-format-1',
-    entry: ${JSON.stringify(join(dir, 'app/main.ts'))},
-    compileOptions: ${JSON.stringify(COMPILE)},
-  })],
-};
-`,
-    );
-    const url = await start(dir, undefined, join(dir, 'vite.config.mjs'));
+    const configFile = writeConfig(dir, {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+    });
+    const url = await start(dir, undefined, configFile);
     const html = await page(url);
     expect(userScript(html)).toContain('entry-ok');
     expect(html).toContain('Hello from the story.');
+  });
+
+  it('serves the story under a non-default base', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir), undefined, { base: '/game/' });
+    const html = await page(`${url}game/`);
+    expect(html).toContain('<script type="module" src="/game/@vite/client"></script>');
+    expect(html).toContain('Hello from the story.');
+    expect(await page(`${url}game/index.html`)).toContain('Hello from the story.');
   });
 });
