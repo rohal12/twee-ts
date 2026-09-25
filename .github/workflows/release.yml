@@ -14,11 +14,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -35,6 +35,6 @@ jobs:
         run: pnpm run build
 
       - name: Release to npm
-        uses: tobua/release-npm-action@v3
+        uses: tobua/release-npm-action@v4
         with:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
