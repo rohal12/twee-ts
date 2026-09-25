@@ -13,8 +13,3 @@ updates:
     directory: "/" # Checks the workflows in .github/workflows
     schedule:
       interval: "weekly"
-    ignore:
-      # v5 publishes through npm trusted publishing instead of NPM_TOKEN. Remove this
-      # once a trusted publisher for @rohal12/twee-ts is configured on npmjs.com.
-      - dependency-name: "tobua/release-npm-action"
-        update-types: ["version-update:semver-major"]
