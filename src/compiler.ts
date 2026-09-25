@@ -128,7 +128,8 @@ async function buildOutput(
   }
 
   // Walk file paths to get all source filenames
-  const sourceFilenames = getFilenames(filePaths);
+  const { filenames: sourceFilenames, diagnostics: sourcePathDiagnostics } = getFilenames(filePaths);
+  diagnostics.push(...sourcePathDiagnostics);
 
   // Create story and load sources
   const story = createStory();
@@ -246,8 +247,9 @@ async function buildOutput(
       }
 
       // Inject modules and head file
-      const modulePaths = options.modules ? getFilenames(options.modules) : [];
-      output = modifyHead(output, modulePaths, options.headFile, diagnostics);
+      const modules = getFilenames(options.modules ?? []);
+      diagnostics.push(...modules.diagnostics);
+      output = modifyHead(output, modules.filenames, options.headFile, diagnostics);
       break;
     }
 

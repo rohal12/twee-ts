@@ -5,20 +5,34 @@
 import { readdirSync, statSync, watch as fsWatch } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 import { isKnownFileType } from './media-types.js';
+import type { Diagnostic } from './types.js';
+
+export interface FilenamesResult {
+  readonly filenames: string[];
+  /** One warning per path that could not be read. */
+  readonly diagnostics: Diagnostic[];
+}
 
 /**
  * Recursively walk directories, collecting regular file paths.
  * Filters out the output file to prevent circular compilation.
+ * Like Tweego, a path that cannot be read is reported as a warning and skipped.
  */
-export function getFilenames(pathnames: string[], outFilename?: string): string[] {
+export function getFilenames(pathnames: string[], outFilename?: string): FilenamesResult {
   const filenames: string[] = [];
+  const diagnostics: Diagnostic[] = [];
   const absOutFile = outFilename ? resolve(outFilename) : '';
+
+  function warn(pathname: string, e: unknown): void {
+    diagnostics.push({ level: 'warning', message: `path ${pathname}: ${e instanceof Error ? e.message : String(e)}` });
+  }
 
   function walk(pathname: string): void {
     let stat;
     try {
       stat = statSync(pathname);
-    } catch {
+    } catch (e) {
+      warn(pathname, e);
       return;
     }
 
@@ -31,7 +45,8 @@ export function getFilenames(pathnames: string[], outFilename?: string): string[
       let entries;
       try {
         entries = readdirSync(pathname);
-      } catch {
+      } catch (e) {
+        warn(pathname, e);
         return;
       }
       for (const entry of entries) {
@@ -44,7 +59,7 @@ export function getFilenames(pathnames: string[], outFilename?: string): string[
     walk(pathname);
   }
 
-  return filenames;
+  return { filenames, diagnostics };
 }
 
 export interface WatchHandle {
