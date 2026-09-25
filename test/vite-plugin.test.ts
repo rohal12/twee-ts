@@ -524,6 +524,163 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     });
   });
 
+  it('rebundles when CSS reached through a nested @import changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "import './styles/index.css';\n",
+      'app/styles/index.css': "@import './base.css';\n",
+      'app/styles/base.css': ':root { --nested-marker: 1; }\n',
+    });
+    const url = await start(dir, plugin(dir));
+    expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*1/);
+    writeFileSync(join(dir, 'app/styles/base.css'), ':root { --nested-marker: 2; }\n');
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*2/), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('rebundles when a file the entry CSS references with url() changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "import './styles/index.css';\n",
+      'app/styles/index.css': "@import './base.css';\n",
+      'app/styles/base.css': 'body { background: url(../img/bg.png); }\n',
+    });
+    const image = join(dir, 'app/img/bg.png');
+    mkdirSync(dirname(image), { recursive: true });
+    writeFileSync(image, Buffer.from('first-image'));
+    const url = await start(dir, plugin(dir));
+    const encoded = (text: string): string => Buffer.from(text).toString('base64');
+    expect(userStylesheet(await page(url))).toContain(encoded('first-image'));
+    writeFileSync(image, Buffer.from('second-image'));
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toContain(encoded('second-image')), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it("leaves a shared plugin object's hooks alone across entry rebuilds, and still sees its watch files", async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v0';\n",
+      'app/extra.txt': 'extra-one',
+    });
+    const extra = join(dir, 'app/extra.txt');
+    const transformHandler = function (this: { addWatchFile(id: string): void }, code: string, id: string) {
+      if (!id.endsWith('main.ts')) return null;
+      this.addWatchFile(extra);
+      return code.replace('EXTRA', readFileSync(extra, 'utf-8'));
+    };
+    const transform = { order: 'pre' as const, handler: transformHandler };
+    const load = (): null => null;
+    // One object every load of the config file hands out, as a package-level plugin would be.
+    const shared = { name: 'shared-plugin', transform, load };
+    const key = '__tweeTsSharedTestPlugin';
+    (globalThis as Record<string, unknown>)[key] = shared;
+    const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+    const configFile = join(dir, 'vite.config.mjs');
+    const options = {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+    };
+    writeFileSync(
+      configFile,
+      `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\n` +
+        `export default { plugins: [globalThis[${JSON.stringify(key)}], tweeTsPlugin(${JSON.stringify(options)})] };\n`,
+    );
+    try {
+      const url = await start(dir, undefined, configFile);
+      expect(userScript(await page(url))).toContain('extra-one');
+      for (const n of [1, 2, 3]) {
+        writeFileSync(
+          join(dir, 'app/main.ts'),
+          `(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v${n}';\n`,
+        );
+        await vi.waitFor(async () => expect(userScript(await page(url))).toContain(`v${n}`), {
+          timeout: 10_000,
+          interval: 100,
+        });
+      }
+      expect(Object.keys(shared)).toEqual(['name', 'transform', 'load']);
+      expect(shared.transform).toBe(transform);
+      expect(shared.transform.handler).toBe(transformHandler);
+      expect(Object.keys(shared.transform)).toEqual(['order', 'handler']);
+      expect(shared.load).toBe(load);
+      writeFileSync(extra, 'extra-two');
+      await vi.waitFor(async () => expect(userScript(await page(url))).toContain('extra-two'), {
+        timeout: 10_000,
+        interval: 100,
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>)[key];
+    }
+  });
+
+  it('sees the watch files of a plugin that applyToEnvironment returns', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA';\n",
+      'app/extra.txt': 'env-one',
+    });
+    const extra = join(dir, 'app/extra.txt');
+    const outer = {
+      name: 'env-plugin',
+      applyToEnvironment: () => ({
+        name: 'env-plugin-inner',
+        transform(this: { addWatchFile(id: string): void }, code: string, id: string) {
+          if (!id.endsWith('main.ts')) return null;
+          this.addWatchFile(extra);
+          return code.replace('EXTRA', readFileSync(extra, 'utf-8'));
+        },
+      }),
+    };
+    const key = '__tweeTsEnvTestPlugin';
+    (globalThis as Record<string, unknown>)[key] = outer;
+    const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+    const configFile = join(dir, 'vite.config.mjs');
+    const options = {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+    };
+    writeFileSync(
+      configFile,
+      `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\n` +
+        `export default { plugins: [globalThis[${JSON.stringify(key)}], tweeTsPlugin(${JSON.stringify(options)})] };\n`,
+    );
+    try {
+      const url = await start(dir, undefined, configFile);
+      expect(userScript(await page(url))).toContain('env-one');
+      writeFileSync(extra, 'env-two');
+      await vi.waitFor(async () => expect(userScript(await page(url))).toContain('env-two'), {
+        timeout: 10_000,
+        interval: 100,
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>)[key];
+    }
+  });
+
+  it('rebundles when CSS the entry imports with ?inline changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts':
+        "import css from './styles/index.css?inline';\n(window as unknown as Record<string, string>).css = css;\n",
+      'app/styles/index.css': ':root { --inline-marker: 1; }\n',
+    });
+    const url = await start(dir, plugin(dir));
+    expect(userScript(await page(url))).toMatch(/--inline-marker:\s*1/);
+    writeFileSync(join(dir, 'app/styles/index.css'), ':root { --inline-marker: 2; }\n');
+    await vi.waitFor(async () => expect(userScript(await page(url))).toMatch(/--inline-marker:\s*2/), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
   it('recompiles when the head file changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,

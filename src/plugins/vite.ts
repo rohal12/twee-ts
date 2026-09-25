@@ -171,7 +171,7 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
     if (item.type === 'chunk') {
       if (item.isEntry) {
         entry.script = dropFileSourceMapComment(item.code);
-        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(toPosix(id));
+        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(fileOfId(id));
       }
       delete bundle[fileName];
     } else if (fileName.endsWith('.css')) {
@@ -258,8 +258,97 @@ const oneOffEntryBuild: Plugin = {
   },
 };
 
+/** Build-phase plugin hooks that may call `this.addWatchFile`. */
+const WATCH_FILE_HOOKS = [
+  'buildStart',
+  'resolveId',
+  'resolveDynamicImport',
+  'load',
+  'transform',
+  'moduleParsed',
+  'buildEnd',
+];
+
+/** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
+function fileOfId(id: string): string {
+  return toPosix(id.replace(/[?#].*$/s, ''));
+}
+
+/** A plugin context whose `addWatchFile` also records the file in `files`. */
+function recordingContext(context: object, files: Set<string>): object {
+  return new Proxy(context, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== 'function') return value;
+      if (key !== 'addWatchFile') return value.bind(target);
+      return (id: string) => {
+        if (!id.startsWith('\0')) files.add(fileOfId(resolve(id)));
+        return value.call(target, id);
+      };
+    },
+  });
+}
+
+/**
+ * A copy of `plugin` whose hooks record `addWatchFile` calls in `files`. The
+ * original stays untouched, so a plugin object shared across entry builds never
+ * collects wrappers. The copy keeps the prototype, so class-based plugins keep
+ * their methods, and object-form hooks keep `order`, `filter` and the rest. A
+ * plugin with no such hooks (a built-in one, for instance) is returned as is.
+ */
+function recordingPlugin(plugin: unknown, files: Set<string>): unknown {
+  if (typeof plugin !== 'object' || plugin === null) return plugin;
+  const hooks = plugin as Readonly<Record<string, unknown>>;
+  const hookHandler = (hook: unknown): unknown =>
+    typeof hook === 'object' && hook !== null ? (hook as { handler?: unknown }).handler : hook;
+  if (!WATCH_FILE_HOOKS.some((name) => typeof hookHandler(hooks[name]) === 'function')) return plugin;
+  const copy = Object.create(
+    Object.getPrototypeOf(plugin) as object | null,
+    Object.getOwnPropertyDescriptors(plugin),
+  ) as Record<string, unknown>;
+  for (const name of WATCH_FILE_HOOKS) {
+    const hook = hooks[name];
+    const handler = hookHandler(hook);
+    if (typeof handler !== 'function') continue;
+    const wrapped = function (this: object, ...args: unknown[]): unknown {
+      return handler.apply(recordingContext(this, files), args);
+    };
+    copy[name] = typeof hook === 'function' ? wrapped : { ...(hook as object), handler: wrapped };
+  }
+  return copy;
+}
+
+/**
+ * Collects the files the entry build's plugins add with `addWatchFile`. These
+ * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
+ * in by `@import` and the files `url()` points at this way. The build runs on
+ * recording copies of its plugins. They are made in the bundler's `options`
+ * hook, which sees the final plugin list, including the plugins Vite resolves
+ * per environment (`applyToEnvironment`) after `configResolved`.
+ */
+function recordWatchFiles(files: Set<string>): Plugin {
+  return {
+    name: 'twee-ts:record-watch-files',
+    options: {
+      order: 'post',
+      async handler(inputOptions) {
+        const plugins = (await flattenPlugins(inputOptions.plugins)).map((p) => recordingPlugin(p, files));
+        return { ...inputOptions, plugins: plugins as typeof inputOptions.plugins };
+      },
+    },
+  };
+}
+
+/** A plugin option (nested arrays, promises, falsy entries) as one flat list. */
+async function flattenPlugins(option: unknown): Promise<unknown[]> {
+  const value: unknown = await option;
+  if (Array.isArray(value)) return (await Promise.all(value.map(flattenPlugins))).flat();
+  return value ? [value] : [];
+}
+
 /** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
 async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Promise<EntryBundle> {
+  const watchFiles = new Set<string>();
   const inline: InlineConfig & Record<string, unknown> = {
     configFile: config.configFile ?? false,
     root: config.root,
@@ -278,7 +367,7 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
       copyPublicDir: false,
       watch: null,
     },
-    plugins: [oneOffEntryBuild],
+    plugins: [oneOffEntryBuild, recordWatchFiles(watchFiles)],
     [INNER_BUILD_FLAG]: true,
   };
   const out = await build(inline);
@@ -290,7 +379,9 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
     }
     for (const item of result.output) bundle[item.fileName] = item;
   }
-  return takeEntryFromBundle(bundle);
+  const entry = takeEntryFromBundle(bundle);
+  for (const file of watchFiles) entry.files.add(file);
+  return entry;
 }
 
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
@@ -384,8 +475,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         pending.clear();
       };
 
-      // The files that belong to the entry: after a good bundle, exactly the modules
-      // it was built from; while there is none, or the last one failed, anything in
+      // The files that belong to the entry: after a good bundle, the modules it was
+      // built from and the files its plugins watch (such as CSS @imports and url()
+      // targets); while there is none, or the last one failed, anything in
       // the project, so that creating a missing import brings it back.
       const touchesEntry = (file: string): boolean =>
         entryPath !== undefined && (entryStale ? isInside(file, [root]) : (entry?.files.has(file) ?? false));
