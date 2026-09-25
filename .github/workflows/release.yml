@@ -20,7 +20,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # npm publishes through trusted publishing (OIDC) only from npm 11.5.1 on; Node 22 ships npm 10.
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
