@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-09-25
+
+### Added
+
+- Vite plugin `entry` option: bundles a JS/TS file and the CSS it imports into the story as Story JavaScript and Story Stylesheet (Vite 8). Fonts and images it uses are inlined, so the story stays one file; a `?no-inline` import is written next to the HTML and served in dev
+- The Vite plugin warns when the entry's folder is inside `sources`
+
+### Fixed
+
+- Vite plugin dev server: the page now loads Vite's client, so reloads reach it; compile and bundling errors appear in Vite's overlay while the last good story keeps being served
+- Vite plugin dev server: changes to `.js`/`.css` sources, the head file, modules and the entry's imports now recompile the story; rapid saves are compiled once; a save that keeps the old modification time is picked up
+- Vite plugin dev server: no rebuild starts after the server closes, including in middleware mode, and a failure while reporting an error no longer stops later rebuilds
+- Vite plugin build: compile errors fail the build, naming file and line once
+- Vite plugin build without an entry: needs no `index.html`, and an `index.html` in the project root no longer replaces the story (it did on Vite 5 and 6)
+- In-memory `.js` and `.css` sources are loaded as script and stylesheet instead of being dropped
+- The CLI and `creator-version` report the published version instead of 1.2.0
+
+### Changed
+
+- `vite` is an optional peer dependency (`>=5`) of `@rohal12/twee-ts/vite`
+
 ## [1.14.0] - 2026-03-28
 
 ### Added

@@ -126,17 +126,35 @@ export function loadInlineSources(
     const content = typeof source.content === 'string' ? source.content : source.content.toString('utf-8');
 
     const ext = normalizedFileExt(source.filename);
-    if (ext === 'tw' || ext === 'twee' || ext === 'tw2' || ext === 'twee2' || !ext) {
-      const twee2 = ext === 'tw2' || ext === 'twee2' || opts.twee2Compat;
-      const result = parseTwee(content, {
-        filename: source.filename,
-        trim: opts.trim ?? true,
-        twee2Compat: twee2,
-      });
-      diagnostics.push(...result.diagnostics);
-      for (const p of result.passages) {
-        storyAdd(story, p, diagnostics);
+    switch (ext) {
+      case '':
+      case 'tw':
+      case 'twee':
+      case 'tw2':
+      case 'twee2': {
+        const twee2 = ext === 'tw2' || ext === 'twee2' || opts.twee2Compat;
+        const result = parseTwee(content, {
+          filename: source.filename,
+          trim: opts.trim ?? true,
+          twee2Compat: twee2,
+        });
+        diagnostics.push(...result.diagnostics);
+        for (const p of result.passages) {
+          storyAdd(story, p, diagnostics);
+        }
+        break;
       }
+      case 'css':
+        storyAdd(story, { name: basename(source.filename), tags: ['stylesheet'], text: content }, diagnostics);
+        break;
+      case 'js':
+        storyAdd(story, { name: basename(source.filename), tags: ['script'], text: content }, diagnostics);
+        break;
+      default:
+        diagnostics.push({
+          level: 'warning',
+          message: `load ${source.filename}: in-memory sources of type .${ext} are not supported; skipped.`,
+        });
     }
   }
 }

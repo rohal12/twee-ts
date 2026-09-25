@@ -121,7 +121,7 @@ Follow type-first development: define data models and function signatures before
 
 ## Releasing
 
-Releases use `tobua/release-npm-action@v3` (`.github/workflows/release.yml`), which runs on every push to `main`. It reads `CHANGELOG.md` to detect whether a new version exists vs what's published on npm. If the latest changelog version is newer, it bumps `package.json`, creates a git tag, and publishes to npm.
+Releases use `tobua/release-npm-action@v3` (`.github/workflows/release.yml`), which runs on every push to `main` but publishes only when the head commit's message contains the annotation `release-npm` (see step 6). It then runs semantic-release: the version bump comes from the Conventional Commit types since the last tag (`feat:` → minor, `fix:` → patch), and it publishes to npm and creates a git tag and a GitHub release. Nothing is committed back, so `package.json` in git keeps its old version; `src/version.ts` reads the published version at runtime. The `CHANGELOG.md` section is for readers; it does not decide the version.
 
 ### How to release
 

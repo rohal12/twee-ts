@@ -185,3 +185,64 @@ describe('loadInlineSources', () => {
     expect(story.passages).toHaveLength(0);
   });
 });
+
+describe('loadInlineSources: scripts and stylesheets', () => {
+  it('loads an in-memory .js source as a script passage', () => {
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadInlineSources(story, [{ filename: 'app.js', content: 'window.x = 1;' }], {}, diagnostics);
+    expect(story.passages).toEqual([{ name: 'app.js', tags: ['script'], text: 'window.x = 1;' }]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('loads an in-memory .css source as a stylesheet passage', () => {
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadInlineSources(story, [{ filename: 'app.css', content: 'body { color: red; }' }], {}, diagnostics);
+    expect(story.passages).toEqual([{ name: 'app.css', tags: ['stylesheet'], text: 'body { color: red; }' }]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('accepts Buffer content for scripts', () => {
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadInlineSources(
+      story,
+      [{ filename: 'lib/app.js', content: Buffer.from('let y = 2;', 'utf-8') }],
+      {},
+      diagnostics,
+    );
+    expect(story.passages).toEqual([{ name: 'app.js', tags: ['script'], text: 'let y = 2;' }]);
+  });
+
+  it('warns about an in-memory source it cannot load from memory', () => {
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadInlineSources(story, [{ filename: 'pic.png', content: Buffer.from([1, 2, 3]) }], {}, diagnostics);
+    expect(story.passages).toEqual([]);
+    expect(diagnostics).toEqual([
+      { level: 'warning', message: 'load pic.png: in-memory sources of type .png are not supported; skipped.' },
+    ]);
+  });
+
+  it('puts an in-memory script into the compiled Story JavaScript', async () => {
+    const { compile } = await import('../src/compiler.js');
+    const result = await compile({
+      sources: [
+        {
+          filename: 'story.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nT\n\n:: Start\nHi\n',
+        },
+        { filename: 'app.js', content: 'window.inlineMarker = 1;' },
+        { filename: 'app.css', content: '.inline-marker { color: red; }' },
+      ],
+      formatId: 'test-format-1',
+      formatPaths: [join(__dirname, 'fixtures', 'storyformats')],
+      useTweegoPath: false,
+      noRemote: true,
+    });
+    expect(result.output).toMatch(/id="twine-user-script"[^>]*>[\s\S]*window\.inlineMarker = 1;/);
+    expect(result.output).toMatch(/id="twine-user-stylesheet"[^>]*>[\s\S]*\.inline-marker/);
+  });
+});
