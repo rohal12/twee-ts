@@ -27,10 +27,7 @@ Use the type system to prevent invalid states at compile time.
 ```ts
 // Good: only valid combinations possible
 type RequestState<T> =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'success'; data: T }
-  | { status: 'error'; error: Error };
+  { status: 'idle' } | { status: 'loading' } | { status: 'success'; data: T } | { status: 'error'; error: Error };
 
 // Bad: allows invalid combinations like { loading: true, error: Error }
 type RequestState<T> = {

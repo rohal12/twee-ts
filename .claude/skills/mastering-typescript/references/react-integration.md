@@ -219,10 +219,7 @@ interface CounterState {
 }
 
 type CounterAction =
-  | { type: 'increment' }
-  | { type: 'decrement' }
-  | { type: 'setStep'; payload: number }
-  | { type: 'reset' };
+  { type: 'increment' } | { type: 'decrement' } | { type: 'setStep'; payload: number } | { type: 'reset' };
 
 function counterReducer(state: CounterState, action: CounterAction): CounterState {
   switch (action.type) {

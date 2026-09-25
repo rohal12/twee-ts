@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@rohal12/twee-ts)](https://www.npmjs.com/package/@rohal12/twee-ts)
 [![CI](https://img.shields.io/github/actions/workflow/status/rohal12/twee-ts/ci.yml)](https://github.com/rohal12/twee-ts/actions)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@rohal12/twee-ts)](https://bundlephobia.com/package/@rohal12/twee-ts)
-[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
+[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/@rohal12/twee-ts?activeTab=dependencies)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
 [![node](https://img.shields.io/node/v/@rohal12/twee-ts)](https://nodejs.org/)
 [![last commit](https://img.shields.io/github/last-commit/rohal12/twee-ts)](https://github.com/rohal12/twee-ts/commits)
