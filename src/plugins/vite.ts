@@ -314,6 +314,18 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       return { build: inputOnly(EMPTY_INPUT) };
     },
 
+    configResolved(config) {
+      if (innerBuild || !options.entry) return;
+      const sources = options.sources.map((p) => toPosix(resolve(p)));
+      if (isInside(toPosix(resolve(options.entry)), sources)) {
+        config.logger.warn(
+          `[twee-ts] The entry ${options.entry} is inside the story sources (${options.sources.join(', ')}). ` +
+            'twee-ts also loads the .js and .css files it finds in source folders, unbundled, as Story JavaScript ' +
+            "and Story Stylesheet; keep the entry's folder out of `sources`.",
+        );
+      }
+    },
+
     resolveId(id) {
       return id === EMPTY_INPUT ? RESOLVED_EMPTY_INPUT : undefined;
     },

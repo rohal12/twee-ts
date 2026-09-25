@@ -474,6 +474,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     }
   });
 
+  it('warns when the entry sits inside the story sources', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const warnings: string[] = [];
+    const quiet = createLogger('silent');
+    const customLogger: Logger = { ...quiet, warn: (message) => void warnings.push(message) };
+    await start(dir, plugin(dir, { sources: [dir] }), undefined, { customLogger });
+    expect(warnings.join('\n')).toMatch(/entry \S*main\.ts is inside the story sources/);
+  });
+
   it("serves the story with Vite's client and the bundled entry", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
