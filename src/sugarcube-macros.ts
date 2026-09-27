@@ -919,12 +919,13 @@ export function findJavaScriptPassageLinks(source: string): MacroPassageLink[] {
 }
 
 /**
- * What JavaScript source must contain for one of its string or template literals to hold `<<`.
- * Each `<` in a value is written as `<`, `\<`, `\x3c`, `\u003c` or `\u{…}`, and two can be
- * next to each other with only line continuations between. The first is `<` or `\<` (then the
- * source holds `<<` or `<\`), or one of the others.
+ * What JavaScript source must contain for one of its string or template literals to hold a call
+ * that is read. A value holding `<<`: each `<` in it is written as `<`, `\<`, `\x3c`, `\u003c` or
+ * `\u{…}`, two can be next to each other with only line continuations between, and the first
+ * is `<` or `\<` (then the source holds `<<` or `<\`) or one of the others. Or a value holding a
+ * `<script>` element, whose own strings can make `<<` from escapes the outer string encodes.
  */
-const MAY_HOLD_MACRO_RE = /<<|<\\|\\x3c|\\u003c|\\u\{/i;
+const MAY_HOLD_MACRO_RE = /<<|<\\|\\x3c|\\u003c|\\u\{|<script/i;
 
 function javaScriptPassageLinks(source: string, context: ReadContext): MacroPassageLink[] {
   if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_MACRO_RE.test(source)) {

@@ -331,4 +331,10 @@ describe('findJavaScriptPassageLinks', () => {
       expect(findJavaScriptPassageLinks(line), line).toEqual([{ macro: 'goto', passage: 'GABCDEF'[index] }]);
     }
   });
+
+  it('reads a call in a <script> element that a string holds', () => {
+    // The outer string's \x5c is a backslash, so the element's own string reads \x3c<goto S>>.
+    const source = String.raw`jQuery(document.body).wiki('<script>$.wiki("\x5cx3c<goto S>>")</script>');`;
+    expect(findJavaScriptPassageLinks(source)).toEqual([{ macro: 'goto', passage: 'S' }]);
+  });
 });
