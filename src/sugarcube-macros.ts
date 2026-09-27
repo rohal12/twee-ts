@@ -51,7 +51,7 @@ type LexedArg =
   | { readonly kind: 'word'; readonly text: string };
 
 /** A tag, and where a `<<link` or `<<goto` first appears unquoted in its arguments, if it does. */
-interface ScannedTag {
+export interface ScannedTag {
   readonly tag: MacroTag;
   readonly innerCall: number | undefined;
 }
@@ -183,9 +183,10 @@ interface ArgumentPartScan {
  * text, answers that in constant time. Once a part is read as plain characters, a part of the
  * same kind that starts inside it can't end before `lastClose` either, in this tag or a later
  * one, so it isn't scanned again: `scanFrom` records where each kind may next be scanned. This
- * keeps the search linear.
+ * keeps the search linear. `onWork` is told how many characters each step reads. (Exported for
+ * tests; the module is not part of the package's API.)
  */
-function tagMatcher(
+export function tagMatcher(
   text: string,
   lastClose = text.lastIndexOf('>>'),
   onWork: (characters: number) => void = () => {},
@@ -709,9 +710,10 @@ function scriptElementReader(text: string): (start: number) => ScriptElementScan
  * whose answers it then uses. All such scans in one reading of a passage, strings included, stop
  * once they have read four times as many characters as the passage has, plus a fixed allowance
  * (`budget`, see `readContext`); on input built to make them read more, the openers after that
- * are taken as unclosed. That keeps the time linear.
+ * are taken as unclosed. That keeps the time linear. (Exported for tests; the module is not part
+ * of the package's API.)
  */
-function scriptBodyCloser(text: string, budget: { left: number }): (opener: MacroTag) => MacroTag | undefined {
+export function scriptBodyCloser(text: string, budget: { left: number }): (opener: MacroTag) => MacroTag | undefined {
   const tags = findMacroTags(text);
   const indexByStart = new Map(tags.map((tag, index) => [tag.start, index]));
   const lastClose = text.lastIndexOf('>>');

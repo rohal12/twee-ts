@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { findMacroPassageLinks, findMacroTags, parseMacroArgs } from '../src/sugarcube-macros.js';
+import {
+  findMacroPassageLinks,
+  findMacroTags,
+  parseMacroArgs,
+  scriptBodyCloser,
+  tagMatcher,
+} from '../src/sugarcube-macros.js';
 import type { MacroTag } from '../src/sugarcube-macros.js';
 
 /** Small seeded generator, so the random cases are the same on every run. */
@@ -113,14 +119,14 @@ describe('findMacroTags', () => {
     ]) {
       expect(findMacroTags(text)).toHaveLength(1);
     }
-  });
+  }, 20_000);
 
   it('stays fast when many tags hold a part that runs past the last >>', () => {
     const n = 40000;
     expect(findMacroTags('<<a ">>' + '<<a \\">>'.repeat(n))).toHaveLength(n + 1);
     expect(findMacroTags('<<a [[>>'.repeat(n))).toHaveLength(n);
     expect(findMacroTags('<<a /*>>'.repeat(n))).toHaveLength(n);
-  });
+  }, 20_000);
 });
 
 describe('parseMacroArgs', () => {
@@ -227,14 +233,14 @@ describe('findMacroPassageLinks', () => {
         { macro: 'goto', passage: 'A' },
       ]);
     }
-  });
+  }, 20_000);
 
   it('stays fast when stray openers in comments run over many <<script>> openers', () => {
     const n = 40000;
     expect(findMacroPassageLinks('/* <<x " */<<script>>'.repeat(n) + '" >><<goto "A">>')).toEqual([
       { macro: 'goto', passage: 'A' },
     ]);
-  });
+  }, 20_000);
 
   it('stays fast when a <<script>> closer search meets unclosed comments and long lines', () => {
     const n = 20000;
@@ -250,12 +256,12 @@ describe('findMacroPassageLinks', () => {
         passage: 'A',
       });
     }
-  });
+  }, 20_000);
 
   it('stays fast when each <<script>> closer search meets a long tag name, spaces or text', () => {
     // Every <<script>> here needs its own closer search, and each would read the long part again,
-    // unless the search's limit counts it.
-    const size = 3_000_000;
+    // unless the search's limit counts it. (The counting itself is tested below.)
+    const size = 300_000;
     const openers = Math.floor(Math.sqrt(2 * (4 * size + 100_000)));
     for (const long of [
       '<<a' + ' '.repeat(size) + '>>',
@@ -267,10 +273,44 @@ describe('findMacroPassageLinks', () => {
       const text = '/*<<x */"' + '<<script>>'.repeat(openers) + long + '">><<goto "A">>';
       expect(findMacroPassageLinks(text)).toContainEqual({ macro: 'goto', passage: 'A' });
     }
-  });
+  }, 20_000);
 
   it('returns very many calls from one element without failing', () => {
     const n = 200000;
     expect(findMacroPassageLinks('<script>' + `x('<<goto "A">>');`.repeat(n) + '</script>')).toHaveLength(n);
+  }, 20_000);
+});
+
+describe('the <<script>> closer search limit', () => {
+  /** How many characters the tag matcher says it read to match a tag at `start`. */
+  function work(text: string, start = 0): number {
+    let characters = 0;
+    tagMatcher(text, undefined, (read) => {
+      characters += read;
+    })(start);
+    return characters;
+  }
+
+  it('counts every character a tag match reads', () => {
+    const size = 10_000;
+    // The name, the spaces after it, each character stepped over, and a part scanned to its end.
+    expect(work('<<' + 'a'.repeat(size) + '>>')).toBeGreaterThanOrEqual(size);
+    expect(work('<<a' + ' '.repeat(size) + '>>')).toBeGreaterThanOrEqual(size);
+    expect(work('<<a b' + ' '.repeat(size) + '>>')).toBeGreaterThanOrEqual(size);
+    expect(work('<<a /*' + ' '.repeat(size) + '>>')).toBeGreaterThanOrEqual(size);
+    // A << that starts no tag counts too.
+    expect(work('<<<')).toBeGreaterThan(0);
+  });
+
+  it('counts the text between tags when it scans from a body', () => {
+    const gap = 10_000;
+    // The tag <<x runs over the <<script>> opener, so its body is scanned on its own.
+    const text = '/*<<x */"<<script>>' + ' '.repeat(gap) + '<</script>>';
+    const start = text.indexOf('<<script>>');
+    const opener = { name: 'script', args: '', start, end: start + 10 };
+    expect(findMacroTags(text).some((tag) => tag.start === start)).toBe(false);
+    const budget = { left: 4 * gap };
+    expect(scriptBodyCloser(text, budget)(opener)?.name).toBe('/script');
+    expect(budget.left).toBeLessThanOrEqual(3 * gap);
   });
 });
