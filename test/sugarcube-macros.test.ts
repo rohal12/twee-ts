@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  findJavaScriptPassageLinks,
   findMacroPassageLinks,
   findMacroTags,
   parseMacroArgs,
@@ -312,5 +313,22 @@ describe('the <<script>> closer search limit', () => {
     const budget = { left: 4 * gap };
     expect(scriptBodyCloser(text, budget)(opener)?.name).toBe('/script');
     expect(budget.left).toBeLessThanOrEqual(3 * gap);
+  });
+});
+
+describe('findJavaScriptPassageLinks', () => {
+  it('reads a call whose << an escape makes', () => {
+    const source = [
+      String.raw`f('<<goto "G">>');`,
+      String.raw`f('<\<goto "A">>');`,
+      String.raw`f('\x3c<goto "B">>');`,
+      String.raw`f('\u003C<goto "C">>');`,
+      String.raw`f('\u{3c}<goto "D">>');`,
+      'f(\'<\\\n<goto "E">>\');',
+      String.raw`f('\<<goto "F">>');`,
+    ];
+    for (const [index, line] of source.entries()) {
+      expect(findJavaScriptPassageLinks(line), line).toEqual([{ macro: 'goto', passage: 'GABCDEF'[index] }]);
+    }
   });
 });

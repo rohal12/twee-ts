@@ -918,9 +918,17 @@ export function findJavaScriptPassageLinks(source: string): MacroPassageLink[] {
   return javaScriptPassageLinks(source, readContext(source));
 }
 
+/**
+ * What JavaScript source must contain for one of its string or template literals to hold `<<`.
+ * Each `<` in a value is written as `<`, `\<`, `\x3c`, `\u003c` or `\u{…}`, and two can be
+ * next to each other with only line continuations between. The first is `<` or `\<` (then the
+ * source holds `<<` or `<\`), or one of the others.
+ */
+const MAY_HOLD_MACRO_RE = /<<|<\\|\\x3c|\\u003c|\\u\{/i;
+
 function javaScriptPassageLinks(source: string, context: ReadContext): MacroPassageLink[] {
-  if (context.depth >= MAX_STRING_DEPTH || (!source.includes('<<') && !source.includes('\\'))) {
-    // No string in it can hold a macro: its text has no `<<`, and no escape could make one.
+  if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_MACRO_RE.test(source)) {
+    // No string in it can hold a macro call.
     return [];
   }
   const inner = deeper(context);
