@@ -10,8 +10,9 @@
  *   expect(map.passages).toContain('Start');
  *   expect(map.brokenLinks).toHaveLength(0);
  */
-import type { ReadonlyStory } from './types.js';
-import { isInfoPassage, isStoryPassage } from './passage.js';
+import type { ReadonlyPassage, ReadonlyStory } from './types.js';
+import { hasTag, isInfoPassage, isStoryPassage } from './passage.js';
+import { findJavaScriptPassageLinks, findMacroPassageLinks } from './sugarcube-macros.js';
 
 export interface StoryMap {
   /** All passage names, in source order. */
@@ -29,7 +30,8 @@ export interface StoryMap {
   /**
    * Map of passage name → passage names it links to.
    * Parses `[[target]]`, `[[display->target]]`, `[[display|target]]`,
-   * and SugarCube's `<<goto "target">>` / `<<link "display" "target">>`.
+   * and SugarCube's `<<goto "target">>` / `<<link "display" "target">>`,
+   * whose arguments are read as SugarCube 2 reads them (see `sugarcube-macros.ts`).
    */
   links: Map<string, string[]>;
   /** Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage. */
@@ -56,8 +58,15 @@ export interface BrokenLink {
  * - `[[Display Text|PassageName]]`   (Twine 1 / Harlowe pipe)
  * - `<<goto "PassageName">>`         (SugarCube macro)
  * - `<<link "Display" "PassageName">>`  (SugarCube macro)
+ *
+ * SugarCube macro arguments may be double- or single-quoted, with backslash escapes, or bare
+ * words; a passage named by a variable or an expression is known only in play and is skipped.
+ * Macro calls are also read inside the quoted strings of other macros' arguments, and inside the
+ * strings of `<<script>>` bodies and `<script>` elements; calls in comments are not read. A
+ * script passage (`isScript`) is JavaScript, so its macro calls are read only inside its strings.
+ * See `sugarcube-macros.ts` for the details and the known differences from SugarCube.
  */
-function extractLinksFromText(text: string): string[] {
+function extractLinksFromText(text: string, isScript: boolean): string[] {
   const targets = new Set<string>();
 
   // [[...]] links
@@ -84,19 +93,48 @@ function extractLinksFromText(text: string): string[] {
     targets.add(content.trim());
   }
 
-  // <<goto "target">>
-  const gotoRe = /<<goto\s+["']([^"']+)["']\s*>>/g;
-  while ((m = gotoRe.exec(text)) !== null) {
-    targets.add(m[1]!);
-  }
-
-  // <<link "display" "target">> (second argument is the target passage)
-  const linkMacroRe = /<<link\s+["'][^"']*["']\s+["']([^"']+)["']\s*>>/g;
-  while ((m = linkMacroRe.exec(text)) !== null) {
-    targets.add(m[1]!);
+  // <<goto "target">> and <<link "display" "target">>. Gotos come before links, the order
+  // this list has always had.
+  const macroLinks = isScript ? findJavaScriptPassageLinks(text) : findMacroPassageLinks(text);
+  for (const macro of ['goto', 'link'] as const) {
+    for (const link of macroLinks) {
+      if (link.macro === macro) {
+        targets.add(link.passage);
+      }
+    }
   }
 
   return [...targets];
+}
+
+/** Passages SugarCube runs from their raw text, never joining their lines. */
+const RAW_TEXT_PASSAGES: ReadonlySet<string> = new Set(['StoryInit', 'PassageReady', 'PassageDone']);
+
+/**
+ * A passage's text as SugarCube reads it for its links. A passage tagged `nobr` has its line
+ * breaks joined (`Passage.processText`): leading and trailing ones removed, each run inside made
+ * one space. Script passages, `init`-tagged passages, StoryInit, PassageReady and PassageDone are
+ * run from their raw text, so they keep theirs.
+ */
+function textAsRead(p: ReadonlyPassage): string {
+  const joined = hasTag(p, 'nobr') && !hasTag(p, 'script') && !hasTag(p, 'init') && !RAW_TEXT_PASSAGES.has(p.name);
+  return joined ? joinLines(p.text) : p.text;
+}
+
+/**
+ * What SugarCube's `text.replace(/^\n+|\n+$/g, '').replace(/\n+/g, ' ')` gives, without that
+ * pattern's backtracking, which takes quadratic time on a long run of line feeds.
+ */
+function joinLines(text: string): string {
+  let start = 0;
+  while (text[start] === '\n') {
+    start += 1;
+  }
+  let end = text.length;
+  while (end > start && text[end - 1] === '\n') {
+    end -= 1;
+  }
+  return text.slice(start, end).replace(/\n+/g, ' ');
 }
 
 /**
@@ -149,7 +187,7 @@ export function storyInspect(story: ReadonlyStory): StoryMap {
     }
 
     // Links
-    const targets = extractLinksFromText(p.text);
+    const targets = extractLinksFromText(textAsRead(p), hasTag(p, 'script'));
     links.set(p.name, targets);
   }
 
