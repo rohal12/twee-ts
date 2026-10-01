@@ -757,6 +757,60 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
   });
 
+  // The watcher can miss changes: after a folder is deleted and created again in
+  // quick succession (as `git rebase` does), new files in it go unseen, and under
+  // Deno so do edits to the files created with it. These tests run without a
+  // watcher, so no event ever arrives.
+  it('serves a changed passage that no watcher event announced', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir), undefined, { server: { watch: null } });
+    expect(await page(url)).toContain('Hello from the story.');
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Unannounced save.'));
+    expect(await page(url)).toContain('Unannounced save.');
+  });
+
+  it('serves a story folder deleted and created again with no watcher event', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'story/scenes/old.tw': ':: Old\nOld scene text.\n',
+      'app/main.ts': ENTRY,
+      'app/style.css': STYLE,
+    });
+    const url = await start(dir, plugin(dir), undefined, { server: { watch: null } });
+    expect(await page(url)).toContain('Old scene text.');
+    rmSync(join(dir, 'story/scenes'), { recursive: true });
+    mkdirSync(join(dir, 'story/scenes'));
+    writeFileSync(join(dir, 'story/scenes/new.tw'), ':: New\nNew scene text.\n');
+    const html = await page(url);
+    expect(html).toContain('New scene text.');
+    expect(html).not.toContain('Old scene text.');
+  });
+
+  it('serves a changed head file that no watcher event announced', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'head.html': '<meta name="head-marker" content="first">',
+      'app/main.ts': ENTRY,
+      'app/style.css': STYLE,
+    });
+    const headFile = join(dir, 'head.html');
+    const url = await start(dir, plugin(dir, { compileOptions: { ...COMPILE, headFile } }), undefined, {
+      server: { watch: null },
+    });
+    expect(await page(url)).toContain('content="first"');
+    writeFileSync(headFile, '<meta name="head-marker" content="second">');
+    expect(await page(url)).toContain('content="second"');
+  });
+
+  it('compiles nothing and reloads nothing for a request when no file changed', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const url = await start(dir, plugin(dir), undefined, { server: { watch: null } });
+    const send = vi.spyOn(server!.ws, 'send');
+    await page(url);
+    await page(url);
+    expect(reloadsSent(send)).toBe(0);
+  });
+
   it('shows a malformed passage in the overlay and keeps serving the last good story', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));

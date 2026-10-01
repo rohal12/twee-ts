@@ -7,14 +7,18 @@
  *
  * In dev the compiled HTML is served at the base URL with Vite's client added.
  * Every change to a source, the head file, a module or a file the entry imports
- * recompiles it and reloads the page, and errors appear in Vite's overlay.
+ * recompiles it and reloads the page, and errors appear in Vite's overlay. A
+ * request for the story also recompiles it first if a source, the head file or
+ * a module changed without the watcher reporting it.
  */
+import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Logger, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
+import { getFilenames } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { isInside, isViteConfigTemp, toPosix } from './paths.js';
 
@@ -194,6 +198,31 @@ function watchedInputs(options: TweeTsVitePluginOptions): string[] {
   return [...options.sources, ...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) =>
     toPosix(resolve(p)),
   );
+}
+
+/**
+ * Every file under `inputs` (forward-slash paths), with what a change to it
+ * alters: modification time, size and inode (a file replaced by a new one).
+ */
+function inputFiles(inputs: readonly string[]): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const filename of getFilenames([...inputs]).filenames) {
+    try {
+      const stat = statSync(filename);
+      files.set(toPosix(resolve(filename)), `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
+    } catch {
+      // Deleted since the walk found it; it counts as gone.
+    }
+  }
+  return files;
+}
+
+/** The files added, removed or changed between two `inputFiles` results. */
+function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): Set<string> {
+  const changed = new Set<string>();
+  for (const [file, state] of after) if (before.get(file) !== state) changed.add(file);
+  for (const file of before.keys()) if (!after.has(file)) changed.add(file);
+  return changed;
 }
 
 /** Adds Vite's client to the page so reloads and the error overlay reach it. */
@@ -469,6 +498,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       let pending = new Set<string>();
       let timer: ReturnType<typeof setTimeout> | undefined;
       let closed = false;
+      // The input files as the last compile found them, to tell whether the
+      // watcher missed a change (see catchUp).
+      let compiledInputs = new Map<string, string>();
+      let catchingUp: Promise<void> | undefined;
       stopDev = () => {
         closed = true;
         clearTimeout(timer);
@@ -486,6 +519,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // hold a full-reload for the first page that connects and reload it once.
       const rebuild = async (changed: ReadonlySet<string>, initial = false): Promise<void> => {
         if (closed) return;
+        // Taken before the compile reads anything, so a file written during it
+        // still counts as changed afterwards.
+        compiledInputs = inputFiles(inputs);
         // The compile cache trusts modification times, which a quick save may leave
         // unchanged (coarse file-system timestamps); forget the files that changed.
         for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
@@ -535,6 +571,30 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }, 50);
       });
 
+      // The watcher can miss changes. When a folder is deleted and created again
+      // in quick succession (as `git rebase` does), chokidar stops watching the
+      // folder, so a file added to it later raises no event; under Deno it also
+      // loses the files created with it, so their later edits raise none
+      // either. Before the story is served, this
+      // waits for any compile under way, compares the input files with what the
+      // last compile found, and compiles again first if they differ.
+      const catchUp = (): Promise<void> => {
+        catchingUp ??= (async () => {
+          await queue;
+          const changed = filesChanged(compiledInputs, inputFiles(inputs));
+          if (changed.size === 0) return;
+          // Changes the watcher did report, still waiting out the debounce, go into the same compile.
+          for (const file of pending) changed.add(file);
+          pending = new Set();
+          clearTimeout(timer);
+          queue = queue.then(() => rebuild(changed)).catch(keepQueueAlive);
+          await queue;
+        })().finally(() => {
+          catchingUp = undefined;
+        });
+        return catchingUp;
+      };
+
       server.ws.on('connection', () => {
         if (lastError) server.ws.send({ type: 'error', err: lastError });
       });
@@ -542,9 +602,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       server.middlewares.use((req, res, next) => {
         const path = (req.url ?? '').split('?')[0] ?? '';
         if (servePaths.includes(path)) {
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'text/html; charset=utf-8');
-          res.end(html || waitingPage(base));
+          catchUp().then(() => {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.end(html || waitingPage(base));
+          }, next);
           return;
         }
         // Files the entry's bundle still emits separately, where the build writes them.
