@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.4] - 2026-10-02
+
+### Fixed
+
+- Vite plugin: the dev server no longer keeps serving an old story after a story folder is deleted and created again, as `git rebase` can do. In that case chokidar stops watching the folder, and under Deno a watcher reopened in the same tick gets no events at all (denoland/deno#36937). Each request for the story now compares the sources, the head file and the modules with what the last compile read, and compiles again first if any were added, removed or changed; a request with nothing changed compiles nothing (#80)
+- `storyInspect()`, `lint()` and `--lint` now check `<<link>>` and `<<goto>>` calls whose label or passage name contains an apostrophe or a double quote, reading their string arguments as SugarCube does, escapes included. Before, those calls were skipped, so a missing passage behind one went unreported (#79)
+
 ## [1.15.3] - 2026-09-25
 
 ### Fixed
