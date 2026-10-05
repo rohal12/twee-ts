@@ -6,8 +6,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -1175,5 +1177,88 @@ describe('watch with a format download that never answers', () => {
     expect(controller.signal.aborted).toBe(true);
     expect(signal.aborted).toBe(true);
     expect(fake.watchers.filter((w) => !w.closed)).toEqual([]);
+  });
+});
+
+// Symbolic links need privileges on Windows.
+describe.skipIf(process.platform === 'win32')('watch with the output reached through a link (#152)', () => {
+  let root: string;
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-watch-link-')));
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('neither loads the output back nor rebuilds for writing it', async () => {
+    const story = join(root, 'story');
+    const start = join(story, 'start.tw');
+    mkdirSync(story);
+    symlinkSync('story', join(root, 'out'));
+    writeFileSync(start, STORY.replace('Hello from the story.', 'ORIGINAL_CONTENT\n\n:: Gone\nSOON_DELETED'));
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outputMode: 'twine2-archive',
+      outFile: join(root, 'out', 'z.html'),
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    await builds.next();
+    expect(readFileSync(join(story, 'z.html'), 'utf-8')).toContain('ORIGINAL_CONTENT');
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    // The watcher on the source folder reports the output the build wrote there.
+    emit(story, 'z.html');
+    expect(vi.getTimerCount()).toBe(0);
+    writeFileSync(start, STORY.replace('Hello from the story.', 'UPDATED_CONTENT'));
+    emit(story, 'start.tw');
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+
+    const second = await builds.next();
+    expect(second.output).toContain('UPDATED_CONTENT');
+    expect(second.output).not.toContain('ORIGINAL_CONTENT');
+    expect(second.output).not.toContain('SOON_DELETED');
+    expect(second.stats.files).toEqual([relative(process.cwd(), start)]);
+    expect(builds.errors).toEqual([]);
+  });
+});
+
+describe('watch with a named source that is the output (#157)', () => {
+  let root: string;
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-watch-inplace-'));
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reports the error and leaves the file unchanged', async () => {
+    const file = join(root, 'a.tw');
+    writeFileSync(file, STORY);
+    const built: CompileResult[] = [];
+    let failed: (error: Error) => void = () => {};
+    const failure = new Promise<Error>((done) => (failed = done));
+    controller = await watch({
+      sources: [file],
+      outputMode: 'twee3',
+      outFile: file,
+      onBuild: (result) => built.push(result),
+      onError: failed,
+    });
+    expect((await failure).message).toBe(`path ${file}: Output file cannot be an input source.`);
+    expect(built).toEqual([]);
+    expect(readFileSync(file, 'utf-8')).toBe(STORY);
   });
 });

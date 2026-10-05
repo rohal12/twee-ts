@@ -4,7 +4,7 @@
 twee-ts [options] <sources...>
 ```
 
-Sources can be files or directories. Directories are walked recursively for supported file types.
+Sources can be files or directories. Directories are walked recursively for supported file types. Inside a source directory, a symbolic link to a file is read, but a link to a directory is not followed, as in Tweego, so a link back to a parent can't make the walk read the same files again and again. A directory named as a source is followed even when it is a link; name a linked directory as a source to include it.
 
 ## Options
 
@@ -16,6 +16,8 @@ Sources can be files or directories. Directories are walked recursively for supp
 | `-f, --format <id>`   | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`.                                  |
 | `-s, --start <name>`  | Starting passage name. Default: `Start`.                                                                    |
 | `--exclude <glob>`    | Leave out source files matching a glob. Repeatable. See [Excluding files](./configuration#excluding-files). |
+
+The output file is compared with the sources by real path, so it is left out even when a symbolic link leads to it or to its directory. Naming the output file itself as a source, a module or the head file is an error (`path a.tw: Output file cannot be an input source.`, exit status 1), and nothing is written.
 
 ### Output Modes
 

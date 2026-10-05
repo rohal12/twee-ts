@@ -18,7 +18,8 @@ import type {
   FileCacheEntry,
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
-import { getFilenames, isExcluded, watchFilesystem } from './filesystem.js';
+import { getFilenames, isExcluded, outputPaths, realPathOf, toBuildOutputs, watchFilesystem } from './filesystem.js';
+import type { BuildOutputs } from './filesystem.js';
 import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag } from './passage.js';
@@ -65,20 +66,23 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
 }
 
 /**
- * Builds as compileToFile() does for `outFile`, without writing it: the output may sit
+ * Builds as compileToFile() does for `outputs`, without writing them: an output may sit
  * inside a source folder, so its last build is left out of the sources and modules and
- * never read back. The caller decides whether the result is written. With no `outFile`
- * (output to stdout, or none), this is compile(). With `cache`, files are cached as
- * compileIncremental() caches them.
+ * never read back. `outputs` is the one file the CLI writes, or every path a bundler's
+ * build writes (see BuildOutputs). The caller decides whether the result is written.
+ * With no outputs (output to stdout, or none), this is compile(). With `cache`, files
+ * are cached as compileIncremental() caches them.
+ *
+ * Throws a TweeTsError when a source, module or head file named directly is an output.
  *
  * Internal, for the CLI and the bundler plugins; not part of the public API.
  */
 export async function compileForOutputFile(
   options: CompileOptions,
-  outFile: string | undefined,
+  outputs: BuildOutputs | string | undefined,
   cache?: Map<string, FileCacheEntry>,
 ): Promise<CompileResult> {
-  return buildOutput(options, cache, undefined, outFile);
+  return buildOutput(options, cache, undefined, outputs);
 }
 
 /**
@@ -243,15 +247,18 @@ function toError(e: unknown): Error {
 }
 
 /**
- * `outFile`: the file the build is written to, which source and module discovery
- * skip (as Tweego does), so an output inside a source folder is never loaded back.
+ * `outputs`: what the build writes (an output file's path, or a bundler's outputs),
+ * which source and module discovery skip, so an output inside a source folder is
+ * never loaded back. A source, module or head file named directly that is an output
+ * is a TweeTsError, as in Tweego: writing the build would overwrite it.
  */
 async function buildOutput(
   options: CompileOptions,
   cache?: Map<string, FileCacheEntry>,
   changedFiles?: ReadonlySet<string>,
-  outFile?: string,
+  outputs?: BuildOutputs | string,
 ): Promise<CompileResult> {
+  const written = toBuildOutputs(outputs);
   const diagnostics: Diagnostic[] = [];
   const outputMode: OutputMode = options.outputMode ?? 'html';
   const trim = options.trim ?? true;
@@ -281,12 +288,10 @@ async function buildOutput(
   }
 
   // Walk file paths to get all source filenames
-  const { filenames: sourceFilenames, diagnostics: sourcePathDiagnostics } = getFilenames(
-    filePaths,
-    outFile,
-    options.exclude,
-  );
-  diagnostics.push(...sourcePathDiagnostics);
+  const sourcePaths = getFilenames(filePaths, written, options.exclude);
+  diagnostics.push(...sourcePaths.diagnostics);
+  rejectOutputSources(sourcePaths.outputSources, diagnostics);
+  const sourceFilenames = sourcePaths.filenames;
 
   // Create story and load sources
   const story = createStory();
@@ -369,8 +374,11 @@ async function buildOutput(
       }
 
       // Modules and head file, injected before the template's closing head tag while the template is filled
-      const modules = getFilenames(options.modules ?? [], outFile);
+      const modules = getFilenames(options.modules ?? [], written);
       diagnostics.push(...modules.diagnostics);
+      const { headFile } = options;
+      const headIsOutput = headFile !== undefined && outputPaths(written).isFile(realPathOf(headFile));
+      rejectOutputSources([...modules.outputSources, ...(headIsOutput ? [headFile] : [])], diagnostics);
       const head = loadHeadContent(modules.filenames, options.headFile, diagnostics);
 
       output = format.isTwine2
@@ -392,6 +400,17 @@ async function buildOutput(
   };
 
   return { output, story, format, diagnostics, stats };
+}
+
+/**
+ * Throws for the first of `paths`, inputs named directly that are also an output:
+ * writing the build would overwrite them. An output found while walking a source
+ * folder is skipped instead (see getFilenames).
+ */
+function rejectOutputSources(paths: readonly string[], diagnostics: readonly Diagnostic[]): void {
+  const [first] = paths;
+  if (first === undefined) return;
+  throw new TweeTsError(`path ${first}: Output file cannot be an input source.`, [...diagnostics]);
 }
 
 function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {

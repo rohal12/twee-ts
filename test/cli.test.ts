@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -528,4 +538,38 @@ describe('CLI formatFetchTimeout config key', () => {
     expect(r.status).toBe(0);
     expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('Hello.');
   }, 30_000);
+});
+
+describe('CLI with a named source that is the output (#157)', () => {
+  it('fails, naming the path, and leaves the file unchanged', () => {
+    writeFileSync(join(dir, 'a.tw'), VALID_STORY);
+    const r = runCli(dir, ['--no-config', '-d', '-o', 'a.tw', 'a.tw']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('path a.tw: Output file cannot be an input source.');
+    expect(readFileSync(join(dir, 'a.tw'), 'utf-8')).toBe(VALID_STORY);
+  });
+});
+
+// Symbolic links need privileges on Windows.
+describe.skipIf(process.platform === 'win32')('CLI in a symlinked project folder (#152)', () => {
+  it('leaves the output out when the sources are named through the link', () => {
+    const base = realpathSync(dir);
+    mkdirSync(join(base, 'real', 'story'), { recursive: true });
+    symlinkSync('real', join(base, 'link'));
+    const link = join(base, 'link');
+    const start = join(link, 'story', 'a.tw');
+    // As from a shell in the link: $PWD/story names the sources; the working directory is the real path.
+    const build = (): CliResult =>
+      runCli(link, ['--no-config', '--archive-twine2', '--log-files', '-o', 'story/z.html', join(link, 'story')]);
+    writeFileSync(start, `${VALID_STORY}\n:: Gone\nSOON_DELETED\n`);
+    expect(build().status).toBe(0);
+    writeFileSync(start, VALID_STORY.replace('Hello.', 'UPDATED_CONTENT'));
+    const second = build();
+    expect(second.status).toBe(0);
+    expect(second.stderr).toBe('');
+    expect(second.stdout).toContain(`Files: ${join('..', 'link', 'story', 'a.tw')}\n`);
+    const html = readFileSync(join(base, 'real', 'story', 'z.html'), 'utf-8');
+    expect(html).toContain('UPDATED_CONTENT');
+    expect(html).not.toContain('SOON_DELETED');
+  });
 });

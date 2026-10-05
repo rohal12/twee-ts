@@ -67,6 +67,8 @@ Every key with its default value:
 | `output`     | `string`   | stdout   | Output file path.                                                                     |
 | `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.          |
 
+Source directories are walked as on the command line: a symbolic link to a directory inside one is not followed, and the output file is never read as a source. See the [CLI Reference](./cli).
+
 ### Excluding files
 
 Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, JavaScript, fonts, and images, audio and video, which become base64 media passages. To keep files out, such as artwork stored next to the passages that use it but served separately, list glob patterns in `exclude`:

@@ -2,10 +2,18 @@
  * File system utilities: path walking, file type detection, watch mode.
  * Ported from filesystem.go.
  */
-import { accessSync, constants as fsConstants, readdirSync, statSync, watch as fsWatch } from 'node:fs';
-import type { FSWatcher } from 'node:fs';
+import {
+  accessSync,
+  constants as fsConstants,
+  lstatSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  watch as fsWatch,
+} from 'node:fs';
+import type { FSWatcher, Stats } from 'node:fs';
 import * as nodePath from 'node:path';
-import { dirname, resolve, relative, join } from 'node:path';
+import { basename, dirname, resolve, relative, join, sep } from 'node:path';
 import { isKnownFileType } from './media-types.js';
 import type { Diagnostic } from './types.js';
 
@@ -27,65 +35,202 @@ export function isExcluded(filename: string, exclude: readonly string[]): boolea
   return exclude.some((pattern) => matchesGlob(rel, pattern.replace(/^\.\//, '')));
 }
 
+/**
+ * The paths a build writes. Source discovery never reads them back as sources,
+ * and the watchers don't rebuild for them.
+ */
+export interface BuildOutputs {
+  /**
+   * Files the build writes: the story, and for a bundler also its chunks, its
+   * assets and the public files it copies.
+   */
+  readonly files: readonly string[];
+  /**
+   * Folders the build writes into, which hold nothing but its output. One found
+   * while walking a source folder is skipped whole, files from earlier builds
+   * included (old hashed chunks, say). A folder named as a source, or one that
+   * holds a source folder, is still walked, and only `files` are left out of it.
+   */
+  readonly dirs: readonly string[];
+}
+
+/** A build that writes nothing: `compile()`, or output to stdout. */
+export const NO_BUILD_OUTPUTS: BuildOutputs = { files: [], dirs: [] };
+
+/** The outputs of a build that writes the one file `outFile`, or none without it. */
+export function toBuildOutputs(outputs: BuildOutputs | string | undefined): BuildOutputs {
+  if (outputs === undefined) return NO_BUILD_OUTPUTS;
+  return typeof outputs === 'string' ? { files: [outputs], dirs: [] } : outputs;
+}
+
+/**
+ * The path outputs are compared by: absolute, with every symbolic link in it
+ * resolved, so two paths that reach the same file through different links (a
+ * symlinked project folder, an alias of the output folder) compare equal. A
+ * path that doesn't exist yet, such as the output before the first build, is
+ * its nearest existing folder's real path joined with the rest.
+ */
+export function realPathOf(path: string): string {
+  const abs = resolve(path);
+  try {
+    return realpathSync.native(abs);
+  } catch {
+    // Missing or unreadable: resolve the folder it would be in instead.
+  }
+  const parent = dirname(abs);
+  return parent === abs ? abs : join(realPathOf(parent), basename(abs));
+}
+
+/** Whether the path `inner` is `outer` or inside it. */
+function isSameOrInside(inner: string, outer: string): boolean {
+  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
+}
+
+/** A build's outputs as real paths (see realPathOf), with the checks discovery and the watchers make. */
+export interface OutputPaths {
+  /** Whether the real path `real` is a file the build writes. */
+  isFile(real: string): boolean;
+  /** Whether the real path `real` is a folder the build owns (see BuildOutputs.dirs). */
+  isDir(real: string): boolean;
+  /** Whether the folder at the real path `real` is an owned folder or holds an output, at any depth. */
+  holds(real: string): boolean;
+  /**
+   * Whether source discovery, walking the folders `roots`, leaves the path out
+   * as output: an output file, or a path it only reaches through an owned folder.
+   */
+  isOutput(path: string, roots: readonly string[]): boolean;
+}
+
+export function outputPaths(outputs: BuildOutputs): OutputPaths {
+  const files = new Set(outputs.files.map(realPathOf));
+  const dirs = new Set(outputs.dirs.map(realPathOf));
+  const all = [...files, ...dirs];
+  return {
+    isFile: (real) => files.has(real),
+    isDir: (real) => dirs.has(real),
+    holds: (real) => dirs.has(real) || all.some((output) => output !== real && isSameOrInside(output, real)),
+    isOutput(path, roots) {
+      const real = realPathOf(path);
+      if (files.has(real)) return true;
+      const owners = [...dirs].filter((dir) => isSameOrInside(real, dir));
+      if (owners.length === 0) return false;
+      // A root walks into the path unless an owned folder below the root holds it.
+      const reaching = roots.map(realPathOf).filter((root) => isSameOrInside(real, root));
+      return reaching.every((root) => owners.some((dir) => dir !== root && isSameOrInside(dir, root)));
+    },
+  };
+}
+
+/**
+ * A folder entry as source discovery walks it, found at `pathname` with the real
+ * path `real` when it is no link: a link to a file counts as that file, and a
+ * link to anything else (a folder above all) as nothing, undefined. Throws when
+ * the entry or a link's target can't be read.
+ */
+export function walkedEntry(
+  pathname: string,
+  real: string,
+): { readonly stat: Stats; readonly real: string } | undefined {
+  const stat = lstatSync(pathname);
+  if (!stat.isSymbolicLink()) return { stat, real };
+  const target = statSync(pathname);
+  return target.isFile() ? { stat: target, real: realPathOf(pathname) } : undefined;
+}
+
 export interface FilenamesResult {
   readonly filenames: string[];
   /** One warning per path that could not be read. */
   readonly diagnostics: Diagnostic[];
+  /**
+   * The paths given that are themselves an output file. A build reading one would
+   * overwrite its own source; the compiler refuses it, as Tweego does.
+   */
+  readonly outputSources: string[];
 }
 
 /**
  * Recursively walk directories, collecting regular file paths.
- * Filters out the output file to prevent circular compilation, and the files
- * that match an `exclude` glob (see isExcluded).
+ *
+ * Leaves out what the build writes (`outputs`, compared by real path, see
+ * realPathOf) so its last output is never read back, and the files that match an
+ * `exclude` glob (see isExcluded). A path given that is itself an output file is
+ * not walked but listed in `outputSources`.
+ *
+ * Symbolic links: a path given is followed wherever it leads. Inside a folder, a
+ * link to a file is read, but a link to a folder is not followed, as Tweego's walk
+ * doesn't follow one. A link back to its own folder or a parent would otherwise
+ * walk the same files again at every depth.
+ *
  * Like Tweego, a path that cannot be read is reported as a warning and skipped.
  */
 export function getFilenames(
-  pathnames: string[],
-  outFilename?: string,
+  pathnames: readonly string[],
+  outputs?: BuildOutputs | string,
   exclude: readonly string[] = [],
 ): FilenamesResult {
   const filenames: string[] = [];
   const diagnostics: Diagnostic[] = [];
-  const absOutFile = outFilename ? resolve(outFilename) : '';
+  const outputSources: string[] = [];
+  const output = outputPaths(toBuildOutputs(outputs));
 
   function warn(pathname: string, e: unknown): void {
     diagnostics.push({ level: 'warning', message: `path ${pathname}: ${e instanceof Error ? e.message : String(e)}` });
   }
 
-  function walk(pathname: string): void {
+  function addFile(pathname: string): void {
+    const abs = resolve(pathname);
+    const rel = relative(process.cwd(), abs);
+    if (isExcluded(rel || abs, exclude)) return;
+    filenames.push(rel || abs);
+  }
+
+  // A folder's entries. `real` is the folder's real path; an entry that is no link
+  // has the real path `real/entry`, so no entry needs resolving.
+  function walkDir(pathname: string, real: string): void {
+    let entries;
+    try {
+      entries = readdirSync(pathname);
+    } catch (e) {
+      warn(pathname, e);
+      return;
+    }
+    for (const entry of entries) walkEntry(join(pathname, entry), join(real, entry));
+  }
+
+  function walkEntry(pathname: string, real: string): void {
+    let entry;
+    try {
+      entry = walkedEntry(pathname, real);
+    } catch (e) {
+      warn(pathname, e);
+      return;
+    }
+    if (entry === undefined) return;
+    if (entry.stat.isFile()) {
+      if (!output.isFile(entry.real)) addFile(pathname);
+    } else if (entry.stat.isDirectory() && !output.isDir(entry.real)) {
+      walkDir(pathname, entry.real);
+    }
+  }
+
+  for (const pathname of pathnames) {
     let stat;
     try {
       stat = statSync(pathname);
     } catch (e) {
       warn(pathname, e);
-      return;
+      continue;
     }
-
+    const real = realPathOf(pathname);
     if (stat.isFile()) {
-      const abs = resolve(pathname);
-      if (abs === absOutFile) return;
-      const rel = relative(process.cwd(), abs);
-      if (isExcluded(rel || abs, exclude)) return;
-      filenames.push(rel || abs);
+      if (output.isFile(real)) outputSources.push(pathname);
+      else addFile(pathname);
     } else if (stat.isDirectory()) {
-      let entries;
-      try {
-        entries = readdirSync(pathname);
-      } catch (e) {
-        warn(pathname, e);
-        return;
-      }
-      for (const entry of entries) {
-        walk(join(pathname, entry));
-      }
+      walkDir(pathname, real);
     }
   }
 
-  for (const pathname of pathnames) {
-    walk(pathname);
-  }
-
-  return { filenames, diagnostics };
+  return { filenames, diagnostics, outputSources };
 }
 
 export interface WatchHandle {
@@ -185,7 +330,7 @@ export function watchFilesystem(
   ignore: (filename: string) => boolean = () => false,
   onError: (error: WatchPathError) => void = () => {},
 ): WatchHandle {
-  const absOutFile = resolve(outFilename);
+  const output = outputPaths(toBuildOutputs(outFilename));
   let buildTimer: ReturnType<typeof setTimeout> | null = null;
   const BUILD_DEBOUNCE = 500;
   const pendingFiles = new Set<string>();
@@ -218,8 +363,9 @@ export function watchFilesystem(
   // itself, so it counts whatever its type. Reported relative to the working
   // directory, the form getFilenames gives and the incremental cache is keyed by.
   function fileChanged(abs: string, named: boolean): void {
-    if (abs === absOutFile) return;
     if (!named && !isKnownFileType(abs)) return;
+    // Compared by real path: the output may be reached through a link.
+    if (output.isFile(realPathOf(abs))) return;
     const rel = relative(process.cwd(), abs);
     if (!ignore(rel || abs)) scheduleBuild(rel || abs);
   }

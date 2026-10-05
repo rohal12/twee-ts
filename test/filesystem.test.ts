@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { basename, join, relative } from 'node:path';
-import { chmodSync, renameSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { getFilenames, isExcluded, watchFilesystem } from '../src/filesystem.js';
+import { basename, join, relative, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  chmodSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+} from 'node:fs';
+import { getFilenames, isExcluded, outputPaths, realPathOf, watchFilesystem } from '../src/filesystem.js';
 import type { WatchHandle } from '../src/filesystem.js';
 
 const TMP_DIR = join(__dirname, '__tmp_fs__');
@@ -80,7 +90,7 @@ describe('getFilenames', () => {
   );
 
   it('handles empty input', () => {
-    expect(getFilenames([])).toEqual({ filenames: [], diagnostics: [] });
+    expect(getFilenames([])).toEqual({ filenames: [], diagnostics: [], outputSources: [] });
   });
 
   describe('with exclude globs', () => {
@@ -113,6 +123,174 @@ describe('getFilenames', () => {
 
     it('keeps every file when no pattern matches', () => {
       expect(getFilenames([TMP_DIR], undefined, ['**/*.mp3']).filenames).toHaveLength(4);
+    });
+  });
+});
+
+// Symbolic links need privileges on Windows.
+describe.skipIf(process.platform === 'win32')('getFilenames with build outputs and symbolic links', () => {
+  let root: string;
+  let story: string;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-outputs-')));
+    story = join(root, 'story');
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), ':: Start\nHello\n');
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const names = (filenames: readonly string[]): string[] => filenames.map((f) => relative(root, resolve(f))).sort();
+
+  describe('compares outputs by real path (#152)', () => {
+    it('leaves out an output named through a link to its folder', () => {
+      writeFileSync(join(story, 'z.html'), 'last build');
+      symlinkSync('story', join(root, 'out'));
+      const { filenames } = getFilenames([story], join(root, 'out', 'z.html'));
+      expect(names(filenames)).toEqual([join('story', 'a.tw')]);
+    });
+
+    it('leaves out the output when the sources are named through a symlinked project folder', () => {
+      // As from a shell in a symlinked folder: $PWD is the link, the working directory the real path.
+      mkdirSync(join(root, 'real'));
+      renameSync(story, join(root, 'real', 'story'));
+      symlinkSync('real', join(root, 'link'));
+      writeFileSync(join(root, 'real', 'story', 'z.html'), 'last build');
+      const { filenames } = getFilenames([join(root, 'link', 'story')], join(root, 'real', 'story', 'z.html'));
+      expect(names(filenames)).toEqual([join('link', 'story', 'a.tw')]);
+    });
+
+    it('compares an output that does not exist yet by its folder', () => {
+      symlinkSync('story', join(root, 'out'));
+      expect(realPathOf(join(root, 'out', 'z.html'))).toBe(join(story, 'z.html'));
+      expect(realPathOf(join(root, 'out', 'new', 'z.html'))).toBe(join(story, 'new', 'z.html'));
+    });
+
+    it('leaves out a link in the sources to the output file', () => {
+      mkdirSync(join(root, 'dist'));
+      writeFileSync(join(root, 'dist', 'z.html'), 'last build');
+      symlinkSync(join('..', 'dist', 'z.html'), join(story, 'z.html'));
+      const { filenames } = getFilenames([story], join(root, 'dist', 'z.html'));
+      expect(names(filenames)).toEqual([join('story', 'a.tw')]);
+    });
+  });
+
+  describe('does not follow links to folders inside a source folder (#160)', () => {
+    it('reads each file once with a link back to its own folder', () => {
+      symlinkSync('.', join(story, 's1'));
+      expect(getFilenames([story])).toEqual({
+        filenames: [relative(process.cwd(), join(story, 'a.tw'))],
+        diagnostics: [],
+        outputSources: [],
+      });
+    });
+
+    it('finishes at once with two links back to the folder', () => {
+      symlinkSync('.', join(story, 's1'));
+      symlinkSync('.', join(story, 's2'));
+      expect(names(getFilenames([story]).filenames)).toEqual([join('story', 'a.tw')]);
+    });
+
+    it('does not follow a link to a parent folder', () => {
+      writeFileSync(join(root, 'outside.tw'), ':: Outside\n');
+      symlinkSync('..', join(story, 'up'));
+      expect(names(getFilenames([story]).filenames)).toEqual([join('story', 'a.tw')]);
+    });
+
+    it('does not follow a link to the output folder', () => {
+      mkdirSync(join(root, 'dist'));
+      writeFileSync(join(root, 'dist', 'z.html'), 'last build');
+      symlinkSync(join('..', 'dist'), join(story, 'build'));
+      expect(names(getFilenames([story], join(root, 'dist', 'z.html')).filenames)).toEqual([join('story', 'a.tw')]);
+    });
+
+    it('still reads a link to a file, and a linked folder named as a source', () => {
+      mkdirSync(join(root, 'shared'));
+      writeFileSync(join(root, 'shared', 'b.tw'), ':: B\n');
+      symlinkSync(join('..', 'shared', 'b.tw'), join(story, 'b.tw'));
+      symlinkSync('shared', join(root, 'linked'));
+      expect(names(getFilenames([story, join(root, 'linked')]).filenames)).toEqual([
+        join('linked', 'b.tw'),
+        join('story', 'a.tw'),
+        join('story', 'b.tw'),
+      ]);
+    });
+
+    it('warns about a link whose target is missing', () => {
+      symlinkSync('missing.tw', join(story, 'dangling.tw'));
+      const { filenames, diagnostics } = getFilenames([story]);
+      expect(names(filenames)).toEqual([join('story', 'a.tw')]);
+      expect(diagnostics).toEqual([{ level: 'warning', message: expect.stringContaining('ENOENT') }]);
+    });
+  });
+
+  describe('a named source that is an output (#157)', () => {
+    it('is listed in outputSources, not read', () => {
+      const file = join(story, 'a.tw');
+      expect(getFilenames([file], file)).toEqual({ filenames: [], diagnostics: [], outputSources: [file] });
+    });
+
+    it('is found through a link too', () => {
+      symlinkSync('story', join(root, 'alias'));
+      const named = join(root, 'alias', 'a.tw');
+      expect(getFilenames([named], join(story, 'a.tw')).outputSources).toEqual([named]);
+    });
+
+    it('is not an output found while walking a folder, which is skipped silently', () => {
+      writeFileSync(join(story, 'z.html'), 'last build');
+      expect(getFilenames([story], join(story, 'z.html'))).toEqual({
+        filenames: [relative(process.cwd(), join(story, 'a.tw'))],
+        diagnostics: [],
+        outputSources: [],
+      });
+    });
+  });
+
+  describe('output folders', () => {
+    beforeEach(() => {
+      mkdirSync(join(story, 'build', 'assets'), { recursive: true });
+      writeFileSync(join(story, 'build', 'index.html'), 'story');
+      writeFileSync(join(story, 'build', 'assets', 'old-chunk.js'), 'old');
+    });
+
+    it('skips an output folder found while walking a source folder whole', () => {
+      const outputs = { files: [], dirs: [join(story, 'build')] };
+      expect(names(getFilenames([story], outputs).filenames)).toEqual([join('story', 'a.tw')]);
+    });
+
+    it('walks an output folder named as a source, leaving out only the output files', () => {
+      const outputs = { files: [join(story, 'build', 'index.html')], dirs: [story] };
+      expect(names(getFilenames([story], outputs).filenames)).toEqual([
+        join('story', 'a.tw'),
+        join('story', 'build', 'assets', 'old-chunk.js'),
+      ]);
+    });
+
+    it('walks a source folder inside an output folder', () => {
+      const outputs = { files: [], dirs: [root] };
+      expect(names(getFilenames([story], outputs).filenames)).toHaveLength(3);
+    });
+  });
+
+  describe('outputPaths', () => {
+    it('tells whether a path is one discovery leaves out, given the source folders', () => {
+      const build = join(story, 'build');
+      const output = outputPaths({ files: [join(root, 'out.html')], dirs: [build] });
+      expect(output.isOutput(join(root, 'out.html'), [story])).toBe(true);
+      expect(output.isOutput(join(build, 'assets', 'old-chunk.js'), [story])).toBe(true);
+      expect(output.isOutput(join(story, 'a.tw'), [story])).toBe(false);
+      // A source folder inside the output folder is walked.
+      expect(output.isOutput(join(build, 'x.tw'), [story, build])).toBe(false);
+      expect(output.isOutput(join(build, 'x.tw'), [build])).toBe(false);
+    });
+
+    it('tells whether a folder holds an output', () => {
+      const output = outputPaths({ files: [join(story, 'build', 'index.html')], dirs: [join(root, 'dist')] });
+      expect(output.holds(story)).toBe(true);
+      expect(output.holds(join(story, 'build'))).toBe(true);
+      expect(output.holds(join(root, 'dist'))).toBe(true);
+      expect(output.holds(join(story, 'parts'))).toBe(false);
+      expect(output.holds(join(story, 'build', 'index.html'))).toBe(false);
     });
   });
 });

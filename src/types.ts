@@ -18,7 +18,11 @@ export type SourceInput = string | InlineSource;
 // --- Compile options ---
 
 export interface CompileOptions {
-  /** Files, directories, or inline sources to compile. */
+  /**
+   * Files, directories, or inline sources to compile. Directories are walked
+   * recursively; inside one, a symbolic link to a file is read, but a link to a
+   * directory is not followed (as in Tweego).
+   */
   sources: SourceInput[];
   /**
    * Glob patterns for files to leave out of `sources`, matched against each file's
@@ -73,7 +77,11 @@ export interface CompileOptions {
 }
 
 export interface CompileToFileOptions extends CompileOptions {
-  /** Output file path. */
+  /**
+   * Output file path. It is never read as a source, even inside a source folder or
+   * reached through a symbolic link. Naming it as a source, a module or the head
+   * file is a TweeTsError, and nothing is written.
+   */
   outFile: string;
 }
 
