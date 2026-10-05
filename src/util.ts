@@ -3,13 +3,11 @@
  */
 import { readFileSync } from 'node:fs';
 import { parse as parsePath } from 'node:path';
+import { normalizeSourceText } from './source-text.js';
 
 /** Read a file as UTF-8 with BOM stripping and line ending normalization. */
 export function readUTF8(filename: string): string {
-  let content = readFileSync(filename, 'utf-8');
-  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-  content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  return content;
+  return normalizeSourceText(readFileSync(filename, 'utf-8'));
 }
 
 /** Read a file as base64. */

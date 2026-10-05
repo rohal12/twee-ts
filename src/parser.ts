@@ -7,6 +7,7 @@ import { ItemType } from './types.js';
 import { tweeLexer } from './lexer.js';
 import { tweeUnescape } from './escape.js';
 import { twee2ToV3 } from './twee2-compat.js';
+import { normalizeSourceText } from './source-text.js';
 
 export interface ParseOptions {
   /** Filename for diagnostics. */
@@ -24,21 +25,23 @@ export interface ParseResult {
 
 /**
  * Parse Twee source text into passages.
+ *
+ * The source is normalized first, as files are when they are read: a leading UTF-8 BOM is
+ * removed and CRLF and bare CR line endings become LF.
  */
 export function parseTwee(source: string, options: ParseOptions = {}): ParseResult {
   const { filename = '<inline>', trim = true, twee2Compat = false } = options;
   const diagnostics: Diagnostic[] = [];
 
-  if (twee2Compat) {
-    source = twee2ToV3(source);
-  }
+  const normalized = normalizeSourceText(source);
+  const tweeSource = twee2Compat ? twee2ToV3(normalized) : normalized;
 
   const passages: Passage[] = [];
   let current: Passage | null = null;
   let pCount = 0;
   let lastType: ItemType = ItemType.EOF;
 
-  for (const item of tweeLexer(source)) {
+  for (const item of tweeLexer(tweeSource)) {
     switch (item.type) {
       case ItemType.Error:
         diagnostics.push({

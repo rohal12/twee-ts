@@ -199,8 +199,10 @@ for (const item of lexer) {
 }
 
 // Parse Twee source into passages
-const passages = parseTwee(':: Start\nHello!', 'story.tw');
+const { passages, diagnostics } = parseTwee(':: Start\nHello!', { filename: 'story.tw' });
 ```
+
+`parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. In-memory sources passed to `compile()` get the same normalization.
 
 ### Story Formats
 
