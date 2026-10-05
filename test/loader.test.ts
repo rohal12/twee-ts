@@ -284,6 +284,19 @@ describe('loadInlineSources: BOM and line-ending normalization', () => {
     expect(story.passages[0]!.metadata).toEqual({ position: '10,20' });
   });
 
+  it('keeps the header after a BOM in the middle of a Twee file and of an inline source', () => {
+    // `cat a.tw b.tw > all.tw`, where both files were saved with a UTF-8 BOM.
+    const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+    const bytes = Buffer.concat([bom, Buffer.from(':: Start\nfirst\n\n'), bom, Buffer.from(':: Second\nsecond\n')]);
+    for (const { story, diagnostics } of [loadFromDisk('all.tw', bytes), loadInline('all.tw', bytes)]) {
+      expect(diagnostics).toEqual([]);
+      expect(story.passages.map((p) => [p.name, p.text])).toEqual([
+        ['Start', 'first'],
+        ['Second', 'second'],
+      ]);
+    }
+  });
+
   it('strips a leading BOM from string content', () => {
     const { story, diagnostics } = loadInline('inline.tw', '﻿:: Start\nHello');
     expect(diagnostics).toEqual([]);

@@ -7,7 +7,7 @@ import { ItemType } from './types.js';
 import { tweeLexer } from './lexer.js';
 import { tweeUnescape } from './escape.js';
 import { twee2ToV3 } from './twee2-compat.js';
-import { normalizeSourceText } from './source-text.js';
+import { normalizeTweeSourceText } from './source-text.js';
 
 export interface ParseOptions {
   /** Filename for diagnostics. */
@@ -27,13 +27,15 @@ export interface ParseResult {
  * Parse Twee source text into passages.
  *
  * The source is normalized first, as files are when they are read: a leading UTF-8 BOM is
- * removed and CRLF and bare CR line endings become LF.
+ * removed and CRLF and bare CR line endings become LF. A BOM at the start of a later line,
+ * directly before `::` (left there by concatenating files), is removed too, so that line
+ * stays a passage header.
  */
 export function parseTwee(source: string, options: ParseOptions = {}): ParseResult {
   const { filename = '<inline>', trim = true, twee2Compat = false } = options;
   const diagnostics: Diagnostic[] = [];
 
-  const normalized = normalizeSourceText(source);
+  const normalized = normalizeTweeSourceText(source);
   const tweeSource = twee2Compat ? twee2ToV3(normalized) : normalized;
 
   const passages: Passage[] = [];

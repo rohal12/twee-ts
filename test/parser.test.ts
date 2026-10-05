@@ -83,6 +83,40 @@ describe('parseTwee: input normalization', () => {
     expect(passages.map((p) => [p.name, p.text])).toEqual([['Start', 'Hello']]);
   });
 
+  it('keeps the header of a concatenated source that starts with a BOM', () => {
+    // `cat a.tw b.tw > all.tw`, where b.tw was saved with a UTF-8 BOM.
+    const { passages, diagnostics } = parseTwee(':: Start\nfirst\n\n\uFEFF:: Second\nsecond\n');
+    expect(diagnostics).toEqual([]);
+    expect(passages.map((p) => [p.name, p.text])).toEqual([
+      ['Start', 'first'],
+      ['Second', 'second'],
+    ]);
+  });
+
+  it('keeps the header of a concatenated source with a BOM and CRLF line endings', () => {
+    const { passages } = parseTwee(':: Start\r\nfirst\r\n\uFEFF\uFEFF:: Second\r\nsecond\r\n');
+    expect(passages.map((p) => [p.name, p.text])).toEqual([
+      ['Start', 'first'],
+      ['Second', 'second'],
+    ]);
+  });
+
+  it('keeps the header of a concatenated Twee 2 source that starts with a BOM', () => {
+    const { passages } = parseTwee(':: Start\nfirst\n\uFEFF:: Second [tag] <10,20>\nsecond\n', { twee2Compat: true });
+    expect(passages.map((p) => [p.name, p.tags, p.text])).toEqual([
+      ['Start', [], 'first'],
+      ['Second', ['tag'], 'second'],
+    ]);
+    expect(passages[1]!.metadata).toEqual({ position: '10,20' });
+  });
+
+  it('keeps a U+FEFF that is not directly before a header', () => {
+    const { passages } = parseTwee(':: Start\nzero\uFEFFwidth\n\uFEFFline start\nmid \uFEFF:: line\n');
+    expect(passages.map((p) => [p.name, p.text])).toEqual([
+      ['Start', 'zero\uFEFFwidth\n\uFEFFline start\nmid \uFEFF:: line'],
+    ]);
+  });
+
   it('accepts CRLF line endings after a tags block', () => {
     const { passages, diagnostics } = parseTwee(':: Start [tag]\r\nHello\r\nWorld\r\n');
     expect(diagnostics).toEqual([]);
