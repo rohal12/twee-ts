@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `watch()` and CLI watch mode run one build at a time. Changes saved during a build go into one follow-up build, so a slow earlier build (such as one waiting for a remote story format) can no longer finish last and overwrite the output with older passages (#136)
+- The Vite and Rollup plugins no longer read the story HTML they write back as a source when it sits inside a source folder, which restored edited and deleted passages on the next build. Watch mode no longer rebuilds without end when the HTML is written into a watched folder (#135)
+- CLI watch mode prints the file list and statistics after each build with `--log-files` and `--log-stats`, as a one-shot build does (#133)
+- Lint and `storyInspect(story, { target })` read no links from passages the output leaves out, such as `Twine.private` notes, StoryData and StoryTitle: their links are not reported as broken and do not keep a passage from being listed as an orphan. Script passages are still read (#134)
+- Importing Twine 2 HTML keeps the story JavaScript and stylesheet when a real passage is named `Story JavaScript` or `Story Stylesheet`. The code passage gets the first free name (`Story JavaScript 2`, …) instead of being replaced (#137)
+- A story title or start passage name containing a format placeholder (`{{STORY_DATA}}`, `{{STORY_NAME}}`, or Twine 1's `"STORY"` and others) no longer breaks the output: placeholders are filled from the format template in one pass, and inserted text stays literal (#138)
+- A `UUID://…//` wrapped IFID in StoryData, StorySettings, `createIFID()` or imported HTML is stored and written as the bare UUID, with one wrapper in the Treaty of Babel comment instead of two (#139)
+- Modules and the head file are injected before a closing head tag in any letter case or with whitespace (`</HEAD>`, `</head >`), and only into the format template, never into story data (#140)
+
+### Changed
+
+- `watch()` no longer writes or reports a build that changes made while it ran have superseded; the follow-up build is written and reported instead (#136)
+
 ## [1.17.0] - 2026-10-05
 
 ### Added
