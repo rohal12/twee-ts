@@ -34,6 +34,7 @@ Every key with its default value:
 ```json
 {
   "sources": ["src/"],
+  "exclude": [],
   "output": "story.html",
   "outputMode": "html",
   "formatId": "sugarcube-2",
@@ -58,11 +59,31 @@ Every key with its default value:
 
 ### Sources & Output
 
-| Key          | Type       | Default  | Description                                                                  |
-| ------------ | ---------- | -------- | ---------------------------------------------------------------------------- |
-| `sources`    | `string[]` | —        | Files or directories to compile. Directories are walked recursively.         |
-| `output`     | `string`   | stdout   | Output file path.                                                            |
-| `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`. |
+| Key          | Type       | Default  | Description                                                                           |
+| ------------ | ---------- | -------- | ------------------------------------------------------------------------------------- |
+| `sources`    | `string[]` | —        | Files or directories to compile. Directories are walked recursively.                  |
+| `exclude`    | `string[]` | `[]`     | Glob patterns for source files to leave out. See [Excluding files](#excluding-files). |
+| `output`     | `string`   | stdout   | Output file path.                                                                     |
+| `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.          |
+
+### Excluding files
+
+Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, JavaScript, fonts, and images, audio and video, which become base64 media passages. To keep files out, such as artwork stored next to the passages that use it but served separately, list glob patterns in `exclude`:
+
+```json
+{
+  "sources": ["src/story"],
+  "exclude": ["src/story/**/*.png"]
+}
+```
+
+- Each pattern is matched against a file's path relative to the working directory, the path `--log-files` prints, with Node's [`path.matchesGlob`](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern): `*` matches within one folder, `**` across folders, `{png,webp}` either name. A leading `./` is ignored. `*` and `**` don't match names that start with a dot.
+- To leave out a folder, match the files in it: `src/story/art/**`.
+- `**` doesn't reach outside the working directory. For sources outside it, start the pattern with the same `../` path: `../shared/**/*.png`.
+- A file listed in `sources` directly is left out too if a pattern matches it. Modules and the head file are never left out.
+- In watch mode and in the Vite plugin's dev server, changes to excluded files don't trigger a rebuild.
+- `--exclude` on the command line replaces the config's list.
+- Needs Node.js 22.5 or newer.
 
 ### Story Format
 

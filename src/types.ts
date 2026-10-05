@@ -20,6 +20,11 @@ export type SourceInput = string | InlineSource;
 export interface CompileOptions {
   /** Files, directories, or inline sources to compile. */
   sources: SourceInput[];
+  /**
+   * Glob patterns for files to leave out of `sources`, matched against each file's
+   * path relative to the working directory (as `stats.files` lists it). Modules are not affected.
+   */
+  exclude?: string[];
   /** Output mode. Default: 'html'. */
   outputMode?: OutputMode;
   /** Story format directory ID (e.g. 'sugarcube-2'). */
@@ -234,6 +239,7 @@ export interface FileCacheEntry {
 
 export interface TweeTsConfig {
   sources?: string[];
+  exclude?: string[];
   output?: string;
   outputMode?: OutputMode;
   formatId?: string;

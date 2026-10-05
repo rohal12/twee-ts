@@ -89,7 +89,7 @@ export function validateConfig(data: unknown): string[] {
   }
 
   // String array fields
-  for (const key of ['sources', 'formatPaths', 'formatIndices', 'formatUrls', 'modules'] as const) {
+  for (const key of ['sources', 'exclude', 'formatPaths', 'formatIndices', 'formatUrls', 'modules'] as const) {
     if (key in obj) {
       if (!Array.isArray(obj[key])) {
         errors.push(`"${key}" must be an array.`);

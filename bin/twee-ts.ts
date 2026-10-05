@@ -49,6 +49,7 @@ const { values, positionals } = parseArgs({
     'format-url': { type: 'string', multiple: true },
     'no-remote': { type: 'boolean' },
     'tag-alias': { type: 'string', multiple: true },
+    exclude: { type: 'string', multiple: true },
     'source-info': { type: 'boolean' },
     'word-count-method': { type: 'string' },
     config: { type: 'string', short: 'c' },
@@ -138,6 +139,7 @@ async function main(): Promise<void> {
   if (values.lint) {
     const lintResult = await lint({
       sources,
+      exclude: values.exclude ?? config?.exclude,
       formatId: values.format ?? config?.formatId,
       startPassage: values.start ?? config?.startPassage,
       formatPaths: config?.formatPaths,
@@ -160,6 +162,7 @@ async function main(): Promise<void> {
 
   const compileOptions = {
     sources,
+    exclude: values.exclude ?? config?.exclude,
     outputMode,
     formatId: values.format ?? config?.formatId,
     startPassage: values.start ?? config?.startPassage,
@@ -376,6 +379,7 @@ Options:
   --format-index <url>      SFA-compatible format index URL (repeatable)
   --format-url <url>        Direct format.js URL (repeatable)
   --tag-alias <alias=target> Map a tag to a special tag (repeatable)
+  --exclude <glob>          Leave out source files matching a glob (repeatable)
   --source-info             Emit source file/line as data- attributes on passages
   --word-count-method <m>   Word counting method: tweego (default), whitespace
   --no-remote               Disable remote format fetching

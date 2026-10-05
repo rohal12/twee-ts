@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { compile } from '../src/compiler.js';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { compile, compileToFile } from '../src/compiler.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -215,5 +216,57 @@ describe('compile', () => {
 
     expect(result.output).toContain('position="100,100"');
     expect(result.output).toContain('size="200,100"');
+  });
+});
+
+describe('compile with exclude', () => {
+  const TMP_DIR = join(__dirname, '__tmp_exclude__');
+  const options = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
+
+  beforeEach(() => {
+    mkdirSync(join(TMP_DIR, 'story', 'art'), { recursive: true });
+    writeFileSync(join(TMP_DIR, 'story', 'start.tw'), readFileSync(join(FIXTURES_DIR, 'minimal.tw')));
+    writeFileSync(join(TMP_DIR, 'story', 'art', 'scene.png'), Buffer.alloc(16, 7));
+  });
+
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  it('loads every media file found in a source folder by default, as Tweego does', async () => {
+    const result = await compile({ ...options, sources: [join(TMP_DIR, 'story')] });
+    expect(result.output).toContain('Twine.image');
+    expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(true);
+  });
+
+  it('leaves out the files that match an exclude glob', async () => {
+    const result = await compile({ ...options, sources: [join(TMP_DIR, 'story')], exclude: ['**/*.png'] });
+    expect(result.output).toContain('Hello, world!');
+    expect(result.output).not.toContain('Twine.image');
+    expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(false);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('leaves them out of compileToFile too', async () => {
+    const outFile = join(TMP_DIR, 'out.html');
+    const result = await compileToFile({
+      ...options,
+      sources: [join(TMP_DIR, 'story')],
+      outFile,
+      exclude: ['**/art/**'],
+    });
+    expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(false);
+    expect(readFileSync(outFile, 'utf-8')).not.toContain('Twine.image');
+  });
+
+  it('leaves modules alone', async () => {
+    const module = join(TMP_DIR, 'story', 'art', 'mod.js');
+    writeFileSync(module, 'window.modMarker = 1;');
+    const result = await compile({
+      ...options,
+      sources: [join(TMP_DIR, 'story')],
+      exclude: ['**/art/**'],
+      modules: [module],
+    });
+    expect(result.output).toContain('<script id="script-module-mod" type="text/javascript">window.modMarker = 1;');
+    expect(result.stats.files.some((f) => f.endsWith('mod.js'))).toBe(false);
   });
 });

@@ -66,6 +66,7 @@ All options for `compile()`. Only `sources` is required.
 ```typescript
 interface CompileOptions {
   sources: SourceInput[];
+  exclude?: string[]; // globs for source files to leave out
   outputMode?: OutputMode; // default: 'html'
   formatId?: string; // default: 'sugarcube-2'
   startPassage?: string; // default: 'Start'
@@ -85,6 +86,16 @@ interface CompileOptions {
 ```
 
 `SourceInput` is either a file/directory path (`string`) or an inline source (`{ filename: string; content: string | Buffer }`).
+
+`exclude` takes glob patterns for files to leave out of `sources`, matched against each file's path relative to the working directory, as `stats.files` lists it. It applies to `compile()`, `compileToFile()`, `compileIncremental()` and `watch()`, whose watcher also ignores changes to excluded files. Modules and the head file are never left out. See [Excluding files](./configuration#excluding-files) for the pattern rules.
+
+```typescript
+const result = await compileToFile({
+  sources: ['src/story'],
+  exclude: ['src/story/**/*.png'],
+  outFile: 'story.html',
+});
+```
 
 ## Inline Sources
 
