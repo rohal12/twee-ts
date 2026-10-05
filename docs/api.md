@@ -315,7 +315,7 @@ const unknown = unknownConfigKeyWarnings({ formatID: 'harlowe-3' });
 const json = scaffoldConfig(); // default config JSON
 ```
 
-`loadConfig()` and `loadConfigFile()` throw on invalid JSON or a config that fails `validateConfig()`. Their optional second argument collects warnings that leave the config usable: keys the config does not define (other than `$schema`) and a file that is not valid UTF-8. A config file may start with a byte order mark.
+`loadConfig()` and `loadConfigFile()` throw when the file cannot be read, on invalid JSON or a config that fails `validateConfig()`. Their optional second argument collects warnings that leave the config usable: keys the config does not define (other than `$schema`) and a file that is not valid UTF-8. A config file may start with a byte order mark.
 
 ### Lint
 

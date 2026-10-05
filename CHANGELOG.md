@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `loadConfig()` throws, naming the file, when the config file exists but cannot be read, as `loadConfigFile()` does, instead of returning `null` and ignoring the config
 - CI runs coverage in its own job, with thresholds that fail the build when coverage drops, a job summary and an uploaded report
 
 ## [1.18.0] - 2026-10-05
