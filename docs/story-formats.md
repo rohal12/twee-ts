@@ -110,7 +110,7 @@ When a format is not found locally, twee-ts automatically downloads it from the 
 
 (`$XDG_CACHE_HOME/twee-ts/storyformats/` when `XDG_CACHE_HOME` is set.) The cache is shared by every project on the machine, and by twee-ts processes running at the same time: each cached file is written to a temporary file and then renamed into place, so a process never reads a half-written format, and concurrent compiles in one process download each format once.
 
-Each request (an index or a `format.js`) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` option of the [API](./api#compile-options) changes the limit. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
+Each request (an index or a `format.js`) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` key of the [config file](./configuration#story-format), or the option of the same name in the [API](./api#compile-options), changes the limit. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
 
 ### Custom Remote Sources
 

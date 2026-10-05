@@ -103,6 +103,18 @@ describe('validateConfig', () => {
     expect(errors).toContain('"sourceInfo" must be a boolean.');
   });
 
+  it('accepts a formatFetchTimeout of 0 or more milliseconds', () => {
+    expect(validateConfig({ formatFetchTimeout: 60000 })).toEqual([]);
+    expect(validateConfig({ formatFetchTimeout: 0 })).toEqual([]);
+  });
+
+  it('rejects a formatFetchTimeout that is not a number of 0 or more', () => {
+    const message = '"formatFetchTimeout" must be a number of milliseconds, 0 or more.';
+    expect(validateConfig({ formatFetchTimeout: '30s' })).toContain(message);
+    expect(validateConfig({ formatFetchTimeout: -1 })).toContain(message);
+    expect(validateConfig({ formatFetchTimeout: null })).toContain(message);
+  });
+
   it('accepts exclude globs', () => {
     expect(validateConfig({ sources: ['src/'], exclude: ['**/*.png', 'src/art/**'] })).toEqual([]);
   });
@@ -291,6 +303,7 @@ describe('JSON Schema', () => {
       'twee2Compat',
       'testMode',
       'noRemote',
+      'formatFetchTimeout',
       'tagAliases',
       'sourceInfo',
     ];

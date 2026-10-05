@@ -88,6 +88,12 @@
       "default": false,
       "description": "Disable remote format fetching."
     },
+    "formatFetchTimeout": {
+      "type": "number",
+      "minimum": 0,
+      "default": 30000,
+      "description": "Milliseconds each story format request (an index or a format.js) may take before it fails with a warning and the next source is tried. 0 turns the limit off."
+    },
     "tagAliases": {
       "type": "object",
       "additionalProperties": { "type": "string" },

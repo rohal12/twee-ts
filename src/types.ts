@@ -349,6 +349,8 @@ export interface TweeTsConfig {
   twee2Compat?: boolean;
   testMode?: boolean;
   noRemote?: boolean;
+  /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
+  formatFetchTimeout?: number;
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean;
   wordCountMethod?: WordCountMethod;

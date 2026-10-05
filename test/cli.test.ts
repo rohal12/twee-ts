@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -486,5 +488,44 @@ describe('CLI with a story format that is not available', () => {
     } finally {
       cli.child.kill();
     }
+  }, 30_000);
+});
+
+describe('CLI formatFetchTimeout config key', () => {
+  let silent: Server | undefined;
+
+  afterEach(() => {
+    silent?.close();
+    silent = undefined;
+  });
+
+  it('limits each story format request', async () => {
+    // Accepts connections and never answers, like a stalled proxy.
+    const server = createServer(() => {});
+    silent = server;
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${port}/format.js`;
+
+    // After the URL times out, the format is found in the download cache, so nothing else goes to the network.
+    const cache = join(dir, 'cache');
+    const cached = join(cache, 'twee-ts', 'storyformats', 'Stalled', '1.0.0');
+    mkdirSync(cached, { recursive: true });
+    writeFileSync(
+      join(cached, 'format.js'),
+      'window.storyFormat({"name":"Stalled","version":"1.0.0","source":"<html><head></head><body>{{STORY_DATA}}</body></html>"});',
+    );
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    writeFileSync(
+      join(dir, 'twee-ts.config.json'),
+      JSON.stringify({ sources: ['story.tw'], output: 'out.html', formatUrls: [url], formatFetchTimeout: 200 }),
+    );
+
+    const r = runCli(dir, ['-f', 'stalled-1'], { ...process.env, XDG_CACHE_HOME: cache, TWEEGO_PATH: '' });
+    expect(r.stderr).toContain(
+      `warning: Remote format fetch failed for "stalled-1": Failed to download format from ${url}: timed out after 200 ms`,
+    );
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('Hello.');
   }, 30_000);
 });
