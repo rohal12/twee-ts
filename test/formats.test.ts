@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  decodeFormatJSON,
   discoverAllFormats,
   discoverFormats,
   getFormatIdByName,
@@ -76,6 +77,66 @@ describe('parseFormatJSON with a Harlowe setup function', () => {
 
   it('still rejects source that is not a format', () => {
     expect(parseFormatJSON('window.storyFormat({"name":"X", "setup": function(){}});', 'harlowe-3')).toBeNull();
+  });
+});
+
+describe('format wrapper comments (#221)', () => {
+  const object = JSON.stringify({ name: 'Review', version: '1.0.0', source: '<b>{{STORY_DATA}} } {</b>' });
+  const plain = `window.storyFormat(${object});`;
+
+  const wrapped = {
+    'leading brace comment': `/* Copyright {license} */\n${plain}`,
+    'trailing brace comment': `${plain}\n// License {notice}`,
+    'surrounding brace comments': `/* { */\n// }}}\n${plain}\n/* } */ // {`,
+    'unbalanced braces in comments': `// }\n/* { { */${plain}// {{`,
+    'comment between wrapper and object': `window.storyFormat(/* { */ ${object} /* } */);`,
+    'braces in strings before the call': `var s = "{ }'"; var t = '}'; var u = \`{\${'}'}\`;\n${plain}`,
+    'a trailing script after the call': `${plain}\nvar later = { a: 1 };`,
+  };
+
+  for (const [label, source] of Object.entries(wrapped)) {
+    it(`decodes the same format with ${label}`, () => {
+      const data = parseFormatJSON(source);
+      expect(data?.name).toBe('Review');
+      expect(data?.source).toBe('<b>{{STORY_DATA}} } {</b>');
+    });
+  }
+
+  it('decodes a relaxed object between brace comments', () => {
+    const source = `/* { */ window.storyFormat({ name: 'R', /* } */ version: "1.0.0", source: 'a}{',\n});\n// }`;
+    expect(parseFormatJSON(source)?.source).toBe('a}{');
+  });
+
+  it('keeps the Harlowe setup function workaround behind comments', () => {
+    const source = `/* {x} */ window.storyFormat({"name":"H","version":"3.0.0","source":"s","setup": function(){ return {a:1}; }});\n// }`;
+    expect(parseFormatJSON(source)?.name).toBe('H');
+  });
+
+  it('still reports a malformed object', () => {
+    expect(decodeFormatJSON('/* {a} */ window.storyFormat({name: });').ok).toBe(false);
+  });
+
+  it('still rejects executable expressions in the object', () => {
+    const source = '/* {} */ window.storyFormat({"name":"X","version":"1.0.0","source":f()});';
+    expect(decodeFormatJSON(source).ok).toBe(false);
+  });
+
+  it('reports no chunk when only comments and strings hold braces', () => {
+    const result = decodeFormatJSON('/* { } */ var s = "{}";');
+    expect(result).toEqual({ ok: false, reason: 'Could not find Twine 2 style story format JSON chunk.' });
+  });
+
+  it('reads the source of a locally discovered format with wrapper comments', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-ts-wrap-'));
+    try {
+      mkdirSync(join(dir, 'review'));
+      writeFileSync(join(dir, 'review', 'format.js'), `/* {license} */\n${plain}\n// {end}`);
+      const format = [...discoverFormats([dir]).values()][0];
+      expect(format?.name).toBe('Review');
+      expect(format && readFormatSource(format)).toBe('<b>{{STORY_DATA}} } {</b>');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

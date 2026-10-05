@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
@@ -328,6 +328,33 @@ describe('download cache used without the network (#92)', () => {
     stubOffline();
     const offline = await compile(options({ sources: story({ format: 'SugarCube', 'format-version': '2.37.3' }) }));
     expect(offline.format?.version).toBe('2.37.3');
+  });
+});
+
+describe('format files wrapped in comments with braces (#221)', () => {
+  const wrap = (js: string): string => `/* Copyright {license} */\n${js}\n// {end}\n`;
+
+  it('compiles with a local format whose wrapper has brace comments', async () => {
+    const formats = join(cacheRoot, 'formats');
+    writeFormat(formats, 'wrapped-1', 'SugarCube', '2.37.3', 'LOCALWRAP');
+    const file = join(formats, 'wrapped-1', 'format.js');
+    writeFileSync(file, wrap(readFileSync(file, 'utf-8')));
+    const result = await compile(
+      options({ formatPaths: [formats], sources: story({ format: 'SugarCube', 'format-version': '2.37.3' }) }),
+    );
+    expect(markerOf(result.output ?? '')).toBe('LOCALWRAP');
+  });
+
+  it('downloads a wrapped format from a URL and compiles from the cache offline', async () => {
+    const url = 'https://example.test/wrapped.js';
+    stubFetch({ [url]: wrap(formatJs('SugarCube', '2.37.3')) });
+    const online = await compile(options({ formatUrls: [url] }));
+    expect(online.format?.name).toBe('SugarCube');
+
+    stubOffline();
+    const offline = await compile(options({ formatUrls: [url], noRemote: true }));
+    expect(offline.format?.name).toBe('SugarCube');
+    expect(offline.output).toContain('<!-- SugarCube 2.37.3 -->');
   });
 });
 
