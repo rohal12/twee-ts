@@ -1,6 +1,81 @@
-import { describe, it, expect } from 'vitest';
-import { join, resolve } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { rollup, watch, type RollupLog, type RollupWatcher, type RollupWatcherEvent } from 'rollup';
+import { build } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
+
+const FORMATS = join(__dirname, 'fixtures', 'storyformats');
+const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
+
+const STORY_DATA = `:: StoryData
+{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}
+`;
+
+const STORY = `${STORY_DATA}
+:: Start
+Hello from the story.
+`;
+
+/** No passage named Start: the compile reports an error. */
+const NO_START = `${STORY_DATA}
+:: Other
+Hello
+`;
+
+/** Start appears twice: the compile reports a warning and still succeeds. */
+const DUPLICATE_START = `${STORY}
+:: Start
+Hello again.
+`;
+
+const ENTRY = 'export const answer = 42;\n';
+
+const dirs: string[] = [];
+function makeProject(story: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-rollup-'));
+  dirs.push(dir);
+  const files: Record<string, string> = { 'story/start.tw': story, 'entry.js': ENTRY };
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(dir, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content, 'utf-8');
+  }
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function storyPlugin(dir: string, format = 'test-format-1'): ReturnType<typeof tweeTsPlugin> {
+  return tweeTsPlugin({ sources: [join(dir, 'story')], format, compileOptions: COMPILE });
+}
+
+interface Built {
+  /** The story asset, when the build emitted one. */
+  html: string | undefined;
+  /** The logs the build sent through Rollup's log channel. */
+  logs: RollupLog[];
+}
+
+/** Runs a real Rollup build and generate; rejects when either fails. */
+async function rollupProject(dir: string, plugin: ReturnType<typeof tweeTsPlugin>, logs: RollupLog[]): Promise<Built> {
+  const bundle = await rollup({
+    input: join(dir, 'entry.js'),
+    plugins: [plugin],
+    onLog: (_level, log) => void logs.push(log),
+  });
+  try {
+    const { output } = await bundle.generate({ format: 'es' });
+    const asset = output.find((item) => item.type === 'asset' && item.fileName === 'index.html');
+    const html = asset?.type === 'asset' ? String(asset.source) : undefined;
+    return { html, logs };
+  } finally {
+    await bundle.close();
+  }
+}
 
 /** Runs the plugin's buildStart with a stand-in for Rollup's context; returns the files it registered. */
 function watchFiles(plugin: ReturnType<typeof tweeTsPlugin>, watchMode: boolean): string[] {
@@ -25,5 +100,142 @@ describe('rollup plugin', () => {
 
   it('registers nothing outside watch mode', () => {
     expect(watchFiles(tweeTsPlugin({ sources: ['story'] }), false)).toEqual([]);
+  });
+});
+
+describe('rollup plugin: build', { timeout: 30_000 }, () => {
+  it('emits the story as an asset', async () => {
+    const dir = makeProject(STORY);
+    const { html, logs } = await rollupProject(dir, storyPlugin(dir), []);
+    expect(html).toContain('Hello from the story.');
+    expect(logs.filter((log) => log.plugin === 'twee-ts')).toEqual([]);
+  });
+
+  it('fails the build and emits nothing when the starting passage is missing', async () => {
+    const dir = makeProject(NO_START);
+    await expect(rollupProject(dir, storyPlugin(dir), [])).rejects.toMatchObject({
+      plugin: 'twee-ts',
+      message: expect.stringContaining('Starting passage "Start" not found.'),
+    });
+  });
+
+  it('fails the build on a malformed passage, naming file and line', async () => {
+    const dir = makeProject(`${STORY}\n:: Broken [unclosed\nText\n`);
+    const error = await rollupProject(dir, storyPlugin(dir), []).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({
+      plugin: 'twee-ts',
+      message: expect.stringMatching(/start\.tw:\d+: Malformed twee source/),
+      loc: { line: expect.any(Number), column: 1 },
+    });
+    // The compiler reports the file as it found it, relative to the working directory.
+    const { id, loc } = error as { id: string; loc: { file: string } };
+    expect(resolve(id)).toBe(join(dir, 'story', 'start.tw'));
+    expect(loc.file).toBe(id);
+  });
+
+  it('fails the build with the compiler error when the story format is missing', async () => {
+    const dir = makeProject(STORY);
+    await expect(rollupProject(dir, storyPlugin(dir, 'no-such-format'), [])).rejects.toMatchObject({
+      plugin: 'twee-ts',
+      message: expect.stringMatching(/no-such-format[\s\S]*No story format available for HTML output\./),
+    });
+  });
+
+  it("passes warnings through Rollup's log channel and still emits the story", async () => {
+    const dir = makeProject(DUPLICATE_START);
+    const { html, logs } = await rollupProject(dir, storyPlugin(dir), []);
+    expect(html).toContain('Hello again.');
+    const warnings = logs.filter((log) => log.plugin === 'twee-ts');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'PLUGIN_WARNING',
+      message: expect.stringContaining('Replacing existing passage "Start" with duplicate.'),
+    });
+  });
+});
+
+describe('rollup plugin: watch', { timeout: 30_000 }, () => {
+  let watcher: RollupWatcher | undefined;
+
+  afterEach(async () => {
+    await watcher?.close();
+    watcher = undefined;
+  });
+
+  /**
+   * Waits for the watcher's next END, which follows a build that succeeded and
+   * one that failed alike; returns the events up to it.
+   */
+  function nextBuild(started: RollupWatcher): Promise<RollupWatcherEvent[]> {
+    const events: RollupWatcherEvent[] = [];
+    return new Promise((done) => {
+      const listener = (event: RollupWatcherEvent): void => {
+        if (event.code === 'BUNDLE_END') void event.result.close();
+        events.push(event);
+        if (event.code === 'END') {
+          started.off('event', listener);
+          done(events);
+        }
+      };
+      started.on('event', listener);
+    });
+  }
+
+  const errorMessages = (events: readonly RollupWatcherEvent[]): string[] =>
+    events.flatMap((event) => (event.code === 'ERROR' ? [event.error.message] : []));
+
+  it('reports a failed build and keeps watching until the story is fixed', async () => {
+    const dir = makeProject(NO_START);
+    const outDir = join(dir, 'dist');
+    const started = watch({
+      input: join(dir, 'entry.js'),
+      plugins: [storyPlugin(dir)],
+      output: { dir: outDir, format: 'es' },
+      watch: { buildDelay: 50 },
+      onLog: () => {},
+    });
+    watcher = started;
+
+    const failed = await nextBuild(started);
+    expect(errorMessages(failed)).toEqual([expect.stringContaining('Starting passage "Start" not found.')]);
+    expect(existsSync(join(outDir, 'index.html'))).toBe(false);
+
+    // Rollup's file watcher may not be ready right after the first build; the
+    // fix is saved again until a build picks it up.
+    const fixed = nextBuild(started);
+    const save = (): void => writeFileSync(join(dir, 'story', 'start.tw'), STORY, 'utf-8');
+    save();
+    const resave = setInterval(save, 250);
+    const events = await fixed.finally(() => clearInterval(resave));
+    expect(errorMessages(events)).toEqual([]);
+    expect(events.map((event) => event.code)).toContain('BUNDLE_END');
+    expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+});
+
+describe('rollup plugin: in a Vite build', { timeout: 30_000 }, () => {
+  async function viteBuild(dir: string): Promise<void> {
+    await build({
+      configFile: false,
+      root: dir,
+      logLevel: 'silent',
+      build: { outDir: join(dir, 'dist'), rollupOptions: { input: join(dir, 'entry.js') } },
+      plugins: [storyPlugin(dir)],
+    });
+  }
+
+  it('writes the story', async () => {
+    const dir = makeProject(STORY);
+    await viteBuild(dir);
+    expect(readFileSync(join(dir, 'dist', 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('fails the build and writes no story when the starting passage is missing', async () => {
+    const dir = makeProject(NO_START);
+    await expect(viteBuild(dir)).rejects.toThrow('Starting passage "Start" not found.');
+    expect(existsSync(join(dir, 'dist', 'index.html'))).toBe(false);
   });
 });

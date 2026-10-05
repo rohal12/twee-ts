@@ -17,7 +17,9 @@ import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Logger, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
-import { compileIncremental, TweeTsError } from '../compiler.js';
+import { compileIncremental } from '../compiler.js';
+import { fatalError, formatDiagnostic, splitDiagnostics } from './diagnostics.js';
+import type { LocatedError } from './diagnostics.js';
 import { getFilenames, isExcluded } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { isInside, isViteConfigTemp, toPosix } from './paths.js';
@@ -77,41 +79,6 @@ interface EntryBundle {
 type BundleItem =
   | { type: 'chunk'; code: string; isEntry: boolean; moduleIds: readonly string[] }
   | { type: 'asset'; source: string | Uint8Array };
-
-/** An error carrying the file and line Vite shows in its overlay. */
-interface LocatedError extends Error {
-  id?: string;
-  loc?: { file: string; line: number; column: number };
-}
-
-function formatDiagnostic(d: Diagnostic): string {
-  const where = d.file ? `${d.file}${d.line ? `:${d.line}` : ''}: ` : '';
-  // The parser starts its messages with "line N: "; the location already says it.
-  const message = d.file && d.line ? d.message.replace(/^line \d+: /, '') : d.message;
-  return `${where}${message}`;
-}
-
-/** Returns the warnings; throws a LocatedError when the compile reported errors. */
-function splitDiagnostics(result: CompileResult): Diagnostic[] {
-  const errors = result.diagnostics.filter((d) => d.level === 'error');
-  if (errors.length === 0) return result.diagnostics.filter((d) => d.level === 'warning');
-  const error: LocatedError = new Error(errors.map(formatDiagnostic).join('\n'));
-  const [first] = errors;
-  if (first?.file) {
-    error.id = first.file;
-    error.loc = { file: first.file, line: first.line ?? 1, column: 1 };
-  }
-  throw error;
-}
-
-/** An error thrown by the compiler or bundler, with a TweeTsError's error diagnostics folded into its message. */
-function fatalError(e: unknown): LocatedError {
-  if (e instanceof TweeTsError) {
-    const errors = e.diagnostics.filter((d) => d.level === 'error').map(formatDiagnostic);
-    return new Error([...errors, e.message].join('\n'));
-  }
-  return e instanceof Error ? e : new Error(String(e));
-}
 
 function buildCompileOptions(options: TweeTsVitePluginOptions, entry: EntryBundle | undefined): CompileOptions {
   const inline: InlineSource[] = [];
