@@ -449,8 +449,8 @@ function toError(e: unknown): Error {
 export async function resolveRemoteFormat(
   name: string,
   version: string,
-  indices?: string[],
-  urls?: string[],
+  indices?: readonly string[],
+  urls?: readonly string[],
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo | undefined> {
   return resolveRemoteFormatRequest({ kind: 'name', name, version }, indices, urls, options);
@@ -463,8 +463,8 @@ export async function resolveRemoteFormat(
  */
 export async function resolveRemoteFormatRequest(
   request: FormatRequest,
-  indices?: string[],
-  urls?: string[],
+  indices?: readonly string[],
+  urls?: readonly string[],
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo | undefined> {
   options.signal?.throwIfAborted();

@@ -50,7 +50,7 @@ function tiddlerElements(html: string): string[] {
 function attr(element: string, name: string): string | null {
   const re = new RegExp(`${name}="([^"]*)"`, 'i');
   const match = element.match(re);
-  return match ? match[1] : null;
+  return match?.[1] ?? null;
 }
 
 /** Check whether an attribute is present at all (regardless of value). */
@@ -62,7 +62,7 @@ function hasAttr(element: string, name: string): boolean {
 /** Extract text content between the opening and closing tags. */
 function textContent(element: string): string {
   const match = element.match(/>([^]*)<\/div>/);
-  return match ? match[1] : '';
+  return match?.[1] ?? '';
 }
 
 /** Find a tiddler element by name. */
@@ -1053,7 +1053,7 @@ describe('Twine 1 HTML Output Spec -- Creator Info Comment', () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     // Archive mode has no <head>, so no creator info expected.
     // This test documents the expected formats for full HTML output.
-    const comments = [...result.output.matchAll(/<!--([\s\S]*?)-->/g)].map((m) => m[1]);
+    const comments = [...result.output.matchAll(/<!--([\s\S]*?)-->/g)].map((m) => m[1] ?? '');
     for (const comment of comments) {
       if (comment.includes('Made in') || comment.includes('Build Info')) {
         // Format 1: contains "Made in" and "Built on" directly

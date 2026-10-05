@@ -60,7 +60,7 @@ function extractStoryData(html: string): string {
 function attr(element: string, name: string): string | null {
   const re = new RegExp(`${name}="([^"]*)"`, 'i');
   const match = element.match(re);
-  return match ? match[1] : null;
+  return match?.[1] ?? null;
 }
 
 /** Extract the opening <tw-storydata> tag. */
@@ -81,7 +81,7 @@ function passageElements(html: string): readonly string[] {
 function passageContent(passageElement: string): string {
   const match = passageElement.match(/>([^]*)<\/tw-passagedata>/);
   if (!match) throw new Error('expected passage content');
-  return match[1];
+  return match[1] ?? '';
 }
 
 // =============================================================================

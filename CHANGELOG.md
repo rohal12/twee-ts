@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `CompileOptions.signal` cancels a compile's story format requests, and `watch()` passes its own signal, so aborting a watch no longer waits for a stalled download. `CompileOptions.formatFetchTimeout` (config key `formatFetchTimeout`, default 30 s, `0` turns it off) times out each format request. `resolveRemoteFormat`, `fetchAndCacheFormat` and `fetchDirectFormat` take an optional `RemoteFetchOptions` (#182)
+- The array options of `CompileOptions` (`sources`, `exclude`, `modules`, `formatPaths`, `formatIndices`, `formatUrls`) accept readonly arrays
 - `loadConfig()` and `loadConfigFile()` take an optional diagnostics array that receives warnings, and `unknownConfigKeyWarnings()` is exported (#159, #165)
 
 ### Fixed

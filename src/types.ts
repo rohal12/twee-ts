@@ -23,12 +23,12 @@ export interface CompileOptions {
    * recursively; inside one, a symbolic link to a file is read, but a link to a
    * directory is not followed (as in Tweego).
    */
-  sources: SourceInput[];
+  sources: readonly SourceInput[];
   /**
    * Glob patterns for files to leave out of `sources`, matched against each file's
    * path relative to the working directory (as `stats.files` lists it). Modules are not affected.
    */
-  exclude?: string[];
+  exclude?: readonly string[];
   /** Output mode. Default: 'html'. */
   outputMode?: OutputMode;
   /** Story format directory ID (e.g. 'sugarcube-2'). */
@@ -36,11 +36,11 @@ export interface CompileOptions {
   /** Name of the starting passage. Default: 'Start'. */
   startPassage?: string;
   /** Extra directories to search for story formats. */
-  formatPaths?: string[];
+  formatPaths?: readonly string[];
   /** Also search TWEEGO_PATH env for formats. Default: true. */
   useTweegoPath?: boolean;
   /** Module files to inject into <head>. */
-  modules?: string[];
+  modules?: readonly string[];
   /** Raw HTML file to append to <head>. */
   headFile?: string;
   /** Trim passage whitespace. Default: true. */
@@ -50,12 +50,12 @@ export interface CompileOptions {
   /** Enable debug/test mode option. Default: false. */
   testMode?: boolean;
   /** URLs to SFA-compatible index.json files for remote format lookup. */
-  formatIndices?: string[];
+  formatIndices?: readonly string[];
   /**
    * Direct URLs to format.js files. Each URL's download is cached under that URL, and is
    * looked up before the downloads shared by name and version.
    */
-  formatUrls?: string[];
+  formatUrls?: readonly string[];
   /** Disable remote format fetching. Default: false. */
   noRemote?: boolean;
   /**

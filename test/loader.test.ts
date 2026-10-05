@@ -148,8 +148,8 @@ describe('loadSources', () => {
     story.name = 'My Story';
     const diag: Diagnostic[] = [];
     loadSources(story, [file], { trim: true }, diag, new Set());
-    expect(story.passages[0].name).toBe('StoryTitle');
-    expect(story.passages[0].text).toBe('My Story');
+    expect(story.passages[0]!.name).toBe('StoryTitle');
+    expect(story.passages[0]!.text).toBe('My Story');
   });
 });
 

@@ -79,8 +79,11 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
 
     // Rollup's watch mode and CLI pass the whole config here, outputs included, so
     // they are known before the first build starts and before any is written.
-    options(inputOptions: { readonly output?: unknown }): undefined {
-      for (const location of outputLocations(inputOptions.output)) record.addLocation(location);
+    // Typed `object`: a type with only optional properties would share none with
+    // Rollup's InputOptions, and the plugin would no longer be assignable to Plugin.
+    options(inputOptions: object): undefined {
+      const { output } = inputOptions as { readonly output?: unknown };
+      for (const location of outputLocations(output)) record.addLocation(location);
       return undefined;
     },
 
