@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { dirname, join, relative } from 'node:path';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { watchFilesystem } from '../src/filesystem.js';
 import { watch } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
@@ -233,6 +233,51 @@ describe('watch with the output inside a source folder', () => {
     expect(second.output).not.toContain('SOON_DELETED');
     expect(second.stats.files.some((f) => f.endsWith('z-output.html'))).toBe(false);
     expect(second.diagnostics).toEqual([]);
+    expect(builds.errors).toEqual([]);
+  });
+});
+
+describe('watch and a save that keeps the modification time', () => {
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const outFile = join(TMP_DIR, 'out.html');
+  const stamp = new Date(1_700_000_000_000);
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, STORY.replace('Hello from the story.', 'ORIGINAL_CONTENT'));
+    utimesSync(start, stamp, stamp);
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('rebuilds the saved file with its new content', async () => {
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outputMode: 'twine2-archive',
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    expect((await builds.next()).output).toContain('ORIGINAL_CONTENT');
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    writeFileSync(start, STORY.replace('Hello from the story.', 'UPDATED_CONTENT'));
+    utimesSync(start, stamp, stamp);
+    emit(story, 'start.tw');
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+
+    const second = await builds.next();
+    expect(second.output).toContain('UPDATED_CONTENT');
+    expect(second.output).not.toContain('ORIGINAL_CONTENT');
+    expect(readFileSync(outFile, 'utf-8')).toContain('UPDATED_CONTENT');
     expect(builds.errors).toEqual([]);
   });
 });

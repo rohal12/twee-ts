@@ -12,7 +12,7 @@ Sources can be files or directories. Directories are walked recursively for supp
 
 | Flag                  | Description                                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `-o, --output <file>` | Output file path. Defaults to stdout.                                                                       |
+| `-o, --output <file>` | Output file path. Defaults to stdout. The file is never read as a source, even inside a source folder.      |
 | `-f, --format <id>`   | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`.                                  |
 | `-s, --start <name>`  | Starting passage name. Default: `Start`.                                                                    |
 | `--exclude <glob>`    | Leave out source files matching a glob. Repeatable. See [Excluding files](./configuration#excluding-files). |
@@ -66,6 +66,8 @@ See [Format Discovery](./story-formats) for how formats are located.
 
 Exits with code 1 if errors are found (broken links, a starting passage that is missing or would be left out of Twine 2 output, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit.
 
+Like a build, linting leaves the output file (`-o`, or `output` in the config file) out of the sources, so an earlier build inside a source folder is not linted.
+
 ```sh
 $ twee-ts --lint ./story/
 Format: SugarCube 2.37.3
@@ -84,11 +86,11 @@ Lint failed.
 
 ### Watch & Logging
 
-| Flag              | Description                                                                                                                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported and the watcher keeps running. |
-| `-l, --log-stats` | Print passage count, word count, and file count after compilation.                                                              |
-| `--log-files`     | Print the list of input files after compilation.                                                                                |
+| Flag              | Description                                                                                                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported, the output file keeps the last good build, and the watcher keeps running. See [Exit Status](#exit-status). |
+| `-l, --log-stats` | Print passage count, word count, and file count after compilation.                                                                                                                                           |
+| `--log-files`     | Print the list of input files after compilation.                                                                                                                                                             |
 
 ### Config & Project
 
@@ -154,9 +156,16 @@ $ echo $?
 1
 ```
 
-In watch mode (`-w`), a build with errors is reported and the watcher keeps running, so you can fix the source and save again.
+In watch mode (`-w`), a build with errors is reported but not written: the output file keeps the last build without errors, byte for byte, and the watcher keeps running, so you can fix the source and save again. The next build without errors is written as usual.
 
-The programmatic API is unaffected: `compile()` and `compileToFile()` still return non-fatal errors in `result.diagnostics`, and `compileToFile()` still writes its output file. Check the diagnostics yourself if you need the CLI's behaviour.
+```sh
+$ twee-ts -w -o story.html src/
+Built: 12 passages, 3400 words
+error: line 12: Malformed twee source; unterminated tag block.
+Build has 1 error; output not written. Still watching for changes.
+```
+
+The programmatic API is unaffected: `compile()`, `compileToFile()` and `watch()` still return non-fatal errors in `result.diagnostics`, and `compileToFile()` and `watch()` still write every build to their output file. Check the diagnostics yourself if you need the CLI's behaviour.
 
 ## Examples
 

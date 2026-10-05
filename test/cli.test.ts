@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -22,6 +23,33 @@ function runCli(cwd: string, args: readonly string[]): CliResult {
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
+
+/** A CLI process left running (watch mode), with what it has printed so far. */
+interface RunningCli {
+  readonly child: ChildProcessWithoutNullStreams;
+  readonly stdout: () => string;
+  readonly stderr: () => string;
+}
+
+function startCli(cwd: string, args: readonly string[]): RunningCli {
+  const child = spawn(process.execPath, [...NODE_ARGS, ...args], { cwd });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  return { child, stdout: () => stdout, stderr: () => stderr };
+}
+
+/** Polls `condition` until it holds; fails, naming `what`, if it hasn't after `timeoutMs`. */
+async function waitFor(condition: () => boolean, what: string, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+const countOf = (text: string, needle: string): number => text.split(needle).length - 1;
 
 const STORY_DATA = ':: StoryData\n{\n\t"ifid": "D674C58C-DEFA-4F70-B7A2-27742230C0FC"\n}\n';
 const VALID_STORY = `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\nHello.\n`;
@@ -161,23 +189,96 @@ describe('CLI exit status', () => {
 
   it('keeps watching after a build that reports errors', async () => {
     const src = write('broken.tw', BROKEN_STORY);
-    const child = spawn(process.execPath, [...NODE_ARGS, ...baseArgs, '-w', src, '-o', 'out.html'], { cwd: dir });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const cli = startCli(dir, [...baseArgs, '-w', src, '-o', 'out.html']);
     try {
-      const deadline = Date.now() + 20_000;
-      while (!stdout.includes('Built:') && child.exitCode === null && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(stdout).toContain('Built:');
-      expect(stderr).toMatch(/error: line \d+: Malformed twee source/);
+      // stdout and stderr arrive separately: wait for the build line and its report.
+      await waitFor(
+        () => (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+        'the first build',
+      );
+      expect(cli.stdout()).toContain('Built:');
+      expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
+      expect(cli.stderr()).toContain('output not written');
+      expect(existsSync(join(dir, 'out.html'))).toBe(false);
       // Give a would-be process.exit() time to land.
       await new Promise((r) => setTimeout(r, 500));
-      expect(child.exitCode).toBeNull();
+      expect(cli.child.exitCode).toBeNull();
     } finally {
-      child.kill();
+      cli.child.kill();
     }
   }, 30_000);
+
+  it('keeps the last good output in watch mode when a rebuild reports errors, and recovers on a good save', async () => {
+    const out = join(dir, 'out.html');
+    const src = write('story.tw', VALID_STORY.replace('Hello.', 'KNOWN_GOOD'));
+    const cli = startCli(dir, [...baseArgs, '-w', src, '-o', 'out.html']);
+    const builds = (): number => countOf(cli.stdout(), 'Built:');
+    try {
+      await waitFor(() => builds() >= 1, 'the first build');
+      const good = readFileSync(out);
+      expect(good.toString('utf-8')).toContain('KNOWN_GOOD');
+
+      write('story.tw', VALID_STORY.replace(':: Start\nHello.', ':: Start [unterminated\nBROKEN_CONTENT'));
+      // stdout and stderr arrive separately: wait for the build line and its report.
+      await waitFor(() => builds() >= 2 && /still watching/i.test(cli.stderr()), 'the rebuild of the malformed save');
+      expect(readFileSync(out).equals(good)).toBe(true);
+      expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
+      expect(cli.stderr()).toContain('output not written');
+      expect(cli.child.exitCode).toBeNull();
+
+      write('story.tw', VALID_STORY.replace('Hello.', 'RECOVERED_CONTENT'));
+      await waitFor(() => builds() >= 3, 'the rebuild of the corrected save');
+      const recovered = readFileSync(out, 'utf-8');
+      expect(recovered).toContain('RECOVERED_CONTENT');
+      expect(recovered).not.toContain('KNOWN_GOOD');
+      expect(cli.child.exitCode).toBeNull();
+    } finally {
+      cli.child.kill();
+    }
+  }, 60_000);
+});
+
+describe('CLI output inside a source folder', () => {
+  const ORIGINAL = `${STORY_DATA}\n:: Start\nORIGINAL_CONTENT [[Deleted]]\n\n:: Deleted\nSOON_DELETED\n`;
+  // Start still links to Deleted, which the edit removes.
+  const EDITED = `${STORY_DATA}\n:: Start\nUPDATED_CONTENT [[Deleted]]\n`;
+  const source = join('story', 'a.tw');
+  const output = join('story', 'z-output.html');
+
+  beforeEach(() => {
+    mkdirSync(join(dir, 'story'));
+    writeFileSync(join(dir, source), ORIGINAL);
+  });
+
+  it('leaves its earlier output out of the sources when it builds again', () => {
+    const args = ['--no-config', '--no-remote', '-a', '--log-files', '-o', output, 'story'];
+    expect(runCli(dir, args).status).toBe(0);
+
+    writeFileSync(join(dir, source), EDITED);
+    const r = runCli(dir, args);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    const html = readFileSync(join(dir, output), 'utf-8');
+    expect(html).toContain('UPDATED_CONTENT');
+    expect(html).not.toContain('ORIGINAL_CONTENT');
+    expect(html).not.toContain('SOON_DELETED');
+    expect(r.stdout).toContain(`Files: ${source}\n`);
+  });
+
+  it('--lint leaves the configured output file out of the sources', () => {
+    writeFileSync(
+      join(dir, 'twee-ts.config.json'),
+      JSON.stringify({ sources: ['story'], output: output, outputMode: 'twine2-archive', noRemote: true }),
+    );
+    expect(runCli(dir, []).status).toBe(0);
+    expect(readFileSync(join(dir, output), 'utf-8')).toContain('SOON_DELETED');
+
+    writeFileSync(join(dir, source), EDITED);
+    const r = runCli(dir, ['--lint']);
+    expect(r.stdout).toContain(', 1 files');
+    expect(r.stdout).not.toContain('warning');
+    // The link to the deleted passage is broken; the earlier output must not stand in for it.
+    expect(r.stdout).toContain('Broken links (1):');
+    expect(r.status).toBe(1);
+  });
 });

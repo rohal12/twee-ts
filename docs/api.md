@@ -39,7 +39,7 @@ const result = await compileToFile({
 
 ### `watch(options)`
 
-Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder.
+Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder. Every build is written to `outFile`, including one whose `diagnostics` report errors, and then passed to `onBuild`; `onError` receives only a fatal error, such as a `TweeTsError`, and that build writes nothing. (The CLI's watch mode instead keeps the last build without errors; see [Exit Status](./cli#exit-status).)
 
 ```typescript
 import { watch } from '@rohal12/twee-ts';

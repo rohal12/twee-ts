@@ -4,8 +4,8 @@
  */
 import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { compile, watch } from '../src/compiler.js';
-import { lint, formatLintReport } from '../src/lint.js';
+import { compileForOutputFile, watchWithWriteFilter } from '../src/compiler.js';
+import { lintForOutputFile, formatLintReport } from '../src/lint.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 import {
@@ -134,26 +134,34 @@ async function main(): Promise<void> {
     return raw as WordCountMethod;
   })();
 
+  const outFile = values.output ?? config?.output ?? '-';
+  // The output file, which every build (and lint) leaves out of the sources and modules,
+  // so an earlier build inside a source folder is never read back as a source.
+  const outPath = outFile === '-' ? undefined : outFile;
+
   // Lint mode: compile + inspect, no output
   if (values.lint) {
-    const lintResult = await lint({
-      sources,
-      exclude: values.exclude ?? config?.exclude,
-      formatId: values.format ?? config?.formatId,
-      startPassage: values.start ?? config?.startPassage,
-      formatPaths: config?.formatPaths,
-      modules: values.module ?? config?.modules,
-      headFile: values.head ?? config?.headFile,
-      trim: values['no-trim'] ? false : (config?.trim ?? true),
-      twee2Compat: values['twee2-compat'] ?? config?.twee2Compat ?? false,
-      testMode: values.test ?? config?.testMode ?? false,
-      formatIndices: values['format-index'] ?? config?.formatIndices,
-      formatUrls: values['format-url'] ?? config?.formatUrls,
-      noRemote: values['no-remote'] ?? config?.noRemote ?? false,
-      tagAliases,
-      sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
-      wordCountMethod,
-    });
+    const lintResult = await lintForOutputFile(
+      {
+        sources,
+        exclude: values.exclude ?? config?.exclude,
+        formatId: values.format ?? config?.formatId,
+        startPassage: values.start ?? config?.startPassage,
+        formatPaths: config?.formatPaths,
+        modules: values.module ?? config?.modules,
+        headFile: values.head ?? config?.headFile,
+        trim: values['no-trim'] ? false : (config?.trim ?? true),
+        twee2Compat: values['twee2-compat'] ?? config?.twee2Compat ?? false,
+        testMode: values.test ?? config?.testMode ?? false,
+        formatIndices: values['format-index'] ?? config?.formatIndices,
+        formatUrls: values['format-url'] ?? config?.formatUrls,
+        noRemote: values['no-remote'] ?? config?.noRemote ?? false,
+        tagAliases,
+        sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
+        wordCountMethod,
+      },
+      outPath,
+    );
     console.log(formatLintReport(lintResult));
     const hasErrors = lintResult.brokenLinks.length > 0 || lintResult.diagnostics.some((d) => d.level === 'error');
     process.exit(hasErrors ? 1 : 0);
@@ -180,30 +188,35 @@ async function main(): Promise<void> {
     wordCountMethod,
   };
 
-  const outFile = values.output ?? config?.output ?? '-';
-
   if (values.watch) {
-    if (outFile === '-') {
+    if (outPath === undefined) {
       console.error('Error: Watch mode requires an output file (-o).');
       process.exit(1);
     }
     console.log('Watch mode started. Press CTRL+C to stop.');
-    await watch({
-      ...compileOptions,
-      outFile,
-      onBuild(result) {
-        console.log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
-        logDiagnostics(result.diagnostics);
-        // A failed build must not stop the watcher: report it and wait for the next change.
-        const errors = countErrors(result.diagnostics);
-        if (errors > 0) console.error(`Build has ${pluralize(errors, 'error')}; still watching for changes.`);
+    // As in a one-shot build, a build with errors is not written: the output file keeps
+    // the last good build until a save fixes the errors.
+    await watchWithWriteFilter(
+      {
+        ...compileOptions,
+        outFile: outPath,
+        onBuild(result) {
+          console.log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
+          logDiagnostics(result.diagnostics);
+          // A failed build must not stop the watcher: report it and wait for the next change.
+          const errors = countErrors(result.diagnostics);
+          if (errors > 0) {
+            console.error(`Build has ${pluralize(errors, 'error')}; output not written. Still watching for changes.`);
+          }
+        },
+        onError(error) {
+          console.error(`Build error: ${error.message}`);
+        },
       },
-      onError(error) {
-        console.error(`Build error: ${error.message}`);
-      },
-    });
+      (result) => countErrors(result.diagnostics) === 0,
+    );
   } else {
-    const result = await compile(compileOptions);
+    const result = await compileForOutputFile(compileOptions, outPath);
     logDiagnostics(result.diagnostics);
 
     // Like Tweego, a build with errors produces no output: the output file (or stdout)
@@ -212,13 +225,13 @@ async function main(): Promise<void> {
     if (errors > 0) {
       console.error(`Compilation failed with ${pluralize(errors, 'error')}; output not written.`);
       process.exitCode = 1;
-    } else if (outFile === '-') {
+    } else if (outPath === undefined) {
       process.stdout.write(result.output);
     } else {
-      writeFileSync(outFile, result.output, 'utf-8');
+      writeFileSync(outPath, result.output, 'utf-8');
     }
 
-    if (outFile !== '-' && values['log-files']) {
+    if (outPath !== undefined && values['log-files']) {
       console.log(`\nFiles: ${result.stats.files.join(', ')}`);
     }
     if (values['log-stats']) logStats(result);

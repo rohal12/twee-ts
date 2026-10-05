@@ -4,7 +4,7 @@
  */
 import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
-import { compile } from './compiler.js';
+import { compileForOutputFile } from './compiler.js';
 import { storyInspect } from './inspect.js';
 import { startPassageDiagnostics } from './start-passage.js';
 
@@ -39,7 +39,21 @@ export interface LintResult {
  * the starting passage itself, against the Twine 2 passage rules.
  */
 export async function lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult> {
-  const result = await compile({ ...options, outputMode: 'json' });
+  return lintForOutputFile(options, undefined);
+}
+
+/**
+ * lint() for a project whose builds are written to `outFile`: like a build for that file,
+ * it leaves `outFile` out of the sources and modules, so an earlier build inside a source
+ * folder is not linted as a source.
+ *
+ * Internal, for the CLI; not part of the public API.
+ */
+export async function lintForOutputFile(
+  options: Omit<CompileOptions, 'outputMode'>,
+  outFile: string | undefined,
+): Promise<LintResult> {
+  const result = await compileForOutputFile({ ...options, outputMode: 'json' }, outFile);
   const map = storyInspect(result.story);
 
   return {

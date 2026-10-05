@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Diagnostic, FileCacheEntry } from '../src/types.js';
+import type { CompileResult, Diagnostic, FileCacheEntry, Story } from '../src/types.js';
 import { createStory } from '../src/story.js';
 import { loadSourcesCached } from '../src/loader.js';
+import { compile, compileIncremental } from '../src/compiler.js';
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'twee-ts-incremental-'));
@@ -395,5 +396,114 @@ describe('incremental cache and Twine 2 HTML', () => {
     const story3 = createStory();
     loadSourcesCached(story3, [file], opts, [], new Set(), cache, new Set());
     expect(story3.name).toBe('Review Story');
+  });
+});
+
+describe('incremental cache and explicitly changed files', () => {
+  const STAMP_MS = 1_700_000_000_000;
+
+  const twine2HTML = (text: string): string =>
+    `<tw-storydata name="Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">${text}</tw-passagedata>
+</tw-storydata>`;
+
+  const decodeDataUrl = (text: string | undefined): string | undefined => {
+    const base64 = text?.match(/base64,([A-Za-z0-9+/=]+)/)?.[1];
+    return base64 === undefined ? undefined : Buffer.from(base64, 'base64').toString('utf-8');
+  };
+
+  const passageText = (story: Story, name: string): string | undefined =>
+    story.passages.find((p) => p.name === name)?.text;
+
+  // One file of each cached input kind: its content before and after a save, and where the content shows up.
+  const kinds = [
+    {
+      kind: 'Twee',
+      name: 'story.tw',
+      content: (marker: string) => `:: Start\n${marker}`,
+      text: (story: Story) => passageText(story, 'Start'),
+    },
+    {
+      kind: 'Twine 2 HTML',
+      name: 'story.html',
+      content: twine2HTML,
+      text: (story: Story) => passageText(story, 'Start'),
+    },
+    {
+      kind: 'CSS',
+      name: 'style.css',
+      content: (marker: string) => `/* ${marker} */`,
+      text: (story: Story) => passageText(story, 'style.css'),
+    },
+    {
+      kind: 'JavaScript',
+      name: 'app.js',
+      content: (marker: string) => `// ${marker}`,
+      text: (story: Story) => passageText(story, 'app.js'),
+    },
+    {
+      kind: 'media',
+      name: 'scene.svg',
+      content: (marker: string) => `<svg>${marker}</svg>`,
+      text: (story: Story) => decodeDataUrl(passageText(story, 'scene')),
+    },
+    {
+      kind: 'font',
+      name: 'Face.woff2',
+      content: (marker: string) => marker,
+      text: (story: Story) => decodeDataUrl(passageText(story, 'Face.woff2')),
+    },
+  ] as const;
+
+  it.each(kinds)('reparses a changed $kind file whose modification time did not change', ({ name, content, text }) => {
+    const dir = makeTmpDir();
+    const file = writeFile(dir, name, content('ORIGINAL_CONTENT'));
+    setMtime(file, STAMP_MS);
+    const cache = new Map<string, FileCacheEntry>();
+
+    const story1 = createStory();
+    loadSourcesCached(story1, [file], opts, [], new Set(), cache);
+    expect(text(story1)).toContain('ORIGINAL_CONTENT');
+
+    // A timestamp-preserving save: new content, the old modification time.
+    writeFile(dir, name, content('UPDATED_CONTENT'));
+    setMtime(file, STAMP_MS);
+
+    const story2 = createStory();
+    loadSourcesCached(story2, [file], opts, [], new Set(), cache, new Set([file]));
+    expect(text(story2)).toContain('UPDATED_CONTENT');
+    expect(text(story2)).not.toContain('ORIGINAL_CONTENT');
+  });
+
+  it('still reuses the entry of a file that changedFiles does not name', () => {
+    const dir = makeTmpDir();
+    const file = writeFile(dir, 'story.tw', ':: Start\nORIGINAL_CONTENT');
+    const other = writeFile(dir, 'other.tw', ':: Other\nOther.');
+    const cache = new Map<string, FileCacheEntry>();
+    loadSourcesCached(createStory(), [file, other], opts, [], new Set(), cache);
+    const entry = cache.get(file);
+
+    loadSourcesCached(createStory(), [file, other], opts, [], new Set(), cache, new Set([other]));
+    expect(cache.get(file)).toBe(entry);
+  });
+
+  it('compileIncremental() reparses a file in changedFiles whose modification time did not change', async () => {
+    const dir = makeTmpDir();
+    const source = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nORIGINAL_CONTENT';
+    const file = writeFile(dir, 'story.tw', source);
+    setMtime(file, STAMP_MS);
+    const cache = new Map<string, FileCacheEntry>();
+    const options = { sources: [file], outputMode: 'json' as const };
+    await compileIncremental(options, cache);
+
+    writeFile(dir, 'story.tw', source.replace('ORIGINAL_CONTENT', 'UPDATED_CONTENT'));
+    setMtime(file, STAMP_MS);
+    // changedFiles names a file by the path source discovery gives it: relative to the working directory.
+    const incremental = await compileIncremental(options, cache, new Set([relative(process.cwd(), file)]));
+    const fresh = await compile(options);
+
+    const start = (result: CompileResult): string | undefined => passageText(result.story, 'Start');
+    expect(start(fresh)).toBe('UPDATED_CONTENT');
+    expect(start(incremental)).toBe('UPDATED_CONTENT');
   });
 });
