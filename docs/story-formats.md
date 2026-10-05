@@ -7,8 +7,9 @@ A story format provides the HTML template that turns your Twee source into a pla
 twee-ts looks for the requested format in these sources, in order, and uses the first that has it:
 
 1. **Local format directories** — see [Search order](#search-order) below
-2. **Download cache** — formats downloaded earlier (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
-3. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom URLs (unless `noRemote: true`)
+2. **`formatUrls`** — the project's direct `format.js` URLs: each URL's own cached copy, else a download (unless `noRemote: true`). See [Custom Remote Sources](#custom-remote-sources)
+3. **Download cache** — formats downloaded earlier from format indices (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
+4. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom indices (unless `noRemote: true`)
 
 A format that a local directory has is used without looking in the cache or on the network.
 
@@ -107,6 +108,10 @@ When a format is not found locally, twee-ts automatically downloads it from the 
 ~/.cache/twee-ts/storyformats/
 ```
 
+(`$XDG_CACHE_HOME/twee-ts/storyformats/` when `XDG_CACHE_HOME` is set.) The cache is shared by every project on the machine, and by twee-ts processes running at the same time: each cached file is written to a temporary file and then renamed into place, so a process never reads a half-written format, and concurrent compiles in one process download each format once.
+
+Each request (an index or a `format.js`) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` option of the [API](./api#compile-options) changes the limit. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
+
 ### Custom Remote Sources
 
 You can specify custom format sources:
@@ -129,6 +134,8 @@ Or in the config file:
 ```
 
 A remote lookup by format ID translates the ID to a name and major version: `sugarcube-2` finds the greatest SugarCube 2.x in an index, or a direct URL whose `format.js` names SugarCube 2.x.
+
+A format downloaded from a direct URL is cached under that URL (in `~/.cache/twee-ts/storyformat-urls/`), not under its name and version, and a project's `formatUrls` are looked up before the formats downloaded from indices. So a patched copy of a format, served from your own URL, is used only by projects that list that URL, and never stands in for the official format with the same name and version in another project. Once a URL has been downloaded, its cached copy is used without the network. `twee-ts cache clear` removes these copies too; `cache list`, `cache size` and `cache clear <name>` cover only the formats downloaded from indices.
 
 ### Disabling Remote Fetching
 

@@ -6,7 +6,7 @@
  * directories, the download cache, and (unless disabled) remote sources. A request that none of
  * them can answer is reported as an error rather than swapped for a different story format.
  */
-import type { Diagnostic, FormatRequest, StoryFormatInfo } from './types.js';
+import type { Diagnostic, FormatRequest, RemoteFetchOptions, StoryFormatInfo } from './types.js';
 import {
   describeFormatRequest,
   discoverAllFormats,
@@ -16,7 +16,7 @@ import {
   rankedTwine2Formats,
   selectFormatCandidate,
 } from './formats.js';
-import { findCachedFormat, resolveRemoteFormatRequest } from './remote-formats.js';
+import { findCachedFormat, resolveFormatUrls, resolveRemoteFormatRequest } from './remote-formats.js';
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
@@ -25,6 +25,10 @@ export interface FormatResolutionOptions {
   readonly noRemote?: boolean;
   readonly formatIndices?: string[];
   readonly formatUrls?: string[];
+  /** Aborts the format requests; resolution then rejects with the signal's reason. */
+  readonly signal?: AbortSignal;
+  /** Milliseconds each format request may take. */
+  readonly formatFetchTimeout?: number;
 }
 
 /** Choose the format request: explicit format ID > StoryData format > default ID. */
@@ -63,10 +67,12 @@ function findLocalFormat(
 /**
  * Resolve a format request to a story format.
  *
- * Order: local format directories, then the download cache, then remote sources (unless
- * `noRemote`). Names and IDs match the same way in each (see `selectFormatCandidate`), so a request
- * that a local format answers never reaches the cache or the network. Local formats that cannot be
- * used are reported as warnings. When a StoryData request names a version that none of them has, an older version of
+ * Order: local format directories, then the project's direct format URLs (each one's cached
+ * copy, else a download unless `noRemote`), then the download cache shared by name and version,
+ * then format indices (unless `noRemote`). Names and IDs match the same way in each (see
+ * `selectFormatCandidate`), so a request that a local format answers never reaches the cache or the
+ * network. Local formats that cannot be used are reported as warnings. When a StoryData request
+ * names a version that none of them has, an older version of
  * the same format and major version is used with a warning. Anything else is an error diagnostic,
  * and the result is `undefined`.
  */
@@ -84,19 +90,37 @@ export async function resolveStoryFormat(
   const local = findLocalFormat(all, pruned, request);
   if (local) return local;
 
-  const cached = findCachedFormat(request);
-  if (cached) return cached;
-
-  if (!noRemote) {
+  const fetchOptions: RemoteFetchOptions = { signal: options.signal, timeout: options.formatFetchTimeout };
+  const warnOnFailure = async (
+    lookup: () => Promise<StoryFormatInfo | undefined>,
+  ): Promise<StoryFormatInfo | undefined> => {
     try {
-      const remote = await resolveRemoteFormatRequest(request, options.formatIndices, options.formatUrls);
-      if (remote) return remote;
+      return await lookup();
     } catch (e) {
+      if (options.signal?.aborted) throw options.signal.reason;
       diagnostics.push({
         level: 'warning',
         message: `Remote format fetch failed for ${wanted}: ${e instanceof Error ? e.message : String(e)}`,
       });
+      return undefined;
     }
+  };
+
+  // The project's own format URLs come before the downloads shared by name and version, so
+  // another project's download of the same name and version never stands in for them.
+  const direct = await warnOnFailure(() =>
+    resolveFormatUrls(request, options.formatUrls ?? [], { ...fetchOptions, offline: noRemote }),
+  );
+  if (direct) return direct;
+
+  const cached = findCachedFormat(request);
+  if (cached) return cached;
+
+  if (!noRemote) {
+    const remote = await warnOnFailure(() =>
+      resolveRemoteFormatRequest(request, options.formatIndices, [], fetchOptions),
+    );
+    if (remote) return remote;
   }
 
   // A same-major older version keeps the story in its own format; it never crosses majors.

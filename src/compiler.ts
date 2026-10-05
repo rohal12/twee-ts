@@ -3,7 +3,6 @@
  * compile(), compileToFile(), watch().
  * Ported from tweego.go + config.go.
  */
-import { writeFileSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type {
   CompileOptions,
@@ -30,6 +29,7 @@ import { toTwee } from './output-twee.js';
 import { loadHeadContent } from './modules.js';
 import { startPassageDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
+import { writeFileAtomic } from './atomic-write.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
@@ -55,11 +55,12 @@ export async function compile(options: CompileOptions): Promise<CompileResult> {
 }
 
 /**
- * Compile and write to a file.
+ * Compile and write to a file. The file is replaced atomically: a reader sees the previous
+ * build or the new one, never part of it, and a failed write leaves the previous build.
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
   const result = await compileForOutputFile(options, options.outFile);
-  writeFileSync(options.outFile, result.output, 'utf-8');
+  writeFileAtomic(options.outFile, result.output);
   return result;
 }
 
@@ -100,10 +101,14 @@ export async function compileIncremental(
 }
 
 /**
- * Watch for file changes and recompile. Every build is written to `outFile`, including
- * one whose diagnostics report errors. Builds run one at a time, and each one is written
- * and reported as it finishes, in order: changes made during a build go into one
- * follow-up build after it. A watched path that can't be watched is passed to `onError`.
+ * Watch for file changes and recompile. Every build is written to `outFile` (replacing it
+ * atomically, as compileToFile() does), including one whose diagnostics report errors.
+ * Builds run one at a time, and each one is written and reported as it finishes, in order:
+ * changes made during a build go into one follow-up build after it. A watched path that
+ * can't be watched is passed to `onError`.
+ *
+ * Aborting the returned controller, or the `signal` in the options, stops watching and
+ * aborts the story format requests of the build in progress.
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
   return watchWithWriteFilter(options, () => true);
@@ -122,6 +127,8 @@ export async function watchWithWriteFilter(
 ): Promise<AbortController> {
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
+  // Every build runs with the controller's signal, which the caller's own signal also aborts (below).
+  const buildOptions: WatchOptions = { ...options, signal: controller.signal };
 
   // Separate file paths from inline sources
   const filePaths = options.sources.filter((s): s is string => typeof s === 'string');
@@ -160,7 +167,7 @@ export async function watchWithWriteFilter(
   const deliver = (outcome: WatchBuildOutcome): void => {
     try {
       if (!outcome.ok) throw outcome.error;
-      if (shouldWrite(outcome.result)) writeFileSync(options.outFile, outcome.result.output, 'utf-8');
+      if (shouldWrite(outcome.result)) writeFileAtomic(options.outFile, outcome.result.output);
       options.onBuild?.(outcome.result);
     } catch (e) {
       reportError(toError(e));
@@ -175,7 +182,7 @@ export async function watchWithWriteFilter(
     try {
       let request: WatchBuildRequest | undefined = first;
       while (request !== undefined) {
-        const outcome = await buildOutput(options, cache, request.changedFiles, options.outFile).then(
+        const outcome = await buildOutput(buildOptions, cache, request.changedFiles, options.outFile).then(
           (result): WatchBuildOutcome => ({ ok: true, result }),
           (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),
         );
@@ -205,10 +212,15 @@ export async function watchWithWriteFilter(
     reportError,
   );
 
+  const outer = options.signal;
+  const onOuterAbort = (): void => controller.abort(outer?.reason);
   controller.signal.addEventListener('abort', () => {
     queued = undefined;
     handle.close();
+    outer?.removeEventListener('abort', onOuterAbort);
   });
+  if (outer?.aborted) onOuterAbort();
+  else outer?.addEventListener('abort', onOuterAbort, { once: true });
   return controller;
 }
 
@@ -247,6 +259,12 @@ async function buildOutput(
   const testMode = options.testMode ?? false;
   const noRemote = options.noRemote ?? false;
   const sourceInfo = options.sourceInfo ?? false;
+
+  options.signal?.throwIfAborted();
+  const timeout = options.formatFetchTimeout;
+  if (timeout !== undefined && !(timeout >= 0)) {
+    throw new TweeTsError(`formatFetchTimeout must be 0 or more milliseconds, not ${timeout}.`);
+  }
 
   // Clear per-compile index cache
   clearIndexCache();

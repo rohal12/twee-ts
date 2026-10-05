@@ -87,14 +87,14 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 ### Story Format
 
-| Key             | Type       | Default         | Description                                                         |
-| --------------- | ---------- | --------------- | ------------------------------------------------------------------- |
-| `formatId`      | `string`   | `"sugarcube-2"` | Story format directory ID.                                          |
-| `formatPaths`   | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.              |
-| `formatIndices` | `string[]` | `[]`            | URLs to SFA-compatible `index.json` files for remote format lookup. |
-| `formatUrls`    | `string[]` | `[]`            | Direct URLs to `format.js` files.                                   |
-| `useTweegoPath` | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.     |
-| `noRemote`      | `boolean`  | `false`         | Disable remote format fetching entirely.                            |
+| Key             | Type       | Default         | Description                                                            |
+| --------------- | ---------- | --------------- | ---------------------------------------------------------------------- |
+| `formatId`      | `string`   | `"sugarcube-2"` | Story format directory ID.                                             |
+| `formatPaths`   | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                 |
+| `formatIndices` | `string[]` | `[]`            | URLs to SFA-compatible `index.json` files for remote format lookup.    |
+| `formatUrls`    | `string[]` | `[]`            | Direct URLs to `format.js` files, looked up before the download cache. |
+| `useTweegoPath` | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.        |
+| `noRemote`      | `boolean`  | `false`         | Disable remote format fetching entirely.                               |
 
 ### Compilation
 

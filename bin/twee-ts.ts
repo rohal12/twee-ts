@@ -4,8 +4,9 @@
  */
 import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { compileForOutputFile, watchWithWriteFilter } from '../src/compiler.js';
+import { compileForOutputFile, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
 import { WatchPathError } from '../src/filesystem.js';
+import { writeFileAtomic } from '../src/atomic-write.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
 import { discoverAllFormats, getFormatSearchDirs, makeFormatId, pruneFormats } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
@@ -235,6 +236,7 @@ async function main(): Promise<void> {
             console.error(`error: ${error.message}`);
             process.exitCode = 1;
           } else {
+            logErrorDiagnostics(error);
             console.error(`Build error: ${error.message}`);
           }
         },
@@ -254,7 +256,7 @@ async function main(): Promise<void> {
     } else if (outPath === undefined) {
       process.stdout.write(result.output);
     } else {
-      writeFileSync(outPath, result.output, 'utf-8');
+      writeFileAtomic(outPath, result.output);
     }
 
     logBuild(result, log);
@@ -326,6 +328,11 @@ function logDiagnostics(diagnostics: Array<{ level: string; message: string }>):
     if (d.level === 'error') console.error(`error: ${d.message}`);
     else console.warn(`warning: ${d.message}`);
   }
+}
+
+/** Prints what a fatal TweeTsError collected (such as why no story format was found) before its message. */
+function logErrorDiagnostics(error: unknown): void {
+  if (error instanceof TweeTsError) logDiagnostics(error.diagnostics);
 }
 
 function logStats(result: {
@@ -500,6 +507,7 @@ Subcommands:
 }
 
 main().catch((err: unknown) => {
+  logErrorDiagnostics(err);
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });
