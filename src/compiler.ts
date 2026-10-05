@@ -58,10 +58,24 @@ export async function compile(options: CompileOptions): Promise<CompileResult> {
  * Compile and write to a file.
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
-  // The output may sit inside a source folder; its last build must not be read back as a source.
-  const result = await buildOutput(options, undefined, undefined, options.outFile);
+  const result = await compileForOutputFile(options, options.outFile);
   writeFileSync(options.outFile, result.output, 'utf-8');
   return result;
+}
+
+/**
+ * Builds as compileToFile() does for `outFile`, without writing it: the output may sit
+ * inside a source folder, so its last build is left out of the sources and modules and
+ * never read back. The caller decides whether the result is written. With no `outFile`
+ * (output to stdout, or none), this is compile().
+ *
+ * Internal, for the CLI; not part of the public API.
+ */
+export async function compileForOutputFile(
+  options: CompileOptions,
+  outFile: string | undefined,
+): Promise<CompileResult> {
+  return buildOutput(options, undefined, undefined, outFile);
 }
 
 /**
@@ -82,9 +96,24 @@ export async function compileIncremental(
 }
 
 /**
- * Watch for file changes and recompile.
+ * Watch for file changes and recompile. Every build is written to `outFile`, including
+ * one whose diagnostics report errors.
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
+  return watchWithWriteFilter(options, () => true);
+}
+
+/**
+ * watch(), writing to `outFile` only the builds `shouldWrite` accepts. A rejected build
+ * leaves the output file as it was; `onBuild` receives every build either way.
+ *
+ * Internal, for the CLI, which keeps the last good output when a rebuild reports errors;
+ * not part of the public API.
+ */
+export async function watchWithWriteFilter(
+  options: WatchOptions,
+  shouldWrite: (result: CompileResult) => boolean,
+): Promise<AbortController> {
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
 
@@ -111,7 +140,7 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
     (changedFiles) => {
       buildOutput(options, cache, changedFiles, options.outFile)
         .then((result) => {
-          writeFileSync(options.outFile, result.output, 'utf-8');
+          if (shouldWrite(result)) writeFileSync(options.outFile, result.output, 'utf-8');
           options.onBuild?.(result);
         })
         .catch((e) => {

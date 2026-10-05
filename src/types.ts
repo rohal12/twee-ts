@@ -65,9 +65,9 @@ export interface CompileToFileOptions extends CompileOptions {
 }
 
 export interface WatchOptions extends CompileToFileOptions {
-  /** Called after each successful rebuild. */
+  /** Called after each build is written, including one whose diagnostics report errors. */
   onBuild?: (result: CompileResult) => void;
-  /** Called on build errors. */
+  /** Called when a build fails with a fatal error (nothing is written). */
   onError?: (error: Error) => void;
 }
 

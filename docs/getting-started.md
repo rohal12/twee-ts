@@ -50,6 +50,8 @@ Automatically rebuild when files change:
 npx @rohal12/twee-ts -w -o story.html src/
 ```
 
+If a save leaves an error in the story, twee-ts reports it and keeps the previous `story.html`; the next save that fixes it rebuilds as usual.
+
 ## Project Structure
 
 A typical twee-ts project looks like this:
