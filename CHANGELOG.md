@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `decompileHTML(html, options?)` takes `DecompileOptions` with `trim` (default `true`). With `trim: false`, Twine 2 passages, Twine 1 tiddlers and the story stylesheet and script keep their whitespace (#122)
+- `storyInspect(story, { target })` checks link destinations against what Twine 2 or Twine 1 output emits. A link to a passage that the output leaves out is a broken link, and the new optional `BrokenLink.omission` says why. Without a target, inspection is unchanged. `InspectOptions`, `PassageOutputTarget`, `PassageOmission` and `OmittingTag` are now exported (#124)
+
+### Fixed
+
+- The CLI no longer reads its own output file back as a source when it sits inside a source folder. Before, the next build restored edited and deleted passages from the earlier output. `--lint` also leaves the output file (`-o`, or `output` in the config) out (#118)
+- CLI watch mode keeps the last good output when a rebuild reports errors, instead of overwriting it with a story that cannot start; the next good save writes again. The programmatic `watch()` still writes every build (#119)
+- `compileIncremental()` and `watch()` reparse a file listed as changed even when its modification time did not change, as after a timestamp-preserving write or on a filesystem with coarse timestamps (#120)
+- Twee output writes the StoryData the build used, so a start passage override (`startPassage` / `-s`), test mode (`-t`) and a generated IFID survive a Twee round trip. A story without a StoryData passage gets one only when `-s` or `-t` is given (#121)
+- Loading compiled HTML with `trim: false` / `--no-trim` keeps leading and trailing passage whitespace, and changing `trim` reparses a cached HTML file (#122)
+- The Rollup plugin fails the build on compile errors (such as a missing starting passage or malformed Twee) and emits no HTML. Warnings go through Rollup's warnings instead of the console (#123)
+- Lint and `--lint` report links to passages that Twine 2 output leaves out (passages tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, an empty StorySettings), with the reason. Links to special passages the output keeps, such as StoryInit, stay valid (#124)
+- Short lines of unclosed link markup (`[[unfinished`) no longer use up the link scan budget, which left later links in the passage unchecked (#125)
+- Lint and inspection read no links from stylesheets (passages tagged `stylesheet` and loaded `.css` files), so CSS such as `content: "[[Decorative]]"` is no longer a broken link (#126)
+
+### Changed
+
+- Twee output built with test mode records `"options": ["debug"]` in StoryData, so compiling that Twee again keeps debug mode on without `-t` (#121)
+
 ## [1.16.1] - 2026-10-05
 
 ### Security
