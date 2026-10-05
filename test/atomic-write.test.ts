@@ -151,4 +151,55 @@ describe('writeFileAtomic', () => {
     expect(readFileSync(target, 'utf-8')).toBe('new');
     expect(readdirSync(dir).sort()).toEqual(['link.html', 'real.html']);
   });
+
+  describe.skipIf(process.platform === 'win32')('dangling symlinks', () => {
+    const entries = () => readdirSync(dir).sort();
+
+    it('creates the target of an absolute dangling link and keeps the link', () => {
+      const target = join(dir, 'served.html');
+      const link = join(dir, 'link.html');
+      symlinkSync(target, link);
+      writeFileAtomic(link, 'new');
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readFileSync(target, 'utf-8')).toBe('new');
+      expect(entries()).toEqual(['link.html', 'served.html']);
+    });
+
+    it('creates the target of a relative dangling link and keeps the link', () => {
+      const link = join(dir, 'link.html');
+      symlinkSync('served.html', link);
+      writeFileAtomic(link, 'new');
+      expect(fs.readlinkSync(link)).toBe('served.html');
+      expect(readFileSync(join(dir, 'served.html'), 'utf-8')).toBe('new');
+      expect(entries()).toEqual(['link.html', 'served.html']);
+    });
+
+    it('follows a chain of links to the final missing target', () => {
+      fs.mkdirSync(join(dir, 'deploy'));
+      symlinkSync(join('deploy', 'final.html'), join(dir, 'b.html'));
+      symlinkSync('b.html', join(dir, 'a.html'));
+      writeFileAtomic(join(dir, 'a.html'), 'new');
+      expect(fs.lstatSync(join(dir, 'a.html')).isSymbolicLink()).toBe(true);
+      expect(fs.lstatSync(join(dir, 'b.html')).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(dir, 'deploy', 'final.html'), 'utf-8')).toBe('new');
+      expect(entries()).toEqual(['a.html', 'b.html', 'deploy']);
+    });
+
+    it('fails and keeps the link when the target folder is missing', () => {
+      const link = join(dir, 'link.html');
+      symlinkSync(join('missing', 'served.html'), link);
+      expect(() => writeFileAtomic(link, 'new')).toThrow(link);
+      expect(fs.readlinkSync(link)).toBe(join('missing', 'served.html'));
+      expect(entries()).toEqual(['link.html']);
+    });
+
+    it('fails and keeps both links of a cycle', () => {
+      symlinkSync('b.html', join(dir, 'a.html'));
+      symlinkSync('a.html', join(dir, 'b.html'));
+      expect(() => writeFileAtomic(join(dir, 'a.html'), 'new')).toThrow(/a\.html/);
+      expect(fs.readlinkSync(join(dir, 'a.html'))).toBe('b.html');
+      expect(fs.readlinkSync(join(dir, 'b.html'))).toBe('a.html');
+      expect(entries()).toEqual(['a.html', 'b.html']);
+    });
+  });
 });
