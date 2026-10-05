@@ -282,3 +282,28 @@ describe('CLI output inside a source folder', () => {
     expect(r.status).toBe(1);
   });
 });
+
+describe('CLI --lint', () => {
+  const lintStory = (content: string): CliResult => {
+    writeFileSync(join(dir, 'story.tw'), content);
+    return runCli(dir, ['--no-config', '--lint', 'story.tw']);
+  };
+
+  it('fails on links to passages that Twine 2 output leaves out, and says why', () => {
+    const r = lintStory(
+      `${STORY_DATA}\n:: Start\n[[Secret]] [[Logic]]\n\n:: Secret [Twine.private]\nHidden\n\n:: Logic [script]\nwindow.x = 1;\n`,
+    );
+    expect(r.stdout).toContain('Start -> Secret (passage "Secret" is tagged "Twine.private"');
+    expect(r.stdout).toContain('Start -> Logic (passage "Logic" is tagged "script"');
+    expect(r.stdout).toContain('Lint failed.');
+    expect(r.status).toBe(1);
+  });
+
+  it('passes when the only bracketed text is in a stylesheet', () => {
+    const r = lintStory(
+      `${STORY_DATA}\n:: Start\nHello\n\n:: Theme [stylesheet]\nbody::before { content: "[[Decorative]]"; }\n`,
+    );
+    expect(r.stdout).toContain('Lint passed.');
+    expect(r.status).toBe(0);
+  });
+});

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { compile } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
 import type { LintResult } from '../src/lint.js';
 
@@ -153,6 +154,90 @@ describe('lint reads no links from stylesheets', () => {
     });
     expect(result.brokenLinks).toEqual([]);
     expect(formatLintReport(result)).toContain('Lint passed.');
+  });
+});
+
+describe('lint checks link destinations against what Twine 2 output emits', () => {
+  const STORY_DATA = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n';
+  const DESTINATIONS = [
+    'Secret',
+    'Logic',
+    'Theme',
+    'StoryData',
+    'StoryTitle',
+    'StorySettings',
+    'StoryInit',
+    'Widgets',
+    'PassageHeader',
+    'Notes',
+    'Room',
+    'Missing',
+  ];
+  const STORY =
+    STORY_DATA +
+    ':: StoryTitle\nTitle\n\n' +
+    `:: Start\n${DESTINATIONS.map((name) => `[[${name}]]`).join(' ')}\n\n` +
+    ':: Secret [Twine.private]\nHidden\n\n' +
+    ':: Logic [script]\nwindow.x = 1;\n\n' +
+    ':: Theme [stylesheet]\nbody { color: red; }\n\n' +
+    ':: StorySettings\n\n' +
+    ':: StoryInit\n<<set $x to 1>>\n\n' +
+    ':: Widgets [widget]\n<<widget "w">>Hi<</widget>>\n\n' +
+    ':: PassageHeader\nHeader\n\n' +
+    ':: Notes [annotation]\nA note.\n\n' +
+    ':: Room\n[[Start]]\n';
+
+  it('reports links to passages that Twine 2 output leaves out, saying why', async () => {
+    const result = await lint({ sources: [{ filename: 'story.tw', content: STORY }] });
+    expect(result.brokenLinks).toEqual([
+      { from: 'Start', to: 'Secret', omission: { kind: 'tag', tag: 'Twine.private' } },
+      { from: 'Start', to: 'Logic', omission: { kind: 'tag', tag: 'script' } },
+      { from: 'Start', to: 'Theme', omission: { kind: 'tag', tag: 'stylesheet' } },
+      { from: 'Start', to: 'StoryData', omission: { kind: 'special-name', name: 'StoryData' } },
+      { from: 'Start', to: 'StoryTitle', omission: { kind: 'special-name', name: 'StoryTitle' } },
+      { from: 'Start', to: 'StorySettings', omission: { kind: 'empty-story-settings' } },
+      { from: 'Start', to: 'Missing' },
+    ]);
+    // A missing passage carries no omission.
+    expect(result.brokenLinks.at(-1)).not.toHaveProperty('omission');
+  });
+
+  it('accepts exactly the destinations that the Twine 2 archive holds as passages', async () => {
+    const sources = [{ filename: 'story.tw', content: STORY }];
+    const archive = (await compile({ sources, outputMode: 'twine2-archive' })).output;
+    const emitted = new Set([...archive.matchAll(/<tw-passagedata [^>]*name="([^"]*)"/g)].map((m) => m[1]));
+    const result = await lint({ sources });
+    const reported = result.brokenLinks.map((link) => link.to);
+    expect(reported).toEqual(DESTINATIONS.filter((name) => !emitted.has(name)));
+    // Links to special passages that the output keeps stay valid.
+    for (const kept of ['StoryInit', 'Widgets', 'PassageHeader', 'Notes', 'Room']) {
+      expect(emitted.has(kept), kept).toBe(true);
+    }
+  });
+
+  it('fails the report and explains why each destination cannot be used', async () => {
+    const result = await lint({
+      sources: [
+        {
+          filename: 'story.tw',
+          content: `${STORY_DATA}:: Start\n[[Secret]] [[Logic]]\n\n:: Secret [Twine.private]\nHidden\n\n:: Logic [script]\nwindow.x = 1;`,
+        },
+      ],
+    });
+    const report = formatLintReport(result);
+    expect(report).toContain('Broken links (2):');
+    expect(report).toContain(
+      'Start -> Secret (passage "Secret" is tagged "Twine.private", so it is left out of the story data)',
+    );
+    expect(report).toContain(
+      'Start -> Logic (passage "Logic" is tagged "script", so it is left out of the story data)',
+    );
+    expect(report).toContain('Lint failed.');
+  });
+
+  it('keeps reporting a missing destination as missing', async () => {
+    const result = await lint({ sources: [{ filename: 'story.tw', content: `${STORY_DATA}:: Start\n[[Missing]]` }] });
+    expect(formatLintReport(result)).toContain('Start -> Missing (passage "Missing" does not exist)');
   });
 });
 

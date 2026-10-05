@@ -68,6 +68,8 @@ Exits with code 1 if errors are found (broken links, a starting passage that is 
 
 Like a build, linting leaves the output file (`-o`, or `output` in the config file) out of the sources, so an earlier build inside a source folder is not linted.
 
+A link is broken when no passage has its name, or when its passage is one that Twine 2 output leaves out: a passage tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, or an empty StorySettings. The passage exists in the source but not in the playable story, so the link fails when it is clicked. The report says why. Links to special passages that the output keeps, such as StoryInit, PassageHeader or a `widget` passage, are valid.
+
 Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so bracketed text in them, such as `content: "[[Decorative]]"`, is not a link.
 
 ```sh
@@ -76,8 +78,9 @@ Format: SugarCube 2.37.3
 Passages: 42 total (38 story, 4 info), 12,345 words, 15 files
 Start: Start
 
-Broken links (1):
+Broken links (2):
   Kitchen -> Pantry (passage "Pantry" does not exist)
+  Kitchen -> Notes (passage "Notes" is tagged "Twine.private", so it is left out of the story data)
 
 Dead ends (2): Ending1, Ending2
 

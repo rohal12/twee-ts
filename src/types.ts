@@ -173,6 +173,9 @@ export type PassageOmission =
   | { readonly kind: 'tag'; readonly tag: OmittingTag }
   | { readonly kind: 'empty-story-settings' };
 
+/** The output whose rules decide which passages a story emits as passages. */
+export type PassageOutputTarget = 'twine1' | 'twine2';
+
 // --- HTML decompile ---
 
 export interface DecompileOptions {
@@ -181,6 +184,19 @@ export interface DecompileOptions {
    * as the Twee lexer does. When false, the stored text is kept exactly. Default: true.
    */
   readonly trim?: boolean;
+}
+
+// --- Story inspection ---
+
+export interface InspectOptions {
+  /**
+   * Check link destinations against this output's passage rules. A link to a passage that the
+   * output leaves out (in Twine 2: `script`, `stylesheet` and `Twine.private` passages,
+   * StoryData, StoryTitle and an empty StorySettings; in Twine 1: `Twine.private` passages) is
+   * then a broken link, and says why. Without a target, a link is broken only when no passage
+   * has its name.
+   */
+  readonly target?: PassageOutputTarget;
 }
 
 // --- Story format ---

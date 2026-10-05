@@ -296,13 +296,21 @@ import { lint, formatLintReport } from '@rohal12/twee-ts';
 
 const result = await lint({ sources: ['src/'] });
 
-console.log(result.brokenLinks); // [{ from: 'Kitchen', to: 'Pantry' }]
+console.log(result.brokenLinks);
+// [
+//   { from: 'Kitchen', to: 'Pantry' },
+//   { from: 'Kitchen', to: 'Notes', omission: { kind: 'tag', tag: 'Twine.private' } },
+// ]
 console.log(result.deadEnds); // ['Ending1', 'Ending2']
 console.log(result.orphans); // ['UnusedRoom']
 
 // Human-readable report
 console.log(formatLintReport(result));
 ```
+
+Lint checks link destinations against what Twine 2 output emits. A link is broken when no passage has its name, or when its passage is one that Twine 2 output leaves out: a passage tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, or an empty StorySettings. Such a link has an `omission` field that says why. Links to special passages that the output keeps, such as StoryInit, PassageHeader or a `widget` passage, are valid.
+
+Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so they link to nothing.
 
 ### Story Inspection
 
@@ -312,9 +320,15 @@ import { compile, storyInspect } from '@rohal12/twee-ts';
 const result = await compile({ sources: ['src/'], outputMode: 'json' });
 const info = storyInspect(result.story);
 
-console.log(info.passageMap); // Map of passage name → passage
-console.log(info.brokenLinks); // passages with links to nonexistent passages
+console.log(info.links); // Map of passage name → passage names it links to
+console.log(info.brokenLinks); // links to passages that don't exist
+
+// Also report links to passages that Twine 2 output leaves out (as lint does)
+const checked = storyInspect(result.story, { target: 'twine2' });
+console.log(checked.brokenLinks); // [{ from: 'Start', to: 'Logic', omission: { kind: 'tag', tag: 'script' } }]
 ```
+
+Without a `target`, `storyInspect` describes the source passages and treats a link as broken only when no passage has its name. With `target: 'twine2'` or `target: 'twine1'`, it also reports links to passages that output leaves out (Twine 1 output leaves out only `Twine.private` passages).
 
 ## Types
 
@@ -343,6 +357,11 @@ import type {
   SourceLocation,
   TweeTsConfig,
   LintResult,
+  StoryMap,
+  BrokenLink,
+  InspectOptions,
+  PassageOutputTarget,
+  PassageOmission,
   CachedFormatEntry,
 } from '@rohal12/twee-ts';
 ```
