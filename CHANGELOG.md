@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `CompileOptions.signal` cancels a compile's story format requests, and `watch()` passes its own signal, so aborting a watch no longer waits for a stalled download. `CompileOptions.formatFetchTimeout` (config key `formatFetchTimeout`, default 30 s, `0` turns it off) times out each format request. `resolveRemoteFormat`, `fetchAndCacheFormat` and `fetchDirectFormat` take an optional `RemoteFetchOptions` (#182)
+- `loadConfig()` and `loadConfigFile()` take an optional diagnostics array that receives warnings, and `unknownConfigKeyWarnings()` is exported (#159, #165)
+
+### Fixed
+
+- Source discovery leaves out every path a build writes, compared by real path, so an output reached through a symlink or a symlinked working directory is no longer read back as a source (#152)
+- Symlinked folders inside a source folder are no longer followed, as in Tweego, so link cycles can no longer multiply files or hang the walk. A folder named directly as a source is still followed (#160)
+- Naming the output file as a source, module or head file is an error ("Output file cannot be an input source."), instead of dropping the file and overwriting it with an empty build (#157)
+- The Vite and Rollup plugins leave out the story HTML of every output, the chunks, assets and copied public files a build writes, and output folders inside a source folder, in builds, the dev server and watch mode. The Vite plugin reads the bundler's `output.dir`, not only `build.outDir` (#153, #155, #184)
+- `rollup --watch` works when `output.dir` is a story source folder (#187)
+- Restarting a Vite dev server, or building with the same plugin instance, no longer stops another server's rebuilds (#179)
+- Format files that are not strict JSON are parsed without changing text inside strings, and a format that cannot be used is skipped with a warning (#154)
+- Format names and IDs match without regard to letter case in local, cached and remote lookups alike, preferring an exact-case match, so a local format that differs only in case is used without a download (#156)
+- A format requested by ID is found even when a newer version of the same format sits in another folder (#161)
+- Prerelease format versions compare by SemVer precedence, so a release wins over its beta, and versions written `v1.0.0`, `1.0` or `1` are accepted, as in Tweego (#162, #164)
+- A format folder in `formatPaths` takes precedence over one with the same name in `TWEEGO_PATH`; the search order is documented (#163)
+- `--list-formats` lists cached formats under IDs that `-f` accepts, and includes `formatPaths` from the config (#174)
+- The CLI prints why a story format is missing (the diagnostics of a fatal error), in one-shot and watch mode (#176)
+- Downloaded story formats and compiled output are written atomically, so parallel builds sharing a cache and live-reload servers never read a half-written file. Concurrent requests for the same format within one process share one download (#173, #181)
+- Formats downloaded from `formatUrls` are cached by URL and looked up before the shared name/version cache, so one project's patched copy no longer stands in for another's (#180)
+- `watch()` and `twee-ts -w` write and report every build while edits keep arriving during builds (#188)
+- An exception thrown from `watch()`'s `onError` no longer crashes the process (#183)
+- Watch mode keeps working when a watched source folder is deleted and recreated, or replaced, and waits for a source folder that does not exist yet; a path that cannot be watched is reported (#175, #177)
+- A changed file that fails to load no longer brings back its old content on a later incremental build, and `changedFiles` entries match however the path is written (#178, #170)
+- Twine 1 output with `obfuscate:rot13` encodes passage names, tags and text as Twine 1.4 does (leaving `StorySettings` and `Twine.image` passages alone), so the story plays, and decompiling such HTML decodes them (#149)
+- Twee output warns about passages that cannot round-trip, such as text lines starting with `::` and names with surrounding spaces or line breaks; in stylesheet and script passages such lines are indented by one space (#150)
+- The Twine 1 start passage name is escaped for its `<script>` context (#151)
+- Font family names generated from font file names are escaped as CSS strings (#169)
+- When a story format template has no closing head tag, modules and the head file go before `<body` with a warning, instead of being dropped silently (#185)
+- A StoryData passage that replaces an earlier one replaces all story metadata, as in Tweego, instead of inheriting fields it leaves out (#167)
+- Passage names generated for loaded files (imported story scripts and stylesheets, CSS, JS, font and media files) are unique across the whole story: a name that is taken gets a number instead of replacing a passage (#168)
+- `StoryBuilder` stays correct after direct changes to `story.passages` (#171)
+- `storyInspect().passagesByTag` lists a passage once per tag (#172)
+- `decompileHTML()` warns about an invalid or missing `ifid` (#186)
+- A config file starting with a UTF-8 BOM loads (#158)
+- Text files that are not valid UTF-8 are read as Windows-1252 with a warning, as Tweego does, instead of replacing characters with U+FFFD (#159)
+- A passage header after a BOM in the middle of a Twee source (from concatenated files) is recognised (#166)
+
+### Changed
+
+- Unknown keys in a config file produce a warning, with a suggestion for case or `-`/`_` mismatches (#165)
+- `watch()` writes and reports every finished build again, reversing the 1.17.1 change that skipped builds superseded by newer edits (#188)
+- Output files are replaced by renaming a temporary file, so they get a new inode on each build and writing needs write permission on the folder (#181)
+- Story format requests time out after 30 seconds by default (#182)
+- Every compile warns about unusable `format.js` files in the format search folders (#154)
+- Twine 1 format components with CRLF line endings are converted to LF, as in Tweego (#159)
+
 ## [1.17.1] - 2026-10-05
 
 ### Fixed
