@@ -66,11 +66,16 @@ export interface CompileToFileOptions extends CompileOptions {
 
 export interface WatchOptions extends CompileToFileOptions {
   /**
-   * Called after each build is written, including one whose diagnostics report errors. A build
-   * that changes made while it ran have superseded is neither written nor reported.
+   * Called after each build is written, including one whose diagnostics report errors. Builds
+   * run one at a time and are reported in order, each as it finishes, also while changes keep
+   * arriving: the changes made during a build go into one follow-up build after it.
    */
   onBuild?: (result: CompileResult) => void;
-  /** Called when a build fails with a fatal error (nothing is written). */
+  /**
+   * Called when a build fails with a fatal error (nothing is written), when `onBuild` throws,
+   * and when a watched path can't be watched (the other paths are still watched). An exception
+   * thrown here is reported to the console, and watching goes on.
+   */
   onError?: (error: Error) => void;
 }
 

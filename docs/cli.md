@@ -91,11 +91,11 @@ Lint failed.
 
 ### Watch & Logging
 
-| Flag              | Description                                                                                                                                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported, the output file keeps the last good build, and the watcher keeps running. See [Exit Status](#exit-status). |
-| `-l, --log-stats` | Print passage count, word count, and file count after compilation, and after every build in watch mode.                                                                                                      |
-| `--log-files`     | Print the list of input files after compilation, and after every build in watch mode.                                                                                                                        |
+| Flag              | Description                                                                                                                                                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported, the output file keeps the last good build, and the watcher keeps running. A source folder that doesn't exist yet is waited for, and one that is deleted and created again is followed. See [Exit Status](#exit-status). |
+| `-l, --log-stats` | Print passage count, word count, and file count after compilation, and after every build in watch mode.                                                                                                                                                                                                                   |
+| `--log-files`     | Print the list of input files after compilation, and after every build in watch mode.                                                                                                                                                                                                                                     |
 
 ### Config & Project
 
@@ -171,6 +171,8 @@ Build has 1 error; output not written. Still watching for changes.
 ```
 
 The programmatic API is unaffected: `compile()`, `compileToFile()` and `watch()` still return non-fatal errors in `result.diagnostics`, and `compileToFile()` and `watch()` still write every build to their output file. Check the diagnostics yourself if you need the CLI's behaviour.
+
+Watch mode waits for a source folder (or file, module or head file) that doesn't exist yet, and builds it once it appears; one that is deleted, or renamed away and replaced, is followed to the new one at its path. A path that can't be watched, such as a folder twee-ts may not read, is reported as `error: Cannot watch <path>: <reason>` and tried again on the next change in the folder above it, while the other paths are still watched. If nothing is left to watch, twee-ts exits with status 1.
 
 ## Examples
 
