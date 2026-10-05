@@ -105,6 +105,23 @@ describe('modifyHead', () => {
     expect(result).toContain('<meta name="custom" content="value">');
   });
 
+  it.each(['</HEAD>', '</Head>', '</head >', '</head\n>'])('injects before a closing head tag written %j', (close) => {
+    const headFile = join(TMP_DIR, 'head.html');
+    writeFileSync(headFile, '<meta name="review" content="injected">');
+    const result = modifyHead(`<html><head><title>Test</title>${close}<body></body></html>`, [], headFile);
+    expect(result).toBe(
+      `<html><head><title>Test</title><meta name="review" content="injected">\n${close}<body></body></html>`,
+    );
+  });
+
+  it('injects only before the first closing head tag', () => {
+    const headFile = join(TMP_DIR, 'head.html');
+    writeFileSync(headFile, '<meta>');
+    expect(modifyHead('<head></HEAD><body></head></body>', [], headFile)).toBe(
+      '<head><meta>\n</HEAD><body></head></body>',
+    );
+  });
+
   it('returns original HTML when no modules or head file', () => {
     expect(modifyHead(baseHtml, [])).toBe(baseHtml);
   });

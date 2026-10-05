@@ -1,14 +1,17 @@
 /**
  * Module/head injection into <head>.
- * Ported from module.go + io.go:modifyHead().
+ * Ported from module.go + io.go:modifyHead(). The renderers inject through `headSlot()` while filling the
+ * format template, so the closing head tag is looked for in the template only, never in inserted story data.
  */
 import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
 import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
 import { scriptContentEscape, styleContentEscape } from './escape.js';
+import { CLOSING_HEAD_TAG, fillTemplate } from './template.js';
+import type { TemplateSlot } from './template.js';
 
 /**
- * Load modules and return HTML tags to inject before </head>.
+ * Load modules and return HTML tags to inject before the closing head tag.
  */
 export function loadModules(filenames: string[]): string {
   const processed = new Set<string>();
@@ -68,9 +71,10 @@ function loadModuleFont(filename: string): string | null {
 }
 
 /**
- * Inject modules and head file content before </head>.
+ * Load the module tags and head file content to inject before the closing head tag, joined by newlines,
+ * or `''` when there is nothing to inject.
  */
-export function modifyHead(html: string, modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
+export function loadHeadContent(modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
   const parts: string[] = [];
 
   if (modulePaths.length > 0) {
@@ -90,10 +94,23 @@ export function modifyHead(html: string, modulePaths: string[], headFile?: strin
     }
   }
 
-  if (parts.length > 0) {
-    parts.push('</head>');
-    const replacement = parts.join('\n');
-    return html.replace('</head>', () => replacement);
-  }
-  return html;
+  return parts.join('\n');
+}
+
+/**
+ * The template slot that inserts `content` on its own line before the first closing head tag (as Tweego does),
+ * or `undefined` when `content` is empty. The tag may use any letter case and whitespace before its `>`, and is
+ * kept as written.
+ */
+export function headSlot(content: string): TemplateSlot | undefined {
+  if (content.length === 0) return undefined;
+  return { pattern: CLOSING_HEAD_TAG, occurrences: 'first', replacement: (tag) => `${content}\n${tag}` };
+}
+
+/**
+ * Inject modules and head file content before the first closing head tag of `html`.
+ */
+export function modifyHead(html: string, modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
+  const slot = headSlot(loadHeadContent(modulePaths, headFile, diagnostics));
+  return slot === undefined ? html : fillTemplate(html, [slot]);
 }
