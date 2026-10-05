@@ -299,6 +299,15 @@ describe('CLI --lint', () => {
     expect(r.status).toBe(1);
   });
 
+  it('passes when the only broken link is in a Twine.private passage', () => {
+    const r = lintStory(
+      `${STORY_DATA}\n:: Start\n[[Next]]\n\n:: Next\nThe end.\n\n:: Notes [Twine.private]\nTODO: write [[Epilogue]] later.\n`,
+    );
+    expect(r.stdout).not.toContain('Broken links');
+    expect(r.stdout).toContain('Lint passed.');
+    expect(r.status).toBe(0);
+  });
+
   it('passes when the only bracketed text is in a stylesheet', () => {
     const r = lintStory(
       `${STORY_DATA}\n:: Start\nHello\n\n:: Theme [stylesheet]\nbody::before { content: "[[Decorative]]"; }\n`,

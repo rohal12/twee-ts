@@ -235,6 +235,43 @@ describe('lint checks link destinations against what Twine 2 output emits', () =
     expect(report).toContain('Lint failed.');
   });
 
+  it('reads no links from a Twine.private passage, so it reports no broken link from one', async () => {
+    const content =
+      `${STORY_DATA}:: Start\n[[Next]]\n\n:: Next\nThe end.\n\n` +
+      ':: Notes [Twine.private]\nTODO: write [[Epilogue]] later.\n';
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+    expect(result.brokenLinks).toEqual([]);
+    expect(result.deadEnds).toEqual(['Next']);
+    expect(result.orphans).toEqual([]);
+    expect(formatLintReport(result)).toContain('Lint passed.');
+  });
+
+  it('still lists a story passage as an orphan when only a Twine.private passage links to it', async () => {
+    const content =
+      `${STORY_DATA}:: Start\n[[Next]]\n\n:: Next\nThe end.\n\n:: Epilogue\nLater.\n\n` +
+      ':: Notes [Twine.private]\nTODO: link [[Epilogue]] from Next.\n';
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+    expect(result.brokenLinks).toEqual([]);
+    expect(result.orphans).toEqual(['Epilogue']);
+  });
+
+  it('reads no links from StoryTitle, which Twine 2 output leaves out', async () => {
+    const content = `${STORY_DATA}:: StoryTitle\nThe [[Missing]] Story\n\n:: Start\nHello.\n`;
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+    expect(result.brokenLinks).toEqual([]);
+  });
+
+  it('keeps reading links from script passages, which Twine 2 output runs', async () => {
+    const content =
+      `${STORY_DATA}:: Start\nHello.\n\n:: Room\nA room.\n\n` +
+      ':: Logic [script]\nwindow.links = "[[Room]] [[Missing]]";\n\n' +
+      ':: Old Logic [script Twine.private]\nwindow.old = "[[Gone]]";\n';
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+    // The private script is left out entirely, so its links are not read.
+    expect(result.brokenLinks).toEqual([{ from: 'Logic', to: 'Missing' }]);
+    expect(result.orphans).toEqual([]);
+  });
+
   it('keeps reporting a missing destination as missing', async () => {
     const result = await lint({ sources: [{ filename: 'story.tw', content: `${STORY_DATA}:: Start\n[[Missing]]` }] });
     expect(formatLintReport(result)).toContain('Start -> Missing (passage "Missing" does not exist)');
