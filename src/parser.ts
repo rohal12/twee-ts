@@ -114,11 +114,9 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
           return { passages, diagnostics };
         }
         try {
-          const raw: unknown = JSON.parse(item.val);
-          if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-            throw new Error('expected a JSON object');
-          }
-          const parsed = raw as Record<string, unknown>;
+          // The lexer only emits a metadata item that starts with `{` and ends with its closing `}`,
+          // so a successful parse is always an object.
+          const parsed = JSON.parse(item.val) as Record<string, unknown>;
           const meta: PassageMetadata = {};
           for (const [key, value] of Object.entries(parsed)) {
             if (typeof value === 'string') {
