@@ -548,6 +548,19 @@ describe('fetchDirectFormat with a Harlowe setup function', () => {
   });
 });
 
+describe('fetchDirectFormat with wrapper comments (#221)', () => {
+  useTempCacheHome();
+
+  it('reads a format wrapped in comments that contain braces', async () => {
+    const wrapped = `/* Copyright {license} */\n${formatJs('Wrapped', '1.0.0')}\n// {notice}`;
+    stubFetch({ 'https://example.test/wrapped.js': wrapped });
+    const info = await fetchDirectFormat('https://example.test/wrapped.js');
+    expect(info.name).toBe('Wrapped');
+    expect(info.version).toBe('1.0.0');
+    expect(parseFormatJSON(readFileSync(info.filename, 'utf-8'))?.source).toBe('<html>{{STORY_DATA}}</html>');
+  });
+});
+
 describe('resolveRemoteFormatRequest with format IDs', () => {
   useTempCacheHome();
 
