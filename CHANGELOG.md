@@ -5,13 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.18.2] - 2026-10-06
 
 ### Fixed
 
+- Output files that are dangling symlinks (absolute, relative or chained) are written through to their final target and the link is kept (#219)
+- `ReadonlyPassage` and `CompileResult.story` make `tags` and `metadata` read-only at compile time; code that mutated them through the read-only types no longer compiles (#220)
+- The `storyFormat` object is located lexically, so JavaScript comments containing braces around it no longer break local, URL or cached format loading (#221)
 - A same-major older story format from the project's configured format URLs is used, with the older-version warning, when no at-or-above version is available, as for local and shared-cache formats (#224)
 - The Vite dev server's entry build uses the plugins and the `define` and alias overrides passed to `createServer()`, with or without a config file (#222)
 - The Vite dev server puts its client script after the real head start tag, not in a comment, an inline script or an attribute value that looks like one (#223)
+
+### Changed
+
+- Coverage thresholds are raised and the untested lines and branches reviewed; no behavior change
 
 ## [1.18.1] - 2026-10-05
 
