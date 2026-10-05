@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { watchFilesystem } from '../src/filesystem.js';
 import { watch } from '../src/compiler.js';
@@ -190,5 +190,167 @@ describe('watch with exclude', () => {
 
     expect((await builds.next()).output).toContain('window.modMarker = 2;');
     expect(builds.errors).toEqual([]);
+  });
+});
+
+describe('watch with the output inside a source folder', () => {
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const outFile = join(story, 'z-output.html');
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, STORY.replace('Hello from the story.', 'ORIGINAL_CONTENT\n\n:: Gone\nSOON_DELETED'));
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('does not load its own earlier output back as a source', async () => {
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outputMode: 'twine2-archive',
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    await builds.next();
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    writeFileSync(start, STORY.replace('Hello from the story.', 'UPDATED_CONTENT'));
+    emit(story, 'start.tw');
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+
+    const second = await builds.next();
+    expect(second.output).toContain('UPDATED_CONTENT');
+    expect(second.output).not.toContain('ORIGINAL_CONTENT');
+    expect(second.output).not.toContain('SOON_DELETED');
+    expect(second.stats.files.some((f) => f.endsWith('z-output.html'))).toBe(false);
+    expect(second.diagnostics).toEqual([]);
+    expect(builds.errors).toEqual([]);
+  });
+});
+
+describe('watch on individual files', () => {
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const outFile = join(TMP_DIR, 'out.html');
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, STORY);
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('reports a change to a watched file under the path source discovery gives it', () => {
+    const builds: (ReadonlySet<string> | undefined)[] = [];
+    vi.useFakeTimers(FAKE_TIMERS);
+    const handle = watchFilesystem([start], outFile, (files) => builds.push(files));
+    try {
+      // The OS names only the file, relative to the folder it is watched through.
+      emit(story, 'start.tw');
+      emit(story, 'other.tw'); // not watched
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([undefined, new Set([relative(process.cwd(), start)])]);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it('rebuilds a story whose source is a single file with its new content', async () => {
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [start],
+      outputMode: 'twine2-archive',
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    expect((await builds.next()).output).toContain('Hello from the story.');
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    writeFileSync(start, STORY.replace('Hello from the story.', 'UPDATED_CONTENT'));
+    emit(story, 'start.tw');
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+
+    const second = await builds.next();
+    expect(second.output).toContain('UPDATED_CONTENT');
+    expect(second.output).not.toContain('Hello from the story.');
+    expect(builds.errors).toEqual([]);
+  });
+
+  describe('the head file', () => {
+    const elsewhere = join(TMP_DIR, 'elsewhere');
+    const headFile = join(elsewhere, 'head.txt');
+    const meta = (content: string): string => `<meta name="watch-test" content="${content}">`;
+
+    beforeEach(() => {
+      mkdirSync(elsewhere, { recursive: true });
+      writeFileSync(headFile, meta('original'));
+    });
+
+    it('rebuilds when a head file outside every source folder changes, whatever its type', async () => {
+      const builds = buildQueue();
+      controller = await watch({
+        ...COMPILE,
+        sources: [story],
+        headFile,
+        outFile,
+        onBuild: builds.onBuild,
+        onError: builds.onError,
+      });
+      expect((await builds.next()).output).toContain(meta('original'));
+
+      vi.useFakeTimers(FAKE_TIMERS);
+      writeFileSync(headFile, meta('HEAD_UPDATED'));
+      emit(elsewhere, 'head.txt');
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(500);
+      vi.useRealTimers();
+
+      const second = await builds.next();
+      expect(second.output).toContain(meta('HEAD_UPDATED'));
+      expect(readFileSync(outFile, 'utf-8')).toContain(meta('HEAD_UPDATED'));
+      expect(builds.errors).toEqual([]);
+    });
+
+    it('rebuilds for a head file inside a source folder that an exclude glob matches', async () => {
+      const inside = join(story, 'head.txt');
+      writeFileSync(inside, meta('original'));
+      const builds = buildQueue();
+      controller = await watch({
+        ...COMPILE,
+        sources: [story],
+        headFile: inside,
+        exclude: ['**/head.txt'],
+        outFile,
+        onBuild: builds.onBuild,
+        onError: builds.onError,
+      });
+      await builds.next();
+
+      vi.useFakeTimers(FAKE_TIMERS);
+      writeFileSync(inside, meta('HEAD_UPDATED'));
+      emit(story, 'head.txt');
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(500);
+      vi.useRealTimers();
+
+      expect((await builds.next()).output).toContain(meta('HEAD_UPDATED'));
+      expect(builds.errors).toEqual([]);
+    });
   });
 });

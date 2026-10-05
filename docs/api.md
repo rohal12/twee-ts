@@ -39,7 +39,7 @@ const result = await compileToFile({
 
 ### `watch(options)`
 
-Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching.
+Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder.
 
 ```typescript
 import { watch } from '@rohal12/twee-ts';
@@ -199,8 +199,10 @@ for (const item of lexer) {
 }
 
 // Parse Twee source into passages
-const passages = parseTwee(':: Start\nHello!', 'story.tw');
+const { passages, diagnostics } = parseTwee(':: Start\nHello!', { filename: 'story.tw' });
 ```
+
+`parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. In-memory sources passed to `compile()` get the same normalization.
 
 ### Story Formats
 

@@ -3,9 +3,8 @@
  * Uses node:util.parseArgs() for argument parsing.
  */
 import { parseArgs } from 'node:util';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { compile, compileToFile, watch } from '../src/compiler.js';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { compile, watch } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
@@ -16,7 +15,7 @@ import {
   clearCachedFormats,
   getCacheSize,
 } from '../src/remote-formats.js';
-import type { TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
+import type { Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
 
 import { VERSION } from '../src/version.js';
 
@@ -195,26 +194,43 @@ async function main(): Promise<void> {
       onBuild(result) {
         console.log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
         logDiagnostics(result.diagnostics);
+        // A failed build must not stop the watcher: report it and wait for the next change.
+        const errors = countErrors(result.diagnostics);
+        if (errors > 0) console.error(`Build has ${pluralize(errors, 'error')}; still watching for changes.`);
       },
       onError(error) {
         console.error(`Build error: ${error.message}`);
       },
     });
   } else {
-    if (outFile === '-') {
-      const result = await compile(compileOptions);
+    const result = await compile(compileOptions);
+    logDiagnostics(result.diagnostics);
+
+    // Like Tweego, a build with errors produces no output: the output file (or stdout)
+    // is left untouched and the exit status is 1, so scripts and CI can detect it.
+    const errors = countErrors(result.diagnostics);
+    if (errors > 0) {
+      console.error(`Compilation failed with ${pluralize(errors, 'error')}; output not written.`);
+      process.exitCode = 1;
+    } else if (outFile === '-') {
       process.stdout.write(result.output);
-      logDiagnostics(result.diagnostics);
-      if (values['log-stats']) logStats(result);
     } else {
-      const result = await compileToFile({ ...compileOptions, outFile });
-      logDiagnostics(result.diagnostics);
-      if (values['log-files']) {
-        console.log(`\nFiles: ${result.stats.files.join(', ')}`);
-      }
-      if (values['log-stats']) logStats(result);
+      writeFileSync(outFile, result.output, 'utf-8');
     }
+
+    if (outFile !== '-' && values['log-files']) {
+      console.log(`\nFiles: ${result.stats.files.join(', ')}`);
+    }
+    if (values['log-stats']) logStats(result);
   }
+}
+
+function countErrors(diagnostics: readonly Diagnostic[]): number {
+  return diagnostics.filter((d) => d.level === 'error').length;
+}
+
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 function listFormats(): void {
@@ -257,37 +273,60 @@ function logStats(result: {
   console.log(`  Files: ${s.files.length}`);
 }
 
-function runInit(): void {
-  console.log('Initializing new twee-ts project...');
-  mkdirSync('src', { recursive: true });
+interface ScaffoldFile {
+  readonly path: string;
+  readonly content: () => string;
+}
 
-  writeFileSync(
-    join('src', 'StoryData.tw'),
-    `:: StoryData
+const SCAFFOLD_FILES: readonly ScaffoldFile[] = [
+  { path: CONFIG_FILENAME, content: scaffoldConfig },
+  {
+    path: 'src/StoryData.tw',
+    content: () => `:: StoryData
 {
 \t"ifid": "${crypto.randomUUID().toUpperCase()}"
 }
 `,
-  );
-
-  writeFileSync(
-    join('src', 'Start.tw'),
-    `:: Start
+  },
+  {
+    path: 'src/Start.tw',
+    content: () => `:: Start
 Welcome to your new Twine story!
 
 This is the starting passage. Edit this file to begin writing your story.
 `,
-  );
+  },
+];
 
-  // Scaffold config file if it doesn't exist
-  if (!existsSync(CONFIG_FILENAME)) {
-    writeFileSync(CONFIG_FILENAME, scaffoldConfig());
-    console.log(`Created: ${CONFIG_FILENAME}`);
+/**
+ * Writes `content` to `path` unless the file already exists.
+ * The exclusive flag makes the check and the write one step, so an existing file is never truncated.
+ * Returns false when the file was already there.
+ */
+function writeNewFile(path: string, content: string): boolean {
+  try {
+    writeFileSync(path, content, { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (e instanceof Error && 'code' in e && e.code === 'EEXIST') return false;
+    throw new Error(`Cannot create ${path}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
   }
+}
 
-  console.log('Created:');
-  console.log('  src/StoryData.tw');
-  console.log('  src/Start.tw');
+function runInit(): void {
+  console.log('Initializing new twee-ts project...');
+  mkdirSync('src', { recursive: true });
+
+  // Existing files are kept as they are: --init never overwrites a story, its IFID, or a config.
+  const results = SCAFFOLD_FILES.map((file) => ({ path: file.path, created: writeNewFile(file.path, file.content()) }));
+  const created = results.filter((r) => r.created).map((r) => r.path);
+  const skipped = results.filter((r) => !r.created).map((r) => r.path);
+
+  if (created.length > 0) {
+    console.log('Created:');
+    for (const path of created) console.log(`  ${path}`);
+  }
+  for (const path of skipped) console.log(`Skipped (already exists): ${path}`);
   console.log('\nRun: npx @rohal12/twee-ts');
 }
 

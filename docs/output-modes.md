@@ -78,6 +78,8 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 }
 ```
 
+`start` is present when `StoryData` sets it or when `-s`/`startPassage` overrides it, and omitted otherwise.
+
 `StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present.
 
 ## Config File

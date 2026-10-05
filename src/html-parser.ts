@@ -4,8 +4,8 @@
  */
 import { parseDocument } from 'htmlparser2';
 import type { Passage, PassageMetadata, Diagnostic, IFID } from './types.js';
-import { createStory, storyAdd, storyPrepend, marshalStoryData } from './story.js';
-import { tiddlerUnescape } from './escape.js';
+import { createStory, storyAdd, storyPrepend, marshalStoryData, unmarshalStorySettings } from './story.js';
+import { rot13, tiddlerUnescape } from './escape.js';
 
 export interface DecompileResult {
   story: import('./types.js').Story;
@@ -76,6 +76,7 @@ function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story,
       story.twine2.zoom = parsed;
     }
   }
+  if (attrs['tags']) story.twine2.tags = attrs['tags'];
   if (attrs['format']) story.twine2.format = attrs['format'];
   if (attrs['format-version']) story.twine2.formatVersion = attrs['format-version'];
   if (attrs['options']) {
@@ -150,26 +151,43 @@ function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story,
 }
 
 function decompileTwine1(storeArea: HtmlNode, story: import('./types.js').Story, diagnostics: Diagnostic[]): void {
-  for (const node of storeArea.children ?? []) {
-    if (node.type !== 'tag' || node.name !== 'div') continue;
-    const nodeAttrs = node.attribs ?? {};
-    if (!('tiddler' in nodeAttrs)) continue;
+  const passages = (storeArea.children ?? []).filter(isTiddler).map(tiddlerToPassage);
 
-    const name = nodeAttrs['tiddler'] ?? '';
-    const tags = nodeAttrs['tags'] ? nodeAttrs['tags'].split(/\s+/).filter((s: string) => s.length > 0) : [];
-    const metadata: PassageMetadata = {};
-
-    if (nodeAttrs['twine-position']) metadata.position = nodeAttrs['twine-position'];
-
-    const rawContent = getTextContent(node);
-    const text = tiddlerUnescape(rawContent).trim();
-
-    const passage: Passage = { name, tags, text };
-    if (metadata.position) {
-      passage.metadata = metadata;
-    }
+  // The Twine 1 writer ROT13-encodes every tiddler but StorySettings when StorySettings says
+  // `obfuscate:rot13`, so read the settings before adding (and so interpreting) anything else.
+  const obfuscated = isRot13Obfuscated(passages);
+  for (const p of passages) {
+    const passage = obfuscated && p.name !== 'StorySettings' ? { ...p, text: rot13(p.text) } : p;
     storyAdd(story, passage, diagnostics);
   }
+}
+
+function isTiddler(node: HtmlNode): boolean {
+  return node.type === 'tag' && node.name === 'div' && node.attribs !== undefined && 'tiddler' in node.attribs;
+}
+
+function tiddlerToPassage(node: HtmlNode): Passage {
+  const nodeAttrs = node.attribs ?? {};
+  const name = nodeAttrs['tiddler'] ?? '';
+  const tags = nodeAttrs['tags'] ? nodeAttrs['tags'].split(/\s+/).filter((s: string) => s.length > 0) : [];
+  const text = tiddlerUnescape(getTextContent(node)).trim();
+
+  const passage: Passage = { name, tags, text };
+  const position = nodeAttrs['twine-position'];
+  if (position) {
+    passage.metadata = { position };
+  }
+  return passage;
+}
+
+/** Whether the StorySettings tiddlers turn on ROT13 obfuscation, read the way the writer reads them. */
+function isRot13Obfuscated(passages: readonly Passage[]): boolean {
+  const settings = createStory();
+  for (const p of passages) {
+    // Diagnostics are dropped here; storyAdd() reports them when the passage is added.
+    if (p.name === 'StorySettings') unmarshalStorySettings(settings, p.text, []);
+  }
+  return settings.twine1.settings.get('obfuscate') === 'rot13';
 }
 
 function findElement(node: HtmlNode, tagName: string): HtmlNode | undefined {

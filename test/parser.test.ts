@@ -75,3 +75,45 @@ describe('parseTwee', () => {
     expect(passages).toHaveLength(0);
   });
 });
+
+describe('parseTwee: input normalization', () => {
+  it('strips a leading UTF-8 BOM', () => {
+    const { passages, diagnostics } = parseTwee('﻿:: Start\nHello');
+    expect(diagnostics).toEqual([]);
+    expect(passages.map((p) => [p.name, p.text])).toEqual([['Start', 'Hello']]);
+  });
+
+  it('accepts CRLF line endings after a tags block', () => {
+    const { passages, diagnostics } = parseTwee(':: Start [tag]\r\nHello\r\nWorld\r\n');
+    expect(diagnostics).toEqual([]);
+    expect(passages).toHaveLength(1);
+    expect(passages[0]!.tags).toEqual(['tag']);
+    expect(passages[0]!.text).toBe('Hello\nWorld');
+  });
+
+  it('accepts CRLF line endings after a metadata block', () => {
+    const { passages, diagnostics } = parseTwee(
+      ':: Start [tag] {"position":"10,20"}\r\nHello\r\n\r\n:: Next\r\nThere\r\n',
+    );
+    expect(diagnostics).toEqual([]);
+    expect(passages.map((p) => p.name)).toEqual(['Start', 'Next']);
+    expect(passages[0]!.metadata?.position).toBe('10,20');
+    expect(passages[1]!.source?.line).toBe(4);
+  });
+
+  it('accepts bare CR line endings', () => {
+    const { passages, diagnostics } = parseTwee(':: Start [tag]\rHello\r\r:: Next\rThere');
+    expect(diagnostics).toEqual([]);
+    expect(passages.map((p) => [p.name, p.text])).toEqual([
+      ['Start', 'Hello'],
+      ['Next', 'There'],
+    ]);
+  });
+
+  it('normalizes CRLF line endings in Twee 2 compatibility mode', () => {
+    const { passages, diagnostics } = parseTwee(':: Start [tag] <10,20>\r\nHello\r\n', { twee2Compat: true });
+    expect(diagnostics).toEqual([]);
+    expect(passages[0]!.metadata?.position).toBe('10,20');
+    expect(passages[0]!.text).toBe('Hello');
+  });
+});
