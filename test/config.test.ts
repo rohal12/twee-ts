@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import type { Diagnostic } from '../src/types.js';
 import {
   validateConfig,
@@ -192,6 +192,12 @@ describe('loading a config file with a BOM, CRLF line endings or another encodin
   it('throws from loadConfigFile() naming the file when it cannot be read', () => {
     const file = join(dir, 'missing.json');
     expect(() => loadConfigFile(file)).toThrow(`Cannot read config file ${file}:`);
+  });
+
+  it('throws from loadConfig() naming the file when it exists but cannot be read', () => {
+    const file = join(dir, CONFIG_FILENAME);
+    mkdirSync(file);
+    expect(() => loadConfig(dir)).toThrow(`Cannot read config file ${file}:`);
   });
 
   it('loads through loadConfigFile()', () => {

@@ -49,7 +49,7 @@ const foldKey = (key: string): string => key.toLowerCase().replace(/[-_]/g, '');
  *
  * @param diagnostics Receives warnings that do not stop the config from loading: keys the config does not
  *   define, and a file that is not valid UTF-8 (it is read as Windows-1252).
- * @throws When the file is not valid JSON or fails {@link validateConfig}.
+ * @throws When the file exists but cannot be read, is not valid JSON or fails {@link validateConfig}.
  */
 export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConfig | null {
   const base = dir ?? process.cwd();
@@ -57,17 +57,7 @@ export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConf
 
   if (!existsSync(configPath)) return null;
 
-  const readDiagnostics: Diagnostic[] = [];
-  let raw: string;
-  try {
-    raw = readUTF8(configPath, readDiagnostics);
-  } catch {
-    return null;
-  }
-
-  const config = parseConfig(raw, configPath, readDiagnostics);
-  diagnostics?.push(...readDiagnostics);
-  return config;
+  return loadConfigFile(configPath, diagnostics);
 }
 
 /**
