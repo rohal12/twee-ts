@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { compile, compileIncremental, compileToFile } from '../src/compiler.js';
-import type { Diagnostic, FileCacheEntry } from '../src/types.js';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { compile, compileIncremental, compileToFile, TweeTsError } from '../src/compiler.js';
+import type { CompileResult, Diagnostic, FileCacheEntry } from '../src/types.js';
 import { decompileHTML } from '../src/html-parser.js';
 import { Parser } from 'htmlparser2';
 
@@ -434,6 +434,104 @@ describe('compileToFile with the output inside a source folder', () => {
     await compileToFile(options);
     const second = await compileToFile(options);
     expect(second.output).not.toContain('script-module-out');
+  });
+});
+
+// Symbolic links need privileges on Windows.
+describe.skipIf(process.platform === 'win32')('compileToFile with the output reached through links (#152)', () => {
+  let root: string;
+  const passages = (text: string, extra = ''): string =>
+    `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nLink Test\n\n:: Start\n${text}\n${extra}`;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-links-')));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** Builds twice, editing Start and deleting a passage in between; returns the second build. */
+  async function twoBuilds(start: string, sources: string, outFile: string) {
+    writeFileSync(start, passages('ORIGINAL_CONTENT', '\n:: Gone\nSOON_DELETED\n'));
+    const options = { sources: [sources], outputMode: 'twine2-archive', outFile } as const;
+    await compileToFile(options);
+    writeFileSync(start, passages('UPDATED_CONTENT'));
+    return compileToFile(options);
+  }
+
+  function expectEdited(result: CompileResult, outFile: string, files: readonly string[]): void {
+    expect(result.output).toContain('UPDATED_CONTENT');
+    expect(result.output).not.toContain('ORIGINAL_CONTENT');
+    expect(result.output).not.toContain('SOON_DELETED');
+    expect(result.stats.files.map((f) => resolve(f))).toEqual(files);
+    expect(result.diagnostics).toEqual([]);
+    expect(readFileSync(outFile, 'utf-8')).toContain('UPDATED_CONTENT');
+  }
+
+  it('sources named through a symlinked project folder, output by its real path', async () => {
+    mkdirSync(join(root, 'real', 'story'), { recursive: true });
+    symlinkSync('real', join(root, 'link'));
+    const outFile = join(root, 'real', 'story', 'z.html');
+    const result = await twoBuilds(join(root, 'real', 'story', 'a.tw'), join(root, 'link', 'story'), outFile);
+    expectEdited(result, outFile, [join(root, 'link', 'story', 'a.tw')]);
+  });
+
+  it('output named through a link to the source folder', async () => {
+    mkdirSync(join(root, 'story'));
+    symlinkSync('story', join(root, 'out'));
+    const outFile = join(root, 'out', 'z.html');
+    const result = await twoBuilds(join(root, 'story', 'a.tw'), join(root, 'story'), outFile);
+    expectEdited(result, outFile, [join(root, 'story', 'a.tw')]);
+  });
+
+  it('a link in the source folder to the output folder', async () => {
+    mkdirSync(join(root, 'story'));
+    mkdirSync(join(root, 'dist'));
+    symlinkSync(join('..', 'dist'), join(root, 'story', 'build'));
+    const outFile = join(root, 'dist', 'z.html');
+    const result = await twoBuilds(join(root, 'story', 'a.tw'), join(root, 'story'), outFile);
+    expectEdited(result, outFile, [join(root, 'story', 'a.tw')]);
+  });
+});
+
+describe('compileToFile with a named source that is the output (#157)', () => {
+  let root: string;
+  const SOURCE = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHello world\n';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-inplace-'));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('rejects a source file that is the output and leaves it unchanged', async () => {
+    const file = join(root, 'a.tw');
+    writeFileSync(file, SOURCE);
+    const build = compileToFile({ sources: [file], outputMode: 'twee3', outFile: file });
+    await expect(build).rejects.toThrow(TweeTsError);
+    await expect(build).rejects.toThrow(`path ${file}: Output file cannot be an input source.`);
+    expect(readFileSync(file, 'utf-8')).toBe(SOURCE);
+  });
+
+  it('rejects a module or head file that is the output', async () => {
+    const story = join(root, 'a.tw');
+    writeFileSync(story, SOURCE);
+    const out = join(root, 'out.html');
+    writeFileSync(out, 'kept');
+    const options = { sources: [story], formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false };
+    await expect(compileToFile({ ...options, noRemote: true, modules: [out], outFile: out })).rejects.toThrow(
+      `path ${out}: Output file cannot be an input source.`,
+    );
+    await expect(compileToFile({ ...options, noRemote: true, headFile: out, outFile: out })).rejects.toThrow(
+      `path ${out}: Output file cannot be an input source.`,
+    );
+    expect(readFileSync(out, 'utf-8')).toBe('kept');
+  });
+
+  it('still skips an output found inside a source folder without an error', async () => {
+    writeFileSync(join(root, 'a.tw'), SOURCE);
+    const outFile = join(root, 'z.tw');
+    await compileToFile({ sources: [root], outputMode: 'twee3', outFile });
+    const second = await compileToFile({ sources: [root], outputMode: 'twee3', outFile });
+    expect(second.diagnostics).toEqual([]);
+    expect(second.stats.files.map((f) => resolve(f))).toEqual([join(root, 'a.tw')]);
   });
 });
 

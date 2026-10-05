@@ -72,7 +72,7 @@ my-story/
 └── story.html                 # Compiled output
 ```
 
-twee-ts recursively walks directories, so you can organize your `.tw` files however you like.
+twee-ts recursively walks directories, so you can organize your `.tw` files however you like. As in Tweego, a symbolic link to a directory inside a source directory is not followed; name the linked directory as a source of its own to include it.
 
 ## Supported File Types
 

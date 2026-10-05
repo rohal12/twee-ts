@@ -1,8 +1,25 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { rollup, watch, type OutputOptions, type RollupLog, type RollupWatcher, type RollupWatcherEvent } from 'rollup';
+import {
+  rollup,
+  watch,
+  type OutputOptions,
+  type RollupBuild,
+  type RollupLog,
+  type RollupWatcher,
+  type RollupWatcherEvent,
+} from 'rollup';
 import { build } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
 
@@ -85,6 +102,11 @@ function storyWith(text: string): string {
 /** A passage to delete between two builds. */
 const DELETED_PASSAGE = '\n:: Deleted\nDelete me\n';
 
+/** The story's Story JavaScript. */
+function userScript(html: string): string {
+  return /<script[^>]*id="twine-user-script"[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
+}
+
 /** Whether the story HTML holds a passage named Deleted. */
 function hasDeletedPassage(html: string): boolean {
   return html.includes('name="Deleted"');
@@ -135,6 +157,41 @@ describe('rollup plugin', () => {
   it('registers nothing outside watch mode', () => {
     expect(watchFiles(tweeTsPlugin({ sources: ['story'] }), false)).toEqual([]);
   });
+
+  it('registers what a source folder that is the output folder holds, never the folder or its outputs (#187)', () => {
+    const dir = makeProject(STORY);
+    const story = join(dir, 'story');
+    writeFileSync(join(story, 'index.html'), 'last build');
+    mkdirSync(join(story, 'parts'));
+    writeFileSync(join(story, 'parts', 'more.tw'), ':: More\nMore\n');
+    const plugin = storyPlugin(dir);
+    // Rollup's watch mode passes the outputs to the options hook before the first build.
+    plugin.options({ output: [{ dir: story, format: 'es' }] });
+    expect(watchFiles(plugin, true).sort()).toEqual([join(story, 'parts'), join(story, 'start.tw')]);
+  });
+
+  it('registers no output folder inside a source folder, nor what it holds', () => {
+    const dir = makeProject(STORY);
+    const story = join(dir, 'story');
+    mkdirSync(join(story, 'build'));
+    writeFileSync(join(story, 'build', 'index.html'), 'last build');
+    const plugin = storyPlugin(dir);
+    plugin.options({ output: { dir: join(story, 'build'), format: 'es' } });
+    expect(watchFiles(plugin, true)).toEqual([join(story, 'start.tw')]);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'registers no link to a folder, which source discovery does not follow (#160)',
+    () => {
+      const dir = makeProject(STORY);
+      const story = join(dir, 'story');
+      mkdirSync(join(dir, 'dist'));
+      symlinkSync('.', join(story, 'self'));
+      symlinkSync(join('..', 'dist'), join(story, 'build'));
+      symlinkSync('missing', join(story, 'dangling'));
+      expect(watchFiles(storyPlugin(dir), true)).toEqual([join(story, 'start.tw')]);
+    },
+  );
 });
 
 describe('rollup plugin: build', { timeout: 30_000 }, () => {
@@ -217,6 +274,66 @@ describe('rollup plugin: build', { timeout: 30_000 }, () => {
       expect(hasDeletedPassage(html)).toBe(false);
     },
   );
+
+  type WriteAll = (bundle: RollupBuild, outputs: readonly OutputOptions[]) => Promise<unknown>;
+  it.each<[string, WriteAll]>([
+    // As the rollup CLI and rollup watch write an output array.
+    ['in parallel', (bundle, outputs) => Promise.all(outputs.map((output) => bundle.write(output)))],
+    [
+      'one after the other',
+      async (bundle, outputs) => {
+        for (const output of outputs) await bundle.write(output);
+      },
+    ],
+  ])("leaves every output's story out of each compile when several outputs are written %s (#153)", async (_n, all) => {
+    const dir = makeProject(storyWith('OLD_TEXT') + DELETED_PASSAGE);
+    const plugin = storyPlugin(dir);
+    const outDirs = [join(dir, 'story', 'preview'), join(dir, 'dist')];
+    const logs: RollupLog[] = [];
+    const run = async (): Promise<void> => {
+      const bundle = await rollup({
+        input: join(dir, 'entry.js'),
+        plugins: [plugin],
+        onLog: (_level, log) => void logs.push(log),
+      });
+      try {
+        await all(
+          bundle,
+          outDirs.map((outDir) => ({ dir: outDir, format: 'es' })),
+        );
+      } finally {
+        await bundle.close();
+      }
+    };
+    await run();
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    await run();
+    for (const outDir of outDirs) {
+      const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+      expect(html).toContain('NEW_TEXT');
+      expect(html).not.toContain('OLD_TEXT');
+      expect(hasDeletedPassage(html)).toBe(false);
+    }
+    expect(logs.filter((log) => log.plugin === 'twee-ts')).toEqual([]);
+  });
+
+  it.each([
+    ['fixed', {}, 1],
+    ['hashed', { entryFileNames: '[name]-[hash].js' }, 3],
+  ])(
+    'leaves the chunks it writes into a source folder out of the story (%s chunk names, #184)',
+    async (_name, names, chunks) => {
+      const dir = makeProject(STORY);
+      const plugin = storyPlugin(dir);
+      for (let i = 1; i <= 3; i++) {
+        writeFileSync(join(dir, 'entry.js'), `export const build = ${i};\nconsole.log(build);\n`);
+        await writeProject(dir, plugin, { dir: join(dir, 'story'), format: 'es', ...names });
+        expect(userScript(readFileSync(join(dir, 'story', 'index.html'), 'utf-8'))).toBe('');
+      }
+      // Rollup never deletes an old hashed chunk; none of them is read either.
+      expect(readdirSync(join(dir, 'story')).filter((name) => name.endsWith('.js'))).toHaveLength(chunks);
+    },
+  );
 });
 
 describe('rollup plugin: watch', { timeout: 30_000 }, () => {
@@ -277,6 +394,35 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     expect(errorMessages(events)).toEqual([]);
     expect(events.map((event) => event.code)).toContain('BUNDLE_END');
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('builds, and rebuilds for an edit, when output.dir is the source folder itself (#187)', async () => {
+    const dir = makeProject(storyWith('OLD_TEXT'));
+    const story = join(dir, 'story');
+    const out = join(story, 'index.html');
+    const started = watch({
+      input: join(dir, 'entry.js'),
+      plugins: [storyPlugin(dir)],
+      output: { dir: story, format: 'es' },
+      watch: { buildDelay: 50 },
+      onLog: () => {},
+    });
+    watcher = started;
+
+    const first = await nextBuild(started);
+    expect(errorMessages(first)).toEqual([]);
+    expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
+    expect(existsSync(join(story, 'entry.js'))).toBe(true);
+
+    // Rollup's file watcher may not be ready right after the first build; the
+    // edit is saved again until a build picks it up.
+    const save = (): void => writeFileSync(join(story, 'start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+    save();
+    const resave = setInterval(save, 250);
+    await vi
+      .waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT'), settled)
+      .finally(() => clearInterval(resave));
+    expect(readFileSync(out, 'utf-8')).not.toContain('OLD_TEXT');
   });
 
   it('neither loads nor keeps rebuilding for the files it writes inside a source folder', async () => {

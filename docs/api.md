@@ -26,7 +26,7 @@ console.log(result.stats); // { passages, storyPassages, words, files }
 
 ### `compileToFile(options)`
 
-Compile and write the output to a file. The file is replaced atomically (written to a temporary file in the same folder, then renamed over it), so a program that reads it meanwhile, such as a live-reload server, sees the previous build or the new one, never part of one. If the write fails, the previous file is left as it was.
+Compile and write the output to a file. The file is replaced atomically (written to a temporary file in the same folder, then renamed over it), so a program that reads it meanwhile, such as a live-reload server, sees the previous build or the new one, never part of one. If the write fails, the previous file is left as it was. `outFile` is left out of the sources and modules, so the output can sit inside a source folder; it is compared by real path, so a symbolic link to it or to its folder doesn't let it back in. A source, module or head file named directly that is `outFile` is an error: the call rejects with a `TweeTsError` (`path a.tw: Output file cannot be an input source.`) and writes nothing, rather than overwrite the source.
 
 ```typescript
 import { compileToFile } from '@rohal12/twee-ts';
