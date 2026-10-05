@@ -2,12 +2,13 @@
  * Remote story format fetching, caching, and checksum verification.
  * Uses the Story Formats Archive (SFA) as the default source.
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import type { FormatRequest, SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
 import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate } from './formats.js';
 import type { SelectFormatOptions } from './formats.js';
+import { readUTF8 } from './util.js';
 
 const DEFAULT_SFA_INDICES = [
   'https://videlais.github.io/story-formats-archive/official/index.json',
@@ -325,7 +326,7 @@ function getCachedFormat(name: string, version: string): StoryFormatInfo | undef
   const formatPath = join(getCacheDir(), name, version, 'format.js');
   try {
     if (!existsSync(formatPath)) return undefined;
-    const source = readFileSync(formatPath, 'utf-8');
+    const source = readUTF8(formatPath);
     const id = makeFormatId(name, version);
     const data = parseFormatJSON(source, id);
     if (!data) return undefined;

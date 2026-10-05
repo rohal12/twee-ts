@@ -202,7 +202,7 @@ for (const item of lexer) {
 const { passages, diagnostics } = parseTwee(':: Start\nHello!', { filename: 'story.tw' });
 ```
 
-`parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. In-memory sources passed to `compile()` get the same normalization.
+`parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. It also removes a BOM at the start of a later line directly before `::`, which joining files leaves there, so that line stays a passage header. In-memory sources passed to `compile()` get the same normalization. A `Buffer` source that is not valid UTF-8 is decoded as Windows-1252, like a file, with a warning in `diagnostics` (see [Text encoding](./getting-started#text-encoding)).
 
 ### HTML Decompiler
 
@@ -281,13 +281,19 @@ validateIFID(ifid); // true
 ### Config
 
 ```typescript
-import { loadConfig, loadConfigFile, validateConfig, scaffoldConfig } from '@rohal12/twee-ts';
+import type { Diagnostic } from '@rohal12/twee-ts';
+import { loadConfig, loadConfigFile, validateConfig, unknownConfigKeyWarnings, scaffoldConfig } from '@rohal12/twee-ts';
 
 const config = loadConfig(); // from cwd
-const config2 = loadConfigFile('my-config.json'); // from path
+const warnings: Diagnostic[] = [];
+const config2 = loadConfigFile('my-config.json', warnings); // from path, collecting warnings
 const errors = validateConfig({ sources: 42 }); // validation
+const unknown = unknownConfigKeyWarnings({ formatID: 'harlowe-3' });
+// ['Unknown config key "formatID" (did you mean "formatId"?); it is ignored.']
 const json = scaffoldConfig(); // default config JSON
 ```
+
+`loadConfig()` and `loadConfigFile()` throw on invalid JSON or a config that fails `validateConfig()`. Their optional second argument collects warnings that leave the config usable: keys the config does not define (other than `$schema`) and a file that is not valid UTF-8. A config file may start with a byte order mark.
 
 ### Lint
 

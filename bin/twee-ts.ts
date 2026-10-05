@@ -85,11 +85,14 @@ async function main(): Promise<void> {
   // Load config file (unless --no-config)
   let config: TweeTsConfig | null = null;
   if (!values['no-config']) {
+    // Warnings, such as unknown keys, which leave the config usable.
+    const configDiagnostics: Diagnostic[] = [];
     if (values.config) {
-      config = loadConfigFile(values.config);
+      config = loadConfigFile(values.config, configDiagnostics);
     } else {
-      config = loadConfig();
+      config = loadConfig(undefined, configDiagnostics);
     }
+    logDiagnostics(configDiagnostics);
   }
 
   // Merge sources: positionals > config.sources

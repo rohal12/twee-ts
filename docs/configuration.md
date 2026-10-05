@@ -165,3 +165,13 @@ Invalid config in twee-ts.config.json:
   "sources" must be an array of strings.
   "trim" must be a boolean.
 ```
+
+A key the config does not define is ignored, so its option keeps the default. twee-ts warns about each one and the build goes on. When the key differs from a real one only in letter case, `-` or `_`, the warning names the real key:
+
+```
+warning: /path/to/twee-ts.config.json: Unknown config key "formatID" (did you mean "formatId"?); it is ignored.
+```
+
+`$schema` is always allowed.
+
+The config file is read like any other text file: it may start with a byte order mark (as Windows PowerShell 5 and older Notepad versions write it) and use CRLF line endings. See [Text encoding](./getting-started#text-encoding).

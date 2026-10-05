@@ -26,7 +26,14 @@ export { discoverFormats, getFormatSearchDirs, parseSemver, semverCompare, parse
 export { generateIFID, validateIFID, createIFID } from './ifid.js';
 
 // Config
-export { loadConfig, loadConfigFile, validateConfig, scaffoldConfig, CONFIG_FILENAME } from './config.js';
+export {
+  loadConfig,
+  loadConfigFile,
+  validateConfig,
+  unknownConfigKeyWarnings,
+  scaffoldConfig,
+  CONFIG_FILENAME,
+} from './config.js';
 
 // Remote formats
 export {

@@ -5,7 +5,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { FormatRequest, StoryFormatInfo, Twine2FormatJSON } from './types.js';
+import type { Diagnostic, FormatRequest, StoryFormatInfo, Twine2FormatJSON } from './types.js';
 import { readUTF8 } from './util.js';
 
 /**
@@ -401,9 +401,12 @@ export function getFormatIdByNameAndVersion(
   return bestId;
 }
 
-/** Read the story format source (for Twine 2, extract the `source` property from JSON). */
-export function readFormatSource(format: StoryFormatInfo): string {
-  const source = readUTF8(format.filename);
+/**
+ * Read the story format source (for Twine 2, extract the `source` property from JSON).
+ * `diagnostics` receives a warning when the format file is not valid UTF-8 (it is read as Windows-1252).
+ */
+export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnostic[]): string {
+  const source = readUTF8(format.filename, diagnostics);
   if (format.isTwine2) {
     const data = parseFormatJSON(source, format.id);
     if (!data) throw new Error(`Cannot parse format ${format.id} JSON`);

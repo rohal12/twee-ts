@@ -11,9 +11,10 @@ import { CLOSING_HEAD_TAG, fillTemplate } from './template.js';
 import type { TemplateSlot } from './template.js';
 
 /**
- * Load modules and return HTML tags to inject before the closing head tag.
+ * Load modules and return HTML tags to inject before the closing head tag. `diagnostics` receives a warning for
+ * each module that is not valid UTF-8 (it is read as Windows-1252).
  */
-export function loadModules(filenames: string[]): string {
+export function loadModules(filenames: string[], diagnostics?: Diagnostic[]): string {
   const processed = new Set<string>();
   const headTags: string[] = [];
 
@@ -25,10 +26,10 @@ export function loadModules(filenames: string[]): string {
 
     switch (ext) {
       case 'css':
-        tag = loadModuleTagged('style', filename);
+        tag = loadModuleTagged('style', filename, diagnostics);
         break;
       case 'js':
-        tag = loadModuleTagged('script', filename);
+        tag = loadModuleTagged('script', filename, diagnostics);
         break;
       case 'otf':
       case 'ttf':
@@ -47,8 +48,8 @@ export function loadModules(filenames: string[]): string {
   return headTags.join('\n');
 }
 
-function loadModuleTagged(tag: 'script' | 'style', filename: string): string | null {
-  const source = readUTF8(filename).trim();
+function loadModuleTagged(tag: 'script' | 'style', filename: string, diagnostics?: Diagnostic[]): string | null {
+  const source = readUTF8(filename, diagnostics).trim();
   if (source.length === 0) return null;
 
   const family = baseNameWithoutExt(filename);
@@ -78,13 +79,13 @@ export function loadHeadContent(modulePaths: string[], headFile?: string, diagno
   const parts: string[] = [];
 
   if (modulePaths.length > 0) {
-    const modules = loadModules(modulePaths).trim();
+    const modules = loadModules(modulePaths, diagnostics).trim();
     if (modules.length > 0) parts.push(modules);
   }
 
   if (headFile) {
     try {
-      const source = readUTF8(headFile).trim();
+      const source = readUTF8(headFile, diagnostics).trim();
       if (source.length > 0) parts.push(source);
     } catch (e) {
       diagnostics?.push({

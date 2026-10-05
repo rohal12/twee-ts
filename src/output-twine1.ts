@@ -2,9 +2,9 @@
  * Twine 1 HTML and archive output.
  * Ported from storyout.go.
  */
-import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
+import type { Diagnostic, PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
+import { readUTF8 } from './util.js';
 import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { headSlot } from './modules.js';
@@ -24,35 +24,37 @@ export function toTwine1Archive(story: ReadonlyStory, _startName: string): strin
  * Fill the Twine 1 format template. The format's components are inserted first, one after another, as Tweego and
  * Twine 1 do. Then the first of each story placeholder (`"VERSION"`, `"TIME"`, `"START_AT"`, `"STORY_SIZE"`,
  * `"STORY"`), the IFID comment and `head` (before the first closing head tag) are found in one pass, so a start
- * passage name or story data holding a placeholder or a closing head tag stays literal.
+ * passage name or story data holding a placeholder or a closing head tag stays literal. `options.diagnostics`
+ * receives a warning for each format file that is not valid UTF-8.
  */
 export function toTwine1HTML(
   story: ReadonlyStory,
   format: StoryFormatInfo,
   startName: string,
-  options?: { readonly head?: string },
+  options?: { readonly head?: string; readonly diagnostics?: Diagnostic[] },
 ): string {
   const formatDir = dirname(format.filename);
   const parentDir = dirname(formatDir);
-  let template = readFormatSource(format);
+  const diagnostics = options?.diagnostics;
+  let template = readFormatSource(format, diagnostics);
   const { data, count } = getTwine1PassageChunk(story);
 
   // Component replacements
-  template = tryReplaceComponent(template, '"USER_LIB"', join(formatDir, 'userlib.js'), false);
-  template = tryReplaceComponent(template, '"ENGINE"', join(parentDir, 'engine.js'), true);
-  template = tryReplaceComponent(template, '"SUGARCANE"', join(formatDir, 'code.js'), true);
-  template = tryReplaceComponent(template, '"JONAH"', join(formatDir, 'code.js'), true);
+  template = tryReplaceComponent(template, '"USER_LIB"', join(formatDir, 'userlib.js'), false, diagnostics);
+  template = tryReplaceComponent(template, '"ENGINE"', join(parentDir, 'engine.js'), true, diagnostics);
+  template = tryReplaceComponent(template, '"SUGARCANE"', join(formatDir, 'code.js'), true, diagnostics);
+  template = tryReplaceComponent(template, '"JONAH"', join(formatDir, 'code.js'), true, diagnostics);
 
   if (story.twine1.settings.get('jquery') === 'on') {
-    template = tryReplaceComponent(template, '"JQUERY"', join(parentDir, 'jquery.js'), true);
+    template = tryReplaceComponent(template, '"JQUERY"', join(parentDir, 'jquery.js'), true, diagnostics);
   }
   if (story.twine1.settings.get('modernizr') === 'on') {
-    template = tryReplaceComponent(template, '"MODERNIZR"', join(parentDir, 'modernizr.js'), true);
+    template = tryReplaceComponent(template, '"MODERNIZR"', join(parentDir, 'modernizr.js'), true, diagnostics);
   }
 
   // A pre-1.4 format has no "STORY" placeholder: the story data and a footer go after the template.
   const isPre14 = !template.includes('"STORY"');
-  const footer = isPre14 ? readFooter(formatDir) : '';
+  const footer = isPre14 ? readFooter(formatDir, diagnostics) : '';
 
   // The IFID comment and the head content are also looked for in the footer, if the template has no place for them.
   const storeArea = (template + footer).includes('<div id="store-area"')
@@ -92,9 +94,9 @@ function firstSlot(token: string, value: string): TemplateSlot {
 }
 
 /** The footer of a pre-1.4 format, or the default one when the format has none. */
-function readFooter(formatDir: string): string {
+function readFooter(formatDir: string, diagnostics: Diagnostic[] | undefined): string {
   try {
-    return readFileSync(join(formatDir, 'footer.html'), 'utf-8');
+    return readUTF8(join(formatDir, 'footer.html'), diagnostics);
   } catch {
     return '</div>\n</body>\n</html>\n';
   }
@@ -121,11 +123,16 @@ function getTwine1PassageChunk(story: ReadonlyStory): { data: string; count: num
   return { data, count };
 }
 
-function tryReplaceComponent(template: string, placeholder: string, componentPath: string, required: boolean): string {
+function tryReplaceComponent(
+  template: string,
+  placeholder: string,
+  componentPath: string,
+  required: boolean,
+  diagnostics: Diagnostic[] | undefined,
+): string {
   if (!template.includes(placeholder)) return template;
   try {
-    let content = readFileSync(componentPath, 'utf-8');
-    if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
+    const content = readUTF8(componentPath, diagnostics);
     return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) {
