@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `clearCachedFormats(name)` and `twee-ts cache clear <name>` reject a name that is not a single cache entry, such as `..` or one containing a path separator, instead of recursively deleting a folder outside the format cache. A symlinked cache entry is never followed (#86)
+- Story formats downloaded from an index or a direct URL are cached only when their name and version are safe directory names (the version must be SemVer), and never through a symlinked cache folder. Before, a format named `../../escaped` was written outside the cache (#87)
+
+### Fixed
+
+- The default format `sugarcube-2` (and any other format ID, such as `harlowe-3`) now resolves from the Story Format Archive and from direct format URLs, which name formats `SugarCube` / `Harlowe`. Before, a fresh project with no local formats failed with "No story format available for HTML output." (#89)
+- The download cache is checked before the network, so a format downloaded once works offline and with `noRemote` / `--no-remote` (#92)
+- A Harlowe format with a function-valued `setup` property loads from a direct URL, not only from a local `harlowe-*` folder (#93)
+- Full HTML output writes the story format it was built with into `<tw-storydata format format-version>`, rather than the StoryData values, which may be empty or name another format. Archive output keeps the source values (#91)
+- An explicit `startPassage` / `-s` now reaches JSON output (`start`), the returned `Story`, and lint and inspection, which no longer list it as an orphan (#95)
+- HTML output reports an error when the starting passage is left out of the story data: a special passage (`StoryData`, `StoryTitle`), or one tagged `script`, `stylesheet` or `Twine.private`. Before, the output had `startnode=""` (#108)
+- `lint()` and `--lint` report a missing or left-out starting passage as an error, without needing a story format (#96)
+- `compileToFile()` and `watch()` no longer read their own output back as a source when it sits inside a source folder, which restored stale passages on the next build (#88)
+- Watch mode rebuilds with the new content when a source given as a single file changes, including when an editor saves by replacing the file (#103)
+- Watch mode rebuilds when the head file changes, wherever it lives and whatever its extension (#104)
+- `vite build --watch` and `rollup --watch` rebuild when sources, modules or the head file change, including files added to or deleted from a source folder (#105)
+- In-memory sources (`{ filename, content }`, string or Buffer) and `parseTwee()` strip a leading BOM and normalize CRLF and CR line endings, as file sources already did. Before, CRLF after a tag or metadata block was a fatal lexer error (#97)
+- Loading Twine 2 HTML keeps the story name, as a `StoryTitle` passage, so HTML-to-Twee and HTML-to-HTML conversions no longer lose the title (#98)
+- Decompiling Twine 2 HTML keeps story-level tags (`<tw-storydata tags>`) (#99)
+- Decompiling Twine 1 HTML built with `obfuscate:rot13` decodes the passages, so they are not encoded twice on recompiling (#100)
+- `compileIncremental()` reparses a cached file when `trim` or `twee2Compat` changed since it was cached. `FileCacheEntry` has a new optional `parseOptionsKey` field; an entry without it is reparsed once (#106)
+- Story JavaScript, stylesheets and head modules containing `</script` or `</style`, even inside a string, no longer end their element early in Twine 2 output. Such sequences are written as `<\/script` / `<\/style`, which leaves the code's meaning unchanged, and a `<!--` that would stop the element from closing is escaped too (#107)
+- Lint and inspection read reverse-arrow links (`[[Room<-go]]`) and links with setters (`[[go->Room][$x to 1]]`, brackets in the setter included), and ignore links inside comments (`<!-- -->`, `/% %/`, `/* */`) and outside strings in JavaScript (#101, #102)
+- `twee-ts --init` no longer overwrites an existing `src/StoryData.tw` or `src/Start.tw` (and its IFID); files that already exist are reported as skipped (#85)
+
+### Changed
+
+- The CLI exits with status 1 when a build reports errors, and then writes no output file and nothing to stdout, as Tweego does. A missing IFID is one such error, so a story without one no longer builds. Watch mode reports the errors and keeps watching (#94)
+- A requested story format that is unavailable is now an error instead of a silent switch to another format. The request is the explicit `formatId` / `-f`, else the StoryData format, else `sugarcube-2`. Before, a StoryData request for Harlowe could compile with SugarCube, and an explicit `formatId` was ignored during the remote fallback. When only an older version of the same major version is available, it is still used, with a warning (#90)
+- A default compile that finds a suitable format in the download cache uses it instead of fetching a newer one (#92)
+- Link markup is split at the first `|`, `->` or `<-`, as SugarCube does: `[[a|b->c]]` targets `b->c` (#101)
+- `parseFormatJSON()`'s second argument is now optional and ignored (#93)
+
 ## [1.16.0] - 2026-10-05
 
 ### Added
