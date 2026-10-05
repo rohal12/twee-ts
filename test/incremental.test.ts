@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { CompileResult, Diagnostic, FileCacheEntry, Story } from '../src/types.js';
+import type { CompileResult, Diagnostic, FileCacheEntry, ReadonlyStory } from '../src/types.js';
 import { createStory } from '../src/story.js';
 import { loadSourcesCached } from '../src/loader.js';
 import { compile, compileIncremental } from '../src/compiler.js';
@@ -452,7 +452,7 @@ describe('incremental cache and explicitly changed files', () => {
     return base64 === undefined ? undefined : Buffer.from(base64, 'base64').toString('utf-8');
   };
 
-  const passageText = (story: Story, name: string): string | undefined =>
+  const passageText = (story: ReadonlyStory, name: string): string | undefined =>
     story.passages.find((p) => p.name === name)?.text;
 
   // One file of each cached input kind: its content before and after a save, and where the content shows up.
@@ -461,37 +461,37 @@ describe('incremental cache and explicitly changed files', () => {
       kind: 'Twee',
       name: 'story.tw',
       content: (marker: string) => `:: Start\n${marker}`,
-      text: (story: Story) => passageText(story, 'Start'),
+      text: (story: ReadonlyStory) => passageText(story, 'Start'),
     },
     {
       kind: 'Twine 2 HTML',
       name: 'story.html',
       content: twine2HTML,
-      text: (story: Story) => passageText(story, 'Start'),
+      text: (story: ReadonlyStory) => passageText(story, 'Start'),
     },
     {
       kind: 'CSS',
       name: 'style.css',
       content: (marker: string) => `/* ${marker} */`,
-      text: (story: Story) => passageText(story, 'style.css'),
+      text: (story: ReadonlyStory) => passageText(story, 'style.css'),
     },
     {
       kind: 'JavaScript',
       name: 'app.js',
       content: (marker: string) => `// ${marker}`,
-      text: (story: Story) => passageText(story, 'app.js'),
+      text: (story: ReadonlyStory) => passageText(story, 'app.js'),
     },
     {
       kind: 'media',
       name: 'scene.svg',
       content: (marker: string) => `<svg>${marker}</svg>`,
-      text: (story: Story) => decodeDataUrl(passageText(story, 'scene')),
+      text: (story: ReadonlyStory) => decodeDataUrl(passageText(story, 'scene')),
     },
     {
       kind: 'font',
       name: 'Face.woff2',
       content: (marker: string) => marker,
-      text: (story: Story) => decodeDataUrl(passageText(story, 'Face.woff2')),
+      text: (story: ReadonlyStory) => decodeDataUrl(passageText(story, 'Face.woff2')),
     },
   ] as const;
 
@@ -573,7 +573,7 @@ describe('incremental cache and explicitly changed files', () => {
 });
 
 describe('incremental cache and a file that fails to load', () => {
-  const passageText = (story: Story, name: string): string | undefined =>
+  const passageText = (story: ReadonlyStory, name: string): string | undefined =>
     story.passages.find((p) => p.name === name)?.text;
   const errors = (diagnostics: readonly Diagnostic[]): string[] =>
     diagnostics.filter((d) => d.level === 'error').map((d) => d.message);

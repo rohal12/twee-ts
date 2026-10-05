@@ -11,6 +11,7 @@ import {
   StoryBuilder,
 } from '../src/story.js';
 import type { Diagnostic, Passage } from '../src/types.js';
+import { createIFID } from '../src/ifid.js';
 
 function mkPassage(name: string, text = '', tags: string[] = []): Passage {
   return { name, tags, text };
@@ -111,7 +112,7 @@ describe('Story', () => {
     expect(storyGet(story, 'Z')?.text).toBe('zulu');
     expect(storyGet(story, 'A')?.text).toBe('alpha');
     expect(storyGet(story, 'B')?.text).toBe('beta');
-    expect(story.passages[0].name).toBe('Z');
+    expect(story.passages[0]!.name).toBe('Z');
   });
 
   it('storyPrepend replaces existing passage in place', () => {
@@ -136,7 +137,7 @@ describe('Story', () => {
 describe('marshalStoryData', () => {
   it('roundtrips through marshal/unmarshal', () => {
     const story = createStory();
-    story.ifid = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+    story.ifid = createIFID('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
     story.twine2.format = 'SugarCube';
     story.twine2.formatVersion = '2.37.3';
     story.twine2.start = 'Begin';

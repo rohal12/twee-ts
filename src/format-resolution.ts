@@ -20,11 +20,11 @@ import { findCachedFormat, resolveFormatUrls, resolveRemoteFormatRequest } from 
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
-  readonly formatPaths?: string[];
+  readonly formatPaths?: readonly string[];
   readonly useTweegoPath?: boolean;
   readonly noRemote?: boolean;
-  readonly formatIndices?: string[];
-  readonly formatUrls?: string[];
+  readonly formatIndices?: readonly string[];
+  readonly formatUrls?: readonly string[];
   /** Aborts the format requests; resolution then rejects with the signal's reason. */
   readonly signal?: AbortSignal;
   /** Milliseconds each format request may take. */

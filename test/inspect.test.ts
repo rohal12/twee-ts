@@ -4,7 +4,6 @@ import { compile } from '../src/compiler.js';
 import { storyInspect } from '../src/inspect.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
-const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
 
 describe('storyInspect', () => {
   it('extracts passage names', async () => {

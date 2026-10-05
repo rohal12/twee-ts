@@ -111,7 +111,7 @@ function emitError(path: string, error: Error): void {
   for (const w of fake.watchers.filter((x) => !x.closed && x.path === path)) w.emitter.emit('error', error);
 }
 
-const FAKE_TIMERS = { toFake: ['setTimeout', 'clearTimeout'] } as const;
+const FAKE_TIMERS: Parameters<typeof vi.useFakeTimers>[0] = { toFake: ['setTimeout', 'clearTimeout'] };
 
 afterEach(() => {
   vi.useRealTimers();

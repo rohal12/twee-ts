@@ -196,7 +196,7 @@ describe('modifyHead', () => {
     const result = modifyHead(baseHtml, [], join(tmpDir, 'missing.html'), diagnostics);
     expect(result).toBe(baseHtml);
     expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0].level).toBe('warning');
-    expect(diagnostics[0].message).toContain('Failed to read head file');
+    expect(diagnostics[0]!.level).toBe('warning');
+    expect(diagnostics[0]!.message).toContain('Failed to read head file');
   });
 });

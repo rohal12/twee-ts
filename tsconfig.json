@@ -21,6 +21,6 @@
     "noUnusedParameters": true,
     "exactOptionalPropertyTypes": false
   },
-  "include": ["src/**/*.ts", "bin/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test"]
+  "include": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "*.config.ts"],
+  "exclude": ["node_modules", "dist"]
 }
