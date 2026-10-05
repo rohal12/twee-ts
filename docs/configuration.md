@@ -90,7 +90,7 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 | Key             | Type       | Default         | Description                                                         |
 | --------------- | ---------- | --------------- | ------------------------------------------------------------------- |
 | `formatId`      | `string`   | `"sugarcube-2"` | Story format directory ID.                                          |
-| `formatPaths`   | `string[]` | `[]`            | Extra directories to search for story formats.                      |
+| `formatPaths`   | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.              |
 | `formatIndices` | `string[]` | `[]`            | URLs to SFA-compatible `index.json` files for remote format lookup. |
 | `formatUrls`    | `string[]` | `[]`            | Direct URLs to `format.js` files.                                   |
 | `useTweegoPath` | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.     |
