@@ -223,19 +223,21 @@ ${MINIMAL_TWINE1_HTML}
     expect(p!.text).toBe('');
   });
 
-  it('reverses ROT13 obfuscation for every tiddler except StorySettings', () => {
+  it('reverses ROT13 obfuscation of names, tags and text for every tiddler but StorySettings and images', () => {
     const html = `<div id="storeArea" hidden>
-<div tiddler="StoryTitle" tags="" twine-position="10,10"><!-- StoryTitle -->Erivrj</div>
-<div tiddler="Start" tags="" twine-position="100,100"><!-- Start -->Uryyb jbeyq [[Arkg]]</div>
+<div tiddler="FgbelGvgyr" tags="" twine-position="10,10">Erivrj</div>
+<div tiddler="Fgneg" tags="vageb" twine-position="100,100">Uryyb jbeyq [[Arkg]]</div>
 <div tiddler="StorySettings" tags="" twine-position="200,100">undo:off\\nObfuscate: ROT13</div>
+<div tiddler="pic" tags="Twine.image" twine-position="300,100">data:image/png;base64,AAAA</div>
 </div>`;
     const { story, diagnostics } = decompileHTML(html);
     expect(diagnostics).toEqual([]);
     expect(story.name).toBe('Review');
-    expect(story.passages.map((p) => [p.name, p.text])).toEqual([
-      ['StoryTitle', 'Review'],
-      ['Start', 'Hello world [[Next]]'],
-      ['StorySettings', 'undo:off\nObfuscate: ROT13'],
+    expect(story.passages.map((p) => [p.name, p.tags, p.text])).toEqual([
+      ['StoryTitle', [], 'Review'],
+      ['Start', ['intro'], 'Hello world [[Next]]'],
+      ['StorySettings', [], 'undo:off\nObfuscate: ROT13'],
+      ['pic', ['Twine.image'], 'data:image/png;base64,AAAA'],
     ]);
   });
 

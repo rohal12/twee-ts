@@ -200,16 +200,16 @@ exitprompt:off
 blankcss:off
 ```
 
-| Setting      | Values     | Effect                                                |
-| ------------ | ---------- | ----------------------------------------------------- |
-| `jquery`     | `on`/`off` | Include jQuery library in output                      |
-| `modernizr`  | `on`/`off` | Include Modernizr library in output                   |
-| `obfuscate`  | `rot13`    | ROT13-encode tiddler content (except `StorySettings`) |
-| `undo`       | `on`/`off` | Enable undo support                                   |
-| `bookmark`   | `on`/`off` | Enable bookmark support                               |
-| `hash`       | `on`/`off` | Enable URL hash-based navigation                      |
-| `exitprompt` | `on`/`off` | Prompt before navigating away                         |
-| `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)              |
+| Setting      | Values     | Effect                                                                                           |
+| ------------ | ---------- | ------------------------------------------------------------------------------------------------ |
+| `jquery`     | `on`/`off` | Include jQuery library in output                                                                 |
+| `modernizr`  | `on`/`off` | Include Modernizr library in output                                                              |
+| `obfuscate`  | `rot13`    | ROT13-encode tiddler names, tags and content (except `StorySettings` and `Twine.image` passages) |
+| `undo`       | `on`/`off` | Enable undo support                                                                              |
+| `bookmark`   | `on`/`off` | Enable bookmark support                                                                          |
+| `hash`       | `on`/`off` | Enable URL hash-based navigation                                                                 |
+| `exitprompt` | `on`/`off` | Prompt before navigating away                                                                    |
+| `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)                                                         |
 
 The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
 

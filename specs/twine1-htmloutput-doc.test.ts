@@ -877,9 +877,10 @@ describe('Twine 1 HTML Output Spec -- Rot13 Obfuscation', () => {
     expect(result.story.twine1.settings.get('obfuscate')).toBe('rot13');
   });
 
-  it('obfuscate:rot13 produces rot13-encoded tiddler content in output', async () => {
-    // Spec: "obfuscate: off or rot13 for obfuscating tiddler values except for StorySettings"
-    // When obfuscate:rot13 is enabled, passage content (tiddler values) should be rot13-encoded.
+  it('obfuscate:rot13 produces rot13-encoded tiddler names, tags and content in output', async () => {
+    // Spec: "obfuscate: off or rot13 for obfuscating `tiddler` values except for StorySettings"
+    // Twine 1.4 (tiddlywiki.py Tiddler.toHtml()) encodes the `tiddler` name, the tags and the content,
+    // with the content as the tiddler's first (and only) child node, which is where engine.js reads it.
     const source = [
       ':: StoryTitle',
       'Obfuscation Test',
@@ -887,16 +888,16 @@ describe('Twine 1 HTML Output Spec -- Rot13 Obfuscation', () => {
       ':: StorySettings',
       'obfuscate:rot13',
       '',
-      ':: Start',
+      ':: Start [intro]',
       'Hello World',
     ].join('\n');
     const result = await compileToArchive(source);
-    const tiddler = findTiddler(result.output, 'Start');
+    expect(findTiddler(result.output, 'Start')).toBeUndefined();
+    const tiddler = findTiddler(result.output, 'Fgneg');
     if (!tiddler) throw new Error('expected Start tiddler');
-    const content = textContent(tiddler);
-    // "Hello World" rot13 => "Uryyb Jbeyq"
-    expect(content).toContain('Uryyb Jbeyq');
-    expect(content).not.toContain('Hello World');
+    expect(attr(tiddler, 'tags')).toBe('vageb');
+    // "Hello World" rot13 => "Uryyb Jbeyq", as the first child: no comment or element before it
+    expect(textContent(tiddler)).toBe('Uryyb Jbeyq');
   });
 
   it('obfuscate:rot13 does NOT encode StorySettings tiddler content', async () => {
@@ -936,11 +937,9 @@ describe('Twine 1 HTML Output Spec -- Rot13 Obfuscation', () => {
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    // When obfuscation is active, the Start passage name may appear as "Fgneg" (rot13 of "Start")
-    const hasStart = findTiddler(result.output, 'Start') !== undefined;
-    const hasRot13Start = findTiddler(result.output, 'Fgneg') !== undefined;
-    // Spec says "may be obfuscated" -- either the original or rot13 name is acceptable
-    expect(hasStart || hasRot13Start).toBe(true);
+    // Twine 1.4 obfuscates it, and the Twine 1 engines decode it, so it must appear as "Fgneg".
+    expect(findTiddler(result.output, 'Fgneg')).toBeDefined();
+    expect(findTiddler(result.output, 'Start')).toBeUndefined();
   });
 
   it('obfuscate:rot13 encodes StoryTitle tiddler content', async () => {
@@ -956,7 +955,7 @@ describe('Twine 1 HTML Output Spec -- Rot13 Obfuscation', () => {
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    const titleTiddler = findTiddler(result.output, 'StoryTitle');
+    const titleTiddler = findTiddler(result.output, 'FgbelGvgyr');
     if (!titleTiddler) throw new Error('expected StoryTitle tiddler');
     const content = textContent(titleTiddler);
     // "My Title" rot13 => "Zl Gvgyr"
@@ -1397,16 +1396,17 @@ describe('Twine 1 HTML Output Spec -- Spec Example Passage', () => {
     ].join('\n');
     const result = await compileToArchive(source);
 
-    // All four story data tiddlers should exist
-    expect(findTiddler(result.output, 'StoryTitle')).toBeDefined();
-    expect(findTiddler(result.output, 'StoryAuthor')).toBeDefined();
-    expect(findTiddler(result.output, 'StorySubtitle')).toBeDefined();
+    // All four story data tiddlers should exist; with obfuscate:rot13, all but StorySettings have their
+    // `tiddler` names and contents ROT13-encoded.
+    expect(findTiddler(result.output, 'FgbelGvgyr')).toBeDefined();
+    expect(findTiddler(result.output, 'FgbelNhgube')).toBeDefined();
+    expect(findTiddler(result.output, 'FgbelFhogvgyr')).toBeDefined();
     expect(findTiddler(result.output, 'StorySettings')).toBeDefined();
 
     // Verify content
-    expect(extractTiddlerContent(result.output, 'StoryTitle')).toContain('Title');
-    expect(extractTiddlerContent(result.output, 'StoryAuthor')).toContain('Author');
-    expect(extractTiddlerContent(result.output, 'StorySubtitle')).toContain('Subtitle');
+    expect(extractTiddlerContent(result.output, 'FgbelGvgyr')).toBe('Gvgyr');
+    expect(extractTiddlerContent(result.output, 'FgbelNhgube')).toBe('Nhgube');
+    expect(extractTiddlerContent(result.output, 'FgbelFhogvgyr')).toBe('Fhogvgyr');
 
     // StorySettings should contain key:value pairs
     const settingsContent = extractTiddlerContent(result.output, 'StorySettings');
@@ -1498,9 +1498,10 @@ describe('Twine 1 HTML Output Spec -- Passage Attribute Completeness', () => {
 
 // =============================================================================
 // Rot13 Obfuscation -- Additional Coverage
-// Spec: "obfuscating tiddler values except for 'StorySettings'"
-// The spec explicitly says "tiddler values" (the content inside the tiddler
-// element) are obfuscated -- NOT the tiddler attribute (passage name).
+// Spec: "obfuscating `tiddler` values except for 'StorySettings'"
+// Twine 1.4 (tiddlywiki.py Tiddler.toHtml()) encodes the `tiddler` attribute (passage
+// name), the tags and the content of every tiddler but StorySettings and Twine.image
+// passages, and its engine.js decodes all three.
 // =============================================================================
 describe('Twine 1 HTML Output Spec -- Rot13 Additional Coverage', () => {
   it('obfuscate:rot13 encodes StoryAuthor tiddler content', async () => {
@@ -1519,7 +1520,7 @@ describe('Twine 1 HTML Output Spec -- Rot13 Additional Coverage', () => {
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    const authorTiddler = findTiddler(result.output, 'StoryAuthor');
+    const authorTiddler = findTiddler(result.output, 'FgbelNhgube');
     if (!authorTiddler) throw new Error('expected StoryAuthor tiddler');
     const content = textContent(authorTiddler);
     // "Jane Doe" rot13 => "Wnar Qbr"
@@ -1543,7 +1544,7 @@ describe('Twine 1 HTML Output Spec -- Rot13 Additional Coverage', () => {
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    const subtitleTiddler = findTiddler(result.output, 'StorySubtitle');
+    const subtitleTiddler = findTiddler(result.output, 'FgbelFhogvgyr');
     if (!subtitleTiddler) throw new Error('expected StorySubtitle tiddler');
     const content = textContent(subtitleTiddler);
     // "A Tale" rot13 => "N Gnyr"
@@ -1557,7 +1558,7 @@ describe('Twine 1 HTML Output Spec -- Rot13 Additional Coverage', () => {
       '\n',
     );
     const result = await compileToArchive(source);
-    const tiddler = findTiddler(result.output, 'Start');
+    const tiddler = findTiddler(result.output, 'Fgneg');
     if (!tiddler) throw new Error('expected Start tiddler');
     const content = textContent(tiddler);
     // Non-alphabetic chars should remain as-is
@@ -1758,7 +1759,7 @@ describe('Twine 1 HTML Output Spec -- Rot13 and Content Encoding Interaction', (
       '\n',
     );
     const result = await compileToArchive(source);
-    const tiddler = findTiddler(result.output, 'Start');
+    const tiddler = findTiddler(result.output, 'Fgneg');
     if (!tiddler) throw new Error('expected Start tiddler');
     const content = textContent(tiddler);
     // Rot13 of "A" is "N", rot13 of "B" is "O", "&" stays as "&" then encodes to "&amp;"
@@ -1782,17 +1783,19 @@ describe('Twine 1 HTML Output Spec -- Rot13 and Content Encoding Interaction', (
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    const cssTiddler = findTiddler(result.output, 'CSS');
+    const cssTiddler = findTiddler(result.output, 'PFF');
     if (!cssTiddler) throw new Error('expected CSS tiddler');
+    expect(attr(cssTiddler, 'tags')).toBe('fglyrfurrg');
     const content = textContent(cssTiddler);
     // "body" rot13 => "obql", "color" rot13 => "pbybe", "red" rot13 => "erq"
     expect(content).toContain('obql');
     expect(content).not.toContain('body');
   });
 
-  it('obfuscate:rot13 does not obfuscate passage names (tiddler attributes) for non-Start passages', async () => {
-    // Spec says "tiddler values" are obfuscated (content), not the tiddler attribute (name).
-    // Only "Start" name "may be obfuscated" per spec. Other passage names stay unchanged.
+  it('obfuscate:rot13 obfuscates the names (tiddler attributes) of other passages too', async () => {
+    // Spec: "obfuscating `tiddler` values". Twine 1.4 encodes every passage name but StorySettings
+    // (and Twine.image passages), and its engine.js decodes every one, so a name left plain would be
+    // decoded into a different name.
     const source = [
       ':: StoryTitle',
       'Test',
@@ -1807,9 +1810,8 @@ describe('Twine 1 HTML Output Spec -- Rot13 and Content Encoding Interaction', (
       'World',
     ].join('\n');
     const result = await compileToArchive(source);
-    // Room1 passage name should remain "Room1" in the tiddler attribute, not rot13-encoded
-    const room1 = findTiddler(result.output, 'Room1');
-    expect(room1).toBeDefined();
+    expect(findTiddler(result.output, 'Ebbz1')).toBeDefined();
+    expect(findTiddler(result.output, 'Room1')).toBeUndefined();
   });
 });
 

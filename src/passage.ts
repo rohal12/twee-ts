@@ -3,7 +3,7 @@
  * Ported from passage.go / passagedata.go.
  */
 import type { Passage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
-import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13, commentSanitize } from './escape.js';
+import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13 } from './escape.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
 const INFO_PASSAGE_NAMES = new Set([
@@ -145,7 +145,20 @@ export function passageToPassagedata(p: Passage, pid: number, options?: { readon
   return `${attrs}>${htmlEscape(p.text)}</tw-passagedata>`;
 }
 
-/** Generate `<div tiddler>` HTML for Twine 1. */
+/**
+ * Whether Twine 1 `obfuscate:rot13` encodes a tiddler: every one but `StorySettings` and those tagged `Twine.image`
+ * (Twine 1.4 `Tiddler.isObfuscateable()`). Its engine tests the stored name and tags, which these tiddlers keep
+ * unencoded, so the decompiler tests them the same way.
+ */
+export function isObfuscatable(p: Readonly<Pick<Passage, 'name' | 'tags'>>): boolean {
+  return p.name !== 'StorySettings' && !p.tags.includes('Twine.image');
+}
+
+/**
+ * Generate `<div tiddler>` HTML for Twine 1. With `obfuscateRot13`, an obfuscatable tiddler (see
+ * `isObfuscatable()`) has its name, each tag and its text ROT13-encoded, as Twine 1.4 writes it
+ * (`Tiddler.toHtml()`), and as its engine.js decodes it.
+ */
 export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false): string {
   let position: string;
 
@@ -160,9 +173,10 @@ export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false
   }
 
   const created = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
-  const content = obfuscateRot13 && p.name !== 'StorySettings' ? tiddlerEscape(rot13(p.text)) : tiddlerEscape(p.text);
-  const nameComment = obfuscateRot13 ? `<!-- ${commentSanitize(p.name)} -->` : '';
-  return `<div tiddler=${quote(attrEscape(p.name))} tags=${quote(attrEscape(p.tags.join(' ')))} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${nameComment}${content}</div>`;
+  const encode = obfuscateRot13 && isObfuscatable(p) ? rot13 : (s: string) => s;
+  const name = attrEscape(encode(p.name));
+  const tags = attrEscape(p.tags.map(encode).join(' '));
+  return `<div tiddler=${quote(name)} tags=${quote(tags)} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${tiddlerEscape(encode(p.text))}</div>`;
 }
 
 /**
