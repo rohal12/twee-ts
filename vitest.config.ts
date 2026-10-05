@@ -9,6 +9,8 @@ export default defineConfig({
       exclude: ['src/types.ts'],
       reporter: ['text', 'html', 'lcov', 'json-summary', 'json'],
       reportsDirectory: 'coverage',
+      // Floors just under the current numbers: coverage may rise but must not fall.
+      thresholds: { statements: 94, branches: 87, functions: 97, lines: 95 },
     },
   },
 });
