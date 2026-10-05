@@ -48,7 +48,44 @@ describe('parseRelaxedJSON', () => {
     ['an array hole', '[1,,2]', /Unexpected ","/],
     ['text after the value', '{} x', /after the value/],
     ['an octal escape', '{"a": "\\1"}', /Octal escape/],
+    ['a zero followed by a digit in an escape', '{"a": "\\01"}', /Octal escape/],
+    ['a backslash at the end of the input', '"a\\', /Unterminated string/],
+    ['a short hexadecimal escape', '"\\x4"', /Invalid hexadecimal escape/],
+    ['a non-hexadecimal unicode escape', '"\\u12G4"', /Invalid hexadecimal escape/],
+    ['an unclosed braced unicode escape', '"\\u{41"', /Invalid Unicode escape/],
+    ['a code point beyond the Unicode range', '"\\u{110000}"', /Undefined Unicode code-point/],
+    ['a missing colon', '{"a" 1}', /Expected ":" but found "1"/],
+    ['an invalid property name', '{[1]: 2}', /Expected a property name but found "\["/],
+    ['a property name at the end of the input', '{', /Expected a property name but found end of input/],
+    ['a number glued to an identifier', '[1a]', /Invalid number/],
+    ['a missing array comma', '[1 2]', /Expected "," or "\]"/],
+    ['an unexpected character', '@', /Unexpected "@"/],
+    ['an empty input', '', /Unexpected end of input/],
   ])('rejects %s', (_label, literal, message) => {
     expect(() => parseRelaxedJSON(literal)).toThrow(message);
+  });
+
+  it.each([
+    ['a line comment ended by a line feed', '[1] // done\n'],
+    ['a carriage-return line continuation', '"a\\\r\nb"'],
+    ['a lone carriage-return line continuation', '"a\\\rb"'],
+    ['a Unicode line separator continuation', '"a\\ b"'],
+    ['a line comment ended by a carriage return', '[1, // c\r2]'],
+    ['a braced unicode escape', '"\\u{41}\\u{1f600}"'],
+  ])('reads %s as JavaScript does', (_label, literal) => {
+    expect(parseRelaxedJSON(literal)).toEqual(evaluate(literal));
+  });
+
+  it('reads a line comment that runs to the end of the input', () => {
+    expect(parseRelaxedJSON('[1] // done')).toEqual([1]);
+  });
+
+  it('does not read a comment that runs past the end of the range', () => {
+    const text = '[1 /* x */ ]';
+    expect(() => parseRelaxedJSON(text, 0, text.indexOf('*/') + 1)).toThrow(/Unterminated comment/);
+  });
+
+  it('does not read a token that runs past the end of the range', () => {
+    expect(() => parseRelaxedJSON('[truex]', 0, 5)).toThrow(/Unexpected "t"/);
   });
 });
