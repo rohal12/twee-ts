@@ -26,7 +26,8 @@ describe('formatDiagnostic', () => {
 describe('splitDiagnostics', () => {
   it('returns the warnings when there are no errors', () => {
     const warning: Diagnostic = { level: 'warning', message: 'careful' };
-    expect(splitDiagnostics(resultWith([warning, { level: 'info', message: 'fyi' }]))).toEqual([warning]);
+    const other: Diagnostic = { level: 'warning', message: 'also careful', file: 'a.tw', line: 2 };
+    expect(splitDiagnostics(resultWith([warning, other]))).toEqual([warning, other]);
   });
 
   it("throws an error with the first error's file and line as its location", () => {
