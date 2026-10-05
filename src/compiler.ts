@@ -58,7 +58,8 @@ export async function compile(options: CompileOptions): Promise<CompileResult> {
  * Compile and write to a file.
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
-  const result = await compile(options);
+  // The output may sit inside a source folder; its last build must not be read back as a source.
+  const result = await buildOutput(options, undefined, undefined, options.outFile);
   writeFileSync(options.outFile, result.output, 'utf-8');
   return result;
 }
@@ -85,23 +86,25 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
   // Separate file paths from inline sources
   const filePaths = options.sources.filter((s): s is string => typeof s === 'string');
   const modulePaths = options.modules ?? [];
-  const allPaths = [...filePaths, ...modulePaths];
+  const headPaths = options.headFile ? [options.headFile] : [];
+  const allPaths = [...filePaths, ...modulePaths, ...headPaths];
 
-  // A change to an excluded source builds nothing. `exclude` leaves modules alone,
-  // so a module (or a file in a module folder) still rebuilds when a glob matches it.
+  // A change to an excluded source builds nothing. `exclude` leaves modules and the
+  // head file alone, so a module (or a file in a module folder) or the head file
+  // still rebuilds when a glob matches it.
   const exclude = options.exclude ?? [];
-  const moduleRoots = modulePaths.map((p) => resolve(p));
+  const notExcludable = [...modulePaths, ...headPaths].map((p) => resolve(p));
   const ignore = (filename: string): boolean => {
     if (!isExcluded(filename, exclude)) return false;
     const abs = resolve(filename);
-    return !moduleRoots.some((root) => abs === root || abs.startsWith(root + sep));
+    return !notExcludable.some((root) => abs === root || abs.startsWith(root + sep));
   };
 
   const handle = watchFilesystem(
     allPaths,
     options.outFile,
     (changedFiles) => {
-      buildOutput(options, cache, changedFiles)
+      buildOutput(options, cache, changedFiles, options.outFile)
         .then((result) => {
           writeFileSync(options.outFile, result.output, 'utf-8');
           options.onBuild?.(result);
@@ -117,10 +120,15 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
   return controller;
 }
 
+/**
+ * `outFile`: the file the build is written to, which source and module discovery
+ * skip (as Tweego does), so an output inside a source folder is never loaded back.
+ */
 async function buildOutput(
   options: CompileOptions,
   cache?: Map<string, FileCacheEntry>,
   changedFiles?: ReadonlySet<string>,
+  outFile?: string,
 ): Promise<CompileResult> {
   const diagnostics: Diagnostic[] = [];
   const outputMode: OutputMode = options.outputMode ?? 'html';
@@ -147,7 +155,7 @@ async function buildOutput(
   // Walk file paths to get all source filenames
   const { filenames: sourceFilenames, diagnostics: sourcePathDiagnostics } = getFilenames(
     filePaths,
-    undefined,
+    outFile,
     options.exclude,
   );
   diagnostics.push(...sourcePathDiagnostics);
@@ -265,7 +273,7 @@ async function buildOutput(
       }
 
       // Inject modules and head file
-      const modules = getFilenames(options.modules ?? []);
+      const modules = getFilenames(options.modules ?? [], outFile);
       diagnostics.push(...modules.diagnostics);
       output = modifyHead(output, modules.filenames, options.headFile, diagnostics);
       break;

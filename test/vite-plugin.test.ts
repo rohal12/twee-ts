@@ -283,6 +283,91 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
   });
 });
 
+/** The watcher `vite build --watch` returns, as far as these tests use it. */
+interface BuildWatcher {
+  on(event: 'event', listener: (event: { code: string; result?: { close(): unknown } }) => void): unknown;
+  close(): Promise<void>;
+}
+
+describe('vite plugin: build watch', { timeout: 30_000 }, () => {
+  let watcher: BuildWatcher | undefined;
+
+  afterEach(async () => {
+    await watcher?.close();
+    watcher = undefined;
+  });
+
+  /** Starts `vite build --watch` and waits for its first build; returns the story's path. */
+  async function watchBuild(dir: string, plugin: ReturnType<typeof tweeTsPlugin>): Promise<string> {
+    const outDir = join(dir, 'dist');
+    const started = (await build({
+      configFile: false,
+      root: dir,
+      logLevel: 'silent',
+      build: { outDir, watch: {} },
+      plugins: [plugin],
+    })) as unknown as BuildWatcher;
+    watcher = started;
+    await new Promise<void>((done, fail) => {
+      started.on('event', (event) => {
+        if (event.code === 'BUNDLE_END') void event.result?.close();
+        if (event.code === 'END') done();
+        if (event.code === 'ERROR') fail(new Error('the first build failed'));
+      });
+    });
+    return join(outDir, 'index.html');
+  }
+
+  const story = (file: string): string => readFileSync(file, 'utf-8');
+  const settled = { timeout: 15_000, interval: 100 };
+
+  it('rebuilds when a source changes, is added to a nested folder, or is deleted', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'story/parts/extra.tw': ':: Extra\nEXTRA_TEXT\n' });
+    const out = await watchBuild(
+      dir,
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
+    );
+    expect(story(out)).toContain('EXTRA_TEXT');
+
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'UPDATED_TEXT'));
+    await vi.waitFor(() => expect(story(out)).toContain('UPDATED_TEXT'), settled);
+
+    writeFileSync(join(dir, 'story/parts/added.tw'), ':: Added\nADDED_TEXT\n');
+    await vi.waitFor(() => expect(story(out)).toContain('ADDED_TEXT'), settled);
+
+    unlinkSync(join(dir, 'story/parts/extra.tw'));
+    await vi.waitFor(() => expect(story(out)).not.toContain('EXTRA_TEXT'), settled);
+    expect(story(out)).toContain('ADDED_TEXT');
+  });
+
+  it('rebuilds when a single-file source, the head file or a module changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'head.txt': '<meta name="head-marker" content="one">',
+      'lib/mod.js': 'window.modMarker = 1;',
+    });
+    const out = await watchBuild(
+      dir,
+      tweeTsPlugin({
+        sources: [join(dir, 'story/start.tw')],
+        format: 'test-format-1',
+        compileOptions: { ...COMPILE, headFile: join(dir, 'head.txt'), modules: [join(dir, 'lib')] },
+      }),
+    );
+    expect(story(out)).toContain('content="one"');
+    expect(story(out)).toContain('window.modMarker = 1;');
+
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'UPDATED_TEXT'));
+    await vi.waitFor(() => expect(story(out)).toContain('UPDATED_TEXT'), settled);
+
+    writeFileSync(join(dir, 'head.txt'), '<meta name="head-marker" content="two">');
+    await vi.waitFor(() => expect(story(out)).toContain('content="two"'), settled);
+
+    writeFileSync(join(dir, 'lib/mod.js'), 'window.modMarker = 2;');
+    await vi.waitFor(() => expect(story(out)).toContain('window.modMarker = 2;'), settled);
+  });
+});
+
 /** Writes a vite.config.mjs that loads the plugin from source, as a project's config file would. */
 function writeConfig(dir: string, options: Record<string, unknown>, extra = ''): string {
   const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;

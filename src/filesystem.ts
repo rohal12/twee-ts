@@ -4,7 +4,7 @@
  */
 import { readdirSync, statSync, watch as fsWatch } from 'node:fs';
 import * as nodePath from 'node:path';
-import { resolve, relative, join } from 'node:path';
+import { dirname, resolve, relative, join, sep } from 'node:path';
 import { isKnownFileType } from './media-types.js';
 import type { Diagnostic } from './types.js';
 
@@ -91,10 +91,36 @@ export interface WatchHandle {
   close(): void;
 }
 
+/** Whether the absolute path `file` is the absolute path `dir` or inside it. */
+function isInsideDir(file: string, dir: string): boolean {
+  return file === dir || file.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+/**
+ * The watched paths split into folders (as given) and files (absolute). A path
+ * that cannot be read counts as a folder, which fs.watch then fails to watch.
+ */
+function splitWatchRoots(pathnames: readonly string[]): { dirs: string[]; files: Set<string> } {
+  const dirs: string[] = [];
+  const files = new Set<string>();
+  for (const pathname of pathnames) {
+    let isFile = false;
+    try {
+      isFile = statSync(pathname).isFile();
+    } catch {
+      // Unreadable: left to fs.watch, as a folder.
+    }
+    if (isFile) files.add(resolve(pathname));
+    else dirs.push(pathname);
+  }
+  return { dirs, files };
+}
+
 /**
  * Watch paths for changes, calling the build callback on known file type changes.
- * A change to a file `ignore` returns true for (given the path relative to the
- * working directory) schedules no build.
+ * A folder is watched recursively; a file is watched on its own and counts
+ * whatever its type (a head file, say). A change to a file `ignore` returns true
+ * for (given the path relative to the working directory) schedules no build.
  * Uses debouncing to avoid rapid rebuilds.
  */
 export function watchFilesystem(
@@ -120,21 +146,49 @@ export function watchFilesystem(
     }, BUILD_DEBOUNCE);
   }
 
-  for (const pathname of pathnames) {
+  // A changed file, as an absolute path. `named`: it is one of the watched paths
+  // itself, so it counts whatever its type. Reported relative to the working
+  // directory, the form getFilenames gives and the incremental cache is keyed by.
+  function fileChanged(abs: string, named: boolean): void {
+    if (abs === absOutFile) return;
+    if (!named && !isKnownFileType(abs)) return;
+    const rel = relative(process.cwd(), abs);
+    if (!ignore(rel || abs)) scheduleBuild(rel || abs);
+  }
+
+  function watchPath(pathname: string, recursive: boolean, listener: (filename: string) => void): void {
     try {
-      const watcher = fsWatch(pathname, { recursive: true }, (_event, filename) => {
-        if (!filename) return;
-        const abs = resolve(pathname, filename);
-        if (abs === absOutFile) return;
-        if (isKnownFileType(filename)) {
-          const rel = relative(process.cwd(), abs);
-          if (!ignore(rel || abs)) scheduleBuild(rel || abs);
-        }
-      });
-      watchers.push(watcher);
+      watchers.push(
+        fsWatch(pathname, { recursive }, (_event, filename) => {
+          if (filename) listener(filename);
+        }),
+      );
     } catch {
       // Ignore inaccessible paths
     }
+  }
+
+  const { dirs, files } = splitWatchRoots(pathnames);
+  const absDirs = dirs.map((dir) => resolve(dir));
+  for (const dir of dirs) {
+    watchPath(dir, true, (filename) => {
+      const abs = resolve(dir, filename);
+      fileChanged(abs, files.has(abs));
+    });
+  }
+
+  // A file is watched through its folder, not on its own: the OS reports only the
+  // file's name for a watch on the file, and an editor that saves by replacing the
+  // file would leave such a watch on the old one. A file inside a watched folder is
+  // seen by that folder's watcher.
+  const fileDirs = new Set(
+    [...files].filter((file) => !absDirs.some((dir) => isInsideDir(file, dir))).map((file) => dirname(file)),
+  );
+  for (const dir of fileDirs) {
+    watchPath(dir, false, (filename) => {
+      const abs = resolve(dir, filename);
+      if (files.has(abs)) fileChanged(abs, true);
+    });
   }
 
   // Build once initially (no changedFiles = full build).

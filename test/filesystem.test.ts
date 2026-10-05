@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { basename, join, relative } from 'node:path';
-import { chmodSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { getFilenames, isExcluded } from '../src/filesystem.js';
+import { chmodSync, renameSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { getFilenames, isExcluded, watchFilesystem } from '../src/filesystem.js';
+import type { WatchHandle } from '../src/filesystem.js';
 
 const TMP_DIR = join(__dirname, '__tmp_fs__');
 
@@ -143,5 +144,75 @@ describe('isExcluded', () => {
 
   it('excludes nothing without patterns', () => {
     expect(isExcluded('cover.png', [])).toBe(false);
+  });
+});
+
+// These use the OS's own file watcher, which reports a change to a watched file
+// by the file's name alone; test/watch.test.ts covers the rest with a stand-in.
+describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const outFile = join(TMP_DIR, 'out.html');
+  let handle: WatchHandle | undefined;
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, ':: Start\nOne\n');
+  });
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+    rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  /** Starts watching `paths`; `next()` waits (up to 10 s) for the next rebuild's changed files. */
+  function watchBuilds(paths: string[]): { next: () => Promise<ReadonlySet<string> | undefined> } {
+    const ready: (ReadonlySet<string> | undefined)[] = [];
+    const waiting: ((files: ReadonlySet<string> | undefined) => void)[] = [];
+    handle = watchFilesystem(paths, outFile, (files) => {
+      const waiter = waiting.shift();
+      if (waiter) waiter(files);
+      else ready.push(files);
+    });
+    return {
+      next: () =>
+        ready.length > 0
+          ? Promise.resolve(ready.shift())
+          : new Promise((done, fail) => {
+              const timer = setTimeout(() => fail(new Error('no rebuild within 10 s')), 10_000);
+              waiting.push((files) => {
+                clearTimeout(timer);
+                done(files);
+              });
+            }),
+    };
+  }
+
+  it('reports a change under the path source discovery gives the file', async () => {
+    const builds = watchBuilds([start]);
+    expect(await builds.next()).toBeUndefined(); // the initial full build
+    writeFileSync(start, ':: Start\nTwo\n');
+    expect(await builds.next()).toEqual(new Set(getFilenames([start]).filenames));
+  });
+
+  it('keeps watching a file that an editor saved by replacing it', async () => {
+    const builds = watchBuilds([start]);
+    await builds.next();
+    const temp = join(story, '.start.tw.swp');
+    writeFileSync(temp, ':: Start\nTwo\n');
+    renameSync(temp, start);
+    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+    writeFileSync(start, ':: Start\nThree\n');
+    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+  });
+
+  it('rebuilds for a named file of a type it would not build for in a folder', async () => {
+    const head = join(TMP_DIR, 'head.txt');
+    writeFileSync(head, '<meta name="a">');
+    const builds = watchBuilds([story, head]);
+    await builds.next();
+    writeFileSync(head, '<meta name="b">');
+    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), head)]));
   });
 });

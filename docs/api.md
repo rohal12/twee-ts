@@ -39,7 +39,7 @@ const result = await compileToFile({
 
 ### `watch(options)`
 
-Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching.
+Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder.
 
 ```typescript
 import { watch } from '@rohal12/twee-ts';
