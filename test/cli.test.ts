@@ -304,6 +304,31 @@ describe('CLI output inside a source folder', () => {
   });
 });
 
+describe('CLI config file', () => {
+  it('warns about an unknown config key and still builds', () => {
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    writeFileSync(
+      join(dir, 'twee-ts.config.json'),
+      JSON.stringify({ sources: ['story.tw'], OutputMode: 'twee3', outputMode: 'twine2-archive', noRemote: true }),
+    );
+    const r = runCli(dir, []);
+    expect(r.stderr).toBe(
+      `warning: ${join(dir, 'twee-ts.config.json')}: Unknown config key "OutputMode" (did you mean "outputMode"?); it is ignored.\n`,
+    );
+    expect(r.stdout).toContain('<tw-storydata');
+    expect(r.status).toBe(0);
+  });
+
+  it('reads a config file -c names that starts with a BOM', () => {
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    writeFileSync(join(dir, 'custom.json'), '\uFEFF{\r\n  "sources": ["story.tw"],\r\n  "noRemote": true\r\n}\r\n');
+    const r = runCli(dir, ['-c', 'custom.json', '-a']);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('<tw-storydata');
+    expect(r.status).toBe(0);
+  });
+});
+
 describe('CLI --lint', () => {
   const lintStory = (content: string): CliResult => {
     writeFileSync(join(dir, 'story.tw'), content);
