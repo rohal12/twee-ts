@@ -256,3 +256,144 @@ describe('incremental compilation cache', () => {
     }
   });
 });
+
+describe('incremental cache and parse options', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+
+  const SPACED = ':: Start\n  content with spaces  \n';
+  const TWEE2 = ':: Start [tag] <10,20>\nHello\n';
+
+  function load(
+    file: string,
+    loadOpts: { trim?: boolean; twee2Compat?: boolean },
+    cache: Map<string, FileCacheEntry>,
+    changedFiles?: ReadonlySet<string>,
+  ): { start: string | undefined; position: string | undefined; diagnostics: Diagnostic[] } {
+    const story = createStory();
+    const diagnostics: Diagnostic[] = [];
+    loadSourcesCached(story, [file], loadOpts, diagnostics, new Set(), cache, changedFiles);
+    const start = story.passages.find((p) => p.name === 'Start');
+    return { start: start?.text, position: start?.metadata?.position, diagnostics };
+  }
+
+  it('reparses an unchanged file when trim changes', () => {
+    const file = writeFile(dir, 'story.tw', SPACED);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    expect(load(file, { trim: true }, cache).start).toBe('content with spaces');
+    expect(load(file, { trim: false }, cache).start).toBe('  content with spaces  ');
+    expect(load(file, { trim: true }, cache).start).toBe('content with spaces');
+  });
+
+  it('reparses an unchanged file when twee2Compat changes', () => {
+    const file = writeFile(dir, 'story.tw', TWEE2);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    expect(load(file, { twee2Compat: true }, cache).position).toBe('10,20');
+    const twee3 = load(file, { twee2Compat: false }, cache);
+    expect(twee3.start).toBeUndefined();
+    expect(twee3.diagnostics.some((d) => d.level === 'error')).toBe(true);
+    expect(load(file, { twee2Compat: true }, cache).position).toBe('10,20');
+  });
+
+  it('reparses on an options change even when changedFiles says the file is unchanged', () => {
+    const file = writeFile(dir, 'story.tw', SPACED);
+    const cache = new Map<string, FileCacheEntry>();
+
+    expect(load(file, { trim: true }, cache).start).toBe('content with spaces');
+    expect(load(file, { trim: false }, cache, new Set()).start).toBe('  content with spaces  ');
+  });
+
+  it('still reuses the entry when the options are unchanged', () => {
+    const file = writeFile(dir, 'story.tw', SPACED);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    load(file, { trim: false }, cache);
+    const entry = cache.get(file);
+    load(file, { trim: false, twee2Compat: false }, cache);
+    expect(cache.get(file)).toBe(entry);
+    load(file, { trim: false }, cache, new Set());
+    expect(cache.get(file)).toBe(entry);
+  });
+
+  it('treats defaulted options the same as explicit defaults', () => {
+    const file = writeFile(dir, 'story.tw', SPACED);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    load(file, {}, cache);
+    const entry = cache.get(file);
+    load(file, { trim: true, twee2Compat: false }, cache);
+    expect(cache.get(file)).toBe(entry);
+  });
+
+  it('keeps .tw2 entries when only twee2Compat changes, since .tw2 files always use it', () => {
+    const file = writeFile(dir, 'story.tw2', TWEE2);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    load(file, { twee2Compat: false }, cache);
+    const entry = cache.get(file);
+    expect(load(file, { twee2Compat: true }, cache).position).toBe('10,20');
+    expect(cache.get(file)).toBe(entry);
+  });
+
+  it('keeps entries for files the parse options do not affect', () => {
+    const file = writeFile(dir, 'styles.css', '  body { color: red; }  ');
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    load(file, { trim: true }, cache);
+    const entry = cache.get(file);
+    load(file, { trim: false, twee2Compat: true }, cache);
+    expect(cache.get(file)).toBe(entry);
+  });
+
+  it('treats an entry without a parse-options key as stale', () => {
+    const file = writeFile(dir, 'story.tw', SPACED);
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>([
+      [file, { mtimeMs: 1000000, passages: [{ name: 'Start', tags: [], text: 'stale' }], diagnostics: [] }],
+    ]);
+
+    expect(load(file, { trim: true }, cache).start).toBe('content with spaces');
+
+    cache.set(file, { mtimeMs: 1000000, passages: [{ name: 'Start', tags: [], text: 'stale' }], diagnostics: [] });
+    expect(load(file, { trim: true }, cache, new Set()).start).toBe('content with spaces');
+  });
+});
+
+describe('incremental cache and Twine 2 HTML', () => {
+  it('keeps the story name of a cached Twine 2 HTML file', () => {
+    const dir = makeTmpDir();
+    const file = writeFile(
+      dir,
+      'story.html',
+      `<tw-storydata name="Review Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
+</tw-storydata>`,
+    );
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    const story1 = createStory();
+    loadSourcesCached(story1, [file], opts, [], new Set(), cache);
+    expect(story1.name).toBe('Review Story');
+
+    const story2 = createStory();
+    loadSourcesCached(story2, [file], opts, [], new Set(), cache);
+    expect(story2.name).toBe('Review Story');
+    expect(story2.passages.map((p) => p.name)).toEqual(['StoryTitle', 'StoryData', 'Start']);
+
+    const story3 = createStory();
+    loadSourcesCached(story3, [file], opts, [], new Set(), cache, new Set());
+    expect(story3.name).toBe('Review Story');
+  });
+});

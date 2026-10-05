@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { OutputMode } from '../src/types.js';
+import { compile } from '../src/compiler.js';
 import { decompileHTML } from '../src/html-parser.js';
 
 const MINIMAL_TWINE2_HTML = `<tw-storydata name="Test Story" startnode="1" creator="Twine" creator-version="2.0"
@@ -206,5 +211,127 @@ ${MINIMAL_TWINE1_HTML}
     const p = story.passages.find((p) => p.name === 'Empty');
     expect(p).toBeDefined();
     expect(p!.text).toBe('');
+  });
+
+  it('reverses ROT13 obfuscation for every tiddler except StorySettings', () => {
+    const html = `<div id="storeArea" hidden>
+<div tiddler="StoryTitle" tags="" twine-position="10,10"><!-- StoryTitle -->Erivrj</div>
+<div tiddler="Start" tags="" twine-position="100,100"><!-- Start -->Uryyb jbeyq [[Arkg]]</div>
+<div tiddler="StorySettings" tags="" twine-position="200,100">undo:off\\nObfuscate: ROT13</div>
+</div>`;
+    const { story, diagnostics } = decompileHTML(html);
+    expect(diagnostics).toEqual([]);
+    expect(story.name).toBe('Review');
+    expect(story.passages.map((p) => [p.name, p.text])).toEqual([
+      ['StoryTitle', 'Review'],
+      ['Start', 'Hello world [[Next]]'],
+      ['StorySettings', 'undo:off\nObfuscate: ROT13'],
+    ]);
+  });
+
+  it('leaves tiddlers alone when obfuscation is off', () => {
+    const html = `<div id="storeArea" hidden>
+<div tiddler="StorySettings" tags="" twine-position="200,100">obfuscate:off</div>
+<div tiddler="Start" tags="" twine-position="100,100">Uryyb</div>
+</div>`;
+    const { story } = decompileHTML(html);
+    expect(story.passages.find((p) => p.name === 'Start')!.text).toBe('Uryyb');
+  });
+});
+
+describe('decompileHTML — story-level tags', () => {
+  it('reads the tags attribute of tw-storydata', () => {
+    const html = MINIMAL_TWINE2_HTML.replace('tags=""', 'tags="fiction adult"');
+    const { story } = decompileHTML(html);
+    expect(story.twine2.tags).toBe('fiction adult');
+    const storyData = story.passages.find((p) => p.name === 'StoryData');
+    expect(JSON.parse(storyData!.text).tags).toBe('fiction adult');
+  });
+
+  it('leaves tags empty when the attribute is empty or missing', () => {
+    expect(decompileHTML(MINIMAL_TWINE2_HTML).story.twine2.tags).toBe('');
+    expect(decompileHTML(MINIMAL_TWINE2_HTML.replace('tags=""', '')).story.twine2.tags).toBe('');
+  });
+});
+
+describe('HTML round trips through compile()', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-roundtrip-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+
+  async function compileToFile(content: string, outputMode: OutputMode, name: string): Promise<string> {
+    const result = await compile({ sources: [{ filename: 'story.tw', content }], outputMode });
+    expect(result.diagnostics.filter((d) => d.level === 'error')).toEqual([]);
+    const file = join(dir, name);
+    writeFileSync(file, result.output, 'utf-8');
+    return file;
+  }
+
+  const TWINE2_SOURCE = [
+    ':: StoryTitle',
+    'Review Story',
+    '',
+    ':: StoryData',
+    JSON.stringify({ ifid: IFID, tags: 'fiction adult' }),
+    '',
+    ':: Start',
+    'Hello world',
+  ].join('\n');
+
+  it('keeps the story title and story tags from Twine 2 HTML to Twee', async () => {
+    const file = await compileToFile(TWINE2_SOURCE, 'twine2-archive', 'story.html');
+    expect(decompileHTML(readFileSync(file, 'utf-8')).story.name).toBe('Review Story');
+
+    const result = await compile({ sources: [file], outputMode: 'twee3' });
+    expect(result.story.name).toBe('Review Story');
+    expect(result.story.twine2.tags).toBe('fiction adult');
+    expect(result.output).toContain(':: StoryTitle\nReview Story\n');
+    expect(result.output).toMatch(/"tags": "fiction adult"/);
+  });
+
+  it('keeps the story title and story tags from Twine 2 HTML to Twine 2 HTML', async () => {
+    const file = await compileToFile(TWINE2_SOURCE, 'twine2-archive', 'story.html');
+    const result = await compile({ sources: [file], outputMode: 'twine2-archive' });
+    expect(result.output).toContain('name="Review Story"');
+    expect(result.output).toContain('tags="fiction adult"');
+  });
+
+  const OBFUSCATED_SOURCE = [
+    ':: StorySettings',
+    'obfuscate:rot13',
+    '',
+    ':: StoryTitle',
+    'Review',
+    '',
+    ':: StoryData',
+    JSON.stringify({ ifid: IFID }),
+    '',
+    ':: Start',
+    'Hello world',
+  ].join('\n');
+
+  it('decodes obfuscated Twine 1 HTML to Twee', async () => {
+    const file = await compileToFile(OBFUSCATED_SOURCE, 'twine1-archive', 'story.html');
+    const { story } = decompileHTML(readFileSync(file, 'utf-8'));
+    expect(story.passages.find((p) => p.name === 'Start')!.text).toBe('Hello world');
+    expect(story.passages.find((p) => p.name === 'StorySettings')!.text).toBe('obfuscate:rot13');
+
+    const result = await compile({ sources: [file], outputMode: 'twee3' });
+    expect(result.story.name).toBe('Review');
+    expect(result.output).toMatch(/:: Start \{[^}]*\}\nHello world\n/);
+    expect(result.output).toMatch(/:: StorySettings \{[^}]*\}\nobfuscate:rot13\n/);
+  });
+
+  it('encodes obfuscated Twine 1 HTML exactly once when recompiled to Twine 1 HTML', async () => {
+    const file = await compileToFile(OBFUSCATED_SOURCE, 'twine1-archive', 'story.html');
+    const result = await compile({ sources: [file], outputMode: 'twine1-archive' });
+    expect(result.output).toContain('Uryyb jbeyq');
+    const { story } = decompileHTML(result.output);
+    expect(story.passages.find((p) => p.name === 'Start')!.text).toBe('Hello world');
   });
 });
