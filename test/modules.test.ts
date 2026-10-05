@@ -30,6 +30,22 @@ describe('loadModules', () => {
     expect(result).toContain('id="script-module-app"');
   });
 
+  it('escapes closing script tags in JS files', () => {
+    const file = join(TMP_DIR, 'tags.js');
+    writeFileSync(file, 'document.write("<script src=x.js></SCRIPT >");');
+    const result = loadModules([file]);
+    expect(result).toBe(
+      '<script id="script-module-tags" type="text/javascript">document.write("<script src=x.js><\\/SCRIPT >");</script>',
+    );
+  });
+
+  it('escapes closing style tags in CSS files', () => {
+    const file = join(TMP_DIR, 'tags.css');
+    writeFileSync(file, 'p::after { content: "</Style>"; }');
+    const result = loadModules([file]);
+    expect(result).toBe('<style id="style-module-tags" type="text/css">p::after { content: "<\\/Style>"; }</style>');
+  });
+
   it('loads font files as @font-face style blocks', () => {
     const file = join(TMP_DIR, 'myfont.woff2');
     writeFileSync(file, Buffer.from([0x00, 0x01]));

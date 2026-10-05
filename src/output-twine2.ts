@@ -3,7 +3,14 @@
  * Ported from storyout.go.
  */
 import type { OmittingTag, PassageOmission, ReadonlyStory, ReadonlyPassage, StoryFormatInfo } from './types.js';
-import { attrEscape, htmlEscape, commentSanitize, htmlCommentSanitize } from './escape.js';
+import {
+  attrEscape,
+  htmlEscape,
+  commentSanitize,
+  htmlCommentSanitize,
+  scriptContentEscape,
+  styleContentEscape,
+} from './escape.js';
 import { passageToPassagedata, hasTag } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { VERSION } from './version.js';
@@ -84,7 +91,9 @@ function getTwine2DataChunk(
       pidS++;
     }
   }
-  parts.push(`<style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">${styleContent}</style>`);
+  parts.push(
+    `<style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">${styleContentEscape(styleContent)}</style>`,
+  );
 
   // Script element
   let scriptContent = '';
@@ -99,7 +108,9 @@ function getTwine2DataChunk(
       pidS++;
     }
   }
-  parts.push(`<script role="script" id="twine-user-script" type="text/twine-javascript">${scriptContent}</script>`);
+  parts.push(
+    `<script role="script" id="twine-user-script" type="text/twine-javascript">${scriptContentEscape(scriptContent)}</script>`,
+  );
 
   // Tag color elements (only spec-valid colors: 7 named colors or hex values)
   const validTagColors = new Set(['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple']);

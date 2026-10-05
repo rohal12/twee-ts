@@ -5,6 +5,7 @@
 import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
 import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
+import { scriptContentEscape, styleContentEscape } from './escape.js';
 
 /**
  * Load modules and return HTML tags to inject before </head>.
@@ -43,15 +44,16 @@ export function loadModules(filenames: string[]): string {
   return headTags.join('\n');
 }
 
-function loadModuleTagged(tag: string, filename: string): string | null {
+function loadModuleTagged(tag: 'script' | 'style', filename: string): string | null {
   const source = readUTF8(filename).trim();
   if (source.length === 0) return null;
 
   const family = baseNameWithoutExt(filename);
   const idSlug = `${tag}-module-${slugify(family)}`;
   const mimeType = tag === 'script' ? 'text/javascript' : 'text/css';
+  const content = tag === 'script' ? scriptContentEscape(source) : styleContentEscape(source);
 
-  return `<${tag} id="${idSlug}" type="${mimeType}">${source}</${tag}>`;
+  return `<${tag} id="${idSlug}" type="${mimeType}">${content}</${tag}>`;
 }
 
 function loadModuleFont(filename: string): string | null {
