@@ -22,13 +22,15 @@ Decompiles to [Twee 3 notation](https://github.com/iftechfoundation/twine-specs/
 
 Does not require a story format.
 
+The `StoryData` passage is written from the compiled story, so it records what `-s`/`startPassage` and `-t`/`testMode` (the `debug` option) changed, and compiling the Twee output again gives the same start passage and options. With no overrides, it is the `StoryData` passage as loaded, normalized to tab-indented JSON, plus the IFID twee-ts reports generating when the passage has none. A story without a `StoryData` passage gets one, after `StoryTitle`, only when `-s` or `-t` is given. A `StoryData` passage that is not valid JSON is written as it is.
+
 ## Twee 1
 
 ```sh
 twee-ts --decompile-twee1 -o story.twee src/
 ```
 
-Decompiles to Twee 1 notation (legacy format).
+Decompiles to Twee 1 notation (legacy format). The `StoryData` passage is written the same way as for Twee 3.
 
 ## Twine 2 Archive
 
