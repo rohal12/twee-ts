@@ -16,7 +16,7 @@ import {
 import type { EventEmitter } from 'node:events';
 import { watchFilesystem } from '../src/filesystem.js';
 import type { WatchHandle } from '../src/filesystem.js';
-import { watch } from '../src/compiler.js';
+import { watch, watchWithWriteFilter } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
 
 type WatchListener = (event: string, filename: string | null) => void;
@@ -338,7 +338,23 @@ describe('watchFilesystem', () => {
   });
 });
 
-const TMP_DIR = join(__dirname, '__tmp_watch__');
+/** The temp folder of the current test in the describe blocks below; each makes a fresh one per test. */
+let tmpDir: string;
+
+/** Makes a fresh temp folder for the current test and returns it. */
+function freshTmpDir(): string {
+  tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-watch-'));
+  return tmpDir;
+}
+
+/**
+ * An exclude glob for `pattern` inside tmpDir. Exclude globs are read relative to
+ * the working directory, and tmpDir lies outside it, where `**` alone doesn't reach.
+ */
+function inTmp(pattern: string): string {
+  return `${relative(process.cwd(), tmpDir).replace(/\\/g, '/')}/${pattern}`;
+}
+
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatId: 'test-format-1', formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
 
@@ -375,11 +391,13 @@ function buildQueue() {
 }
 
 describe('watch with exclude', () => {
-  const story = join(TMP_DIR, 'story');
-  const outFile = join(TMP_DIR, 'out.html');
+  let story: string;
+  let outFile: string;
   let controller: AbortController | undefined;
 
   beforeEach(() => {
+    story = join(freshTmpDir(), 'story');
+    outFile = join(tmpDir, 'out.html');
     mkdirSync(join(story, 'art'), { recursive: true });
     writeFileSync(join(story, 'start.tw'), STORY);
     writeFileSync(join(story, 'art', 'scene.png'), Buffer.alloc(16, 7));
@@ -388,7 +406,7 @@ describe('watch with exclude', () => {
   afterEach(() => {
     controller?.abort();
     controller = undefined;
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('leaves excluded files out of every build and rebuilds for none of their changes', async () => {
@@ -397,7 +415,7 @@ describe('watch with exclude', () => {
       ...COMPILE,
       sources: [story],
       outFile,
-      exclude: ['**/*.png'],
+      exclude: [inTmp('**/*.png')],
       onBuild: builds.onBuild,
       onError: builds.onError,
     });
@@ -431,7 +449,7 @@ describe('watch with exclude', () => {
       ...COMPILE,
       sources: [story],
       outFile,
-      exclude: ['**/lib/**'],
+      exclude: [inTmp('**/lib/**')],
       modules: [module],
       onBuild: builds.onBuild,
       onError: builds.onError,
@@ -453,20 +471,23 @@ describe('watch with exclude', () => {
 });
 
 describe('watch with the output inside a source folder', () => {
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
-  const outFile = join(story, 'z-output.html');
+  let story: string;
+  let start: string;
+  let outFile: string;
   let controller: AbortController | undefined;
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    story = join(freshTmpDir(), 'story');
+    start = join(story, 'start.tw');
+    outFile = join(story, 'z-output.html');
+    mkdirSync(story);
     writeFileSync(start, STORY.replace('Hello from the story.', 'ORIGINAL_CONTENT\n\n:: Gone\nSOON_DELETED'));
   });
 
   afterEach(() => {
     controller?.abort();
     controller = undefined;
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('does not load its own earlier output back as a source', async () => {
@@ -497,14 +518,17 @@ describe('watch with the output inside a source folder', () => {
 });
 
 describe('watch and a save that keeps the modification time', () => {
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
-  const outFile = join(TMP_DIR, 'out.html');
+  let story: string;
+  let start: string;
+  let outFile: string;
   const stamp = new Date(1_700_000_000_000);
   let controller: AbortController | undefined;
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    story = join(freshTmpDir(), 'story');
+    start = join(story, 'start.tw');
+    outFile = join(tmpDir, 'out.html');
+    mkdirSync(story);
     writeFileSync(start, STORY.replace('Hello from the story.', 'ORIGINAL_CONTENT'));
     utimesSync(start, stamp, stamp);
   });
@@ -512,7 +536,7 @@ describe('watch and a save that keeps the modification time', () => {
   afterEach(() => {
     controller?.abort();
     controller = undefined;
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('rebuilds the saved file with its new content', async () => {
@@ -542,20 +566,23 @@ describe('watch and a save that keeps the modification time', () => {
 });
 
 describe('watch on individual files', () => {
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
-  const outFile = join(TMP_DIR, 'out.html');
+  let story: string;
+  let start: string;
+  let outFile: string;
   let controller: AbortController | undefined;
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    story = join(freshTmpDir(), 'story');
+    start = join(story, 'start.tw');
+    outFile = join(tmpDir, 'out.html');
+    mkdirSync(story);
     writeFileSync(start, STORY);
   });
 
   afterEach(() => {
     controller?.abort();
     controller = undefined;
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('reports a change to a watched file under the path source discovery gives it', () => {
@@ -597,12 +624,14 @@ describe('watch on individual files', () => {
   });
 
   describe('the head file', () => {
-    const elsewhere = join(TMP_DIR, 'elsewhere');
-    const headFile = join(elsewhere, 'head.txt');
+    let elsewhere: string;
+    let headFile: string;
     const meta = (content: string): string => `<meta name="watch-test" content="${content}">`;
 
     beforeEach(() => {
-      mkdirSync(elsewhere, { recursive: true });
+      elsewhere = join(tmpDir, 'elsewhere');
+      headFile = join(elsewhere, 'head.txt');
+      mkdirSync(elsewhere);
       writeFileSync(headFile, meta('original'));
     });
 
@@ -639,7 +668,7 @@ describe('watch on individual files', () => {
         ...COMPILE,
         sources: [story],
         headFile: inside,
-        exclude: ['**/head.txt'],
+        exclude: [inTmp('**/head.txt')],
         outFile,
         onBuild: builds.onBuild,
         onError: builds.onError,
@@ -660,9 +689,9 @@ describe('watch on individual files', () => {
 });
 
 describe('watch with a build still in flight', () => {
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
-  const outFile = join(TMP_DIR, 'out.html');
+  let story: string;
+  let start: string;
+  let outFile: string;
   const FORMAT_URL = 'https://formats.invalid/format.js';
   const FORMAT_JS = `window.storyFormat(${JSON.stringify({
     name: 'WatchSerial',
@@ -752,10 +781,13 @@ describe('watch with a build still in flight', () => {
   }
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    story = join(freshTmpDir(), 'story');
+    start = join(story, 'start.tw');
+    outFile = join(tmpDir, 'out.html');
+    mkdirSync(story);
     writeFileSync(start, source('OLD_CONTENT'));
     origCacheHome = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = join(TMP_DIR, 'cache');
+    process.env['XDG_CACHE_HOME'] = join(tmpDir, 'cache');
   });
 
   afterEach(() => {
@@ -764,7 +796,7 @@ describe('watch with a build still in flight', () => {
     vi.unstubAllGlobals();
     if (origCacheHome !== undefined) process.env['XDG_CACHE_HOME'] = origCacheHome;
     else delete process.env['XDG_CACHE_HOME'];
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('delivers a slow build, then builds the changes made during it once, after it', async () => {
@@ -844,21 +876,27 @@ describe('watch with a build still in flight', () => {
     const format = stubSlowFormat();
     const reported: CompileResult[] = [];
     const errors: Error[] = [];
-    controller = await watch({
-      ...SLOW_FORMAT,
-      sources: [story],
-      outFile,
-      onBuild: (result) => reported.push(result),
-      onError: (error) => errors.push(error),
-    });
+    let idle: () => void = () => {};
+    const settled = new Promise<void>((done) => (idle = done));
+    controller = await watchWithWriteFilter(
+      {
+        ...SLOW_FORMAT,
+        sources: [story],
+        outFile,
+        onBuild: (result) => reported.push(result),
+        onError: (error) => errors.push(error),
+      },
+      () => true,
+      { onIdle: () => idle() },
+    );
     await format.firstRequested;
     writeFileSync(start, source('NEW_CONTENT'));
     change('start.tw');
 
     controller.abort();
     format.releaseFirst(false); // a build started after this one would fetch the format again
-    // Give the released build time to finish; nothing it does may show.
-    await new Promise((done) => setTimeout(done, 200));
+    // The released build, and any build that would follow it, has finished; nothing it did may show.
+    await settled;
 
     expect(reported).toEqual([]);
     expect(errors).toEqual([]);

@@ -224,25 +224,31 @@ describe('compile', () => {
 });
 
 describe('compile with exclude', () => {
-  const TMP_DIR = join(__dirname, '__tmp_exclude__');
+  let dir: string;
   const options = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
+  /**
+   * `pattern` inside dir. Exclude globs are read relative to the working
+   * directory, and dir lies outside it, in the temp folder, where `**` alone doesn't reach.
+   */
+  const inDir = (pattern: string): string => `${relative(process.cwd(), dir).replace(/\\/g, '/')}/${pattern}`;
 
   beforeEach(() => {
-    mkdirSync(join(TMP_DIR, 'story', 'art'), { recursive: true });
-    writeFileSync(join(TMP_DIR, 'story', 'start.tw'), readFileSync(join(FIXTURES_DIR, 'minimal.tw')));
-    writeFileSync(join(TMP_DIR, 'story', 'art', 'scene.png'), Buffer.alloc(16, 7));
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-exclude-'));
+    mkdirSync(join(dir, 'story', 'art'), { recursive: true });
+    writeFileSync(join(dir, 'story', 'start.tw'), readFileSync(join(FIXTURES_DIR, 'minimal.tw')));
+    writeFileSync(join(dir, 'story', 'art', 'scene.png'), Buffer.alloc(16, 7));
   });
 
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('loads every media file found in a source folder by default, as Tweego does', async () => {
-    const result = await compile({ ...options, sources: [join(TMP_DIR, 'story')] });
+    const result = await compile({ ...options, sources: [join(dir, 'story')] });
     expect(result.output).toContain('Twine.image');
     expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(true);
   });
 
   it('leaves out the files that match an exclude glob', async () => {
-    const result = await compile({ ...options, sources: [join(TMP_DIR, 'story')], exclude: ['**/*.png'] });
+    const result = await compile({ ...options, sources: [join(dir, 'story')], exclude: [inDir('**/*.png')] });
     expect(result.output).toContain('Hello, world!');
     expect(result.output).not.toContain('Twine.image');
     expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(false);
@@ -250,24 +256,24 @@ describe('compile with exclude', () => {
   });
 
   it('leaves them out of compileToFile too', async () => {
-    const outFile = join(TMP_DIR, 'out.html');
+    const outFile = join(dir, 'out.html');
     const result = await compileToFile({
       ...options,
-      sources: [join(TMP_DIR, 'story')],
+      sources: [join(dir, 'story')],
       outFile,
-      exclude: ['**/art/**'],
+      exclude: [inDir('**/art/**')],
     });
     expect(result.stats.files.some((f) => f.endsWith('scene.png'))).toBe(false);
     expect(readFileSync(outFile, 'utf-8')).not.toContain('Twine.image');
   });
 
   it('leaves modules alone', async () => {
-    const module = join(TMP_DIR, 'story', 'art', 'mod.js');
+    const module = join(dir, 'story', 'art', 'mod.js');
     writeFileSync(module, 'window.modMarker = 1;');
     const result = await compile({
       ...options,
-      sources: [join(TMP_DIR, 'story')],
-      exclude: ['**/art/**'],
+      sources: [join(dir, 'story')],
+      exclude: [inDir('**/art/**')],
       modules: [module],
     });
     expect(result.output).toContain('<script id="script-module-mod" type="text/javascript">window.modMarker = 1;');
@@ -276,7 +282,7 @@ describe('compile with exclude', () => {
 });
 
 describe('compile with closing tags inside scripts and styles', () => {
-  const TMP_DIR = join(__dirname, '__tmp_closing_tags__');
+  let dir: string;
   const STORY = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nTags\n\n:: Start\nHi';
   const story = { filename: 'story.tw', content: STORY };
   const html = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
@@ -288,8 +294,10 @@ describe('compile with closing tags inside scripts and styles', () => {
     return window;
   }
 
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-closing-tags-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('keeps a JavaScript source holding a closing script tag whole', async () => {
     const result = await compile({
@@ -342,10 +350,10 @@ describe('compile with closing tags inside scripts and styles', () => {
   });
 
   it('escapes them in JavaScript and CSS files on disk compiled to HTML', async () => {
-    writeFileSync(join(TMP_DIR, 'start.tw'), STORY);
-    writeFileSync(join(TMP_DIR, 'code.js'), 'window.x = "</script>";');
-    writeFileSync(join(TMP_DIR, 'look.css'), 'b::before { content: "</style>"; }');
-    const result = await compile({ ...html, sources: [TMP_DIR] });
+    writeFileSync(join(dir, 'start.tw'), STORY);
+    writeFileSync(join(dir, 'code.js'), 'window.x = "</script>";');
+    writeFileSync(join(dir, 'look.css'), 'b::before { content: "</style>"; }');
+    const result = await compile({ ...html, sources: [dir] });
 
     expect(result.output).toContain('window.x = "<\\/script>";</script>');
     expect(result.output).toContain('b::before { content: "<\\/style>"; }</style>');
@@ -354,8 +362,8 @@ describe('compile with closing tags inside scripts and styles', () => {
   });
 
   it('escapes them in head modules', async () => {
-    const js = join(TMP_DIR, 'mod.js');
-    const css = join(TMP_DIR, 'mod.css');
+    const js = join(dir, 'mod.js');
+    const css = join(dir, 'mod.css');
     writeFileSync(js, 'window.m = "</Script>" + "<!--<script>";');
     writeFileSync(css, 'i::after { content: "</style>"; }');
     const result = await compile({ ...html, sources: [story], modules: [js, css] });
@@ -375,7 +383,7 @@ describe('compile with closing tags inside scripts and styles', () => {
       { filename: 'style.css', content: 'a::after { content: "</style>"; }' },
     ];
     const first = await compile({ sources, outputMode: 'twine2-archive' });
-    const archive = join(TMP_DIR, 'story.html');
+    const archive = join(dir, 'story.html');
     writeFileSync(archive, first.output);
     const again = await compile({ sources: [archive], outputMode: 'twine2-archive' });
 
@@ -389,18 +397,21 @@ describe('compile with closing tags inside scripts and styles', () => {
 });
 
 describe('compileToFile with the output inside a source folder', () => {
-  const TMP_DIR = join(__dirname, '__tmp_outfile__');
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
+  let dir: string;
+  let story: string;
+  let start: string;
   const passages = (text: string, extra = ''): string =>
     `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nOut Test\n\n:: Start\n${text}\n${extra}`;
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-outfile-'));
+    story = join(dir, 'story');
+    start = join(story, 'start.tw');
+    mkdirSync(story);
     writeFileSync(start, passages('ORIGINAL_CONTENT', '\n:: Gone\nSOON_DELETED\n'));
   });
 
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it.each([
     ['an absolute', (p: string) => p],
@@ -635,17 +646,18 @@ describe('a wrapped IFID is written as the bare UUID', () => {
   const BARE = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
   const WRAPPED = `UUID://${BARE}//`;
   const SOURCE = `:: StoryTitle\nWrapped\n\n:: StoryData\n${JSON.stringify({ ifid: WRAPPED })}\n\n:: Start\nHello`;
-  const TMP_DIR = join(__dirname, '__tmp_wrapped_ifid__');
+  let dir: string;
 
   beforeEach(() => {
-    mkdirSync(join(TMP_DIR, 'twine1-test'), { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-wrapped-ifid-'));
+    mkdirSync(join(dir, 'twine1-test'));
     writeFileSync(
-      join(TMP_DIR, 'twine1-test', 'header.html'),
+      join(dir, 'twine1-test', 'header.html'),
       '<html><body><div id="storeArea">"STORY"</div></body></html>',
     );
   });
 
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   function compileWrapped(outputMode: 'html' | 'twine2-archive' | 'twee3' | 'json', content = SOURCE) {
     return compile({
@@ -676,7 +688,7 @@ describe('a wrapped IFID is written as the bare UUID', () => {
     const result = await compile({
       sources: [{ filename: 'story.tw', content: SOURCE }],
       formatId: 'twine1-test',
-      formatPaths: [TMP_DIR],
+      formatPaths: [dir],
       useTweegoPath: false,
       noRemote: true,
     });
@@ -713,7 +725,7 @@ describe('a wrapped IFID is written as the bare UUID', () => {
 });
 
 describe('format template placeholders', () => {
-  const TMP_DIR = join(__dirname, '__tmp_template_placeholders__');
+  let dir: string;
   const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
   const html = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
 
@@ -726,21 +738,23 @@ describe('format template placeholders', () => {
 
   /** Writes a Twine 2 format whose template is `source` and returns compile options for it. */
   function twine2Format(source: string) {
-    mkdirSync(join(TMP_DIR, 'custom-2'), { recursive: true });
+    mkdirSync(join(dir, 'custom-2'), { recursive: true });
     const format = { name: 'Custom', version: '1.0.0', source };
-    writeFileSync(join(TMP_DIR, 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
-    return { formatId: 'custom-2', formatPaths: [TMP_DIR], useTweegoPath: false, noRemote: true };
+    writeFileSync(join(dir, 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
+    return { formatId: 'custom-2', formatPaths: [dir], useTweegoPath: false, noRemote: true };
   }
 
   /** Writes a Twine 1 format whose header is `header` and returns compile options for it. */
   function twine1Format(header: string) {
-    mkdirSync(join(TMP_DIR, 'custom-1'), { recursive: true });
-    writeFileSync(join(TMP_DIR, 'custom-1', 'header.html'), header);
-    return { formatId: 'custom-1', formatPaths: [TMP_DIR], useTweegoPath: false, noRemote: true };
+    mkdirSync(join(dir, 'custom-1'), { recursive: true });
+    writeFileSync(join(dir, 'custom-1', 'header.html'), header);
+    return { formatId: 'custom-1', formatPaths: [dir], useTweegoPath: false, noRemote: true };
   }
 
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-template-placeholders-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('keeps a title holding {{STORY_DATA}} and passage text holding {{STORY_NAME}} literal', async () => {
     const result = await compile({ ...html, sources: [story('{{STORY_DATA}}', 'Hi {{STORY_NAME}} {{STORY_DATA}}')] });
@@ -850,33 +864,35 @@ function scriptElements(html: string): string[] {
 }
 
 describe('module and head file injection', () => {
-  const TMP_DIR = join(__dirname, '__tmp_head_injection__');
+  let dir: string;
   const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
   const STORY = `:: StoryTitle\nHead\n\n:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nHello\n`;
   const META = '<meta name="review" content="injected">';
   const MODULE = '<style id="style-module-mod" type="text/css">h1 { color: red; }</style>';
 
   function twine2Format(source: string) {
-    mkdirSync(join(TMP_DIR, 'formats', 'custom-2'), { recursive: true });
+    mkdirSync(join(dir, 'formats', 'custom-2'), { recursive: true });
     const format = { name: 'Custom', version: '1.0.0', source };
-    writeFileSync(join(TMP_DIR, 'formats', 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
-    return { formatId: 'custom-2', formatPaths: [join(TMP_DIR, 'formats')], useTweegoPath: false, noRemote: true };
+    writeFileSync(join(dir, 'formats', 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
+    return { formatId: 'custom-2', formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true };
   }
 
   function twine1Format(header: string) {
-    mkdirSync(join(TMP_DIR, 'formats', 'custom-1'), { recursive: true });
-    writeFileSync(join(TMP_DIR, 'formats', 'custom-1', 'header.html'), header);
-    return { formatId: 'custom-1', formatPaths: [join(TMP_DIR, 'formats')], useTweegoPath: false, noRemote: true };
+    mkdirSync(join(dir, 'formats', 'custom-1'), { recursive: true });
+    writeFileSync(join(dir, 'formats', 'custom-1', 'header.html'), header);
+    return { formatId: 'custom-1', formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true };
   }
 
   function headOptions() {
-    writeFileSync(join(TMP_DIR, 'mod.css'), 'h1 { color: red; }');
-    writeFileSync(join(TMP_DIR, 'head.html'), META);
-    return { modules: [join(TMP_DIR, 'mod.css')], headFile: join(TMP_DIR, 'head.html') };
+    writeFileSync(join(dir, 'mod.css'), 'h1 { color: red; }');
+    writeFileSync(join(dir, 'head.html'), META);
+    return { modules: [join(dir, 'mod.css')], headFile: join(dir, 'head.html') };
   }
 
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-head-injection-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   const CLOSING_TAGS: readonly (readonly [string, string])[] = [
     ['lowercase', '</head>'],
@@ -984,7 +1000,7 @@ describe('module and head file injection', () => {
 
   it('looks for the body start tag in the footer of a pre-1.4 Twine 1 format too', async () => {
     const options = twine1Format('<div id="storeArea">');
-    writeFileSync(join(TMP_DIR, 'formats', 'custom-1', 'footer.html'), '</div><body></body>');
+    writeFileSync(join(dir, 'formats', 'custom-1', 'footer.html'), '</div><body></body>');
     const result = await compile({ ...options, ...headOptions(), sources: [{ filename: 'story.tw', content: STORY }] });
 
     expect(result.output.endsWith(`</div></div>${MODULE}\n${META}\n<body></body>`)).toBe(true);
@@ -1030,12 +1046,12 @@ describe('module and head file injection', () => {
 
   it('does not fill placeholders in the injected module and head file content', async () => {
     const options = twine2Format('<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>');
-    writeFileSync(join(TMP_DIR, 'mod.js'), 'window.placeholders = ["{{STORY_DATA}}", "{{STORY_NAME}}"];');
-    writeFileSync(join(TMP_DIR, 'head.html'), '<meta name="{{STORY_NAME}}" content="{{STORY_DATA}}">');
+    writeFileSync(join(dir, 'mod.js'), 'window.placeholders = ["{{STORY_DATA}}", "{{STORY_NAME}}"];');
+    writeFileSync(join(dir, 'head.html'), '<meta name="{{STORY_NAME}}" content="{{STORY_DATA}}">');
     const result = await compile({
       ...options,
-      modules: [join(TMP_DIR, 'mod.js')],
-      headFile: join(TMP_DIR, 'head.html'),
+      modules: [join(dir, 'mod.js')],
+      headFile: join(dir, 'head.html'),
       sources: [{ filename: 'story.tw', content: STORY }],
     });
 

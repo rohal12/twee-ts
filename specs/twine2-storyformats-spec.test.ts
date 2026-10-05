@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 import { compile } from '../src/compiler.js';
 import {
@@ -24,7 +25,13 @@ import type { StoryFormatInfo } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
-const TEMP_DIR = join(__dirname, '..', 'test', '.tmp-storyformat-spec');
+let tempDir: string | undefined;
+
+/** The temp folder this run writes formats to: unique per run, created on first use and removed by cleanupTemp(). */
+function tempRoot(): string {
+  tempDir ??= mkdtempSync(join(tmpdir(), 'twee-ts-storyformat-spec-'));
+  return tempDir;
+}
 
 /** Helper: build a minimal valid twee source. */
 function minimalStory(passages: string): string {
@@ -41,21 +48,21 @@ function minimalStory(passages: string): string {
 
 /** Helper: write a temporary story format file. */
 function writeTempFormat(dirName: string, content: string): string {
-  const dir = join(TEMP_DIR, dirName);
+  const dir = join(tempRoot(), dirName);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'format.js');
   writeFileSync(path, content, 'utf-8');
-  return TEMP_DIR;
+  return tempRoot();
 }
 
 /** Clean up temp directory after tests. */
 function cleanupTemp(): void {
-  try {
-    rmSync(TEMP_DIR, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
+  if (tempDir === undefined) return;
+  rmSync(tempDir, { recursive: true, force: true });
+  tempDir = undefined;
 }
+
+afterAll(() => cleanupTemp());
 
 /** Helper: parse format object from raw format.js content. */
 function parseFormatObject(content: string): Record<string, unknown> {
@@ -957,7 +964,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'format-beta',
       'window.storyFormat({"name":"Beta","version":"1.0.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const names = [...formats.values()].map((f) => f.name);
     expect(names).toContain('Alpha');
     expect(names).toContain('Beta');
@@ -973,7 +980,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'versioned-format-200',
       'window.storyFormat({"name":"Versioned","version":"2.0.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const versionedFormats = [...formats.values()].filter((f) => f.name === 'Versioned');
     expect(versionedFormats.length).toBe(2);
     const versions = versionedFormats.map((f) => f.version).sort();
@@ -992,7 +999,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'major-new',
       'window.storyFormat({"name":"MajorTest","version":"2.0.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const majorFormats = [...formats.values()].filter((f) => f.name === 'MajorTest');
     const versions = majorFormats.map((f) => f.version);
     expect(versions).toContain('1.1.1');
@@ -1009,7 +1016,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'duplicate-b',
       'window.storyFormat({"name":"Duplicate","version":"1.0.0","source":"<html>B {{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const dupes = [...formats.values()].filter((f) => f.name === 'Duplicate');
     // Spec: "Twine 2 does not allow installed story formats of the same version
     // and name to be overwritten." Same name+version MUST NOT coexist.
@@ -1029,7 +1036,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'semver-new-patch',
       'window.storyFormat({"name":"SemVerTest","version":"1.0.1","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const semverFormats = [...formats.values()].filter((f) => f.name === 'SemVerTest');
     const versions = semverFormats.map((f) => f.version);
     // Per spec, 1.0.0 should be removed when 1.0.1 is installed (same major)
@@ -1047,7 +1054,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'semver-new-minor',
       'window.storyFormat({"name":"SemVerMinor","version":"1.1.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const semverFormats = [...formats.values()].filter((f) => f.name === 'SemVerMinor');
     const versions = semverFormats.map((f) => f.version);
     expect(versions).not.toContain('1.0.0');
@@ -1074,7 +1081,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
       'specex-v200',
       'window.storyFormat({"name":"SpecExample","version":"2.0.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const specFormats = [...formats.values()].filter((f) => f.name === 'SpecExample');
     const versions = specFormats.map((f) => f.version);
     // 1.0.0 should be removed (superseded by 1.0.1 and then by 1.1.1)
@@ -1204,32 +1211,32 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
   afterAll(() => cleanupTemp());
 
   it('discovers Twine 1 format from header.html in a named directory', () => {
-    const dir = join(TEMP_DIR, 'twine1-format');
+    const dir = join(tempRoot(), 'twine1-format');
     mkdirSync(dir, { recursive: true });
     const headerContent =
       '<html><head><title>Test</title></head><body><div id="storeArea">"STORY"</div><span>"STORY_SIZE"</span></body></html>';
     writeFileSync(join(dir, 'header.html'), headerContent, 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-format');
     expect(format).toBeDefined();
   });
 
   it('Twine 1 format filename is header.html', () => {
     // Spec: "contained in a single HTML file ... called header.html"
-    const dir = join(TEMP_DIR, 'twine1-filename-check');
+    const dir = join(tempRoot(), 'twine1-filename-check');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-filename-check');
     if (!format) throw new Error('expected format');
     expect(format.filename).toMatch(/header\.html$/);
   });
 
   it('Twine 1 format is identified as not a Twine 2 format (isTwine2 = false)', () => {
-    const dir = join(TEMP_DIR, 'twine1-type-check');
+    const dir = join(tempRoot(), 'twine1-type-check');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-type-check');
     if (!format) throw new Error('expected format');
     expect(format.isTwine2).toBe(false);
@@ -1237,21 +1244,21 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
 
   it('Twine 1 format name is derived from containing folder', () => {
     // Spec: "The story format name was derived from the containing folder."
-    const dir = join(TEMP_DIR, 'sugarcane');
+    const dir = join(tempRoot(), 'sugarcane');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'sugarcane');
     if (!format) throw new Error('expected format');
     expect(format.id).toBe('sugarcane');
   });
 
   it('Twine 1 format source contains "STORY" placeholder', () => {
-    const dir = join(TEMP_DIR, 'twine1-story-placeholder');
+    const dir = join(tempRoot(), 'twine1-story-placeholder');
     mkdirSync(dir, { recursive: true });
     const headerContent = '<html><body>"STORY"</body></html>';
     writeFileSync(join(dir, 'header.html'), headerContent, 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-story-placeholder');
     if (!format) throw new Error('expected format to be discovered');
     const source = readFileSync(format.filename, 'utf-8');
@@ -1261,11 +1268,11 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
   it('Twine 1 format source contains "STORY_SIZE" placeholder', () => {
     // Spec: "The file used two wildcards 'STORY', for the set of passages,
     // and 'STORY_SIZE', for the number of passages."
-    const dir = join(TEMP_DIR, 'twine1-storysize-placeholder');
+    const dir = join(tempRoot(), 'twine1-storysize-placeholder');
     mkdirSync(dir, { recursive: true });
     const headerContent = '<html><body>"STORY" "STORY_SIZE"</body></html>';
     writeFileSync(join(dir, 'header.html'), headerContent, 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-storysize-placeholder');
     if (!format) throw new Error('expected format to be discovered');
     const source = readFileSync(format.filename, 'utf-8');
@@ -1273,11 +1280,11 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
   });
 
   it('readFormatSource returns raw HTML for Twine 1 format (no JSON extraction)', () => {
-    const dir = join(TEMP_DIR, 'twine1-readsource');
+    const dir = join(tempRoot(), 'twine1-readsource');
     mkdirSync(dir, { recursive: true });
     const headerContent = '<html><body>"STORY" "STORY_SIZE"</body></html>';
     writeFileSync(join(dir, 'header.html'), headerContent, 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'twine1-readsource');
     if (!format) throw new Error('expected format');
     const source = readFormatSource(format);
@@ -1288,10 +1295,10 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
     // Spec: "The story format name was derived from the containing folder."
     // Twine 1 formats are just HTML files with no JSON metadata.
     // The name MUST come from the folder, not from file contents.
-    const dir = join(TEMP_DIR, 'my-twine1-format');
+    const dir = join(tempRoot(), 'my-twine1-format');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'my-twine1-format');
     if (!format) throw new Error('expected format');
     // The name should be derived from the folder name
@@ -1301,14 +1308,14 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
   it('Twine 1 format coexists with Twine 2 formats in discovery', () => {
     // Both Twine 1 (header.html) and Twine 2 (format.js) formats should
     // be discoverable from the same search path
-    const twine1Dir = join(TEMP_DIR, 'twine1-coexist');
+    const twine1Dir = join(tempRoot(), 'twine1-coexist');
     mkdirSync(twine1Dir, { recursive: true });
     writeFileSync(join(twine1Dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
     writeTempFormat(
       'twine2-coexist',
       'window.storyFormat({"name":"CoexistT2","version":"1.0.0","source":"<html>{{STORY_DATA}}</html>"});',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const twine1 = [...formats.values()].find((f) => f.id === 'twine1-coexist');
     const twine2 = [...formats.values()].find((f) => f.id === 'twine2-coexist');
     expect(twine1).toBeDefined();
@@ -1321,7 +1328,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
     // Spec: "In Twine 2 a story format is a single JavaScript file, usually called format.js."
     // When both format.js and header.html exist in the same directory,
     // the Twine 2 format (format.js) should take priority.
-    const dir = join(TEMP_DIR, 'dual-format-dir');
+    const dir = join(tempRoot(), 'dual-format-dir');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'header.html'), '<html><body>"STORY"</body></html>', 'utf-8');
     writeFileSync(
@@ -1329,7 +1336,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
       'window.storyFormat({"name":"DualFormat","version":"1.0.0","source":"<html>{{STORY_DATA}}</html>"});',
       'utf-8',
     );
-    const formats = discoverFormats([TEMP_DIR]);
+    const formats = discoverFormats([tempRoot()]);
     const format = [...formats.values()].find((f) => f.id === 'dual-format-dir');
     if (!format) throw new Error('expected format');
     // format.js should be preferred (Twine 2 format)
@@ -1347,7 +1354,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
   afterAll(() => cleanupTemp());
 
   it('"STORY" placeholder is replaced with passage data in Twine 1 output', async () => {
-    const dir = join(TEMP_DIR, 'twine1-replacement-test');
+    const dir = join(tempRoot(), 'twine1-replacement-test');
     mkdirSync(dir, { recursive: true });
     const headerContent = '<html><head><title>Test</title></head><body><div id="storeArea">"STORY"</div></body></html>';
     writeFileSync(join(dir, 'header.html'), headerContent, 'utf-8');
@@ -1356,7 +1363,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
     const result = await compile({
       sources: [{ filename: 'test.tw', content: source }],
       formatId: 'twine1-replacement-test',
-      formatPaths: [TEMP_DIR],
+      formatPaths: [tempRoot()],
       useTweegoPath: false,
     });
     expect(result.output).toContain('tiddler="Start"');
@@ -1364,7 +1371,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
   });
 
   it('"STORY_SIZE" placeholder is replaced with passage count in Twine 1 output', async () => {
-    const dir = join(TEMP_DIR, 'twine1-size-test');
+    const dir = join(tempRoot(), 'twine1-size-test');
     mkdirSync(dir, { recursive: true });
     const headerContent =
       '<html><head><title>Test</title></head><body><div id="storeArea">"STORY"</div><span>"STORY_SIZE"</span></body></html>';
@@ -1374,14 +1381,14 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
     const result = await compile({
       sources: [{ filename: 'test.tw', content: source }],
       formatId: 'twine1-size-test',
-      formatPaths: [TEMP_DIR],
+      formatPaths: [tempRoot()],
       useTweegoPath: false,
     });
     expect(result.output).not.toContain('"STORY_SIZE"');
   });
 
   it('"STORY_SIZE" is replaced with the correct numeric passage count', async () => {
-    const dir = join(TEMP_DIR, 'twine1-size-count-test');
+    const dir = join(tempRoot(), 'twine1-size-count-test');
     mkdirSync(dir, { recursive: true });
     const headerContent =
       '<html><head><title>Test</title></head><body><div id="storeArea">"STORY"</div><span id="count">"STORY_SIZE"</span></body></html>';
@@ -1403,7 +1410,7 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
     const result = await compile({
       sources: [{ filename: 'test.tw', content: source }],
       formatId: 'twine1-size-count-test',
-      formatPaths: [TEMP_DIR],
+      formatPaths: [tempRoot()],
       useTweegoPath: false,
     });
     // The exact count depends on whether StoryTitle counts as a passage

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import type { Diagnostic } from '../src/types.js';
 import {
   validateConfig,
@@ -12,17 +12,6 @@ import {
   CONFIG_FILENAME,
   CONFIG_KEYS,
 } from '../src/config.js';
-
-const TMP_DIR = join(__dirname, '.tmp-config-test');
-
-function setup() {
-  rmSync(TMP_DIR, { recursive: true, force: true });
-  mkdirSync(TMP_DIR, { recursive: true });
-}
-
-function teardown() {
-  rmSync(TMP_DIR, { recursive: true, force: true });
-}
 
 describe('validateConfig', () => {
   it('accepts a valid config', () => {
@@ -133,45 +122,31 @@ describe('validateConfig', () => {
 });
 
 describe('loadConfig', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-config-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
   it('returns null when no config file exists', () => {
-    setup();
-    try {
-      const config = loadConfig(TMP_DIR);
-      expect(config).toBeNull();
-    } finally {
-      teardown();
-    }
+    const config = loadConfig(dir);
+    expect(config).toBeNull();
   });
 
   it('loads a valid config file', () => {
-    setup();
-    try {
-      writeFileSync(join(TMP_DIR, CONFIG_FILENAME), JSON.stringify({ sources: ['src/'] }));
-      const config = loadConfig(TMP_DIR);
-      expect(config).toEqual({ sources: ['src/'] });
-    } finally {
-      teardown();
-    }
+    writeFileSync(join(dir, CONFIG_FILENAME), JSON.stringify({ sources: ['src/'] }));
+    const config = loadConfig(dir);
+    expect(config).toEqual({ sources: ['src/'] });
   });
 
   it('throws on invalid JSON', () => {
-    setup();
-    try {
-      writeFileSync(join(TMP_DIR, CONFIG_FILENAME), '{bad json');
-      expect(() => loadConfig(TMP_DIR)).toThrow('Invalid JSON');
-    } finally {
-      teardown();
-    }
+    writeFileSync(join(dir, CONFIG_FILENAME), '{bad json');
+    expect(() => loadConfig(dir)).toThrow('Invalid JSON');
   });
 
   it('throws on invalid config structure', () => {
-    setup();
-    try {
-      writeFileSync(join(TMP_DIR, CONFIG_FILENAME), JSON.stringify({ sources: 42 }));
-      expect(() => loadConfig(TMP_DIR)).toThrow('Invalid config');
-    } finally {
-      teardown();
-    }
+    writeFileSync(join(dir, CONFIG_FILENAME), JSON.stringify({ sources: 42 }));
+    expect(() => loadConfig(dir)).toThrow('Invalid config');
   });
 });
 
