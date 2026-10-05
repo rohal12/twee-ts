@@ -3,13 +3,15 @@
  * Compiles .tw files and emits HTML as an asset. Compile errors fail the build
  * and emit nothing; warnings go through Rollup's warnings.
  */
-import { readdirSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { readdirSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { CompileOptions, CompileResult, Diagnostic } from '../types.js';
 import { compileForOutputFile } from '../compiler.js';
+import { outputPaths, realPathOf, walkedEntry } from '../filesystem.js';
+import type { OutputPaths } from '../filesystem.js';
 import { fatalError, formatDiagnostic, splitDiagnostics } from './diagnostics.js';
 import type { LocatedError } from './diagnostics.js';
-import { emittedFilePath } from './paths.js';
+import { createOutputRecord, outputLocations } from './paths.js';
 import type { OutputLocation } from './paths.js';
 
 export interface TweeTsRollupPluginOptions {
@@ -24,33 +26,63 @@ export interface TweeTsRollupPluginOptions {
 }
 
 /**
- * What `rollup --watch` watches for the input at the absolute `path`: the path
- * itself, which Rollup watches recursively when it is a folder, unless it holds
- * one of the files the build wrote (`written`). Such a folder is replaced by what
- * it contains, and the written files are left out, so writing them starts no
- * build. A file added straight to that folder later is found at the next build.
+ * What `rollup --watch` watches for the input at `path`, whose real path is
+ * `real`. `isRoot`: the input itself, which is followed wherever it leads.
+ *
+ * Rollup watches a folder recursively and follows the links in it. So a folder
+ * is registered whole only when nothing under it is left out of the story: no
+ * file or folder the build writes (`outputs`), and no link to a folder, which
+ * source discovery doesn't follow and which may lead to the output. Any other
+ * folder is replaced by what it contains, minus those, so writing the outputs
+ * starts no build. A file added straight to such a folder is found at the next
+ * build. A path the build writes to is never registered itself: Rollup fails a
+ * watch build whose watched files include its `output.dir` or `output.file`.
  */
-function watchTargets(path: string, written: readonly string[]): string[] {
-  if (written.includes(path)) return [];
-  if (!written.some((file) => file.startsWith(path + sep))) return [path];
-  let entries: string[];
+function watchTargets(path: string, real: string, outputs: OutputPaths, isRoot: boolean): string[] {
+  if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return [];
+  let entry;
   try {
-    entries = readdirSync(path);
+    entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
   } catch {
-    return [path]; // Unreadable: Rollup's watcher reports it.
+    // An input Rollup's watcher reports, unless it is an output location. Below an
+    // input, what source discovery can't read (a link to nothing, say) is skipped.
+    return isRoot && !outputs.isDir(real) ? [path] : [];
   }
-  return entries.flatMap((entry) => watchTargets(join(path, entry), written));
+  if (entry === undefined) return []; // A link to a folder, not followed.
+  if (outputs.isFile(entry.real)) return [];
+  if (!entry.stat.isDirectory()) return [path];
+  let names: string[];
+  try {
+    names = readdirSync(path);
+  } catch {
+    return isRoot && !outputs.isDir(real) ? [path] : [];
+  }
+  const children = names.map((name) => {
+    const child = join(path, name);
+    return { path: child, targets: watchTargets(child, join(entry.real, name), outputs, false) };
+  });
+  const whole =
+    !outputs.holds(entry.real) &&
+    children.every(({ path: child, targets }) => targets.length === 1 && targets[0] === child);
+  return whole ? [path] : children.flatMap(({ targets }) => targets);
 }
 
 export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   const outputFilename = options.outputFilename ?? 'index.html';
-  // In watch mode, the files the last build wrote and those the current one writes
-  // (absolute paths). They may sit inside a source folder, which must not rebuild for them.
-  let written: readonly string[] = [];
-  let writing: string[] = [];
+  // Every path this plugin's builds write: each output's folder or file, its story,
+  // and the files of each bundle. A source folder may hold any of them, and none
+  // may be read back as a source or rebuild under watch.
+  const record = createOutputRecord(outputFilename);
 
   return {
     name: 'twee-ts',
+
+    // Rollup's watch mode and CLI pass the whole config here, outputs included, so
+    // they are known before the first build starts and before any is written.
+    options(inputOptions: { readonly output?: unknown }): undefined {
+      for (const location of outputLocations(inputOptions.output)) record.addLocation(location);
+      return undefined;
+    },
 
     // `rollup --watch` rebuilds for the files the build registers. The story's
     // inputs are read in generateBundle, outside the module graph, so they are
@@ -58,16 +90,18 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     // to it included.
     buildStart(this: { addWatchFile: (id: string) => void; meta: { watchMode: boolean } }) {
       if (!this.meta.watchMode) return;
-      // A build that failed before writing leaves the last build's files as they were.
-      if (writing.length > 0) {
-        written = writing;
-        writing = [];
-      }
+      const outputs = outputPaths(record.outputs());
       const extra = options.compileOptions;
       const inputs = [...options.sources, ...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])];
       for (const input of inputs) {
-        for (const target of watchTargets(resolve(input), written)) this.addWatchFile(target);
+        for (const target of watchTargets(resolve(input), realPathOf(input), outputs, true)) this.addWatchFile(target);
       }
+    },
+
+    // Runs for every output before any of them generates its bundle, when the
+    // outputs are written together (as the CLI and watch mode write them).
+    renderStart(outputOptions: OutputLocation): void {
+      record.addLocation(outputOptions);
     },
 
     async generateBundle(
@@ -75,19 +109,19 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
         emitFile: (opts: { type: 'asset'; fileName: string; source: string }) => void;
         error: (error: LocatedError) => never;
         warn: (message: string) => void;
-        meta: { watchMode: boolean };
       },
       outputOptions: OutputLocation,
       bundle: Readonly<Record<string, unknown>>,
     ): Promise<void> {
-      // Where the story is written: a source folder may hold it, and its last
-      // build must not be loaded back as a source.
-      const outFile = emittedFilePath(outputOptions, outputFilename);
+      // Where this output writes the story and the bundle. A source folder may hold
+      // them, or another output's, and no last build of them may be read back.
+      record.addLocation(outputOptions);
+      record.addFiles(outputOptions, Object.keys(bundle));
       let result: CompileResult;
       try {
         result = await compileForOutputFile(
           { sources: options.sources, formatId: options.format, ...options.compileOptions },
-          outFile,
+          record.outputs(),
         );
       } catch (e) {
         return this.error(fatalError(e));
@@ -100,12 +134,6 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       }
       for (const w of warnings) this.warn(formatDiagnostic(w));
       this.emitFile({ type: 'asset', fileName: outputFilename, source: result.output });
-      if (this.meta.watchMode) {
-        for (const fileName of new Set([...Object.keys(bundle), outputFilename])) {
-          const path = emittedFilePath(outputOptions, fileName);
-          if (path !== undefined) writing.push(path);
-        }
-      }
     },
   };
 }

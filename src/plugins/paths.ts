@@ -1,9 +1,11 @@
 /**
  * Path helpers for the bundler plugins. Vite reports module ids with forward
  * slashes on every platform, while node:path gives backslashes on Windows, so
- * the Vite plugin compares paths in forward-slash form only.
+ * the Vite plugin compares paths in forward-slash form only. Paths a build
+ * writes are compared by real path instead (see filesystem.ts).
  */
 import { dirname, resolve } from 'node:path';
+import type { BuildOutputs } from '../filesystem.js';
 
 /** The output settings that say where a bundle is written, as Rollup and Vite pass them to generateBundle. */
 export interface OutputLocation {
@@ -20,6 +22,61 @@ export interface OutputLocation {
 export function emittedFilePath(output: OutputLocation, fileName: string): string | undefined {
   const dir = output.dir ?? (output.file === undefined ? undefined : dirname(output.file));
   return dir === undefined ? undefined : resolve(dir, fileName);
+}
+
+/**
+ * The locations a bundler's `output` option names: one output's settings or an
+ * array of them, as a config gives them. Outputs that name neither `dir` nor
+ * `file`, and anything that isn't an output's settings, are left out.
+ */
+export function outputLocations(option: unknown): OutputLocation[] {
+  return (Array.isArray(option) ? option : [option]).flatMap((output: unknown): OutputLocation[] => {
+    if (typeof output !== 'object' || output === null) return [];
+    const { dir, file } = output as { readonly dir?: unknown; readonly file?: unknown };
+    const location = {
+      ...(typeof dir === 'string' ? { dir } : {}),
+      ...(typeof file === 'string' ? { file } : {}),
+    };
+    return location.dir === undefined && location.file === undefined ? [] : [location];
+  });
+}
+
+/**
+ * Every path the builds of one plugin instance write, gathered from what the
+ * bundler reports: each output's location (`output.dir`, `output.file`, the
+ * story inside it) and the files of each bundle written there. It is kept across
+ * builds, so a compile also leaves out what another output of the same build
+ * writes, before or after it, and files an earlier build wrote that the current
+ * one doesn't (an old hashed chunk).
+ */
+export interface OutputRecord {
+  /** Records an output location: its folder, its file, and the story it writes. */
+  addLocation(output: OutputLocation): void;
+  /** Records the files a bundle writes to `output`, by output file name. */
+  addFiles(output: OutputLocation, fileNames: Iterable<string>): void;
+  /** Every path recorded so far: `output.dir` folders as folders, the rest as files. */
+  outputs(): BuildOutputs;
+}
+
+/** An empty OutputRecord for a plugin that writes its story as `storyFileName`. */
+export function createOutputRecord(storyFileName: string): OutputRecord {
+  const files = new Set<string>();
+  const dirs = new Set<string>();
+  const addFiles = (output: OutputLocation, fileNames: Iterable<string>): void => {
+    for (const fileName of fileNames) {
+      const path = emittedFilePath(output, fileName);
+      if (path !== undefined) files.add(path);
+    }
+  };
+  return {
+    addLocation(output) {
+      if (output.dir !== undefined) dirs.add(resolve(output.dir));
+      if (output.file !== undefined) files.add(resolve(output.file));
+      addFiles(output, [storyFileName]);
+    },
+    addFiles,
+    outputs: () => ({ files: [...files], dirs: [...dirs] }),
+  };
 }
 
 /** The path with Windows separators turned into forward slashes. */

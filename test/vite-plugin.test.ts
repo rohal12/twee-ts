@@ -13,7 +13,15 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
-import { build, createLogger, createServer, type InlineConfig, type Logger, type ViteDevServer } from 'vite';
+import {
+  build,
+  createLogger,
+  createServer,
+  type InlineConfig,
+  type Logger,
+  type Plugin,
+  type ViteDevServer,
+} from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { toPosix } from '../src/plugins/paths.js';
 
@@ -221,6 +229,48 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(html).not.toContain('OLD_TEXT');
     expect(hasDeletedPassage(html)).toBe(false);
   });
+
+  it("leaves every output's story out of each compile when the build has several outputs (#153)", async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const plugin = tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    const outDirs = [join(dir, 'dist'), join(dir, 'story', 'preview')];
+    const buildOptions = {
+      emptyOutDir: false,
+      rolldownOptions: { output: outDirs.map((outDir) => ({ dir: outDir })) },
+    };
+    await buildProject(dir, plugin, buildOptions);
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    await buildProject(dir, plugin, buildOptions);
+    for (const outDir of outDirs) {
+      const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+      expect(html).toContain('NEW_TEXT');
+      expect(html).not.toContain('OLD_TEXT');
+      expect(hasDeletedPassage(html)).toBe(false);
+    }
+  });
+
+  it.each([
+    ['a subfolder of', (dir: string) => outDirInSources(dir)],
+    ['the same folder as', (dir: string) => join(dir, 'story')],
+  ])(
+    'leaves the assets and public files a build writes into %s a source folder out of the story (#184)',
+    async (_where, outDirOf) => {
+      const dir = makeProject({
+        'story/start.tw': STORY,
+        'app/main.ts': KEEP_ENTRY,
+        'public/vendor.js': 'window.vendorLoaded = true;\n',
+      });
+      writeBinary(dir, 'app/img/keep.png', 8192);
+      const outDir = outDirOf(dir);
+      for (let build = 1; build <= 2; build++) {
+        await buildProject(dir, entryPlugin(dir), { outDir, emptyOutDir: false });
+        const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+        expect(html).not.toContain('Twine.image');
+        expect(userScript(html)).not.toContain('vendorLoaded');
+      }
+      expect(readdirSync(outDir)).toEqual(expect.arrayContaining(['keep.png', 'vendor.js']));
+    },
+  );
 
   it('without an entry: a root index.html does not replace the story', async () => {
     const dir = makeProject({
@@ -430,6 +480,79 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     expect(builds).toBe(0);
   });
 });
+
+describe(
+  "vite plugin: build watch with the bundler's output.dir in a source folder (#155)",
+  { timeout: 30_000 },
+  () => {
+    let watcher: BuildWatcher | undefined;
+
+    afterEach(async () => {
+      await watcher?.close();
+      watcher = undefined;
+    });
+
+    /** The plugin, with the files its buildStart registers for the watcher added to `files`. */
+    interface WatchContext {
+      addWatchFile(id: string): void;
+    }
+
+    function recordingBuildStart(plugin: Plugin, files: string[]): Plugin {
+      const buildStart = plugin.buildStart as (this: WatchContext, options: unknown) => void;
+      return {
+        ...plugin,
+        buildStart(this: WatchContext, options: unknown) {
+          const context = new Proxy(this, {
+            get(target, key) {
+              if (key === 'addWatchFile') {
+                return (id: string) => {
+                  files.push(id);
+                  target.addWatchFile(id);
+                };
+              }
+              const value: unknown = Reflect.get(target, key, target);
+              return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+            },
+          });
+          buildStart.call(context, options);
+        },
+      };
+    }
+
+    it('watches neither the story it writes nor a folder that holds it, and rebuilds for an edit', async () => {
+      const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT'), 'story/parts/more.tw': ':: More\nMore\n' });
+      const story = toPosix(join(dir, 'story'));
+      const preview = join(dir, 'story', 'preview');
+      const out = join(preview, 'index.html');
+      const files: string[] = [];
+      const plugin = tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+      const started = (await build({
+        configFile: false,
+        root: dir,
+        logLevel: 'silent',
+        build: { emptyOutDir: false, watch: {}, rolldownOptions: { output: { dir: preview } } },
+        plugins: [recordingBuildStart(plugin, files)],
+      })) as unknown as BuildWatcher;
+      watcher = started;
+      await new Promise<void>((done, fail) => {
+        started.on('event', (event) => {
+          if (event.code === 'BUNDLE_END') void event.result?.close();
+          if (event.code === 'END') done();
+          if (event.code === 'ERROR') fail(new Error('the first build failed'));
+        });
+      });
+      expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
+      // The story folder holds the output folder, so it is listed by what it holds.
+      expect([...new Set(files)].sort()).toEqual([`${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`]);
+
+      writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+      await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT'), {
+        timeout: 15_000,
+        interval: 100,
+      });
+    });
+  },
+);
 
 /** Writes a vite.config.mjs that loads the plugin from source, as a project's config file would. */
 function writeConfig(dir: string, options: Record<string, unknown>, extra = ''): string {
@@ -1035,6 +1158,52 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     }
     expect(await page(url)).not.toContain('REBUILT_TEXT');
     expect(reloadsSent(send)).toBe(0);
+  });
+
+  it("leaves a build's story out when the bundler's output.dir put it in a source folder (#155)", async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const preview = join(dir, 'story', 'preview');
+    const buildOptions = { emptyOutDir: false, rolldownOptions: { output: { dir: preview } } };
+    const storyPlugin = (): ReturnType<typeof tweeTsPlugin> =>
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    await buildProject(dir, storyPlugin(), buildOptions);
+    expect(readFileSync(join(preview, 'index.html'), 'utf-8')).toContain('OLD_TEXT');
+
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    const url = await start(dir, storyPlugin(), undefined, { build: buildOptions });
+    const html = await page(url);
+    expect(html).toContain('NEW_TEXT');
+    expect(html).not.toContain('OLD_TEXT');
+    expect(hasDeletedPassage(html)).toBe(false);
+  });
+
+  it('keeps recompiling after server.restart() with the plugin passed inline (#179)', async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('FIRST_TEXT') });
+    const url = await start(
+      dir,
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
+    );
+    expect(await page(url)).toContain('FIRST_TEXT');
+    // The restarted server keeps the plugin instance; closing the old one must not stop it.
+    await server!.restart();
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('AFTER_RESTART'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('AFTER_RESTART'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+  });
+
+  it('keeps recompiling after a build with the same plugin instance ends (#179)', async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('FIRST_TEXT') });
+    const shared = tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    const url = await start(dir, shared);
+    expect(await page(url)).toContain('FIRST_TEXT');
+    await buildProject(dir, shared);
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('AFTER_BUILD'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('AFTER_BUILD'), {
+      timeout: 10_000,
+      interval: 100,
+    });
   });
 
   it('still recompiles for a module that an exclude glob also matches', async () => {

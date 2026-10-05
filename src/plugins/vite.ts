@@ -12,7 +12,7 @@
  * a module changed without the watcher reporting it.
  */
 import { readdirSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Logger, Plugin, ResolvedConfig, UserConfig } from 'vite';
@@ -20,9 +20,11 @@ import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineS
 import { compileForOutputFile } from '../compiler.js';
 import { fatalError, formatDiagnostic, splitDiagnostics } from './diagnostics.js';
 import type { LocatedError } from './diagnostics.js';
-import { getFilenames, isExcluded } from '../filesystem.js';
+import { getFilenames, isExcluded, outputPaths, realPathOf, walkedEntry } from '../filesystem.js';
+import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
-import { emittedFilePath, isInside, isViteConfigTemp, toPosix } from './paths.js';
+import { createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
+import type { OutputLocation } from './paths.js';
 
 export interface TweeTsVitePluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
@@ -166,24 +168,59 @@ function headInputs(options: TweeTsVitePluginOptions): string[] {
 }
 
 /**
- * Whether a file (forward-slash path) is an input the compile leaves out: the
- * story HTML a build writes (`builtStory`, an absolute path), and the sources
- * `exclude` matches. `exclude` never applies to the head file and modules.
+ * Whether a file (forward-slash path) is a source `exclude` matches. `exclude`
+ * never applies to the head file and modules.
  */
-function excludedInput(options: TweeTsVitePluginOptions, builtStory: string | undefined): (file: string) => boolean {
+function excludedByGlob(options: TweeTsVitePluginOptions): (file: string) => boolean {
   const exclude = options.compileOptions?.exclude ?? [];
   const notExcludable = headInputs(options);
-  const output = builtStory === undefined ? undefined : toPosix(builtStory);
-  return (file) => file === output || (isExcluded(file, exclude) && !isInside(file, notExcludable));
+  return (file) => isExcluded(file, exclude) && !isInside(file, notExcludable);
 }
 
 /**
- * Where a build writes the story HTML with this config: `build.outDir`, against
- * the root. It may sit inside a source folder, where neither a compile nor the
- * watchers may take it for a source.
+ * Where a build with this config writes: each output's folder, the bundler's
+ * `output.dir` or else `build.outDir`, or the bundler's `output.file`. Vite
+ * resolves an `output.dir` against the root when it empties the folder and
+ * copies the public files into it, while the bundler resolves it against the
+ * working directory when it writes; both count.
  */
-function builtStoryPath(config: ResolvedConfig, outputFilename: string): string {
-  return resolve(config.root, config.build.outDir, outputFilename);
+function configOutputLocations(config: ResolvedConfig): OutputLocation[] {
+  const outDir = resolve(config.root, config.build.outDir);
+  const bundlerOptions = (
+    config.build as unknown as Readonly<Record<string, { readonly output?: unknown } | undefined>>
+  )[viteMajor >= 8 ? 'rolldownOptions' : 'rollupOptions'];
+  const option = bundlerOptions?.output;
+  const outputs: unknown[] = option === undefined ? [{}] : Array.isArray(option) ? option : [option];
+  return outputs.flatMap((output) => {
+    const [location] = outputLocations(output);
+    if (location === undefined) return [{ dir: outDir }];
+    if (location.dir === undefined) return [location];
+    return [{ dir: resolve(location.dir) }, { dir: resolve(config.root, location.dir) }];
+  });
+}
+
+/**
+ * Every path a build with this config writes, as far as the config tells: each
+ * output's folder (see configOutputLocations), the story in it, and the copies
+ * of the public files Vite puts there. The plugin adds the files each bundle
+ * writes as it builds (see createOutputRecord).
+ */
+function configOutputs(config: ResolvedConfig, outputFilename: string): BuildOutputs {
+  const record = createOutputRecord(outputFilename);
+  const publicFiles =
+    config.build.copyPublicDir && config.publicDir
+      ? getFilenames([config.publicDir]).filenames.map((file) => relative(config.publicDir, resolve(file)))
+      : [];
+  for (const location of configOutputLocations(config)) {
+    record.addLocation(location);
+    record.addFiles(location, publicFiles);
+  }
+  return record.outputs();
+}
+
+/** Both builds' outputs together. */
+function mergeOutputs(a: BuildOutputs, b: BuildOutputs): BuildOutputs {
+  return { files: [...a.files, ...b.files], dirs: [...a.dirs, ...b.dirs] };
 }
 
 /** Absolute forward-slash paths whose changes recompile the story: sources, head file, modules. */
@@ -193,48 +230,52 @@ function watchedInputs(options: TweeTsVitePluginOptions): string[] {
 
 /**
  * What `vite build --watch` watches for the story: every file under `inputs`
- * (forward-slash paths) but those `skip` returns true for, and every folder
- * under them. The bundler watches each path on its own, not recursively, so a
- * folder is listed for the files added to it or deleted from it.
+ * (forward-slash paths) that source discovery reads, but those `skip` returns
+ * true for, and every folder under them. The bundler watches each path on its
+ * own, not recursively, so a folder is listed for the files added to it or
+ * deleted from it. As in source discovery, a link to a folder is not followed.
  *
  * A watched folder may still report changes in its subfolders (Rolldown's
- * watcher on Linux does), so no folder that holds the story the build writes
- * (`story`, a forward-slash path) is listed: writing the story would start the
- * next build. A file added straight to such a folder is found when another
- * change starts a build.
+ * watcher on Linux does), so no path the build writes (`outputs`) is listed, nor
+ * a folder that holds one: writing the outputs would start the next build. A file
+ * added straight to such a folder is found when another change starts a build.
  */
-function buildWatchTargets(
-  inputs: readonly string[],
-  skip: (file: string) => boolean,
-  story: string | undefined,
-): string[] {
+function buildWatchTargets(inputs: readonly string[], skip: (file: string) => boolean, outputs: OutputPaths): string[] {
   const targets: string[] = [];
-  const walk = (path: string): void => {
-    let entries;
+  const walk = (path: string, real: string, isRoot: boolean): void => {
+    if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return;
+    let entry;
+    let names;
     try {
-      if (!statSync(path).isDirectory()) {
+      entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
+      if (entry === undefined || outputs.isFile(entry.real)) return;
+      if (!entry.stat.isDirectory()) {
         if (!skip(path)) targets.push(path);
         return;
       }
-      entries = readdirSync(path);
+      names = readdirSync(path);
     } catch {
       return; // Missing or unreadable: the compile reports it.
     }
-    if (story === undefined || !story.startsWith(`${path}/`)) targets.push(path);
-    for (const entry of entries) walk(`${path}/${entry}`);
+    if (!outputs.holds(entry.real)) targets.push(path);
+    for (const name of names) walk(`${path}/${name}`, join(entry.real, name), false);
   };
-  for (const input of inputs) walk(input);
+  for (const input of inputs) walk(input, realPathOf(input), true);
   return targets;
 }
 
 /**
- * Every file under `inputs` (forward-slash paths) but those `skip` returns true
- * for, with what a change to it alters: modification time, size and inode (a
- * file replaced by a new one).
+ * Every file under `inputs` (forward-slash paths) that source discovery reads,
+ * leaving out `outputs`, but those `skip` returns true for, with what a change to
+ * it alters: modification time, size and inode (a file replaced by a new one).
  */
-function inputFiles(inputs: readonly string[], skip: (file: string) => boolean): Map<string, string> {
+function inputFiles(
+  inputs: readonly string[],
+  skip: (file: string) => boolean,
+  outputs: BuildOutputs,
+): Map<string, string> {
   const files = new Map<string, string>();
-  for (const filename of getFilenames([...inputs]).filenames) {
+  for (const filename of getFilenames(inputs, outputs).filenames) {
     const file = toPosix(resolve(filename));
     if (skip(file)) continue;
     try {
@@ -448,8 +489,15 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const cache = new Map<string, FileCacheEntry>();
   let innerBuild = false;
   let building = false;
-  let builtStory: string | undefined; // where a build writes the story, once the config is resolved
-  let stopDev: (() => void) | undefined;
+  // The config of the last build this plugin took part in, once resolved.
+  let buildConfig: ResolvedConfig | undefined;
+  // The files this plugin's builds write, and their output folders, as each bundle
+  // reports them. A source folder may hold any of them; none is a source.
+  const record = createOutputRecord(outputFilename);
+  // Everything the builds and the dev server leave out: what the config says a
+  // build writes, and what the builds so far wrote.
+  const allOutputs = (config: ResolvedConfig): BuildOutputs =>
+    mergeOutputs(configOutputs(config, outputFilename), record.outputs());
 
   if (options.entry && viteMajor < 8) {
     throw new Error(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`);
@@ -469,7 +517,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     configResolved(config) {
       if (innerBuild) return;
-      builtStory = builtStoryPath(config, outputFilename);
+      if (building) buildConfig = config;
       if (!options.entry) return;
       const sources = options.sources.map((p) => toPosix(resolve(p)));
       if (isInside(toPosix(resolve(options.entry)), sources)) {
@@ -485,9 +533,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // inputs are read in generateBundle, outside the module graph, so they are
     // registered here; the dev server watches them itself (configureServer).
     buildStart() {
-      if (innerBuild || !building || !this.meta.watchMode) return;
-      const story = builtStory === undefined ? undefined : toPosix(builtStory);
-      for (const target of buildWatchTargets(watchedInputs(options), excludedInput(options, builtStory), story)) {
+      if (innerBuild || !building || !this.meta.watchMode || buildConfig === undefined) return;
+      const outputs = outputPaths(allOutputs(buildConfig));
+      for (const target of buildWatchTargets(watchedInputs(options), excludedByGlob(options), outputs)) {
         this.addWatchFile(target);
       }
     },
@@ -517,13 +565,15 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         for (const [fileName, item] of Object.entries(bundle)) {
           if (item.type === 'chunk' && item.facadeModuleId === RESOLVED_EMPTY_INPUT) delete bundle[fileName];
         }
+        // Where this output writes the story and the bundle, should the bundler's own
+        // settings differ from what the config said. Nothing a build writes is a source.
+        record.addLocation(outputOptions);
+        record.addFiles(outputOptions, Object.keys(bundle));
+        const outputs = buildConfig === undefined ? record.outputs() : allOutputs(buildConfig);
         const entry = options.entry ? takeEntryFromBundle(bundle) : undefined;
-        // The bundler's own output settings say where the story goes, should they
-        // differ from build.outDir; its last build there is no source.
-        const outFile = emittedFilePath(outputOptions, outputFilename) ?? builtStory;
         let result: CompileResult;
         try {
-          result = await compileForOutputFile(buildCompileOptions(options, entry), outFile, cache);
+          result = await compileForOutputFile(buildCompileOptions(options, entry), outputs, cache);
         } catch (e) {
           return this.error(fatalError(e));
         }
@@ -543,9 +593,16 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const base = server.config.base;
       const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
       const inputs = watchedInputs(options);
-      // A build's story HTML, which `vite build` may have left inside a source folder.
-      const buildOutput = builtStoryPath(server.config, outputFilename);
-      const excluded = excludedInput(options, buildOutput);
+      // What a build writes, which `vite build` may have left inside a source folder:
+      // the story, chunks and assets, and the copies of the public files.
+      let outputs = allOutputs(server.config);
+      let output = outputPaths(outputs);
+      const refreshOutputs = (): void => {
+        outputs = allOutputs(server.config);
+        output = outputPaths(outputs);
+      };
+      const excludedGlob = excludedByGlob(options);
+      const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
       const root = toPosix(server.config.root);
       server.watcher.add(inputs);
@@ -562,10 +619,17 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // watcher missed a change (see catchUp).
       let compiledInputs = new Map<string, string>();
       let catchingUp: Promise<void> | undefined;
-      stopDev = () => {
+      // Stops this server's rebuilds when it closes, on close() and restart() alike;
+      // no rebuild may start after that, including one whose timer is still pending
+      // in middleware mode. Vite closes each server's own watcher then. closeBundle
+      // can't tell: it runs for the whole plugin instance, which a restarted server
+      // (the plugin passed inline keeps its instance) or a build may share.
+      const closeWatcher = server.watcher.close.bind(server.watcher);
+      server.watcher.close = async () => {
         closed = true;
         clearTimeout(timer);
         pending.clear();
+        return closeWatcher();
       };
 
       // The files that belong to the entry: after a good bundle, the modules it was
@@ -579,9 +643,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // hold a full-reload for the first page that connects and reload it once.
       const rebuild = async (changed: ReadonlySet<string>, initial = false): Promise<void> => {
         if (closed) return;
+        refreshOutputs();
         // Taken before the compile reads anything, so a file written during it
         // still counts as changed afterwards.
-        compiledInputs = inputFiles(inputs, excluded);
+        compiledInputs = inputFiles(inputs, excludedGlob, outputs);
         // The compile cache trusts modification times, which a quick save may leave
         // unchanged (coarse file-system timestamps); forget the files that changed.
         for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
@@ -591,7 +656,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
             entry = await bundleEntryForDev(server.config, entryPath);
             entryStale = false;
           }
-          const result = await compileForOutputFile(buildCompileOptions(options, entry), buildOutput, cache);
+          const result = await compileForOutputFile(buildCompileOptions(options, entry), outputs, cache);
           for (const w of splitDiagnostics(result)) server.config.logger.warn(`[twee-ts] ${formatDiagnostic(w)}`);
           html = injectViteClient(result.output, base);
           lastError = undefined;
@@ -641,7 +706,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const catchUp = (): Promise<void> => {
         catchingUp ??= (async () => {
           await queue;
-          const changed = filesChanged(compiledInputs, inputFiles(inputs, excluded));
+          const changed = filesChanged(compiledInputs, inputFiles(inputs, excludedGlob, outputs));
           if (changed.size === 0) return;
           // Changes the watcher did report, still waiting out the debounce, go into the same compile.
           for (const file of pending) changed.add(file);
@@ -679,12 +744,6 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }
         next();
       });
-    },
-
-    // Vite runs this when the dev server closes (and after a build); no rebuild may
-    // start after it, including one whose timer is still pending in middleware mode.
-    closeBundle() {
-      stopDev?.();
     },
   };
 }
