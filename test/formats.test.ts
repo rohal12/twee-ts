@@ -102,6 +102,30 @@ describe('format wrapper comments (#221)', () => {
     });
   }
 
+  const obj = '{"name":"E","version":"1.0.0","source":"s"}';
+
+  it('ignores lookalike identifiers and calls without an object', () => {
+    expect(parseFormatJSON(`xstoryFormat({"name":"X"}); storyFormat /* c */ ; window.storyFormat(${obj});`)?.name).toBe(
+      'E',
+    );
+    expect(parseFormatJSON(`window.storyFormat(\n // c\n ${obj} // tail`)?.name).toBe('E');
+  });
+
+  it('copes with escapes, template substitutions and unterminated trivia', () => {
+    expect(parseFormatJSON(`var a = "q\\" {"; var b = \`x\${ "}" + \`{\` }\`; storyFormat(${obj}); /* {`)?.name).toBe(
+      'E',
+    );
+    expect(parseFormatJSON(`storyFormat(${obj}); // {`)?.name).toBe('E');
+  });
+
+  it('falls back to the last closing brace when the object is not balanced', () => {
+    const regex = '{"name":"E","version":"1.0.0","source":"s","setup": function(){ return /\'{/; }}';
+    expect(decodeFormatJSON(`storyFormat(${regex}); // }`).ok).toBe(true);
+    expect(decodeFormatJSON('storyFormat({"name":"E", "source": `x${ ').ok).toBe(false);
+    expect(decodeFormatJSON('} storyFormat({').ok).toBe(false);
+    expect(decodeFormatJSON('x = "unterminated {').ok).toBe(false);
+  });
+
   it('decodes a relaxed object between brace comments', () => {
     const source = `/* { */ window.storyFormat({ name: 'R', /* } */ version: "1.0.0", source: 'a}{',\n});\n// }`;
     expect(parseFormatJSON(source)?.source).toBe('a}{');
