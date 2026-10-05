@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
 import { getFormatSearchDirs } from '../src/formats.js';
 import { resolveStoryFormat } from '../src/format-resolution.js';
-import { getCacheDir } from '../src/remote-formats.js';
+import { fetchDirectFormat, getCacheDir } from '../src/remote-formats.js';
 import type { CompileOptions, Diagnostic, SFAIndexEntry } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -608,5 +608,51 @@ describe('resolveStoryFormat', () => {
     );
     expect(found).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  describe('older fallback from format URLs', () => {
+    const URL_OLDER = 'https://example.test/older/format.js';
+    const request = { kind: 'name', name: 'Urlfmt', version: '1.1.0' } as const;
+
+    it('selects a primed same-major older URL copy with the older-version warning and no network', async () => {
+      stubFetch({ [URL_OLDER]: formatJs('Urlfmt', '1.0.0') });
+      await fetchDirectFormat(URL_OLDER);
+      const fetchMock = stubOffline();
+      const diagnostics: Diagnostic[] = [];
+      const found = await resolveStoryFormat(
+        request,
+        { formatPaths: [], useTweegoPath: false, noRemote: true, formatUrls: [URL_OLDER] },
+        diagnostics,
+      );
+      expect(found?.version).toBe('1.0.0');
+      expect(diagnostics).toEqual([
+        { level: 'warning', message: expect.stringContaining('using Urlfmt 1.0.0 instead') },
+      ]);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('selects an older copy on its first online download', async () => {
+      stubFetch({ [URL_OLDER]: formatJs('Urlfmt', '1.0.0') });
+      const diagnostics: Diagnostic[] = [];
+      const found = await resolveStoryFormat(
+        request,
+        { formatPaths: [], useTweegoPath: false, formatUrls: [URL_OLDER] },
+        diagnostics,
+      );
+      expect(found?.version).toBe('1.0.0');
+      expect(diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('using Urlfmt 1.0.0 instead'));
+    });
+
+    it('rejects a URL copy of another major version', async () => {
+      stubFetch({ [URL_OLDER]: formatJs('Urlfmt', '0.9.0') });
+      const diagnostics: Diagnostic[] = [];
+      const found = await resolveStoryFormat(
+        request,
+        { formatPaths: [], useTweegoPath: false, formatUrls: [URL_OLDER] },
+        diagnostics,
+      );
+      expect(found).toBeUndefined();
+      expect(diagnostics.some((d) => d.level === 'error')).toBe(true);
+    });
   });
 });
