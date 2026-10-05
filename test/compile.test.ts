@@ -1250,7 +1250,10 @@ describe('passage names generated for loaded files are unique across the story',
     return file;
   }
 
-  function named(passages: readonly { name: string; tags: string[]; text: string }[], tag: string): string[][] {
+  function named(
+    passages: readonly { name: string; tags: readonly string[]; text: string }[],
+    tag: string,
+  ): string[][] {
     return passages.filter((p) => p.tags.includes(tag)).map((p) => [p.name, p.text]);
   }
 

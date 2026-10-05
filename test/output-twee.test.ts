@@ -38,7 +38,7 @@ function warnings(diagnostics: readonly Diagnostic[]): string[] {
   return diagnostics.filter((d) => d.level === 'warning').map((d) => d.message);
 }
 
-function texts(passages: readonly { name: string; tags: string[]; text: string }[]) {
+function texts(passages: readonly { name: string; tags: readonly string[]; text: string }[]) {
   return passages.map((p) => [p.name, p.tags, p.text] as const);
 }
 

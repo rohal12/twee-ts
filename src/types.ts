@@ -178,8 +178,9 @@ export interface Story {
 
 // --- Readonly story (post-construction) ---
 
-export type ReadonlyPassage = Readonly<Passage> & {
+export type ReadonlyPassage = Readonly<Omit<Passage, 'tags' | 'metadata'>> & {
   readonly tags: readonly string[];
+  readonly metadata?: Readonly<PassageMetadata>;
 };
 
 export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2'>> & {
