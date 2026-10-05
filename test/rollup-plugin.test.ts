@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -216,6 +217,59 @@ describe('rollup plugin', () => {
       expect(watchFiles(storyPlugin(dir), true)).toEqual([join(story, 'start.tw')]);
     },
   );
+
+  it.skipIf(process.platform === 'win32')('registers no link to a file the build writes', () => {
+    const dir = makeProject(STORY);
+    const story = join(dir, 'story');
+    mkdirSync(join(dir, 'dist'));
+    writeFileSync(join(dir, 'dist', 'index.html'), 'last build');
+    symlinkSync(join('..', 'dist', 'index.html'), join(story, 'last.html'));
+    const plugin = storyPlugin(dir);
+    plugin.options({ output: { file: join(dir, 'dist', 'index.html'), format: 'es' } });
+    expect(watchFiles(plugin, true)).toEqual([join(story, 'start.tw')]);
+  });
+
+  describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('with a folder that cannot be read', () => {
+    it('skips an unreadable folder below a source', () => {
+      const dir = makeProject(STORY);
+      const story = join(dir, 'story');
+      const locked = join(story, 'locked');
+      mkdirSync(locked);
+      chmodSync(locked, 0o000);
+      try {
+        expect(watchFiles(storyPlugin(dir), true)).toEqual([join(story, 'start.tw')]);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    });
+
+    it('still registers an unreadable source folder, so the watcher reports it', () => {
+      const dir = makeProject(STORY);
+      const locked = join(dir, 'locked');
+      mkdirSync(locked);
+      chmodSync(locked, 0o000);
+      try {
+        const plugin = tweeTsPlugin({ sources: [locked], compileOptions: COMPILE });
+        expect(watchFiles(plugin, true)).toEqual([locked]);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    });
+
+    it('registers nothing for an unreadable source folder that is the output folder', () => {
+      const dir = makeProject(STORY);
+      const locked = join(dir, 'locked');
+      mkdirSync(locked);
+      chmodSync(locked, 0o000);
+      try {
+        const plugin = tweeTsPlugin({ sources: [locked], compileOptions: COMPILE });
+        plugin.options({ output: { dir: locked, format: 'es' } });
+        expect(watchFiles(plugin, true)).toEqual([]);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    });
+  });
 });
 
 describe('rollup plugin: build', { timeout: 30_000 }, () => {

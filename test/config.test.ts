@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -64,6 +64,20 @@ describe('validateConfig', () => {
   it('rejects non-string elements in array fields', () => {
     const errors = validateConfig({ sources: ['ok', 42] });
     expect(errors).toContain('"sources" must be an array of strings.');
+  });
+
+  it('rejects an invalid or non-string wordCountMethod', () => {
+    for (const value of ['syllables', 3, null]) {
+      const errors = validateConfig({ wordCountMethod: value });
+      expect(errors).toEqual(['"wordCountMethod" must be one of: tweego, whitespace.']);
+    }
+    for (const value of ['tweego', 'whitespace']) {
+      expect(validateConfig({ wordCountMethod: value })).toEqual([]);
+    }
+  });
+
+  it('rejects a non-string outputMode', () => {
+    expect(validateConfig({ outputMode: 7 })).toHaveLength(1);
   });
 
   it('rejects invalid outputMode', () => {
@@ -163,6 +177,21 @@ describe('loading a config file with a BOM, CRLF line endings or another encodin
   it('loads through loadConfig()', () => {
     writeFileSync(join(dir, CONFIG_FILENAME), WITH_BOM);
     expect(loadConfig(dir)).toEqual({ sources: ['src/'], output: 'story.html' });
+  });
+
+  it('looks in the working directory when no directory is given', () => {
+    writeFileSync(join(dir, CONFIG_FILENAME), JSON.stringify({ sources: ['src/'] }));
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      expect(loadConfig()).toEqual({ sources: ['src/'] });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it('throws from loadConfigFile() naming the file when it cannot be read', () => {
+    const file = join(dir, 'missing.json');
+    expect(() => loadConfigFile(file)).toThrow(`Cannot read config file ${file}:`);
   });
 
   it('loads through loadConfigFile()', () => {

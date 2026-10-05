@@ -75,6 +75,11 @@ describe('createIFID', () => {
     expect(createIFID(WRAPPED.toLowerCase())).toBe(BARE);
   });
 
+  it('rejects a 45-character value whose wrapper is wrong', () => {
+    expect(validateIFID(`UUID:\\\\${BARE}//`)).toBe('invalid IFID UUID://...// format');
+    expect(validateIFID(`UUID://${BARE}\\\\`)).toBe('invalid IFID UUID://...// format');
+  });
+
   it('throws on an invalid IFID', () => {
     expect(() => createIFID('not-an-ifid')).toThrow('Invalid IFID: invalid IFID length');
   });

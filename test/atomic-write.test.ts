@@ -47,6 +47,32 @@ function failNextWritePartWay(during: () => void = () => {}): void {
   });
 }
 
+describe('writeFileAtomic failures', () => {
+  it('wraps a thrown value that is not an Error, without a code', () => {
+    const path = join(dir, 'out.html');
+    mockedWriteFileSync.mockImplementationOnce(() => {
+      throw 'boom';
+    });
+    let thrown: unknown;
+    try {
+      writeFileAtomic(path, 'x');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(`Cannot write ${path}: boom`);
+    expect(thrown).not.toHaveProperty('code');
+  });
+
+  it('wraps an Error that has no code, without inventing one', () => {
+    const path = join(dir, 'out.html');
+    mockedWriteFileSync.mockImplementationOnce(() => {
+      throw new Error('disk on fire');
+    });
+    expect(() => writeFileAtomic(path, 'x')).toThrow(`Cannot write ${path}: disk on fire`);
+  });
+});
+
 describe('writeFileAtomic', () => {
   it('creates a file that did not exist', () => {
     const path = join(dir, 'out.html');

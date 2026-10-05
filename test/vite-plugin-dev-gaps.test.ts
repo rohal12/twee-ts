@@ -1,0 +1,189 @@
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createServer as createNetServer, type AddressInfo } from 'node:net';
+import { build, createLogger, createServer, type Logger, type ViteDevServer } from 'vite';
+import { tweeTsPlugin } from '../src/plugins/vite.js';
+
+const FORMATS = join(__dirname, 'fixtures', 'storyformats');
+const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
+const STORY =
+  ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nGaps\n\n:: Start\nHello from the story.\n';
+const DUPLICATE_START = `${STORY}\n:: Start\nHello again.\n`;
+const BROKEN = `${STORY}\n:: Broken [unclosed\nText\n`;
+
+const dirs: string[] = [];
+function makeProject(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-vite-gaps-'));
+  dirs.push(dir);
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(dir, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content, 'utf-8');
+  }
+  return dir;
+}
+
+let server: ViteDevServer | undefined;
+
+afterEach(async () => {
+  await server?.close();
+  server = undefined;
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+async function freePort(): Promise<number> {
+  return new Promise((done) => {
+    const probe = createNetServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => done(port));
+    });
+  });
+}
+
+/** Starts a dev server on a free port with no logging unless `customLogger` is given; returns its base URL. */
+async function start(dir: string, options: Parameters<typeof tweeTsPlugin>[0], customLogger?: Logger): Promise<string> {
+  const port = await freePort();
+  server = await createServer({
+    configFile: false,
+    root: dir,
+    logLevel: 'silent',
+    ...(customLogger ? { customLogger } : {}),
+    plugins: [tweeTsPlugin(options)],
+    server: { host: '127.0.0.1', port, strictPort: true },
+  });
+  await server.listen();
+  return `http://127.0.0.1:${port}/`;
+}
+
+/** A logger that keeps what it is given, by level. */
+function recordingLogger(): { logger: Logger; warnings: string[]; errors: string[] } {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const logger: Logger = {
+    ...createLogger('silent'),
+    warn: (message) => void warnings.push(message),
+    error: (message) => void errors.push(message),
+  };
+  return { logger, warnings, errors };
+}
+
+describe('vite plugin: dev server details', { timeout: 30_000 }, () => {
+  it('serves the client first when the story format has no <head>', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY.replace(':: StoryTitle\nGaps\n\n', ''),
+      'formats/headless-1/format.js':
+        'window.storyFormat({"name":"Headless","version":"1.0.0","source":"<body>{{STORY_DATA}}</body>"});',
+    });
+    const url = await start(dir, {
+      sources: [join(dir, 'story')],
+      format: 'headless-1',
+      compileOptions: { ...COMPILE, formatPaths: [join(dir, 'formats')] },
+    });
+    const html = await (await fetch(url)).text();
+    expect(html.startsWith('<script type="module" src="/@vite/client"></script>')).toBe(true);
+    expect(html).toContain('Hello from the story.');
+  });
+
+  it('serves the story at the name given as outputFilename, and nothing at index.html', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    const url = await start(dir, {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      outputFilename: 'story.html',
+      compileOptions: COMPILE,
+    });
+    expect(await (await fetch(`${url}story.html`)).text()).toContain('Hello from the story.');
+    expect((await fetch(`${url}index.html`)).status).toBe(404);
+  });
+
+  it('answers a request it does not serve with what Vite would answer', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    const url = await start(dir, { sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    expect((await fetch(`${url}nothing-here.txt`)).status).toBe(404);
+  });
+
+  it("logs the compile's warnings and still serves the story", async () => {
+    const dir = makeProject({ 'story/start.tw': DUPLICATE_START });
+    const { logger, warnings } = recordingLogger();
+    const url = await start(
+      dir,
+      { sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE },
+      logger,
+    );
+    expect(warnings.join('\n')).toContain('[twee-ts] Replacing existing passage "Start"');
+    expect(await (await fetch(url)).text()).toContain('Hello again.');
+  });
+
+  it('ignores the temporary copy Vite writes of its config file, which would otherwise start a rebuild', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    await start(dir, { sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    const send = vi.spyOn(server!.ws, 'send');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server!.watcher.emit('all', 'add', join(dir, 'story', 'vite.config.mjs.timestamp-1727270000000-0a1b2c.mjs'));
+      expect(vi.getTimerCount()).toBe(0);
+      // A source that really changed does schedule a rebuild.
+      server!.watcher.emit('all', 'change', join(dir, 'story', 'start.tw'));
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('shows the last compile error to a page that connects after it happened', async () => {
+    const dir = makeProject({ 'story/start.tw': BROKEN });
+    const url = await start(dir, { sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    const send = vi.spyOn(server!.ws, 'send');
+    const socket = new WebSocket(url.replace('http', 'ws'), 'vite-hmr');
+    try {
+      await vi.waitFor(
+        () =>
+          expect(send).toHaveBeenCalledWith({
+            type: 'error',
+            err: expect.objectContaining({ message: expect.stringMatching(/Malformed twee source/) }),
+          }),
+        { timeout: 10_000, interval: 50 },
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
+  it("passes the entry build's warnings on to the dev server's logger", async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "export const value = eval('1 + 1');\n",
+    });
+    const { logger, warnings } = recordingLogger();
+    await start(
+      dir,
+      {
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        entry: join(dir, 'app/main.ts'),
+        compileOptions: COMPILE,
+      },
+      logger,
+    );
+    expect(warnings.join('\n')).toMatch(/eval/i);
+  });
+});
+
+describe('vite plugin: build details', { timeout: 30_000 }, () => {
+  it('writes the story when the config names an input of its own', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'main.js': 'globalThis.ran = true;\n' });
+    await build({
+      configFile: false,
+      root: dir,
+      logLevel: 'silent',
+      build: { outDir: join(dir, 'dist'), rolldownOptions: { input: join(dir, 'main.js') } },
+      plugins: [tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE })],
+    });
+    expect(readFileSync(join(dir, 'dist', 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+});
