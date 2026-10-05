@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { compile, compileToFile } from '../src/compiler.js';
 
@@ -268,5 +268,54 @@ describe('compile with exclude', () => {
     });
     expect(result.output).toContain('<script id="script-module-mod" type="text/javascript">window.modMarker = 1;');
     expect(result.stats.files.some((f) => f.endsWith('mod.js'))).toBe(false);
+  });
+});
+
+describe('compileToFile with the output inside a source folder', () => {
+  const TMP_DIR = join(__dirname, '__tmp_outfile__');
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const passages = (text: string, extra = ''): string =>
+    `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nOut Test\n\n:: Start\n${text}\n${extra}`;
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, passages('ORIGINAL_CONTENT', '\n:: Gone\nSOON_DELETED\n'));
+  });
+
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  it.each([
+    ['an absolute', (p: string) => p],
+    ['a relative', (p: string) => relative(process.cwd(), p)],
+  ])('does not load its own earlier output back as a source (%s output path)', async (_kind, asGiven) => {
+    const outFile = asGiven(join(story, 'z-output.html'));
+    const options = { sources: [story], outputMode: 'twine2-archive', outFile } as const;
+    await compileToFile(options);
+
+    writeFileSync(start, passages('UPDATED_CONTENT'));
+    const second = await compileToFile(options);
+
+    expect(second.output).toContain('UPDATED_CONTENT');
+    expect(second.output).not.toContain('ORIGINAL_CONTENT');
+    expect(second.output).not.toContain('SOON_DELETED');
+    expect(second.stats.files.some((f) => f.endsWith('z-output.html'))).toBe(false);
+    expect(second.diagnostics).toEqual([]);
+    expect(readFileSync(outFile, 'utf-8')).toContain('UPDATED_CONTENT');
+  });
+
+  it('leaves the output out of module discovery too', async () => {
+    const options = {
+      sources: [start],
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      noRemote: true,
+      modules: [story],
+      outFile: join(story, 'out.js'),
+    };
+    await compileToFile(options);
+    const second = await compileToFile(options);
+    expect(second.output).not.toContain('script-module-out');
   });
 });
