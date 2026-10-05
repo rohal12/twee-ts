@@ -65,6 +65,15 @@ describe('compareVersions', () => {
     }
   });
 
+  it('ranks a release above its prerelease whichever side it is on, and compares numeric identifiers numerically', () => {
+    expect(compareVersions(v('1.0.0'), v('1.0.0-rc.1'))).toBeGreaterThan(0);
+    expect(compareVersions(v('1.0.0-rc.1'), v('1.0.0'))).toBeLessThan(0);
+    expect(compareVersions(v('1.0.0-rc.1'), v('1.0.0-rc.1'))).toBe(0);
+    expect(compareVersions(v('1.0.0-rc.1'), v('1.0.0-rc'))).toBeGreaterThan(0);
+    expect(compareVersions(v('1.0.0-1'), v('1.0.0-a'))).toBeLessThan(0);
+    expect(compareVersions(v('1.0.0-a'), v('1.0.0-1'))).toBeGreaterThan(0);
+  });
+
   it('ignores build metadata and the v prefix', () => {
     expect(compareVersions(v('1.0.0+a'), v('1.0.0+b'))).toBe(0);
     expect(compareVersions(v('v1.0'), v('1.0.0'))).toBe(0);
