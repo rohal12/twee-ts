@@ -90,8 +90,7 @@ export function readBase64(filename: string): string {
   return readFileSync(filename).toString('base64');
 }
 
-/** Get the filename without extension, falling back to the full basename for dotfiles. */
+/** Get the filename without extension, a dotfile keeps its whole name. */
 export function baseNameWithoutExt(filename: string): string {
-  const { name, ext } = parsePath(filename);
-  return name || ext;
+  return parsePath(filename).name;
 }

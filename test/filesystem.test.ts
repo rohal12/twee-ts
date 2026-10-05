@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, join, parse, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   chmodSync,
@@ -300,6 +300,14 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
   });
 });
 
+describe('outputPaths with a root folder', () => {
+  it('holds an output below a folder whose path already ends in a separator', () => {
+    const root = parse(tmpdir()).root;
+    const output = outputPaths({ files: [join(tmpdir(), 'twee-ts-never-built', 'out.html')], dirs: [] });
+    expect(output.holds(root)).toBe(true);
+  });
+});
+
 describe('isExcluded', () => {
   it('matches a path relative to the working directory', () => {
     expect(isExcluded(join('src', 'art', 'scene.png'), ['src/art/**'])).toBe(true);
@@ -391,6 +399,14 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     renameSync(temp, start);
     expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
     writeFileSync(start, ':: Start\nThree\n');
+    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+  });
+
+  it('does not rebuild for a change to a file of a type it does not build for', async () => {
+    const builds = watchBuilds([story]);
+    await builds.next();
+    writeFileSync(join(story, 'notes.unknown'), 'not a source');
+    writeFileSync(start, ':: Start\nTwo\n');
     expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
   });
 

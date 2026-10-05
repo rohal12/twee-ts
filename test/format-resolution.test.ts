@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
 import { getFormatSearchDirs } from '../src/formats.js';
+import { resolveStoryFormat } from '../src/format-resolution.js';
 import { getCacheDir } from '../src/remote-formats.js';
 import type { CompileOptions, Diagnostic, SFAIndexEntry } from '../src/types.js';
 
@@ -577,5 +578,35 @@ describe('formats that cannot be used are reported (#154, #164)', () => {
       expect.stringMatching(/^format broken-1: Skipping format; /),
       expect.stringMatching(/^read .*legacy-1.format\.js: Invalid UTF-8/),
     ]);
+  });
+});
+
+describe('resolveStoryFormat', () => {
+  it('goes online by default and warns with the text of a failure that is not an Error', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw 'connection reset';
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const diagnostics: Diagnostic[] = [];
+    const found = await resolveStoryFormat(
+      { kind: 'id', id: 'nothing-1' },
+      { formatPaths: [], useTweegoPath: false, formatUrls: ['https://example.com/format.js'] },
+      diagnostics,
+    );
+    expect(found).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalled();
+    expect(diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('Remote format fetch failed for'));
+    expect(diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('connection reset'));
+  });
+
+  it('never touches the network when noRemote is set', async () => {
+    const fetchMock = stubOffline();
+    const found = await resolveStoryFormat(
+      { kind: 'id', id: 'nothing-1' },
+      { formatPaths: [], useTweegoPath: false, noRemote: true, formatUrls: ['https://example.com/format.js'] },
+      [],
+    );
+    expect(found).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
