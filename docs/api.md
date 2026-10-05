@@ -310,7 +310,7 @@ console.log(formatLintReport(result));
 
 Lint checks link destinations against what Twine 2 output emits. A link is broken when no passage has its name, or when its passage is one that Twine 2 output leaves out: a passage tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, or an empty StorySettings. Such a link has an `omission` field that says why. Links to special passages that the output keeps, such as StoryInit, PassageHeader or a `widget` passage, are valid.
 
-Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so they link to nothing.
+Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so they link to nothing. Passages that Twine 2 output leaves out never reach the player, so lint reads no links from `Twine.private` passages, StoryData or StoryTitle: a link in a private notes passage is not reported as broken, and it does not keep a passage from being listed as an orphan. Script passages are still read, because Twine 2 output runs them.
 
 ### Story Inspection
 
@@ -328,7 +328,7 @@ const checked = storyInspect(result.story, { target: 'twine2' });
 console.log(checked.brokenLinks); // [{ from: 'Start', to: 'Logic', omission: { kind: 'tag', tag: 'script' } }]
 ```
 
-Without a `target`, `storyInspect` describes the source passages and treats a link as broken only when no passage has its name. With `target: 'twine2'` or `target: 'twine1'`, it also reports links to passages that output leaves out (Twine 1 output leaves out only `Twine.private` passages).
+Without a `target`, `storyInspect` describes the source passages and treats a link as broken only when no passage has its name. With `target: 'twine2'` or `target: 'twine1'`, it also reports links to passages that output leaves out (Twine 1 output leaves out only `Twine.private` passages), and reads no links from those passages, except script passages, which Twine 2 output runs. Left-out passages are never story passages, so they are never listed as dead ends or orphans, with or without a target.
 
 ## Types
 
