@@ -64,7 +64,7 @@ See [Format Discovery](./story-formats) for how formats are located.
 | -------- | ----------------------------------------------------------------------- |
 | `--lint` | Lint story structure (broken links, dead ends, orphans) without output. |
 
-Exits with code 1 if errors are found (broken links, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit.
+Exits with code 1 if errors are found (broken links, a starting passage that is missing or would be left out of Twine 2 output, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit.
 
 ```sh
 $ twee-ts --lint ./story/

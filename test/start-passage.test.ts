@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { compile } from '../src/compiler.js';
-import { lint } from '../src/lint.js';
+import { lint, formatLintReport } from '../src/lint.js';
 import type { CompileOptions, InlineSource } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -77,6 +77,54 @@ describe('effective starting passage in JSON output and the returned story', () 
     expect(result.start).toBe('Begin');
     expect(result.orphans).not.toContain('Begin');
     expect(result.orphans).toContain('Start');
+  });
+});
+
+describe('lint validates the starting passage', () => {
+  it('reports a StoryData start that does not exist', async () => {
+    const result = await lint({ sources: [source(storyData(',"start":"Missing"') + ':: Room\nroom')] });
+    expect(result.start).toBe('Missing');
+    expect(errors(result.diagnostics)).toEqual(['Starting passage "Missing" not found.']);
+    const report = formatLintReport(result);
+    expect(report).toContain('error: Starting passage "Missing" not found.');
+    expect(report).toContain('Lint failed.');
+    expect(report).not.toContain('Lint passed.');
+  });
+
+  it('reports a startPassage override that does not exist', async () => {
+    const result = await lint({ sources: [source(storyData() + ':: Start\n[[Start]]')], startPassage: 'Missing' });
+    expect(errors(result.diagnostics)).toEqual(['Starting passage "Missing" not found.']);
+    expect(formatLintReport(result)).toContain('Lint failed.');
+  });
+
+  it('reports a missing default Start passage', async () => {
+    const result = await lint({ sources: [source(storyData() + ':: Room\nroom')] });
+    expect(result.start).toBe('Start');
+    expect(errors(result.diagnostics)).toEqual(['Starting passage "Start" not found.']);
+    expect(formatLintReport(result)).toContain('Lint failed.');
+  });
+
+  it('reports a starting passage that Twine 2 output leaves out', async () => {
+    const result = await lint({ sources: [source(storyData() + ':: Start [script]\nconsole.log(1)')] });
+    expect(errors(result.diagnostics)).toEqual([
+      expect.stringContaining('Starting passage "Start" is tagged "script"'),
+    ]);
+  });
+
+  it('needs no story format to do so', async () => {
+    const result = await lint({
+      sources: [source(storyData(',"format":"NoSuchFormat","format-version":"9.9.9"') + ':: Room\nroom')],
+      noRemote: true,
+      formatPaths: [],
+      useTweegoPath: false,
+    });
+    expect(errors(result.diagnostics)).toEqual(['Starting passage "Start" not found.']);
+  });
+
+  it('passes a story whose starting passage exists', async () => {
+    const result = await lint({ sources: [source(storyData() + ':: Start\n[[Start]]')] });
+    expect(errors(result.diagnostics)).toEqual([]);
+    expect(formatLintReport(result)).toContain('Lint passed.');
   });
 });
 

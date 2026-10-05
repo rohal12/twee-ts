@@ -6,6 +6,7 @@ import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
 import { compile } from './compiler.js';
 import { storyInspect } from './inspect.js';
+import { startPassageDiagnostics } from './start-passage.js';
 
 export interface LintResult {
   /** Compilation diagnostics (errors and warnings). */
@@ -34,14 +35,15 @@ export interface LintResult {
 
 /**
  * Lint a story: compile without output rendering, then inspect structure.
- * Uses JSON output mode internally to avoid format resolution.
+ * Uses JSON output mode internally to avoid format resolution, so it checks
+ * the starting passage itself, against the Twine 2 passage rules.
  */
 export async function lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult> {
   const result = await compile({ ...options, outputMode: 'json' });
   const map = storyInspect(result.story);
 
   return {
-    diagnostics: result.diagnostics,
+    diagnostics: [...result.diagnostics, ...startPassageDiagnostics(result.story, map.start, 'twine2')],
     stats: result.stats,
     formatName: result.story.twine2.format,
     formatVersion: result.story.twine2.formatVersion,
