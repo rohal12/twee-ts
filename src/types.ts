@@ -240,6 +240,21 @@ export interface Twine2FormatJSON {
   license?: string;
 }
 
+/** The result of reading a format.js: its metadata, or why it cannot be used. */
+export type FormatDecodeResult =
+  { readonly ok: true; readonly data: Twine2FormatJSON } | { readonly ok: false; readonly reason: string };
+
+/**
+ * A parsed SemVer version. Build metadata is dropped, since it takes no part in precedence.
+ * Each prerelease identifier is kept as written ('beta', '1').
+ */
+export interface SemVer {
+  readonly major: number;
+  readonly minor: number;
+  readonly patch: number;
+  readonly prerelease: readonly string[];
+}
+
 // --- Lexer ---
 
 export const ItemType = {

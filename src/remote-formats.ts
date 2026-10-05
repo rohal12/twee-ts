@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import type { FormatRequest, SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
 import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate } from './formats.js';
 import type { SelectFormatOptions } from './formats.js';
+import { sameVersion } from './semver.js';
 import { readUTF8 } from './util.js';
 
 const DEFAULT_SFA_INDICES = [
@@ -263,7 +264,7 @@ export async function resolveRemoteFormatRequest(
 
   // 0. An exact version already downloaded needs no network access.
   const cached = findCachedFormat(request);
-  if (cached && request.kind === 'name' && isExactVersion(cached.version, request.version)) return cached;
+  if (cached && request.kind === 'name' && sameVersion(cached.version, request.version)) return cached;
 
   // 1. Try direct URLs — use the first that answers the request
   for (const url of urls ?? []) {
@@ -300,13 +301,6 @@ export async function resolveRemoteFormatRequest(
   // If all sources failed with errors, propagate the last one
   if (lastError) throw lastError;
   return undefined;
-}
-
-/** Whether two version strings name the same SemVer version. */
-function isExactVersion(have: string, wanted: string): boolean {
-  const a = parseSemver(have);
-  const b = parseSemver(wanted);
-  return a !== null && b !== null && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 
 /**

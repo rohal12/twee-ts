@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { compileForOutputFile, watchWithWriteFilter } from '../src/compiler.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
-import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
+import { discoverAllFormats, getFormatSearchDirs, makeFormatId, pruneFormats } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 import {
   discoverCachedFormats,
@@ -15,7 +15,15 @@ import {
   clearCachedFormats,
   getCacheSize,
 } from '../src/remote-formats.js';
-import type { CompileResult, Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
+import type {
+  CompileResult,
+  Diagnostic,
+  StoryFormatInfo,
+  TweeTsConfig,
+  OutputMode,
+  WordCountMethod,
+} from '../src/types.js';
+import { compareVersions, parseVersion } from '../src/semver.js';
 
 import { VERSION } from '../src/version.js';
 
@@ -67,11 +75,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (values['list-formats']) {
-    listFormats();
-    return;
-  }
-
   if (values.init) {
     runInit();
     return;
@@ -93,6 +96,12 @@ async function main(): Promise<void> {
       config = loadConfig(undefined, configDiagnostics);
     }
     logDiagnostics(configDiagnostics);
+  }
+
+  // Listed after the config is read, so the list shows what --format can select in this project.
+  if (values['list-formats']) {
+    listFormats(config?.formatPaths ?? [], config?.useTweegoPath ?? true);
+    return;
   }
 
   // Merge sources: positionals > config.sources
@@ -264,9 +273,19 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
-function listFormats(): void {
-  const dirs = getFormatSearchDirs();
-  const formats = discoverFormats(dirs);
+/** Order version strings from highest to lowest SemVer precedence (unparseable ones last). */
+function byVersionDescending(a: string, b: string): number {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (!left || !right) return Number(!left) - Number(!right);
+  return compareVersions(right, left);
+}
+
+/** Print the formats --format can select: local folders (pruned by SemVer) and cached downloads, by ID. */
+function listFormats(formatPaths: readonly string[], useTweegoPath: boolean): void {
+  const diagnostics: Diagnostic[] = [];
+  const formats = pruneFormats(discoverAllFormats(getFormatSearchDirs(formatPaths, useTweegoPath), diagnostics));
+  logDiagnostics(diagnostics);
 
   console.log('Local story formats:');
   if (formats.size === 0) {
@@ -278,11 +297,19 @@ function listFormats(): void {
     }
   }
 
-  const cached = discoverCachedFormats();
-  if (cached.size > 0) {
+  // Cached downloads answer an ID request by name and major version, taking the greatest version.
+  const cachedById = new Map<string, StoryFormatInfo[]>();
+  for (const f of discoverCachedFormats().values()) {
+    const id = makeFormatId(f.name, f.version);
+    cachedById.set(id, [...(cachedById.get(id) ?? []), f]);
+  }
+  if (cachedById.size > 0) {
     console.log('\nCached remote formats:');
-    for (const [id, f] of cached) {
-      console.log(`  ${id}: ${f.name} ${f.version}`);
+    for (const [id, versions] of [...cachedById].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      const [newest, ...older] = [...versions].sort((a, b) => byVersionDescending(a.version, b.version));
+      if (!newest) continue;
+      const also = older.length > 0 ? ` (also cached: ${older.map((f) => f.version).join(', ')})` : '';
+      console.log(`  ${id}: ${newest.name} ${newest.version}${also}`);
     }
   }
 }

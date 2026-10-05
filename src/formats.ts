@@ -1,39 +1,25 @@
 /**
  * Story format discovery, loading, and SemVer matching.
  * Ported from formats.go + config.go.
+ *
+ * Every lookup (local folders here, the download cache and remote indices in remote-formats.ts)
+ * goes through the same version parsing ({@link parseVersion}) and the same matching rules
+ * ({@link selectFormatCandidate}).
  */
 import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import type { Diagnostic, FormatRequest, StoryFormatInfo, Twine2FormatJSON } from './types.js';
+import type {
+  Diagnostic,
+  FormatDecodeResult,
+  FormatRequest,
+  SemVer,
+  StoryFormatInfo,
+  Twine2FormatJSON,
+} from './types.js';
+import { parseRelaxedJSON } from './relaxed-json.js';
+import { compareVersions, parseVersion } from './semver.js';
 import { readUTF8 } from './util.js';
-
-/**
- * Attempt to fix non-strict JSON (trailing commas, single quotes, unquoted keys).
- */
-function relaxedJSONParse(json: string): unknown {
-  // First try standard parse
-  try {
-    return JSON.parse(json);
-  } catch {
-    // fall through to relaxed parsing
-  }
-
-  let fixed = json;
-
-  // Replace single-quoted string values with double-quoted
-  // Match single-quoted strings: 'value' -> "value"
-  fixed = fixed.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"');
-
-  // Add quotes around unquoted property names
-  // Match word chars before a colon that aren't already quoted
-  fixed = fixed.replace(/(?<=^|[{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/gm, '"$1":');
-
-  // Remove trailing commas before } or ]
-  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
-
-  return JSON.parse(fixed);
-}
 
 /** A `"setup": function` property, which Harlowe appends to its otherwise-JSON format object. */
 const SETUP_FUNCTION_PROPERTY = /,\s*"setup"\s*:\s*function\b/g;
@@ -45,193 +31,257 @@ function stripSetupFunction(chunk: string): string | undefined {
   return lastIndex === -1 ? undefined : chunk.slice(0, lastIndex) + '}';
 }
 
+type ObjectParse = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: string };
+
 /**
- * Parse the Twine 2 format.js JSON chunk.
- * Handles Harlowe's malformed JSON by stripping the "setup" function property. The workaround
- * keys on the property itself, so the same bytes parse whether they come from a `harlowe-3`
- * directory or a direct download.
- * Per spec, the name key is Optional.
+ * Parse the format object at `start`–`end` of `text`: strict JSON first (fast), then the
+ * JavaScript literal subset formats use. Error positions point into `text`.
+ */
+function parseFormatObject(text: string, start: number, end: number): ObjectParse {
+  try {
+    return { ok: true, value: JSON.parse(text.slice(start, end)) };
+  } catch {
+    // Not strict JSON; the spec does not require it to be.
+  }
+  try {
+    return { ok: true, value: parseRelaxedJSON(text, start, end) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Check a parsed format object's fields. Per spec, `name` is optional; `version` and `source` are required. */
+function toFormatJSON(raw: unknown): FormatDecodeResult {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, reason: 'Story format JSON chunk is not an object.' };
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.version !== 'string') return { ok: false, reason: 'Story format has no "version" string.' };
+  if (typeof obj.source !== 'string') return { ok: false, reason: 'Story format has no "source" string.' };
+  if (!parseVersion(obj.version)) {
+    return { ok: false, reason: `Story format version ${JSON.stringify(obj.version)} is not a SemVer version.` };
+  }
+  const data: Twine2FormatJSON = {
+    name: typeof obj.name === 'string' ? obj.name : 'Untitled Story Format',
+    version: obj.version,
+    source: obj.source,
+    proofing: obj.proofing === true,
+  };
+  if (typeof obj.author === 'string') data.author = obj.author;
+  if (typeof obj.description === 'string') data.description = obj.description;
+  if (typeof obj.image === 'string') data.image = obj.image;
+  if (typeof obj.url === 'string') data.url = obj.url;
+  if (typeof obj.license === 'string') data.license = obj.license;
+  return { ok: true, data };
+}
+
+/**
+ * Read the metadata of a Twine 2 format.js, or say why it cannot be used.
+ *
+ * The object passed to `window.storyFormat()` may be strict JSON or a JavaScript object literal
+ * (single quotes, unquoted keys, trailing commas, comments). String values come back exactly as
+ * JavaScript evaluation gives them. Harlowe's function-valued `setup` property is dropped; the
+ * workaround keys on the property itself, so the same bytes parse whether they come from a
+ * `harlowe-3` directory or a direct download.
+ */
+export function decodeFormatJSON(source: string): FormatDecodeResult {
+  const first = source.indexOf('{');
+  const last = source.lastIndexOf('}');
+  if (first === -1 || last < first) {
+    return { ok: false, reason: 'Could not find Twine 2 style story format JSON chunk.' };
+  }
+
+  const parsed = parseFormatObject(source, first, last + 1);
+  if (parsed.ok) return toFormatJSON(parsed.value);
+
+  // Harlowe workaround: strip the "setup" function property.
+  const stripped = stripSetupFunction(source.slice(first, last + 1));
+  const retried = stripped === undefined ? undefined : parseFormatObject(stripped, 0, stripped.length);
+  if (retried?.ok) return toFormatJSON(retried.value);
+  return { ok: false, reason: `Could not decode story format JSON chunk: ${parsed.error}` };
+}
+
+/**
+ * Parse the Twine 2 format.js JSON chunk; null when it cannot be used ({@link decodeFormatJSON}
+ * gives the reason).
  *
  * @param _formatId No longer used; kept so existing callers keep compiling.
  */
 export function parseFormatJSON(source: string, _formatId?: string): Twine2FormatJSON | null {
-  const first = source.indexOf('{');
-  const last = source.lastIndexOf('}');
-  if (first === -1 || last === -1) return null;
+  const result = decodeFormatJSON(source);
+  return result.ok ? result.data : null;
+}
 
-  const chunk = source.slice(first, last + 1);
-
-  const parse = (json: string): Twine2FormatJSON | null => {
-    const raw: unknown = relaxedJSONParse(json);
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-    const obj = raw as Record<string, unknown>;
-    // version and source are required; name is optional per spec
-    if (typeof obj.version !== 'string' || typeof obj.source !== 'string') return null;
-    // Validate version is semver
-    if (!parseSemver(obj.version)) return null;
-    const name = typeof obj.name === 'string' ? obj.name : 'Untitled Story Format';
-    const result: Twine2FormatJSON = {
-      name,
-      version: obj.version,
-      source: obj.source,
-      proofing: obj.proofing === true,
-    };
-    if (typeof obj.author === 'string') result.author = obj.author;
-    if (typeof obj.description === 'string') result.description = obj.description;
-    if (typeof obj.image === 'string') result.image = obj.image;
-    if (typeof obj.url === 'string') result.url = obj.url;
-    if (typeof obj.license === 'string') result.license = obj.license;
-    return result;
-  };
-
+/** A directory's entries in a stable order, or none when it cannot be read. */
+function listDirectory(dir: string): string[] {
   try {
-    return parse(chunk);
+    return readdirSync(dir).sort();
   } catch {
-    // Harlowe workaround: strip the "setup" function property
-    const stripped = stripSetupFunction(chunk);
-    if (stripped === undefined) return null;
-    try {
-      return parse(stripped);
-    } catch {
-      return null;
-    }
+    return [];
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
   }
 }
 
 /**
- * Discover all story formats in the given search directories.
- * Implements SemVer-based version pruning: within each (name, major) group,
- * only the highest minor.patch survives.
+ * Load the format in one folder: its format.js (Twine 2), else its header.html (Twine 1).
+ * A format.js that cannot be used is reported as a warning, as Tweego does.
  */
-export function discoverFormats(searchDirs: string[]): Map<string, StoryFormatInfo> {
+function loadFormatDir(
+  searchDir: string,
+  id: string,
+  diagnostics: Diagnostic[] | undefined,
+): StoryFormatInfo | undefined {
+  const formatDir = join(searchDir, id);
+  if (!isDirectory(formatDir)) return undefined;
+
+  for (const baseFilename of ['format.js', 'header.html']) {
+    const filename = join(formatDir, baseFilename);
+    if (!isFile(filename)) continue;
+
+    if (baseFilename === 'header.html') {
+      // Twine 1 format: the folder name is its name.
+      return { id, filename, isTwine2: false, name: id, version: '', proofing: false };
+    }
+
+    // An encoding warning explains a skipped format; for a usable one, readFormatSource() reports it when used.
+    const encoding: Diagnostic[] = [];
+    let decoded: FormatDecodeResult;
+    try {
+      decoded = decodeFormatJSON(readUTF8(filename, encoding));
+    } catch (e) {
+      decoded = { ok: false, reason: `Could not read ${filename}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (!decoded.ok) {
+      diagnostics?.push(...encoding);
+      diagnostics?.push({
+        level: 'warning',
+        message: `format ${id}: Skipping format; ${decoded.reason} (${filename})`,
+      });
+      continue;
+    }
+    const { data } = decoded;
+    const format: StoryFormatInfo = {
+      id,
+      filename,
+      isTwine2: true,
+      name: data.name,
+      version: data.version,
+      proofing: data.proofing ?? false,
+    };
+    if (data.author) format.author = data.author;
+    if (data.description) format.description = data.description;
+    if (data.image) format.image = data.image;
+    if (data.url) format.url = data.url;
+    if (data.license) format.license = data.license;
+    return format;
+  }
+  return undefined;
+}
+
+/**
+ * Discover every story format in the search directories, keyed by folder name (the format ID),
+ * without version pruning.
+ *
+ * Directories are searched in order, and a later directory outranks an earlier one: when two hold
+ * the same folder name, the later one's format is kept. The map iterates in that order too, lowest
+ * rank first. Formats that cannot be used are left out, with a warning in `diagnostics`.
+ */
+export function discoverAllFormats(
+  searchDirs: readonly string[],
+  diagnostics?: Diagnostic[],
+): Map<string, StoryFormatInfo> {
   const formats = new Map<string, StoryFormatInfo>();
-  const baseFilenames = ['format.js', 'header.html'];
-
   for (const searchDir of searchDirs) {
-    try {
-      const stat = statSync(searchDir);
-      if (!stat.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    let entries;
-    try {
-      entries = readdirSync(searchDir);
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const formatDir = join(searchDir, entry);
-      try {
-        if (!statSync(formatDir).isDirectory()) continue;
-      } catch {
-        continue;
-      }
-
-      for (const baseFilename of baseFilenames) {
-        const formatFilename = join(formatDir, baseFilename);
-        try {
-          const stat = statSync(formatFilename);
-          if (!stat.isFile()) continue;
-        } catch {
-          continue;
-        }
-
-        const isTwine2 = baseFilename === 'format.js';
-        const format: StoryFormatInfo = {
-          id: entry,
-          filename: formatFilename,
-          isTwine2,
-          name: '',
-          version: '',
-          proofing: false,
-        };
-
-        if (isTwine2) {
-          try {
-            const source = readUTF8(formatFilename);
-            const data = parseFormatJSON(source, entry);
-            if (!data) continue;
-            format.name = data.name;
-            format.version = data.version;
-            format.proofing = data.proofing ?? false;
-            if (data.author) format.author = data.author;
-            if (data.description) format.description = data.description;
-            if (data.image) format.image = data.image;
-            if (data.url) format.url = data.url;
-            if (data.license) format.license = data.license;
-          } catch {
-            continue;
-          }
-        } else {
-          // Twine 1 format: use folder name as default name
-          format.name = entry;
-        }
-
-        formats.set(entry, format);
-        break; // Found format file for this directory
-      }
+    for (const entry of listDirectory(searchDir)) {
+      const format = loadFormatDir(searchDir, entry, diagnostics);
+      if (!format) continue;
+      // Re-insert, so the map's order follows the directories' rank.
+      formats.delete(entry);
+      formats.set(entry, format);
     }
   }
-
-  // SemVer pruning: for formats with the same name, within each major version
-  // keep only the highest minor.patch. Also, same name+version from different
-  // directories: keep the first one found.
-  pruneFormats(formats);
-
   return formats;
 }
 
-/**
- * Prune formats by SemVer: within each (name, major) group,
- * keep only the highest version. First-found wins for same name+version.
- */
-function pruneFormats(formats: Map<string, StoryFormatInfo>): void {
-  // Group by (name, major) -> best entry
-  const bestByNameMajor = new Map<string, { id: string; version: [number, number, number] }>();
-  // Track seen name+version combos (first wins)
-  const seenNameVersion = new Set<string>();
+/** The version a format is pruned and selected by, or null for one outside SemVer pruning. */
+function prunableVersion(format: StoryFormatInfo): SemVer | null {
+  return format.isTwine2 && format.name ? parseVersion(format.version) : null;
+}
 
-  for (const [id, f] of formats) {
-    if (!f.isTwine2 || !f.name || !f.version) continue;
-    const v = parseSemver(f.version);
-    if (!v) continue;
-
-    const nameVersionKey = `${f.name}@${f.version}`;
-    if (seenNameVersion.has(nameVersionKey)) {
-      // Duplicate name+version: remove the later one
-      formats.delete(id);
-      continue;
-    }
-    seenNameVersion.add(nameVersionKey);
-
-    const groupKey = `${f.name}@${v[0]}`;
-    const existing = bestByNameMajor.get(groupKey);
-    if (!existing || semverCompare(v, existing.version) > 0) {
-      bestByNameMajor.set(groupKey, { id, version: v });
-    }
-  }
-
-  // Remove all non-best entries within each group
-  for (const [id, f] of [...formats]) {
-    if (!f.isTwine2 || !f.name || !f.version) continue;
-    const v = parseSemver(f.version);
-    if (!v) continue;
-
-    const groupKey = `${f.name}@${v[0]}`;
-    const best = bestByNameMajor.get(groupKey);
-    if (best && best.id !== id) {
-      formats.delete(id);
-    }
-  }
+/** The search directory a discovered format was found in. */
+function searchDirOf(format: StoryFormatInfo): string {
+  return dirname(dirname(format.filename));
 }
 
 /**
- * Get the default format search directories.
+ * Prune formats by SemVer: within each (name, major) group, keep only the version with the highest
+ * precedence (a release outranks its prereleases). Between equal versions, the folder in the
+ * higher-ranked search directory wins, and within one directory the first folder name in sort
+ * order. Returns a new map in the same order.
+ *
+ * Pruning serves name-based selection and listings. An explicit format ID is looked up in the
+ * unpruned map, so a pinned folder is used even when another folder holds a newer version.
  */
-export function getFormatSearchDirs(extraPaths: string[] = [], useTweegoPath = true): string[] {
+export function pruneFormats(formats: ReadonlyMap<string, StoryFormatInfo>): Map<string, StoryFormatInfo> {
+  // Search directories first appear in the map in rank order (see discoverAllFormats).
+  const dirRank = new Map<string, number>();
+  for (const format of formats.values()) {
+    const dir = searchDirOf(format);
+    if (!dirRank.has(dir)) dirRank.set(dir, dirRank.size);
+  }
+  const rankOf = (format: StoryFormatInfo): number => dirRank.get(searchDirOf(format)) ?? 0;
+
+  const best = new Map<string, { readonly format: StoryFormatInfo; readonly version: SemVer }>();
+  for (const format of formats.values()) {
+    const version = prunableVersion(format);
+    if (!version) continue;
+    const group = `${format.name}@${version.major}`;
+    const current = best.get(group);
+    const order = current ? compareVersions(version, current.version) : 1;
+    if (order > 0 || (order === 0 && current && rankOf(format) > rankOf(current.format))) {
+      best.set(group, { format, version });
+    }
+  }
+  return new Map(
+    [...formats].filter(([id, format]) => {
+      const version = prunableVersion(format);
+      return version === null || best.get(`${format.name}@${version.major}`)?.format.id === id;
+    }),
+  );
+}
+
+/**
+ * Discover all story formats in the given search directories, pruned by SemVer: within each
+ * (name, major) group only the highest version survives. See {@link discoverAllFormats} for the
+ * directory ranking and {@link pruneFormats} for pruning.
+ */
+export function discoverFormats(searchDirs: readonly string[]): Map<string, StoryFormatInfo> {
+  return pruneFormats(discoverAllFormats(searchDirs));
+}
+
+/**
+ * Get the format search directories, lowest rank first: the story format subdirectories of the
+ * home directory, then of the working directory, then each `TWEEGO_PATH` entry, then `extraPaths`
+ * (`formatPaths`). A later directory outranks an earlier one for the same format folder name, so
+ * `formatPaths` override `TWEEGO_PATH`, which overrides the home and working directories, as in
+ * Tweego.
+ */
+export function getFormatSearchDirs(extraPaths: readonly string[] = [], useTweegoPath = true): string[] {
   const subdirNames = ['storyformats', '.storyformats', 'story-formats', 'storyFormats', 'targets'];
   const basePaths = new Set<string>();
 
@@ -245,41 +295,28 @@ export function getFormatSearchDirs(extraPaths: string[] = [], useTweegoPath = t
   // Working directory
   basePaths.add(process.cwd());
 
-  const dirs: string[] = [];
-  for (const base of basePaths) {
-    for (const sub of subdirNames) {
-      const dir = join(base, sub);
-      try {
-        if (statSync(dir).isDirectory()) {
-          dirs.push(dir);
-        }
-      } catch {
-        // skip
-      }
-    }
-  }
-
-  // Extra user-provided paths
-  dirs.push(...extraPaths);
+  const dirs = [...basePaths].flatMap((base) => subdirNames.map((sub) => join(base, sub))).filter(isDirectory);
 
   // TWEEGO_PATH environment variable
-  if (useTweegoPath) {
-    const tweegoPath = process.env.TWEEGO_PATH;
-    if (tweegoPath) {
-      dirs.push(...tweegoPath.split(process.platform === 'win32' ? ';' : ':'));
-    }
-  }
+  const tweegoPath = useTweegoPath ? process.env.TWEEGO_PATH : undefined;
+  if (tweegoPath) dirs.push(...tweegoPath.split(process.platform === 'win32' ? ';' : ':'));
+
+  // Extra user-provided paths outrank everything else.
+  dirs.push(...extraPaths);
 
   return dirs;
 }
 
-/** Parse a simple semver string into [major, minor, patch]. */
+/**
+ * Parse a version string into [major, minor, patch]. Accepts what {@link parseVersion} accepts
+ * (`v1.2.3`, `1.2`, `2.0.0-beta.1`); the prerelease and build metadata are dropped.
+ */
 export function parseSemver(v: string): [number, number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
-  if (!m) return null;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
+  const parsed = parseVersion(v);
+  return parsed ? [parsed.major, parsed.minor, parsed.patch] : null;
 }
 
+/** Compare [major, minor, patch] tuples. Use {@link compareVersions} to take prereleases into account. */
 export function semverCompare(a: [number, number, number], b: [number, number, number]): number {
   const [aMajor, aMinor, aPatch] = a;
   const [bMajor, bMinor, bPatch] = b;
@@ -291,7 +328,7 @@ export function semverCompare(a: [number, number, number], b: [number, number, n
 
 /** Build a directory-style format ID from a name and version, e.g. ('SugarCube', '2.37.3') → 'sugarcube-2'. */
 export function makeFormatId(name: string, version: string): string {
-  const major = parseSemver(version)?.[0] ?? 0;
+  const major = parseVersion(version)?.major ?? 0;
   return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
 }
 
@@ -315,15 +352,53 @@ export interface SelectFormatOptions {
   readonly allowOlder?: boolean;
 }
 
+/** {@link selectFormatCandidate} over one set of candidates, matching names without regard to case. */
+function pickFormatCandidate<T>(
+  request: FormatRequest,
+  candidates: readonly T[],
+  describe: (candidate: T) => { readonly name: string; readonly version: string },
+  allowOlder: boolean,
+): T | undefined {
+  const wanted = request.kind === 'name' ? parseVersion(request.version) : null;
+  let best: { readonly candidate: T; readonly version: SemVer } | undefined;
+
+  for (const candidate of candidates) {
+    const { name, version } = describe(candidate);
+    const have = parseVersion(version);
+    if (!have) continue;
+
+    if (request.kind === 'id') {
+      if (makeFormatId(name, version) !== request.id.toLowerCase()) continue;
+    } else {
+      if (name.toLowerCase() !== request.name.toLowerCase()) continue;
+      if (wanted) {
+        const order = compareVersions(have, wanted);
+        if (order === 0) return candidate;
+        if (have.major !== wanted.major) continue;
+        if (!allowOlder && order < 0) continue;
+      }
+    }
+
+    if (!best || compareVersions(have, best.version) > 0) best = { candidate, version: have };
+  }
+
+  return best?.candidate;
+}
+
 /**
- * Pick the candidate that best answers a format request.
+ * Pick the candidate that best answers a format request. Local folders, the download cache and
+ * remote indices all select through this one function.
  *
- * - An ID request ('sugarcube-2') matches a candidate whose name and major version build that ID,
- *   and takes the greatest such version.
- * - A name request matches the name case-insensitively. An exact version wins outright; otherwise
- *   the greatest version with the same major that is not older than the one asked for (or, with
- *   `allowOlder`, the greatest same-major version). An unparseable requested version takes the
- *   greatest version of any major.
+ * - An ID request ('sugarcube-2') matches, without regard to case, a candidate whose name and
+ *   major version build that ID, and takes the greatest such version.
+ * - A name request matches the name without regard to case, but a candidate whose name matches in
+ *   case too is preferred when one answers the request. An exact version (prerelease included)
+ *   wins outright; otherwise the greatest version with the same major that is not older than the
+ *   one asked for (or, with `allowOlder`, the greatest same-major version). An unparseable
+ *   requested version takes the greatest version of any major.
+ *
+ * Versions compare by SemVer precedence ({@link compareVersions}), so a release outranks its
+ * prereleases. Between equal versions, the earlier candidate wins.
  */
 export function selectFormatCandidate<T>(
   request: FormatRequest,
@@ -332,73 +407,47 @@ export function selectFormatCandidate<T>(
   options: SelectFormatOptions = {},
 ): T | undefined {
   const allowOlder = options.allowOlder ?? false;
-  const wanted = request.kind === 'name' ? parseSemver(request.version) : null;
-  let best: { readonly candidate: T; readonly version: [number, number, number] } | undefined;
-
-  for (const candidate of candidates) {
-    const { name, version } = describe(candidate);
-    const have = parseSemver(version);
-    if (!have) continue;
-
-    if (request.kind === 'id') {
-      if (makeFormatId(name, version) !== request.id.toLowerCase()) continue;
-    } else {
-      if (name.toLowerCase() !== request.name.toLowerCase()) continue;
-      if (wanted) {
-        if (semverCompare(have, wanted) === 0) return candidate;
-        if (have[0] !== wanted[0]) continue;
-        if (!allowOlder && semverCompare(have, wanted) < 0) continue;
-      }
-    }
-
-    if (!best || semverCompare(have, best.version) > 0) best = { candidate, version: have };
+  if (request.kind === 'name') {
+    const exactCase = candidates.filter((c) => describe(c).name === request.name);
+    const preferred = pickFormatCandidate(request, exactCase, describe, allowOlder);
+    if (preferred !== undefined) return preferred;
   }
-
-  return best?.candidate;
+  return pickFormatCandidate(request, candidates, describe, allowOlder);
 }
 
-/** Get format ID from Twine 2 name, picking the greatest version. */
-export function getFormatIdByName(formats: Map<string, StoryFormatInfo>, name: string): string | undefined {
-  let bestVersion: [number, number, number] | null = null;
-  let bestId: string | undefined;
-
-  for (const [id, f] of formats) {
-    if (!f.isTwine2 || f.name !== name) continue;
-    const v = parseSemver(f.version);
-    if (!v) continue;
-    if (!bestVersion || semverCompare(v, bestVersion) > 0) {
-      bestVersion = v;
-      bestId = id;
-    }
-  }
-
-  return bestId;
+/** The Twine 2 formats of a discovered map, those from higher-ranked search directories first. */
+export function rankedTwine2Formats(formats: ReadonlyMap<string, StoryFormatInfo>): StoryFormatInfo[] {
+  return [...formats.values()].filter((f) => f.isTwine2).reverse();
 }
 
-/** Get format ID from Twine 2 name and version, using SemVer major matching. */
+/**
+ * Look a format ID up among discovered folders. The ID matches a folder name without regard to
+ * case; an exact-case folder is preferred, then the highest-ranked one.
+ */
+export function findFormatById(formats: ReadonlyMap<string, StoryFormatInfo>, id: string): StoryFormatInfo | undefined {
+  const exact = formats.get(id);
+  if (exact) return exact;
+  const wanted = id.toLowerCase();
+  return [...formats.values()].reverse().find((f) => f.id.toLowerCase() === wanted);
+}
+
+/**
+ * Get format ID from Twine 2 name and version, as a compile selects a local format by StoryData:
+ * {@link selectFormatCandidate} over the pruned formats, so the greatest version with the same
+ * major that is not older than `version` (any major when `version` is unparseable).
+ */
 export function getFormatIdByNameAndVersion(
-  formats: Map<string, StoryFormatInfo>,
+  formats: ReadonlyMap<string, StoryFormatInfo>,
   name: string,
   version: string,
 ): string | undefined {
-  const wanted = parseSemver(version);
-  let bestVersion: [number, number, number] | null = null;
-  let bestId: string | undefined;
+  const request: FormatRequest = { kind: 'name', name, version };
+  return selectFormatCandidate(request, rankedTwine2Formats(pruneFormats(formats)), (f) => f)?.id;
+}
 
-  for (const [id, f] of formats) {
-    if (!f.isTwine2 || f.name !== name) continue;
-    const have = parseSemver(f.version);
-    if (!have) continue;
-
-    if (wanted === null || (have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-      if (!bestVersion || semverCompare(have, bestVersion) > 0) {
-        bestVersion = have;
-        bestId = id;
-      }
-    }
-  }
-
-  return bestId;
+/** Get format ID from Twine 2 name, picking the greatest version. */
+export function getFormatIdByName(formats: ReadonlyMap<string, StoryFormatInfo>, name: string): string | undefined {
+  return getFormatIdByNameAndVersion(formats, name, '');
 }
 
 /**
@@ -407,12 +456,10 @@ export function getFormatIdByNameAndVersion(
  */
 export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnostic[]): string {
   const source = readUTF8(format.filename, diagnostics);
-  if (format.isTwine2) {
-    const data = parseFormatJSON(source, format.id);
-    if (!data) throw new Error(`Cannot parse format ${format.id} JSON`);
-    return data.source;
-  }
-  return source;
+  if (!format.isTwine2) return source;
+  const decoded = decodeFormatJSON(source);
+  if (!decoded.ok) throw new Error(`Cannot parse format ${format.id} JSON: ${decoded.reason}`);
+  return decoded.data.source;
 }
 
 /** Read a file as UTF-8 (re-exported for loader use). */

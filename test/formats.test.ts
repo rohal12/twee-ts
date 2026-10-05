@@ -1,15 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  discoverAllFormats,
   discoverFormats,
   getFormatIdByName,
   getFormatIdByNameAndVersion,
   makeFormatId,
   parseFormatJSON,
+  readFormatSource,
   selectFormatCandidate,
 } from '../src/formats.js';
-import type { FormatRequest } from '../src/types.js';
+import type { Diagnostic, FormatRequest } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'storyformats');
 
@@ -114,5 +117,143 @@ describe('selectFormatCandidate', () => {
   it('allows an older same-major version only when asked', () => {
     expect(select({ kind: 'name', name: 'SugarCube', version: '2.38.0' }, true)).toBe('2.37.3');
     expect(select({ kind: 'name', name: 'SugarCube', version: '3.0.0' }, true)).toBeUndefined();
+  });
+
+  it('matches names without regard to case, preferring an exact-case match (#156)', () => {
+    const mixed = [
+      { name: 'sugarcube', version: '2.37.3' },
+      { name: 'SugarCube', version: '2.36.1' },
+    ];
+    const pick = (name: string) => selectFormatCandidate({ kind: 'name', name, version: '2.0.0' }, mixed, (c) => c);
+    expect(pick('SugarCube')?.version).toBe('2.36.1');
+    expect(pick('sugarcube')?.version).toBe('2.37.3');
+    expect(pick('SUGARCUBE')?.version).toBe('2.37.3');
+  });
+
+  it('ranks a release above its prereleases and never treats them as the same version (#162)', () => {
+    const pre = [
+      { name: 'Pre', version: '2.0.0' },
+      { name: 'Pre', version: '2.0.0-beta.1' },
+    ];
+    for (const list of [pre, [...pre].reverse()]) {
+      const pick = (request: FormatRequest, allowOlder = false) =>
+        selectFormatCandidate(request, list, (c) => c, { allowOlder })?.version;
+      expect(pick({ kind: 'name', name: 'Pre', version: '2.0.0' })).toBe('2.0.0');
+      expect(pick({ kind: 'name', name: 'Pre', version: '2.0.0-beta.1' })).toBe('2.0.0-beta.1');
+      expect(pick({ kind: 'name', name: 'Pre', version: '1.0.0' })).toBeUndefined();
+      expect(pick({ kind: 'id', id: 'pre-2' })).toBe('2.0.0');
+    }
+    const betaOnly = [{ name: 'Pre', version: '2.0.0-beta.1' }];
+    const request: FormatRequest = { kind: 'name', name: 'Pre', version: '2.0.0' };
+    expect(selectFormatCandidate(request, betaOnly, (c) => c)).toBeUndefined();
+    expect(selectFormatCandidate(request, betaOnly, (c) => c, { allowOlder: true })?.version).toBe('2.0.0-beta.1');
+  });
+});
+
+describe('format versions such as v1.0.0 and 1.0 (#164)', () => {
+  it('parses the format and keeps the version as written', () => {
+    const data = parseFormatJSON('window.storyFormat({"name":"V","version":"v1.0.0","source":"{{STORY_DATA}}"});');
+    expect(data?.version).toBe('v1.0.0');
+    expect(
+      parseFormatJSON('window.storyFormat({"name":"V","version":"1.0","source":"{{STORY_DATA}}"});')?.version,
+    ).toBe('1.0');
+  });
+
+  it('builds IDs from the coerced major version', () => {
+    expect(makeFormatId('VPrefix', 'v1.0.0')).toBe('vprefix-1');
+    expect(makeFormatId('TwoPart', '1.0')).toBe('twopart-1');
+  });
+});
+
+describe('relaxed format.js parsing (#154)', () => {
+  /** What Twine 2 sees: it runs format.js as JavaScript. */
+  function evaluate(formatJs: string): Record<string, unknown> {
+    let captured: unknown;
+    const run = new Function('window', formatJs) as (window: { storyFormat: (o: unknown) => void }) => void;
+    run({ storyFormat: (o) => (captured = o) });
+    if (typeof captured !== 'object' || captured === null) throw new Error('format.js did not call storyFormat');
+    return captured as Record<string, unknown>;
+  }
+
+  const sources = {
+    apostrophe: `<p class='a'>It's {{STORY_DATA}}</p>`,
+    wordColon: 'Hello, world: {{STORY_DATA}}',
+    minifiedObject: '<script>var o={a:1,b:2};</script>{{STORY_DATA}}',
+    trailingCommaText: '<pre>[1, 2, ]  {a, }</pre>{{STORY_DATA}}',
+    escapes: 'line\nbreak \\ "quoted" \u2028 // not a comment /* nor this */ {{STORY_DATA}}',
+  };
+
+  /** Escape a string for a single-quoted JavaScript literal. */
+  const singleQuote = (s: string): string =>
+    `'${s
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, '\\n')
+      .replace(/\u2028/g, '\\u2028')}'`;
+
+  /** Ways to write the same format object in format.js that are not strict JSON. */
+  const writers: Record<string, (source: string) => string> = {
+    trailingComma: (s) => `window.storyFormat({"name":"T","version":"1.0.0","source":${JSON.stringify(s)},});`,
+    unquotedKeys: (s) => `window.storyFormat({name:"T",version:"1.0.0",source:${JSON.stringify(s)}});`,
+    singleQuoted: (s) => `window.storyFormat({'name':'T','version':'1.0.0','source':${singleQuote(s)}});`,
+    allTogether: (s) =>
+      `window.storyFormat({\n  // a comment\n  name: 'T',\n  version: "1.0.0",\n  /* another */ source: ${singleQuote(s)},\n  proofing: false,\n});`,
+  };
+
+  for (const [sourceLabel, source] of Object.entries(sources)) {
+    for (const [writerLabel, write] of Object.entries(writers)) {
+      it(`keeps a source with ${sourceLabel} byte-identical when written with ${writerLabel}`, () => {
+        const formatJs = write(source);
+        const expected = evaluate(formatJs);
+        expect(expected.source).toBe(source);
+        const data = parseFormatJSON(formatJs);
+        expect(data?.source).toBe(expected.source);
+        expect(data?.name).toBe('T');
+        expect(data?.version).toBe('1.0.0');
+      });
+    }
+  }
+
+  it('discovers a non-JSON format whose source would break a textual rewrite', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-ts-relaxed-'));
+    try {
+      mkdirSync(join(dir, 'x-1'));
+      writeFileSync(
+        join(dir, 'x-1', 'format.js'),
+        `window.storyFormat({name:"X",version:"1.0.0",source:${JSON.stringify(sources.wordColon)}});`,
+      );
+      const format = discoverFormats([dir]).get('x-1');
+      if (!format) throw new Error('expected x-1 to be discovered');
+      expect(readFormatSource(format)).toBe(sources.wordColon);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns, naming the format and the reason, when a format.js cannot be used', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-ts-relaxed-'));
+    try {
+      mkdirSync(join(dir, 'broken-1'));
+      writeFileSync(
+        join(dir, 'broken-1', 'format.js'),
+        'window.storyFormat({name: "B", version: "1.0.0", source: x});',
+      );
+      mkdirSync(join(dir, 'badversion-1'));
+      writeFileSync(
+        join(dir, 'badversion-1', 'format.js'),
+        'window.storyFormat({"name":"V","version":"latest","source":"{{STORY_DATA}}"});',
+      );
+      const diagnostics: Diagnostic[] = [];
+      expect([...discoverAllFormats([dir], diagnostics).keys()]).toEqual([]);
+      expect(diagnostics).toEqual([
+        { level: 'warning', message: expect.stringMatching(/^format badversion-1: Skipping format; .*"latest"/) },
+        {
+          level: 'warning',
+          message: expect.stringMatching(/^format broken-1: Skipping format; Could not decode story format JSON chunk/),
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

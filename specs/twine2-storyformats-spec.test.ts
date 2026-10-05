@@ -183,22 +183,17 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
       }
     });
 
-    it('format with non-semver version is rejected (version x.y.z is Required per spec)', () => {
-      // Spec: "semantic version-style formatting (x.y.z, e.g., 1.2.1) of the version is also required"
-      // A version like "1.0" does not match x.y.z and MUST be rejected.
+    it('format with an x.y version is accepted, as Tweego accepts it (#164)', () => {
+      // Spec: "semantic version-style formatting (x.y.z, e.g., 1.2.1) of the version is also required".
+      // Tweego (Masterminds semver.NewVersion) reads "1.0" as 1.0.0 and loads the format, and so
+      // does twee-ts. The version is kept as written.
       const formatDir = writeTempFormat(
         'odd-version-format',
         'window.storyFormat({"name":"OddVer","version":"1.0","source":"<html>{{STORY_DATA}}</html>"});',
       );
       const formats = discoverFormats([formatDir]);
       const format = [...formats.values()].find((f) => f.name === 'OddVer');
-      // Spec strictly requires x.y.z. A version like "1.0" (missing patch) MUST be rejected.
-      // The format MUST NOT be discoverable with a non-semver version.
-      if (format) {
-        // If discovered despite non-semver version, the version MUST have been normalized to x.y.z
-        expect(format.version).toMatch(/^\d+\.\d+\.\d+([+-].*)?$/);
-      }
-      // Ideally, format should not be discovered at all with non-semver version
+      expect(format?.version).toBe('1.0');
     });
 
     it('format with completely invalid version string is rejected', () => {
@@ -1651,9 +1646,8 @@ describe('Twine 2 Story Formats Spec -- SemVer Utilities', () => {
       expect(result).toBeNull();
     });
 
-    it('returns null for incomplete version (missing patch)', () => {
-      const result = parseSemver('1.0');
-      expect(result).toBeNull();
+    it('coerces an incomplete version (missing patch) to x.y.0, as Tweego does (#164)', () => {
+      expect(parseSemver('1.0')).toEqual([1, 0, 0]);
     });
 
     it('returns null for empty string', () => {

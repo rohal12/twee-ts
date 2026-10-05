@@ -9,9 +9,11 @@
 import type { Diagnostic, FormatRequest, StoryFormatInfo } from './types.js';
 import {
   describeFormatRequest,
-  discoverFormats,
-  getFormatIdByNameAndVersion,
+  discoverAllFormats,
+  findFormatById,
   getFormatSearchDirs,
+  pruneFormats,
+  rankedTwine2Formats,
   selectFormatCandidate,
 } from './formats.js';
 import { findCachedFormat, resolveRemoteFormatRequest } from './remote-formats.js';
@@ -37,15 +39,20 @@ export function formatRequestFor(
   return { kind: 'id', id: defaultId };
 }
 
-/** Look a request up among the formats found in local format directories. */
-function findLocalFormat(formats: Map<string, StoryFormatInfo>, request: FormatRequest): StoryFormatInfo | undefined {
+/**
+ * Look a request up among the formats found in local format directories. An ID names a folder, so
+ * it is looked up among all of them; a name request selects by SemVer among the pruned formats.
+ */
+function findLocalFormat(
+  all: ReadonlyMap<string, StoryFormatInfo>,
+  pruned: ReadonlyMap<string, StoryFormatInfo>,
+  request: FormatRequest,
+): StoryFormatInfo | undefined {
   switch (request.kind) {
     case 'id':
-      return formats.get(request.id);
-    case 'name': {
-      const id = getFormatIdByNameAndVersion(formats, request.name, request.version);
-      return id === undefined ? undefined : formats.get(id);
-    }
+      return findFormatById(all, request.id);
+    case 'name':
+      return selectFormatCandidate(request, rankedTwine2Formats(pruned), (f) => f);
     default: {
       const _exhaustive: never = request;
       throw new Error(`unhandled format request: ${JSON.stringify(_exhaustive)}`);
@@ -57,7 +64,9 @@ function findLocalFormat(formats: Map<string, StoryFormatInfo>, request: FormatR
  * Resolve a format request to a story format.
  *
  * Order: local format directories, then the download cache, then remote sources (unless
- * `noRemote`). When a StoryData request names a version that none of them has, an older version of
+ * `noRemote`). Names and IDs match the same way in each (see `selectFormatCandidate`), so a request
+ * that a local format answers never reaches the cache or the network. Local formats that cannot be
+ * used are reported as warnings. When a StoryData request names a version that none of them has, an older version of
  * the same format and major version is used with a warning. Anything else is an error diagnostic,
  * and the result is `undefined`.
  */
@@ -67,10 +76,12 @@ export async function resolveStoryFormat(
   diagnostics: Diagnostic[],
 ): Promise<StoryFormatInfo | undefined> {
   const noRemote = options.noRemote ?? false;
-  const formats = discoverFormats(getFormatSearchDirs(options.formatPaths, options.useTweegoPath ?? true));
+  const searchDirs = getFormatSearchDirs(options.formatPaths, options.useTweegoPath ?? true);
+  const all = discoverAllFormats(searchDirs, diagnostics);
+  const pruned = pruneFormats(all);
   const wanted = describeFormatRequest(request);
 
-  const local = findLocalFormat(formats, request);
+  const local = findLocalFormat(all, pruned, request);
   if (local) return local;
 
   const cached = findCachedFormat(request);
@@ -91,12 +102,8 @@ export async function resolveStoryFormat(
   // A same-major older version keeps the story in its own format; it never crosses majors.
   if (request.kind === 'name') {
     const older =
-      selectFormatCandidate(
-        request,
-        [...formats.values()].filter((f) => f.isTwine2),
-        (f) => f,
-        { allowOlder: true },
-      ) ?? findCachedFormat(request, { allowOlder: true });
+      selectFormatCandidate(request, rankedTwine2Formats(pruned), (f) => f, { allowOlder: true }) ??
+      findCachedFormat(request, { allowOlder: true });
     if (older) {
       diagnostics.push({
         level: 'warning',
@@ -109,7 +116,7 @@ export async function resolveStoryFormat(
   const reason = noRemote ? ' (remote fetching disabled)' : '';
   diagnostics.push({
     level: 'error',
-    message: `Story format ${wanted} is not available${reason}. Found: ${[...formats.keys()].join(', ') || 'none'}`,
+    message: `Story format ${wanted} is not available${reason}. Found: ${[...all.keys()].join(', ') || 'none'}`,
   });
   return undefined;
 }
