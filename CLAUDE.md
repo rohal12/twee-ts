@@ -168,6 +168,11 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
 ## PR review guidelines
 
+Whole-compiler validation follows [docs/compiler-validation.md](docs/compiler-validation.md).
+Read that workflow before a new review sweep, re-run the stable cases in
+`validation/compiler-contracts.mjs`, and extend the owning issue for a new variant
+of an existing defect class. The matrix's known failures must remain visible.
+
 When reviewing PRs, check for:
 
 1. **Type safety** — no `any` casts, no `@ts-ignore`, no non-null assertions (`!`) without justification
