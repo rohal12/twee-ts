@@ -32,6 +32,35 @@ describe('lint', () => {
     expect(result.brokenLinks[0]).toEqual({ from: 'Start', to: 'MissingRoom' });
   });
 
+  it('reads reverse-arrow and setter links', async () => {
+    const story = (start: string) => [
+      {
+        filename: 'links.tw',
+        content: `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n${start}\n\n:: Room\nText.`,
+      },
+    ];
+    const reverse = await lint({ sources: story('[[Room<-go]]') });
+    expect(reverse.brokenLinks).toEqual([]);
+    expect(reverse.orphans).not.toContain('Room');
+
+    const setter = await lint({ sources: story('[[Room]] [[go->Missing][$flag = true]]') });
+    expect(setter.brokenLinks).toEqual([{ from: 'Start', to: 'Missing' }]);
+  });
+
+  it('ignores links in comments', async () => {
+    const result = await lint({
+      sources: [
+        {
+          filename: 'comments.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<!-- [[Ghost]] --> /% [[Ghost]] %/ /* [[Ghost]] */ [[Room]]\n\n:: Room\nText.',
+        },
+      ],
+    });
+    expect(result.brokenLinks).toEqual([]);
+    expect(formatLintReport(result)).toContain('Lint passed.');
+  });
+
   it('detects dead ends and orphans', async () => {
     const result = await lint({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],

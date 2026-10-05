@@ -1,17 +1,19 @@
 /**
- * Reads SugarCube 2 macro calls the way SugarCube 2.37.3 does, so the link check sees the same
- * passage names that `<<link>>` and `<<goto>>` use when the story plays.
+ * Reads SugarCube 2 macro calls and link markup the way SugarCube 2.37.3 does, so the link check
+ * sees the same passage names that `[[…]]` links, `<<link>>` and `<<goto>>` use when the story
+ * plays.
  *
  * Each step follows a part of SugarCube's macro parser:
  * - `findMacroTags` finds where a tag starts and ends (the parser's `lookahead` pattern);
  * - `parseMacroArgs` splits the text after the macro name into arguments (`parseArgs`);
  * - quoted arguments are evaluated as strict-mode JavaScript strings (`evalStringLiteral`).
  *
+ * Link and image markup is read as `parseSquareBracketedMarkup` reads it (see `link-markup.ts`).
  * Of the rest of the wikifier, only comments, `<script>` elements and `<<script>>` bodies are
- * told apart; other markup, such as verbatim text, is read as markup (see
- * `findMacroPassageLinks`).
+ * told apart; other markup, such as verbatim text, is read as markup (see `findPassageLinks`).
  */
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from './javascript-strings.js';
+import { readSquareBracketedMarkup } from './link-markup.js';
 
 /** A macro tag: `<<name args>>`, or a closing tag `<</name>>`. */
 export interface MacroTag {
@@ -37,9 +39,13 @@ export type MacroArg =
   /** A variable, an expression, `setup`/`settings`, a boolean or `undefined`. */
   | { readonly type: 'other' };
 
-/** A passage named by a `<<link>>` or `<<goto>>` call. */
-export interface MacroPassageLink {
-  readonly macro: 'goto' | 'link';
+/** The macros whose calls name a passage. */
+type PassageLinkMacro = 'goto' | 'link';
+
+/** A passage named by link markup (`[[…]]`) or by a `<<link>>` or `<<goto>>` call. */
+export interface PassageLink {
+  /** What names it: link markup, or a call of that macro. */
+  readonly via: 'markup' | PassageLinkMacro;
   readonly passage: string;
 }
 
@@ -47,7 +53,7 @@ export interface MacroPassageLink {
 type LexedArg =
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'expression'; readonly code: string }
-  | { readonly kind: 'markup' }
+  | { readonly kind: 'markup'; readonly text: string }
   | { readonly kind: 'word'; readonly text: string };
 
 /** A tag, and where a `<<link` or `<<goto` first appears unquoted in its arguments, if it does. */
@@ -107,21 +113,27 @@ const RAW_ARGUMENT_MACROS: ReadonlySet<string> = new Set([
 const MAX_STRING_DEPTH = 10;
 
 /**
- * What one reading of a passage carries down into the strings it reads: how deep it is, and how
- * much the `<<script>>` closer search has left to read (see `scriptBodyCloser`).
+ * What one reading of a passage carries down into the strings it reads: how deep it is, how much
+ * the `<<script>>` closer search has left to read (see `scriptBodyCloser`), and how much the
+ * reading of link and image markup has (see `readSquareBracketedMarkup`).
  */
 interface ReadContext {
   readonly depth: number;
   readonly budget: { left: number };
+  readonly markupBudget: { left: number };
 }
 
-/** A context for reading `text`: the closer search may read four times it, plus an allowance. */
+/**
+ * A context for reading `text`: the closer search, and the markup reading, may each read four
+ * times it, plus an allowance.
+ */
 function readContext(text: string): ReadContext {
-  return { depth: 0, budget: { left: 4 * text.length + 100_000 } };
+  const allowance = (): { left: number } => ({ left: 4 * text.length + 100_000 });
+  return { depth: 0, budget: allowance(), markupBudget: allowance() };
 }
 
 function deeper(context: ReadContext): ReadContext {
-  return { depth: context.depth + 1, budget: context.budget };
+  return { ...context, depth: context.depth + 1 };
 }
 
 /** Index of the first match of a global `re` at or after `from`, or -1. */
@@ -372,7 +384,7 @@ function lexArgument(raw: string, pos: number): { arg: LexedArg; end: number } |
     }
     case '[': {
       const end = lexSquareBracketed(raw, pos + 1);
-      return end === undefined ? undefined : { arg: { kind: 'markup' }, end };
+      return end === undefined ? undefined : { arg: { kind: 'markup', text: raw.slice(pos, end) }, end };
     }
     default: {
       const space = searchFrom(SPACE_RE, raw, pos + 1);
@@ -526,7 +538,7 @@ function passageName(arg: MacroArg): string | undefined {
  * In text built from a template literal, a bare word with a `${…}` in it may become several
  * words in play, so no argument after it is known.
  */
-function passageArgument(macro: MacroPassageLink['macro'], lexed: readonly LexedArg[]): MacroArg | undefined {
+function passageArgument(macro: PassageLinkMacro, lexed: readonly LexedArg[]): MacroArg | undefined {
   const index = macro === 'link' ? 1 : 0;
   if (lexed.slice(0, index + 1).some((arg) => arg.kind === 'word' && arg.text.includes(SUBSTITUTION))) {
     return undefined;
@@ -547,27 +559,65 @@ function passageArgument(macro: MacroPassageLink['macro'], lexed: readonly Lexed
   }
 }
 
-function isPassageLinkMacro(name: string): name is MacroPassageLink['macro'] {
+function isPassageLinkMacro(name: string): name is PassageLinkMacro {
   return name === 'goto' || name === 'link';
 }
 
 /** The passage a `<<link>>` or `<<goto>>` tag names itself, if it can be known before play. */
-function ownPassageLink(tag: MacroTag, lexed: readonly LexedArg[]): MacroPassageLink | undefined {
+function ownPassageLink(tag: MacroTag, lexed: readonly LexedArg[]): PassageLink | undefined {
   if (!isPassageLinkMacro(tag.name)) {
     return undefined;
   }
   const arg = passageArgument(tag.name, lexed);
   const passage = arg === undefined ? undefined : passageName(arg);
-  return passage === undefined ? undefined : { macro: tag.name, passage };
+  return passage === undefined ? undefined : { via: tag.name, passage };
 }
 
 /**
- * The passages a tag names: its own, if it is a `<<link>>` or `<<goto>>` call, then those of the
- * calls inside the strings of its arguments, which the macro may print or pass on
+ * The passage a link's destination names. SugarCube evaluates a destination that no passage is
+ * named by, and a quoted string gives its value (`[[Go|"Room"]]`), unless that is blank.
+ */
+function linkDestination(link: string): string {
+  const value = evalStringLiteral(link);
+  return value === undefined || value.trim() === '' ? link : value;
+}
+
+/**
+ * The passage that link markup from `start` in `text` names, and where the markup ends, or
+ * `undefined` where SugarCube rejects the markup. Image markup names none here, nor does markup
+ * with a template literal's `${…}` in it, whose passage is known only in play.
+ */
+function linkMarkupAt(
+  text: string,
+  start: number,
+  budget?: { left: number },
+): { link: PassageLink | undefined; end: number } | undefined {
+  const markup = readSquareBracketedMarkup(text, start, budget);
+  if (markup === undefined) {
+    return undefined;
+  }
+  const passage =
+    markup.type === 'link' && !text.slice(start, markup.end).includes(SUBSTITUTION) ? markup.link : undefined;
+  return {
+    link: passage === undefined ? undefined : { via: 'markup', passage: linkDestination(passage) },
+    end: markup.end,
+  };
+}
+
+/** The passage that a link markup argument names, if SugarCube reads the whole argument as markup. */
+function markupArgumentLinks(raw: string): PassageLink[] {
+  const markup = linkMarkupAt(raw, 0);
+  return markup?.link === undefined || markup.end !== raw.length ? [] : [markup.link];
+}
+
+/**
+ * The passages a tag names: its own, if it is a `<<link>>` or `<<goto>>` call, then those of its
+ * link markup arguments (`<<button [[Go|Room]]>>`), and those of the links and calls inside the
+ * strings of its arguments, which the macro may print or pass on
  * (`<<set _out to '<<link "Go" "Room">><</link>>'>>`). The arguments of the macros SugarCube
  * doesn't split are read as JavaScript; in others, a backquoted expression is.
  */
-function tagPassageLinks(tag: MacroTag, context: ReadContext): MacroPassageLink[] {
+function tagPassageLinks(tag: MacroTag, context: ReadContext): PassageLink[] {
   if (RAW_ARGUMENT_MACROS.has(tag.name)) {
     return javaScriptPassageLinks(tag.args, context);
   }
@@ -577,13 +627,14 @@ function tagPassageLinks(tag: MacroTag, context: ReadContext): MacroPassageLink[
     return [];
   }
   const own = ownPassageLink(tag, lexed);
-  const inner = lexed.flatMap((arg): MacroPassageLink[] => {
+  const inner = lexed.flatMap((arg): PassageLink[] => {
     switch (arg.kind) {
       case 'string':
         return markupPassageLinks(arg.value, deeper(context));
       case 'expression':
         return javaScriptPassageLinks(arg.code, context);
       case 'markup':
+        return markupArgumentLinks(arg.text);
       case 'word':
         return [];
       default: {
@@ -598,22 +649,40 @@ function tagPassageLinks(tag: MacroTag, context: ReadContext): MacroPassageLink[
 /**
  * The passage named by a `<<link>>` or `<<goto>>` that appears unquoted inside another tag's
  * arguments, at `start`. SugarCube never sees such an outer "tag" when its `<<` lies in text it
- * reads as something else, such as link markup (`[[<<-- Back|Prev]]`); the call inside it then
- * runs. The call ends where the outer tag ends.
+ * reads as something else, such as verbatim text (`{{{<<if}}}`); the call inside it then runs.
+ * The call ends where the outer tag ends.
  */
 function innerPassageLink(
   matchTagAt: (start: number) => ScannedTag | undefined,
   start: number,
-): MacroPassageLink | undefined {
+): PassageLink | undefined {
   const inner = matchTagAt(start)?.tag;
   const lexed = inner === undefined ? undefined : lexMacroArgs(inner.args);
   return inner === undefined || lexed === undefined ? undefined : ownPassageLink(inner, lexed);
 }
 
-// Where a comment, a `<script>` element or italics can start: the other markup whose text holds
-// no call. `//` is here only because it comes first, as in SugarCube: `//*` is italics.
-const REGION_OPEN_RE = /\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]/g;
+// Where link or image markup, a comment, a `<script>` element or italics can start, as SugarCube's
+// parsers match them: the markup whose text is read apart from the walk. `//` is here only because
+// it comes first, as in SugarCube: `//*` is italics.
+const REGION_OPEN_RE = /\[\[[^[]|\[[<>]?[Ii][Mm][Gg]\[|\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]/g;
 const HAS_SCRIPT_OPEN_RE = /<[Ss][Cc][Rr][Ii][Pp][Tt]/;
+type RegionKind = 'markup' | '//' | CommentKind | 'script';
+
+function regionKind(opener: string): RegionKind {
+  if (opener.startsWith('[')) {
+    return 'markup';
+  }
+  switch (opener) {
+    case '//':
+    case '/*':
+    case '/%':
+    case '<!--':
+      return opener;
+    default:
+      return 'script';
+  }
+}
+
 // SugarCube's `(?:.|\n)*?` doesn't cross the other line terminators.
 const SCRIPT_CLOSE_RE = /<\/[Ss][Cc][Rr][Ii][Pp][Tt]>|[\r\u2028\u2029]/g;
 const COMMENT_CLOSE_RES: Readonly<Record<CommentKind, RegExp>> = {
@@ -783,29 +852,38 @@ export function scriptBodyCloser(text: string, budget: { left: number }): (opene
 }
 
 /** Adds `more` to the end of `links`, without spreading, which fails for very long lists. */
-function append(links: MacroPassageLink[], more: readonly MacroPassageLink[]): void {
+function append(links: PassageLink[], more: readonly PassageLink[]): void {
   for (const link of more) {
     links.push(link);
   }
 }
 
 /**
- * The passages that `<<link>>` and `<<goto>>` calls in passage markup name. Calls whose passage
- * is known only in play (a variable or an expression) are left out. A tag's own passage comes
- * before those of the calls inside its arguments' strings.
+ * The passages that link markup (`[[…]]`) and `<<link>>` and `<<goto>>` calls in passage markup
+ * name, in the order they come. Calls whose passage is known only in play (a variable or an
+ * expression) are left out. A tag's own passage comes before those that its arguments name, as
+ * link markup or inside strings.
  *
  * The markup is walked in order, as SugarCube's wikifier walks it, with a tag tried at each
- * `<<` the walk reaches. Of the wikifier's other parsers, only those whose text holds no call
- * are told apart: comments (`/* … *` + `/`, `/% … %/`, `<!-- … -->`), whose calls never run,
- * and `<script>` elements and `<<script>>` bodies, which are JavaScript: only the calls in their
- * strings are read (see `findJavaScriptPassageLinks`). Everything else, verbatim text included,
- * is read as markup.
+ * `<<` the walk reaches, and link or image markup read at each `[[` or `[img[`; markup SugarCube
+ * rejects is read on from just after its opener, and so is markup after a limit on how much
+ * markup a reading may scan, which only input built to take quadratic time reaches (see
+ * `readSquareBracketedMarkup`). Image markup names no passage here. Of the wikifier's other
+ * parsers, only those whose text holds no link or call are told apart: comments (`/* … *` + `/`,
+ * `/% … %/`, `<!-- … -->`), whose links and calls never run, and `<script>` elements and
+ * `<<script>>` bodies, which are JavaScript: only the links and calls in their strings are read
+ * (see `findJavaScriptPassageLinks`). Everything else, verbatim text included, is read as markup.
  *
  * Where this differs from SugarCube:
+ * - a link whose passage SugarCube evaluates, because no passage has its name, is taken by its
+ *   name, `[[Go|$next]]` naming the passage `$next`, unless it is a quoted string, which is taken
+ *   by its value even when a passage has the name with the quotes;
+ * - a link SugarCube takes for a URL, because no passage has its name and it looks like one or
+ *   holds a `/`, `.`, `?` or `#`, is still read as naming a passage;
  * - a comment or a `<<script>>` body is skipped whole, even where `parseBody` ends a container
  *   such as `<<if>>` at a closing tag inside it and the rest then runs;
- * - a `/*`, `<!--` or `<script` inside other markup that holds no call, such as link markup or a
- *   `<style>` element, still starts a comment or an element;
+ * - a `[[`, `/*`, `<!--` or `<script` inside other markup that holds no call, such as verbatim
+ *   text or a `<style>` element, still starts link markup, a comment or an element;
  * - a `<<` in such other markup still starts a tag. When that tag runs over a `<<link` or
  *   `<<goto` outside the parts of its arguments that the tag pattern reads as units, that call
  *   is still read (see `innerPassageLink`), even where the tag's arguments would be JavaScript,
@@ -820,12 +898,15 @@ function append(links: MacroPassageLink[], more: readonly MacroPassageLink[]): v
  *   `Config.passages.nobr`, are not joined before they are read (see `storyInspect` for passages
  *   tagged `nobr`).
  */
-export function findMacroPassageLinks(text: string): MacroPassageLink[] {
+export function findPassageLinks(text: string): PassageLink[] {
   return markupPassageLinks(text, readContext(text));
 }
 
-function markupPassageLinks(text: string, context: ReadContext): MacroPassageLink[] {
-  if (context.depth > MAX_STRING_DEPTH || (!text.includes('<<') && !HAS_SCRIPT_OPEN_RE.test(text))) {
+function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
+  if (
+    context.depth > MAX_STRING_DEPTH ||
+    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text))
+  ) {
     return [];
   }
   const matchTagAt = tagMatcher(text);
@@ -834,13 +915,27 @@ function markupPassageLinks(text: string, context: ReadContext): MacroPassageLin
   const readComment = commentReader(text);
   const readScriptElement = scriptElementReader(text);
   let findScriptCloser: ((opener: MacroTag) => MacroTag | undefined) | undefined;
-  const links: MacroPassageLink[] = [];
+  const links: PassageLink[] = [];
 
-  /** Reads the region `opener` opens, adding the calls in a `<script>` element; returns where the walk goes on. */
+  /**
+   * Reads the region `opener` opens, adding the passage that link markup names and the links and
+   * calls in a `<script>` element; returns where the walk goes on.
+   */
   const regionEnd = (opener: RegExpExecArray): number => {
     const start = opener.index;
-    const kind = opener[0];
+    const kind = regionKind(opener[0]);
     switch (kind) {
+      case 'markup': {
+        const markup = linkMarkupAt(text, start, context.markupBudget);
+        if (markup === undefined) {
+          // SugarCube prints the opener it matched and reads on after it.
+          return start + opener[0].length;
+        }
+        if (markup.link !== undefined) {
+          links.push(markup.link);
+        }
+        return markup.end;
+      }
       case '//':
         // Italics, whose text is read on; `//*` is not a comment.
         return start + 2;
@@ -848,7 +943,7 @@ function markupPassageLinks(text: string, context: ReadContext): MacroPassageLin
       case '/%':
       case '<!--':
         return readComment(kind, start) ?? start + kind.length;
-      default: {
+      case 'script': {
         const element = readScriptElement(start);
         if (element.openerEnd === undefined) {
           // Not an opener SugarCube reads.
@@ -860,6 +955,10 @@ function markupPassageLinks(text: string, context: ReadContext): MacroPassageLin
         }
         append(links, javaScriptPassageLinks(text.slice(element.openerEnd, element.close), context));
         return element.close + 9;
+      }
+      default: {
+        const _exhaustive: never = kind;
+        throw new Error(`unhandled region: ${String(_exhaustive)}`);
       }
     }
   };
@@ -909,31 +1008,33 @@ function markupPassageLinks(text: string, context: ReadContext): MacroPassageLin
 }
 
 /**
- * The passages that `<<link>>` and `<<goto>>` calls in the strings of JavaScript source name,
- * such as a script passage or a `<<script>>` body: `$.wiki('<<goto "Room">>')`. Code outside
- * the strings isn't markup, so a call put together while the story plays, such as
- * `'<<goto "' + target + '">>'`, names no passage here.
+ * The passages that link markup and `<<link>>` and `<<goto>>` calls in the strings of JavaScript
+ * source name, such as a script passage or a `<<script>>` body: `$.wiki('<<goto "Room">>')`.
+ * Code outside the strings isn't markup, so a call put together while the story plays, such as
+ * `'<<goto "' + target + '">>'`, names no passage here, nor does an array of arrays (`[[0, 1]]`).
  */
-export function findJavaScriptPassageLinks(source: string): MacroPassageLink[] {
+export function findJavaScriptPassageLinks(source: string): PassageLink[] {
   return javaScriptPassageLinks(source, readContext(source));
 }
 
 /**
  * What JavaScript source must contain for one of its string or template literals to hold a call
- * that is read. A value holding `<<`: each `<` in it is written as `<`, `\<`, `\x3c`, `\u003c` or
- * `\u{…}`, two can be next to each other with only line continuations between, and the first
- * is `<` or `\<` (then the source holds `<<` or `<\`) or one of the others. Or a value holding a
- * `<script>` element, whose own strings can make `<<` from escapes the outer string encodes.
+ * or link markup that is read. A value holding `<<`: each `<` in it is written as `<`, `\<`,
+ * `\x3c`, `\u003c` or `\u{…}`, two can be next to each other with only line continuations
+ * between, and the first is `<` or `\<` (then the source holds `<<` or `<\`) or one of the others.
+ * A value holding `[[`, likewise: the source holds `[[`, a `[` before `\[` or a line continuation,
+ * `\x5b`, `\u005b` or `\u{`. Or a value holding a `<script>` element, whose own strings can make
+ * `<<` or `[[` from escapes the outer string encodes.
  */
-const MAY_HOLD_MACRO_RE = /<<|<\\|\\x3c|\\u003c|\\u\{|<script/i;
+const MAY_HOLD_LINK_RE = /<<|<\\|\\x3c|\\u003c|\\u\{|<script|\[\[|\[\\[[\n\r\u2028\u2029]|\\x5b|\\u005b/i;
 
-function javaScriptPassageLinks(source: string, context: ReadContext): MacroPassageLink[] {
-  if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_MACRO_RE.test(source)) {
-    // No string in it can hold a macro call.
+function javaScriptPassageLinks(source: string, context: ReadContext): PassageLink[] {
+  if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_LINK_RE.test(source)) {
+    // No string in it can hold a link or a macro call.
     return [];
   }
   const inner = deeper(context);
-  const links: MacroPassageLink[] = [];
+  const links: PassageLink[] = [];
   for (const value of javaScriptStrings(source)) {
     append(links, markupPassageLinks(value, inner));
   }

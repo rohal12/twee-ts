@@ -12,7 +12,7 @@
  */
 import type { ReadonlyPassage, ReadonlyStory } from './types.js';
 import { hasTag, isInfoPassage, isStoryPassage } from './passage.js';
-import { findJavaScriptPassageLinks, findMacroPassageLinks } from './sugarcube-macros.js';
+import { findJavaScriptPassageLinks, findPassageLinks } from './sugarcube-macros.js';
 
 export interface StoryMap {
   /** All passage names, in source order. */
@@ -29,9 +29,10 @@ export interface StoryMap {
   tagsByPassage: Map<string, string[]>;
   /**
    * Map of passage name → passage names it links to.
-   * Parses `[[target]]`, `[[display->target]]`, `[[display|target]]`,
-   * and SugarCube's `<<goto "target">>` / `<<link "display" "target">>`,
-   * whose arguments are read as SugarCube 2 reads them (see `sugarcube-macros.ts`).
+   * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
+   * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
+   * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
+   * (see `sugarcube-macros.ts`). Links and calls in comments are not read.
    */
   links: Map<string, string[]>;
   /** Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage. */
@@ -50,61 +51,33 @@ export interface BrokenLink {
 }
 
 /**
- * Extract all [[wiki-style links]] from passage text.
+ * Extract the passages that passage text links to, read as SugarCube 2 reads them.
  *
  * Supported syntaxes:
  * - `[[PassageName]]`
- * - `[[Display Text->PassageName]]`  (Twine 2 / SugarCube arrow)
- * - `[[Display Text|PassageName]]`   (Twine 1 / Harlowe pipe)
- * - `<<goto "PassageName">>`         (SugarCube macro)
+ * - `[[Display Text|PassageName]]`
+ * - `[[Display Text->PassageName]]`
+ * - `[[PassageName<-Display Text]]`
+ * - any of those with a setter: `[[Display Text|PassageName][$x to 1]]`
+ * - `<<goto "PassageName">>`            (SugarCube macro)
  * - `<<link "Display" "PassageName">>`  (SugarCube macro)
  *
- * SugarCube macro arguments may be double- or single-quoted, with backslash escapes, or bare
- * words; a passage named by a variable or an expression is known only in play and is skipped.
- * Macro calls are also read inside the quoted strings of other macros' arguments, and inside the
- * strings of `<<script>>` bodies and `<script>` elements; calls in comments are not read. A
- * script passage (`isScript`) is JavaScript, so its macro calls are read only inside its strings.
- * See `sugarcube-macros.ts` for the details and the known differences from SugarCube.
+ * In link markup, the first `|`, `->` or `<-` divides the text from the passage name; image
+ * markup (`[img[…][PassageName]]`) is not read. SugarCube macro arguments may be double- or
+ * single-quoted, with backslash escapes, or bare words; a passage named by a variable or an
+ * expression is known only in play and is skipped. Links and macro calls are also read inside the
+ * quoted strings of macros' arguments, and inside the strings of `<<script>>` bodies and
+ * `<script>` elements; links and calls in comments are not read. A script passage (`isScript`) is
+ * JavaScript, so its links and calls are read only inside its strings. See `sugarcube-macros.ts`
+ * for the details and the known differences from SugarCube.
  */
 function extractLinksFromText(text: string, isScript: boolean): string[] {
-  const targets = new Set<string>();
-
-  // [[...]] links
-  const wikiLinkRe = /\[\[([^\]]+)\]\]/g;
-  let m;
-  while ((m = wikiLinkRe.exec(text)) !== null) {
-    const content = m[1]!;
-
-    // [[display->target]]
-    const arrowIdx = content.indexOf('->');
-    if (arrowIdx !== -1) {
-      targets.add(content.slice(arrowIdx + 2).trim());
-      continue;
-    }
-
-    // [[display|target]]
-    const pipeIdx = content.indexOf('|');
-    if (pipeIdx !== -1) {
-      targets.add(content.slice(pipeIdx + 1).trim());
-      continue;
-    }
-
-    // [[target]]
-    targets.add(content.trim());
-  }
-
-  // <<goto "target">> and <<link "display" "target">>. Gotos come before links, the order
-  // this list has always had.
-  const macroLinks = isScript ? findJavaScriptPassageLinks(text) : findMacroPassageLinks(text);
-  for (const macro of ['goto', 'link'] as const) {
-    for (const link of macroLinks) {
-      if (link.macro === macro) {
-        targets.add(link.passage);
-      }
-    }
-  }
-
-  return [...targets];
+  const found = isScript ? findJavaScriptPassageLinks(text) : findPassageLinks(text);
+  // Link markup, then gotos, then links: the order this list has always had.
+  const ordered = (['markup', 'goto', 'link'] as const).flatMap((via) =>
+    found.filter((link) => link.via === via).map((link) => link.passage),
+  );
+  return [...new Set(ordered)];
 }
 
 /** Passages SugarCube runs from their raw text, never joining their lines. */
