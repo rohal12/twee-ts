@@ -11,11 +11,18 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import type { FormatRequest, RemoteFetchOptions, SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
-import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate } from './formats.js';
+import type {
+  FormatRequest,
+  RemoteFetchOptions,
+  SFAIndex,
+  SFAIndexEntry,
+  StoryFormatInfo,
+  Twine2FormatJSON,
+} from './types.js';
+import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate, UNNAMED_FORMAT_NAME } from './formats.js';
 import type { SelectFormatOptions } from './formats.js';
 import { sameVersion } from './semver.js';
-import { readUTF8 } from './util.js';
+import { decodeText, readUTF8 } from './util.js';
 import { writeFileAtomic } from './atomic-write.js';
 
 const DEFAULT_SFA_INDICES = [
@@ -139,14 +146,26 @@ interface SharedRequest<T> {
 /** Requests in progress, by what they fetch, so concurrent compiles make each request once. */
 const sharedRequests = new Map<string, SharedRequest<unknown>>();
 
+/** How one caller waits on a shared request. */
+interface WaitOptions {
+  /** Stops this caller's wait at once, rejecting with the signal's reason. */
+  readonly signal: AbortSignal | undefined;
+  /** How long this caller waits, in milliseconds (0: no limit). */
+  readonly timeout: number;
+  /** The error this caller's wait ends with when its timeout passes. */
+  readonly timedOut: () => Error;
+}
+
 /**
- * Runs `start` once for all callers that ask for `key` while it is in progress. A caller whose
- * `signal` aborts stops waiting at once and rejects with the signal's reason; the request
- * itself is aborted (through the signal `start` receives) once no caller waits on it.
+ * Runs `start` once for all callers that ask for `key` while it is in progress. Each caller waits
+ * under its own limits: a caller whose `signal` aborts, or whose `timeout` passes, stops waiting
+ * at once and rejects, while the others keep waiting. The request itself is aborted (through
+ * the signal `start` receives) once no caller waits on it. `start` must not depend on any one
+ * caller: what differs between callers belongs after the shared result.
  */
 function shareRequest<T>(
   key: string,
-  signal: AbortSignal | undefined,
+  { signal, timeout, timedOut }: WaitOptions,
   start: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   if (signal?.aborted) return Promise.reject(signal.reason);
@@ -155,21 +174,25 @@ function shareRequest<T>(
 
   return new Promise<T>((resolve, reject) => {
     let waiting = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const stopWaiting = (): void => {
       if (!waiting) return;
       waiting = false;
       signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
       request.waiters--;
     };
-    const onAbort = (): void => {
+    const giveUp = (reason: unknown): void => {
       stopWaiting();
       if (request.waiters === 0) {
         if (sharedRequests.get(key) === request) sharedRequests.delete(key);
-        request.controller.abort(signal?.reason);
+        request.controller.abort(reason);
       }
-      reject(signal?.reason);
+      reject(reason);
     };
+    const onAbort = (): void => giveUp(signal?.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
+    if (timeout > 0 && timeout <= MAX_TIMER_DELAY) timer = setTimeout(() => giveUp(timedOut()), timeout);
     request.promise.then(
       (value) => {
         stopWaiting();
@@ -203,24 +226,39 @@ function requestTimeout(options: RemoteFetchOptions): number {
   return timeout;
 }
 
+/** How one caller waits for `url`: under its own signal and timeout. `what` names the request in errors. */
+function waitOptions(options: RemoteFetchOptions, what: string, url: string): WaitOptions {
+  const timeout = requestTimeout(options);
+  return {
+    signal: options.signal,
+    timeout,
+    timedOut: () => new Error(`Failed to ${what} from ${url}: timed out after ${timeout} ms`),
+  };
+}
+
 /**
- * Fetch `url` as text, aborting when `signal` does or after `timeout` milliseconds (0: no limit).
- * `what` names the request in errors, as in "Failed to <what> from <url>".
+ * Fetch `url` as bytes, aborting when `signal` does. `what` names the request in errors, as in
+ * "Failed to <what> from <url>". The bytes are returned undecoded, so checksums cover what was served.
  */
-async function fetchText(url: string, what: string, signal: AbortSignal, timeout: number): Promise<string> {
-  const limit = timeout > 0 && timeout <= MAX_TIMER_DELAY ? AbortSignal.timeout(timeout) : undefined;
-  try {
-    const res = await fetch(url, { signal: limit ? AbortSignal.any([signal, limit]) : signal });
-    if (!res.ok) {
-      throw new Error(`Failed to ${what} from ${url}: ${res.status} ${res.statusText}`);
-    }
-    return await res.text();
-  } catch (e) {
-    if (limit?.aborted && !signal.aborted) {
-      throw new Error(`Failed to ${what} from ${url}: timed out after ${timeout} ms`, { cause: e });
-    }
-    throw e;
+async function fetchBytes(url: string, what: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    throw new Error(`Failed to ${what} from ${url}: ${res.status} ${res.statusText}`);
   }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/** Download a format.js once for every caller in this process that asks for `url` meanwhile. */
+function shareDownload(url: string, options: RemoteFetchOptions): Promise<Uint8Array<ArrayBuffer>> {
+  return shareRequest(`download\0${url}`, waitOptions(options, 'download format', url), (signal) =>
+    fetchBytes(url, 'download format', signal),
+  );
+}
+
+/** Decode a downloaded format.js as local ones are (UTF-8, else Windows-1252), without a leading BOM. */
+function decodeDownload(bytes: Uint8Array, url: string): string {
+  const { text } = decodeText(bytes, url);
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 /** Validate that a JSON value is a valid SFAIndexEntry. */
@@ -253,9 +291,8 @@ export async function fetchIndex(url: string, options: RemoteFetchOptions = {}):
   const cached = indexCache.get(url);
   if (cached) return cached;
 
-  const timeout = requestTimeout(options);
-  return shareRequest(`index\0${url}`, options.signal, async (signal) => {
-    const text = await fetchText(url, 'fetch format index', signal, timeout);
+  return shareRequest(`index\0${url}`, waitOptions(options, 'fetch format index', url), async (signal) => {
+    const text = decodeDownload(await fetchBytes(url, 'fetch format index', signal), url);
     const data = validateSFAIndex(JSON.parse(text));
     indexCache.set(url, data);
     return data;
@@ -309,8 +346,25 @@ function cachedFormatInfo(
 }
 
 /**
- * Download a format, verify its checksum, write it to the cache shared by name and version, and
- * return its StoryFormatInfo. Concurrent calls for one download URL share one request.
+ * Check that a downloaded format is the one the index entry promised. The name matches without
+ * regard to case, as format requests do, and the version by SemVer precedence, so "1.0" and "v1.0.0"
+ * agree. A format.js that names no format ({@link UNNAMED_FORMAT_NAME}) is allowed: such formats
+ * exist, and the index entry then supplies the name it is cached under.
+ */
+function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downloadUrl: string): void {
+  const nameMatches = data.name === UNNAMED_FORMAT_NAME || data.name.toLowerCase() === entry.name.toLowerCase();
+  if (nameMatches && sameVersion(data.version, entry.version)) return;
+  throw new Error(
+    `Story format mismatch for ${downloadUrl}: the index lists ${entry.name} ${entry.version}, ` +
+      `but the download is ${data.name} ${data.version}`,
+  );
+}
+
+/**
+ * Download a format, verify its checksum, check that it is the format the entry names, write it to
+ * the cache shared by name and version, and return its StoryFormatInfo. Concurrent calls for one
+ * download URL share one request for the bytes; each call then verifies them against its own
+ * entry, within its own timeout.
  */
 export async function fetchAndCacheFormat(
   entry: SFAIndexEntry,
@@ -319,35 +373,31 @@ export async function fetchAndCacheFormat(
 ): Promise<StoryFormatInfo> {
   // Index metadata is untrusted: reject a name or version that would leave the cache before downloading.
   cachedFormatDir(entry.name, entry.version);
-  const timeout = requestTimeout(options);
+  const bytes = await shareDownload(downloadUrl, options);
 
-  return shareRequest(`format\0${getCacheDir()}\0${downloadUrl}`, options.signal, async (signal) => {
-    const text = await fetchText(downloadUrl, 'download format', signal, timeout);
-
-    // Verify checksum if available
-    const checksumKey = Object.keys(entry.checksums ?? {}).find((k) => k.endsWith('format.js'));
-    if (checksumKey) {
-      const expected = entry.checksums[checksumKey];
-      if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
-      const encoder = new TextEncoder();
-      const valid = await verifySHA256(encoder.encode(text), expected);
-      if (!valid) {
-        throw new Error(`Checksum verification failed for ${entry.name} ${entry.version}`);
-      }
+  // Verify the checksum against the bytes as served, if the entry has one.
+  const checksumKey = Object.keys(entry.checksums ?? {}).find((k) => k.endsWith('format.js'));
+  if (checksumKey) {
+    const expected = entry.checksums[checksumKey];
+    if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
+    if (!(await verifySHA256(bytes, expected))) {
+      throw new Error(`Checksum verification failed for ${entry.name} ${entry.version}`);
     }
+  }
 
-    // Parse format JSON to extract name/version/source
-    const id = makeFormatId(entry.name, entry.version);
-    const data = parseFormatJSON(text, id);
-    if (!data) {
-      throw new Error(`Failed to parse format JSON from ${downloadUrl}`);
-    }
+  // Parse format JSON to extract name/version/source
+  const text = decodeDownload(bytes, downloadUrl);
+  const id = makeFormatId(entry.name, entry.version);
+  const data = parseFormatJSON(text, id);
+  if (!data) {
+    throw new Error(`Failed to parse format JSON from ${downloadUrl}`);
+  }
+  checkFormatIdentity(entry, data, downloadUrl);
 
-    // Nobody waits for it any more: leave the cache as it was.
-    signal.throwIfAborted();
-    const formatPath = writeCacheEntry(resolve(getCacheDir()), [entry.name, entry.version], text);
-    return cachedFormatInfo(id, formatPath, data);
-  });
+  // This caller gave up meanwhile: leave the cache as it was.
+  options.signal?.throwIfAborted();
+  const formatPath = writeCacheEntry(resolve(getCacheDir()), [entry.name, entry.version], text);
+  return cachedFormatInfo(id, formatPath, data);
 }
 
 /**
@@ -356,23 +406,20 @@ export async function fetchAndCacheFormat(
  * one URL share one request.
  */
 export async function fetchDirectFormat(url: string, options: RemoteFetchOptions = {}): Promise<StoryFormatInfo> {
-  const timeout = requestTimeout(options);
+  const bytes = await shareDownload(url, options);
+  const text = decodeDownload(bytes, url);
 
-  return shareRequest(`url\0${getUrlCacheDir()}\0${url}`, options.signal, async (signal) => {
-    const text = await fetchText(url, 'download format', signal, timeout);
+  const data = parseFormatJSON(text);
+  if (!data) {
+    throw new Error(`Failed to parse format JSON from ${url}`);
+  }
+  // The metadata is untrusted: refuse what could not be cached by name and version either.
+  cachedFormatDir(data.name, data.version);
 
-    const data = parseFormatJSON(text);
-    if (!data) {
-      throw new Error(`Failed to parse format JSON from ${url}`);
-    }
-    // The metadata is untrusted: refuse what could not be cached by name and version either.
-    cachedFormatDir(data.name, data.version);
-
-    // Nobody waits for it any more: leave the cache as it was.
-    signal.throwIfAborted();
-    const formatPath = writeCacheEntry(getUrlCacheDir(), [urlCacheKey(url)], text);
-    return cachedFormatInfo(makeFormatId(data.name, data.version), formatPath, data);
-  });
+  // This caller gave up meanwhile: leave the cache as it was.
+  options.signal?.throwIfAborted();
+  const formatPath = writeCacheEntry(getUrlCacheDir(), [urlCacheKey(url)], text);
+  return cachedFormatInfo(makeFormatId(data.name, data.version), formatPath, data);
 }
 
 /** The copy of a direct format URL in the download cache, if it has been downloaded before. */
