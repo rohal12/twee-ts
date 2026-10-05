@@ -10,11 +10,30 @@ export function generateIFID(): IFID {
   return randomUUID().toUpperCase() as IFID;
 }
 
-/** Validate and brand an IFID string. Throws on invalid input. */
+/**
+ * Validate and brand an IFID string. Throws on invalid input.
+ * Returns the IFID in its stored form (see `normalizeIFID`).
+ */
 export function createIFID(value: string): IFID {
   const err = validateIFID(value);
   if (err) throw new Error(`Invalid IFID: ${err}`);
-  return value.toUpperCase() as IFID;
+  return normalizeIFID(value);
+}
+
+/** Length of the `UUID://...//` wrapper around a 36-character UUID. */
+const WRAPPED_LENGTH = 45;
+
+/**
+ * Bring an IFID into the form the story model stores and every output writes: the uppercase
+ * bare UUID. A valid `UUID://...//` wrapped IFID loses its wrapper; outputs that need the wrapper
+ * (the Treaty of Babel comment) add exactly one. Twine 2 IFIDs use only capital letters, so the
+ * value is uppercased, as Tweego does. An invalid value is only uppercased, so that validation
+ * reports it as written.
+ */
+export function normalizeIFID(value: string): IFID {
+  const upper = value.toUpperCase();
+  const bare = upper.length === WRAPPED_LENGTH && validateIFID(upper) === null ? upper.slice(7, 43) : upper;
+  return bare as IFID;
 }
 
 /**

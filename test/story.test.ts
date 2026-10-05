@@ -73,6 +73,30 @@ describe('Story', () => {
     expect(story.twine2.start).toBe('Begin');
   });
 
+  it('stores a wrapped StoryData IFID as the bare UUID and rewrites the passage', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(
+      story,
+      mkPassage('StoryData', JSON.stringify({ ifid: 'uuid://d674c58c-defa-4f70-b7a2-27742230c0fc//' })),
+      diag,
+    );
+    expect(diag).toEqual([]);
+    expect(story.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(JSON.parse(storyGet(story, 'StoryData')!.text)).toEqual({ ifid: 'D674C58C-DEFA-4F70-B7A2-27742230C0FC' });
+  });
+
+  it('reports an invalid wrapped StoryData IFID as written', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(
+      story,
+      mkPassage('StoryData', JSON.stringify({ ifid: 'UUID://D674C58C-DEFA-0F70-B7A2-27742230C0FC//' })),
+      diag,
+    );
+    expect(diag.map((d) => d.message)).toEqual(["Cannot validate IFID; invalid version '0' at position 15."]);
+  });
+
   it('lookups work after storyPrepend', () => {
     const story = createStory();
     const diag: Diagnostic[] = [];
@@ -140,6 +164,12 @@ describe('unmarshalStorySettings', () => {
     const diag: Diagnostic[] = [];
     unmarshalStorySettings(story, 'ifid:D674C58C-DEFA-4F70-B7A2-27742230C0FC\nzoom:2', diag);
     expect(diag.some((d) => d.message.includes('obsolete'))).toBe(true);
+    expect(story.legacyIFID).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+  });
+
+  it('stores a wrapped legacy ifid entry as the bare UUID', () => {
+    const story = createStory();
+    unmarshalStorySettings(story, 'ifid:UUID://D674C58C-DEFA-4F70-B7A2-27742230C0FC//', []);
     expect(story.legacyIFID).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
   });
 });

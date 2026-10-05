@@ -3,9 +3,10 @@
  * Ported from storyload.go:loadHTML().
  */
 import { parseDocument } from 'htmlparser2';
-import type { Passage, PassageMetadata, Diagnostic, IFID, DecompileOptions } from './types.js';
+import type { Passage, PassageMetadata, Diagnostic, DecompileOptions } from './types.js';
 import { createStory, storyAdd, storyPrepend, marshalStoryData, unmarshalStorySettings } from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
+import { normalizeIFID } from './ifid.js';
 
 export interface DecompileResult {
   story: import('./types.js').Story;
@@ -74,7 +75,7 @@ function decompileTwine2(
       startnode = parsed;
     }
   }
-  if (attrs['ifid']) story.ifid = attrs['ifid'].toUpperCase() as IFID;
+  if (attrs['ifid']) story.ifid = normalizeIFID(attrs['ifid']);
   if (attrs['zoom']) {
     const parsed = parseFloat(attrs['zoom']);
     if (Number.isNaN(parsed)) {

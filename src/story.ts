@@ -3,7 +3,7 @@
  * Ported from story.go + storydata.go.
  */
 import type { Story, ReadonlyStory, Passage, Diagnostic, WordCountMethod, IFID } from './types.js';
-import { validateIFID } from './ifid.js';
+import { normalizeIFID, validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
 
 /** Module-level index: maps passage names to their array indices for O(1) lookups. */
@@ -141,7 +141,7 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
   }
   const data = raw as StoryDataJSON;
 
-  if (typeof data.ifid === 'string' && data.ifid) story.ifid = data.ifid.toUpperCase() as IFID;
+  if (typeof data.ifid === 'string' && data.ifid) story.ifid = normalizeIFID(data.ifid);
   if (typeof data.format === 'string' && data.format) story.twine2.format = data.format;
   if (typeof data['format-version'] === 'string' && data['format-version'])
     story.twine2.formatVersion = data['format-version'];
@@ -190,7 +190,7 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
       case 'ifid': {
         const err = validateIFID(val);
         if (err === null) {
-          story.legacyIFID = val.toUpperCase() as IFID;
+          story.legacyIFID = normalizeIFID(val);
         }
         obsolete.push('"ifid"');
         continue;

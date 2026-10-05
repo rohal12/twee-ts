@@ -529,3 +529,84 @@ describe('Twee output records the effective StoryData', () => {
     expect(result.output).toContain(':: StoryData\n{not json\n\n\n');
   });
 });
+
+describe('a wrapped IFID is written as the bare UUID', () => {
+  const BARE = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const WRAPPED = `UUID://${BARE}//`;
+  const SOURCE = `:: StoryTitle\nWrapped\n\n:: StoryData\n${JSON.stringify({ ifid: WRAPPED })}\n\n:: Start\nHello`;
+  const TMP_DIR = join(__dirname, '__tmp_wrapped_ifid__');
+
+  beforeEach(() => {
+    mkdirSync(join(TMP_DIR, 'twine1-test'), { recursive: true });
+    writeFileSync(
+      join(TMP_DIR, 'twine1-test', 'header.html'),
+      '<html><body><div id="storeArea">"STORY"</div></body></html>',
+    );
+  });
+
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  function compileWrapped(outputMode: 'html' | 'twine2-archive' | 'twee3' | 'json', content = SOURCE) {
+    return compile({
+      sources: [{ filename: 'story.tw', content }],
+      outputMode,
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      noRemote: true,
+    });
+  }
+
+  function babelComments(output: string): string[] {
+    return output.match(/<!-- UUID:.*?-->/g) ?? [];
+  }
+
+  for (const outputMode of ['html', 'twine2-archive'] as const) {
+    it(`writes one wrapper in the Babel comment and none in the ifid attribute (${outputMode})`, async () => {
+      const result = await compileWrapped(outputMode);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.story.ifid).toBe(BARE);
+      expect(/ifid="([^"]*)"/.exec(result.output)?.[1]).toBe(BARE);
+      expect(babelComments(result.output)).toEqual([`<!-- UUID://${BARE}// -->`]);
+    });
+  }
+
+  it('writes one wrapper in the Twine 1 HTML comment', async () => {
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: SOURCE }],
+      formatId: 'twine1-test',
+      formatPaths: [TMP_DIR],
+      useTweegoPath: false,
+      noRemote: true,
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(babelComments(result.output)).toEqual([`<!-- UUID://${BARE}// -->`]);
+  });
+
+  it('writes the bare UUID in JSON output', async () => {
+    const result = await compileWrapped('json');
+    expect(JSON.parse(result.output).ifid).toBe(BARE);
+  });
+
+  it('writes the bare UUID into Twee StoryData, which compiles again to the same IFID', async () => {
+    const first = await compileWrapped('twee3');
+    expect(first.output).toContain(`"ifid": "${BARE}"`);
+    expect(first.output).not.toContain('UUID://');
+    const again = await compileWrapped('html', first.output);
+    expect(again.diagnostics).toEqual([]);
+    expect(/ifid="([^"]*)"/.exec(again.output)?.[1]).toBe(BARE);
+  });
+
+  it('reuses a wrapped legacy StorySettings ifid as the bare UUID', async () => {
+    const result = await compileWrapped(
+      'twine2-archive',
+      `:: StoryTitle\nLegacy\n\n:: StorySettings\nifid:uuid://${BARE.toLowerCase()}//\n\n:: Start\nHello`,
+    );
+    expect(result.diagnostics.map((d) => d.message)).toContain(
+      'Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.',
+    );
+    expect(result.story.ifid).toBe(BARE);
+    expect(/ifid="([^"]*)"/.exec(result.output)?.[1]).toBe(BARE);
+    expect(babelComments(result.output)).toEqual([`<!-- UUID://${BARE}// -->`]);
+  });
+});

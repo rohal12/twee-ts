@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { generateIFID, validateIFID } from '../src/ifid.js';
+import { createIFID, generateIFID, normalizeIFID, validateIFID } from '../src/ifid.js';
+
+const BARE = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+const WRAPPED = `UUID://${BARE}//`;
 
 describe('generateIFID', () => {
   it('generates a valid UUID v4 in uppercase', () => {
@@ -51,6 +54,50 @@ describe('validateIFID', () => {
   it('validates generated IFIDs', () => {
     for (let i = 0; i < 10; i++) {
       expect(validateIFID(generateIFID())).toBeNull();
+    }
+  });
+});
+
+describe('createIFID', () => {
+  it('returns a bare UUID unchanged', () => {
+    expect(createIFID(BARE)).toBe(BARE);
+  });
+
+  it('uppercases a lowercase bare UUID', () => {
+    expect(createIFID(BARE.toLowerCase())).toBe(BARE);
+  });
+
+  it('strips the UUID://...// wrapper', () => {
+    expect(createIFID(WRAPPED)).toBe(BARE);
+  });
+
+  it('strips a lowercase wrapper around a lowercase UUID', () => {
+    expect(createIFID(WRAPPED.toLowerCase())).toBe(BARE);
+  });
+
+  it('throws on an invalid IFID', () => {
+    expect(() => createIFID('not-an-ifid')).toThrow('Invalid IFID: invalid IFID length');
+  });
+});
+
+describe('normalizeIFID', () => {
+  it('turns a wrapped IFID into the uppercase bare UUID', () => {
+    expect(normalizeIFID(`uuid://${BARE.toLowerCase()}//`)).toBe(BARE);
+  });
+
+  it('uppercases a bare IFID', () => {
+    expect(normalizeIFID(BARE.toLowerCase())).toBe(BARE);
+  });
+
+  it('keeps an invalid value, uppercased, so validation can report it as written', () => {
+    expect(normalizeIFID('uuid://not-an-ifid//')).toBe('UUID://NOT-AN-IFID//');
+    expect(normalizeIFID(`UUID://${BARE.slice(0, 35)}X//`)).toBe(`UUID://${BARE.slice(0, 35)}X//`);
+  });
+
+  it('gives a value that validates for every valid input', () => {
+    for (const input of [BARE, BARE.toLowerCase(), WRAPPED, WRAPPED.toLowerCase()]) {
+      expect(validateIFID(normalizeIFID(input))).toBeNull();
+      expect(normalizeIFID(input)).toHaveLength(36);
     }
   });
 });
