@@ -4,12 +4,30 @@ A story format provides the HTML template that turns your Twee source into a pla
 
 ## Format Discovery
 
-twee-ts searches for formats in the following order:
+twee-ts looks for the requested format in these sources, in order, and uses the first that has it:
 
-1. **`formatPaths`** — directories listed in the config or passed via the API
-2. **`TWEEGO_PATH`** — the environment variable used by Tweego (unless `useTweegoPath: false`)
-3. **Download cache** — formats downloaded earlier (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
-4. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom URLs (unless `noRemote: true`)
+1. **Local format directories** — see [Search order](#search-order) below
+2. **Download cache** — formats downloaded earlier (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
+3. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom URLs (unless `noRemote: true`)
+
+A format that a local directory has is used without looking in the cache or on the network.
+
+### Search Order
+
+Local formats are read from these directories, lowest rank first:
+
+1. The home directory's `storyformats`, `.storyformats`, `story-formats`, `storyFormats` and `targets` subdirectories
+2. The same subdirectories of the working directory
+3. Each directory in the **`TWEEGO_PATH`** environment variable (unless `useTweegoPath: false`)
+4. Each directory in **`formatPaths`**, from the config or the API
+
+When two directories hold a format folder with the same name, the later one in this list wins: `formatPaths` override `TWEEGO_PATH`, which overrides the home and working directories, as in Tweego. Within `TWEEGO_PATH` or `formatPaths`, a later entry wins over an earlier one.
+
+A `format.js` that cannot be read or parsed, or whose `version` is not a version, is skipped with a warning that names the folder and the reason:
+
+```
+warning: format broken-1: Skipping format; Could not decode story format JSON chunk: Unexpected identifier "nope" at line 3, column 11 (…/broken-1/format.js)
+```
 
 ### Listing Available Formats
 
@@ -26,7 +44,10 @@ Local story formats:
 
 Cached remote formats:
   chapbook-2: Chapbook 2.2.0
+  sugarcube-2: SugarCube 2.37.3 (also cached: 2.36.1)
 ```
+
+Every ID listed is one `--format` accepts. Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached format is listed under the ID of its name and major version; when several versions are cached, `--format` takes the greatest.
 
 ## Format Directory Structure
 
@@ -42,7 +63,9 @@ storyformats/
     └── format.js
 ```
 
-The directory name serves as the **format ID** (e.g. `sugarcube-2`). Use this ID with `--format` or `formatId`.
+The directory name serves as the **format ID** (e.g. `sugarcube-2`). Use this ID with `--format` or `formatId`. An ID request always uses that folder, even when another folder holds a newer version of the same format (see [SemVer Version Pruning](#semver-version-pruning)).
+
+IDs and format names match without regard to letter case, in local directories, the download cache and remote indices alike: `--format SugarCube-2` finds the `sugarcube-2` folder, and a StoryData format of `sugarcube` finds SugarCube. When two formats differ only in case, the one whose case matches exactly is used.
 
 ### Format Metadata
 
@@ -51,7 +74,7 @@ Twine 2 `format.js` files contain a JSON object with the following fields:
 | Field         | Required | Description                                        |
 | ------------- | -------- | -------------------------------------------------- |
 | `name`        | No       | Display name (defaults to "Untitled Story Format") |
-| `version`     | Yes      | SemVer version string (e.g. `"2.37.3"`)            |
+| `version`     | Yes      | Version string (e.g. `"2.37.3"`), see below        |
 | `source`      | Yes      | HTML template source                               |
 | `proofing`    | No       | Whether this is a proofing format                  |
 | `author`      | No       | Format author                                      |
@@ -60,11 +83,17 @@ Twine 2 `format.js` files contain a JSON object with the following fields:
 | `url`         | No       | Format homepage URL                                |
 | `license`     | No       | Format license                                     |
 
-twee-ts uses relaxed JSON parsing for `format.js`, tolerating trailing commas, single-quoted strings, and unquoted property keys found in some formats (e.g. older versions of Harlowe). It also drops Harlowe's function-valued `setup` property, whether the format comes from a local directory or a download.
+The object does not have to be strict JSON: as Twine 2 runs `format.js` as JavaScript, twee-ts also accepts the JavaScript object literal syntax some formats use, such as single-quoted strings, unquoted property keys, trailing commas and comments. Only the structure is relaxed; string values, including the `source`, are read exactly as JavaScript would read them. twee-ts also drops Harlowe's function-valued `setup` property, whether the format comes from a local directory or a download.
+
+The `version` is read as Tweego reads it: a SemVer version such as `2.37.3` or `2.0.0-beta.1`, optionally with a leading `v`, and with `1.0` or `1` standing for `1.0.0`. The version is kept as written.
 
 ### SemVer Version Pruning
 
-When multiple versions of the same format are discovered, twee-ts keeps only the highest `minor.patch` within each major version. For example, if both SugarCube `2.36.1` and `2.37.3` are found, only `2.37.3` is kept. Different major versions (e.g. Harlowe 2.x and 3.x) coexist as separate format IDs.
+When multiple versions of the same format are discovered, twee-ts keeps only the highest version within each major version for selecting a format by name (from `StoryData`) and for `--list-formats`. For example, if both SugarCube `2.36.1` and `2.37.3` are found, a `StoryData` request for SugarCube 2.36.1 uses `2.37.3`. Different major versions (e.g. Harlowe 2.x and 3.x) coexist.
+
+Versions compare by SemVer precedence, so a release outranks its prereleases (`2.0.0` over `2.0.0-beta.1`). Between two copies of the same name and version, the one in the higher-ranked directory is kept (see [Search Order](#search-order)).
+
+Pruning does not apply to a request by ID: `--format sugarcube-2` uses the `sugarcube-2` folder even when `sugarcube-2.37` holds a newer SugarCube 2.
 
 ### Twine 1 Formats
 
@@ -125,7 +154,7 @@ The format is selected in this order of precedence:
 
 The first of these that is set is the format twee-ts looks for, in every source above. If it can't be found, the build fails with an error naming it; twee-ts never swaps in a different story format.
 
-When the `StoryData` passage specifies a format by name and version, twee-ts matches it against available formats using semantic versioning: the same major version, at or above the requested version. If only an older version of the same major is available, twee-ts uses it and warns.
+When the `StoryData` passage specifies a format by name and version, twee-ts matches it against available formats using semantic versioning: the same major version, at or above the requested version. In the download cache and remote indices, the exact version wins when it is there; a prerelease is never taken as the exact match for its release. If only an older version of the same major is available, twee-ts uses it and warns.
 
 The compiled HTML's `<tw-storydata>` element records the format and version it was built with. Archive output (`twine2-archive`) keeps the `StoryData` values as written.
 

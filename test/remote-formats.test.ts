@@ -455,7 +455,8 @@ describe('downloaded format metadata containment', () => {
     ['a traversal suffix on the version', 'Escaper', '1.0.0/../../../escaped'],
   ])('fetchDirectFormat rejects %s', async (_label, name, version) => {
     stubFetch({ 'https://example.test/format.js': formatJs(name, version) });
-    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/unsafe/);
+    // A version with a path suffix is not a SemVer version, so it may already fail to parse.
+    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/unsafe|parse/);
     expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
     expect(existsSync(join(tmp.root(), 'twee-ts', 'escaped'))).toBe(false);
     expect(existsSync(join(getCacheDir(), 'nested'))).toBe(false);

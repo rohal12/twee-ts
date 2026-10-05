@@ -18,8 +18,8 @@ interface CliResult {
   readonly stderr: string;
 }
 
-function runCli(cwd: string, args: readonly string[]): CliResult {
-  const r = spawnSync(process.execPath, [...NODE_ARGS, ...args], { cwd, encoding: 'utf-8', timeout: 30_000 });
+function runCli(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = process.env): CliResult {
+  const r = spawnSync(process.execPath, [...NODE_ARGS, ...args], { cwd, env, encoding: 'utf-8', timeout: 30_000 });
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -118,6 +118,49 @@ describe('CLI --init', () => {
     expect(readFileSync(storyDataPath(), 'utf-8')).toBe(STORY_DATA);
     expect(readFileSync(startPath(), 'utf-8')).toMatch(/^:: Start\n/);
     expect(r.stdout).toContain('Skipped (already exists): src/StoryData.tw');
+  });
+});
+
+describe('CLI --list-formats (#174)', () => {
+  /** An environment with an empty home, a cache inside the test directory, and no TWEEGO_PATH. */
+  const env = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    HOME: join(dir, 'home'),
+    USERPROFILE: join(dir, 'home'),
+    XDG_CACHE_HOME: join(dir, 'cache'),
+    TWEEGO_PATH: '',
+  });
+  const writeFormat = (formatDir: string, name: string, version: string): void => {
+    mkdirSync(formatDir, { recursive: true });
+    const source = `<html><head></head><body>${name}-${version} {{STORY_DATA}}</body></html>`;
+    writeFileSync(join(formatDir, 'format.js'), `window.storyFormat(${JSON.stringify({ name, version, source })});`);
+  };
+
+  it('lists cached formats under IDs that --format accepts', () => {
+    writeFormat(join(dir, 'cache', 'twee-ts', 'storyformats', 'Fixture', '1.0.0'), 'Fixture', '1.0.0');
+    writeFormat(join(dir, 'cache', 'twee-ts', 'storyformats', 'Fixture', '1.1.0'), 'Fixture', '1.1.0');
+    const list = runCli(dir, ['--no-config', '--list-formats'], env());
+    expect(list.status).toBe(0);
+    expect(list.stdout).toContain('Cached remote formats:\n  fixture-1: Fixture 1.1.0 (also cached: 1.0.0)\n');
+
+    const id = /Cached remote formats:\n {2}(\S+):/.exec(list.stdout)?.[1];
+    expect(id).toBe('fixture-1');
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    const build = runCli(dir, ['--no-config', '--no-remote', '-f', id ?? '', '-o', 'out.html', 'story.tw'], env());
+    expect(build.stderr).toBe('');
+    expect(build.status).toBe(0);
+    expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('Fixture-1.1.0');
+  });
+
+  it('lists the formatPaths from the config file, and warns about formats it skips', () => {
+    writeFormat(join(dir, 'formats', 'mine-1'), 'Mine', '1.0.0');
+    mkdirSync(join(dir, 'formats', 'broken-1'));
+    writeFileSync(join(dir, 'formats', 'broken-1', 'format.js'), 'window.storyFormat({name: "B", source: nope});');
+    writeFileSync(join(dir, 'twee-ts.config.json'), JSON.stringify({ formatPaths: ['formats'] }));
+    const list = runCli(dir, ['--list-formats'], env());
+    expect(list.status).toBe(0);
+    expect(list.stdout).toContain('  mine-1: Mine 1.0.0 (Twine 2)\n');
+    expect(list.stderr).toMatch(/^warning: format broken-1: Skipping format; /m);
   });
 });
 

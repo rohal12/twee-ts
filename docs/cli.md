@@ -51,7 +51,7 @@ See [Output Modes](./output-modes) for details on each mode.
 
 | Flag                   | Description                                        |
 | ---------------------- | -------------------------------------------------- |
-| `--list-formats`       | List all available story formats and exit.         |
+| `--list-formats`       | List the format IDs `--format` accepts, and exit.  |
 | `--format-index <url>` | URL to an SFA-compatible `index.json`. Repeatable. |
 | `--format-url <url>`   | Direct URL to a `format.js` file. Repeatable.      |
 | `--no-remote`          | Disable remote format fetching.                    |
