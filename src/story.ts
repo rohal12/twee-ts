@@ -47,7 +47,7 @@ function currentIndex(story: Story): NameIndex {
  * Rebuild the index unless it matches `story.passages` at every position. O(n): for entry points
  * that run after code outside the compiler may have changed the passages, such as StoryBuilder.
  */
-export function storyVerifyIndex(story: Story): void {
+function storyVerifyIndex(story: Story): void {
   const index = currentIndex(story);
   if (!story.passages.every((p, i) => p.name === index.names[i])) buildIndex(story);
 }
@@ -466,12 +466,16 @@ export class StoryBuilder {
 
   /** Add a passage, handling special passages (StoryData, StoryTitle, etc.). */
   add(passage: Passage, diagnostics: Diagnostic[]): void {
-    storyVerifyIndex(this.story);
+    // A found name is checked at its position, so it is current. Only a new name (or a generated
+    // one, which looks up other names) needs every position checked first.
+    if (generatedNames.has(passage) || !storyHas(this.story, passage.name)) storyVerifyIndex(this.story);
     storyAdd(this.story, passage, diagnostics);
   }
 
   /** Check if a passage name exists. */
   has(name: string): boolean {
+    // A found name is checked at its position; only "not found" needs every position checked.
+    if (storyHas(this.story, name)) return true;
     storyVerifyIndex(this.story);
     return storyHas(this.story, name);
   }
