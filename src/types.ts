@@ -180,6 +180,14 @@ export interface StoryFormatInfo {
   license?: string;
 }
 
+/**
+ * The story format a compile asks for: a directory-style ID (e.g. 'sugarcube-2', which names
+ * a format and a major version) or a Twine 2 format name with a version (as StoryData has it).
+ */
+export type FormatRequest =
+  | { readonly kind: 'id'; readonly id: string }
+  | { readonly kind: 'name'; readonly name: string; readonly version: string };
+
 export interface Twine2FormatJSON {
   name: string;
   version: string;

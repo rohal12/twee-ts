@@ -5,7 +5,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { StoryFormatInfo, Twine2FormatJSON } from './types.js';
+import type { FormatRequest, StoryFormatInfo, Twine2FormatJSON } from './types.js';
 import { readUTF8 } from './util.js';
 
 /**
@@ -35,17 +35,31 @@ function relaxedJSONParse(json: string): unknown {
   return JSON.parse(fixed);
 }
 
+/** A `"setup": function` property, which Harlowe appends to its otherwise-JSON format object. */
+const SETUP_FUNCTION_PROPERTY = /,\s*"setup"\s*:\s*function\b/g;
+
+/** Drop a trailing `"setup": function(){…}` property from a format object, if it has one. */
+function stripSetupFunction(chunk: string): string | undefined {
+  let lastIndex = -1;
+  for (const match of chunk.matchAll(SETUP_FUNCTION_PROPERTY)) lastIndex = match.index;
+  return lastIndex === -1 ? undefined : chunk.slice(0, lastIndex) + '}';
+}
+
 /**
  * Parse the Twine 2 format.js JSON chunk.
- * Handles Harlowe's malformed JSON by stripping the "setup" function property.
+ * Handles Harlowe's malformed JSON by stripping the "setup" function property. The workaround
+ * keys on the property itself, so the same bytes parse whether they come from a `harlowe-3`
+ * directory or a direct download.
  * Per spec, the name key is Optional.
+ *
+ * @param _formatId No longer used; kept so existing callers keep compiling.
  */
-export function parseFormatJSON(source: string, formatId: string): Twine2FormatJSON | null {
+export function parseFormatJSON(source: string, _formatId?: string): Twine2FormatJSON | null {
   const first = source.indexOf('{');
   const last = source.lastIndexOf('}');
   if (first === -1 || last === -1) return null;
 
-  let chunk = source.slice(first, last + 1);
+  const chunk = source.slice(first, last + 1);
 
   const parse = (json: string): Twine2FormatJSON | null => {
     const raw: unknown = relaxedJSONParse(json);
@@ -74,18 +88,13 @@ export function parseFormatJSON(source: string, formatId: string): Twine2FormatJ
     return parse(chunk);
   } catch {
     // Harlowe workaround: strip the "setup" function property
-    if (formatId.toLowerCase().startsWith('harlowe')) {
-      const setupIdx = chunk.lastIndexOf(',"setup": function');
-      if (setupIdx !== -1) {
-        chunk = chunk.slice(0, setupIdx) + '}';
-        try {
-          return parse(chunk);
-        } catch {
-          // fall through
-        }
-      }
+    const stripped = stripSetupFunction(chunk);
+    if (stripped === undefined) return null;
+    try {
+      return parse(stripped);
+    } catch {
+      return null;
     }
-    return null;
   }
 }
 
@@ -278,6 +287,74 @@ export function semverCompare(a: [number, number, number], b: [number, number, n
   if (aMinor !== bMinor) return aMinor - bMinor;
   if (aPatch !== bPatch) return aPatch - bPatch;
   return 0;
+}
+
+/** Build a directory-style format ID from a name and version, e.g. ('SugarCube', '2.37.3') → 'sugarcube-2'. */
+export function makeFormatId(name: string, version: string): string {
+  const major = parseSemver(version)?.[0] ?? 0;
+  return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
+}
+
+/** Describe a format request for diagnostics. */
+export function describeFormatRequest(request: FormatRequest): string {
+  switch (request.kind) {
+    case 'id':
+      return `"${request.id}"`;
+    case 'name':
+      return request.version ? `"${request.name}" at version "${request.version}"` : `"${request.name}"`;
+    default: {
+      const _exhaustive: never = request;
+      throw new Error(`unhandled format request: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
+
+/** Options for {@link selectFormatCandidate}. */
+export interface SelectFormatOptions {
+  /** For a name request, also accept a version older than the one asked for (same major only). */
+  readonly allowOlder?: boolean;
+}
+
+/**
+ * Pick the candidate that best answers a format request.
+ *
+ * - An ID request ('sugarcube-2') matches a candidate whose name and major version build that ID,
+ *   and takes the greatest such version.
+ * - A name request matches the name case-insensitively. An exact version wins outright; otherwise
+ *   the greatest version with the same major that is not older than the one asked for (or, with
+ *   `allowOlder`, the greatest same-major version). An unparseable requested version takes the
+ *   greatest version of any major.
+ */
+export function selectFormatCandidate<T>(
+  request: FormatRequest,
+  candidates: readonly T[],
+  describe: (candidate: T) => { readonly name: string; readonly version: string },
+  options: SelectFormatOptions = {},
+): T | undefined {
+  const allowOlder = options.allowOlder ?? false;
+  const wanted = request.kind === 'name' ? parseSemver(request.version) : null;
+  let best: { readonly candidate: T; readonly version: [number, number, number] } | undefined;
+
+  for (const candidate of candidates) {
+    const { name, version } = describe(candidate);
+    const have = parseSemver(version);
+    if (!have) continue;
+
+    if (request.kind === 'id') {
+      if (makeFormatId(name, version) !== request.id.toLowerCase()) continue;
+    } else {
+      if (name.toLowerCase() !== request.name.toLowerCase()) continue;
+      if (wanted) {
+        if (semverCompare(have, wanted) === 0) return candidate;
+        if (have[0] !== wanted[0]) continue;
+        if (!allowOlder && semverCompare(have, wanted) < 0) continue;
+      }
+    }
+
+    if (!best || semverCompare(have, best.version) > 0) best = { candidate, version: have };
+  }
+
+  return best?.candidate;
 }
 
 /** Get format ID from Twine 2 name, picking the greatest version. */

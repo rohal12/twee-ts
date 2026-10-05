@@ -5,8 +5,9 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import type { SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
-import { parseSemver, semverCompare, parseFormatJSON } from './formats.js';
+import type { FormatRequest, SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
+import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate } from './formats.js';
+import type { SelectFormatOptions } from './formats.js';
 
 const DEFAULT_SFA_INDICES = [
   'https://videlais.github.io/story-formats-archive/official/index.json',
@@ -111,12 +112,6 @@ function validateSFAIndex(json: unknown): SFAIndex {
   return { twine1, twine2 };
 }
 
-/** Generate a format ID from name and version. */
-function makeFormatId(name: string, version: string): string {
-  const major = parseSemver(version)?.[0] ?? '0';
-  return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
-}
-
 /** Fetch and parse an SFA index.json, with in-memory caching. */
 export async function fetchIndex(url: string): Promise<SFAIndex> {
   const cached = indexCache.get(url);
@@ -141,36 +136,16 @@ interface FindEntryResult {
  * Exact version preferred, then highest version with same major.
  */
 export function findEntry(index: SFAIndex, name: string, version: string): FindEntryResult | undefined {
-  const wanted = parseSemver(version);
+  return findEntryForRequest(index, { kind: 'name', name, version });
+}
 
-  const searchArrays: Array<{ entries: SFAIndexEntry[]; formatType: 'twine1' | 'twine2' }> = [
-    { entries: index.twine2 ?? [], formatType: 'twine2' },
-    { entries: index.twine1 ?? [], formatType: 'twine1' },
+/** Find the best matching entry in an SFA index for a name or ID request (twine2 entries first). */
+function findEntryForRequest(index: SFAIndex, request: FormatRequest): FindEntryResult | undefined {
+  const candidates: FindEntryResult[] = [
+    ...(index.twine2 ?? []).map((entry) => ({ entry, formatType: 'twine2' as const })),
+    ...(index.twine1 ?? []).map((entry) => ({ entry, formatType: 'twine1' as const })),
   ];
-
-  let bestResult: FindEntryResult | undefined;
-  let bestVersion: [number, number, number] | null = null;
-
-  for (const { entries, formatType } of searchArrays) {
-    for (const entry of entries) {
-      if (entry.name.toLowerCase() !== name.toLowerCase()) continue;
-      const have = parseSemver(entry.version);
-      if (!have) continue;
-
-      // Exact match — return immediately
-      if (wanted && semverCompare(have, wanted) === 0) return { entry, formatType };
-
-      // Same-major, highest version
-      if (wanted === null || (have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-        if (!bestVersion || semverCompare(have, bestVersion) > 0) {
-          bestVersion = have;
-          bestResult = { entry, formatType };
-        }
-      }
-    }
-  }
-
-  return bestResult;
+  return selectFormatCandidate(request, candidates, (c) => c.entry);
 }
 
 /** Verify SHA-256 checksum using Web Crypto API (Node 22 built-in). */
@@ -238,8 +213,7 @@ export async function fetchDirectFormat(url: string): Promise<StoryFormatInfo> {
   }
   const text = await res.text();
 
-  const tempId = 'direct-url';
-  const data = parseFormatJSON(text, tempId);
+  const data = parseFormatJSON(text);
   if (!data) {
     throw new Error(`Failed to parse format JSON from ${url}`);
   }
@@ -259,9 +233,11 @@ export async function fetchDirectFormat(url: string): Promise<StoryFormatInfo> {
 
 /**
  * Try to resolve a remote story format by name and version.
+ * 0. Use an exactly matching cached download, without touching the network
  * 1. Try direct format URLs
  * 2. Try custom index URLs
  * 3. Try default SFA indices
+ * 4. Fall back to a compatible cached download (e.g. when offline)
  */
 export async function resolveRemoteFormat(
   name: string,
@@ -269,23 +245,32 @@ export async function resolveRemoteFormat(
   indices?: string[],
   urls?: string[],
 ): Promise<StoryFormatInfo | undefined> {
+  return resolveRemoteFormatRequest({ kind: 'name', name, version }, indices, urls);
+}
+
+/**
+ * Resolve a story format request remotely, in the same order as {@link resolveRemoteFormat}.
+ * An ID request such as 'sugarcube-2' matches the format whose name and major version build that ID
+ * (SugarCube 2.x), taking the greatest version available.
+ */
+export async function resolveRemoteFormatRequest(
+  request: FormatRequest,
+  indices?: string[],
+  urls?: string[],
+): Promise<StoryFormatInfo | undefined> {
   let lastError: Error | undefined;
 
-  // 1. Try direct URLs — check if any match by name
-  if (urls) {
-    for (const url of urls) {
-      try {
-        const info = await fetchDirectFormat(url);
-        if (info.name.toLowerCase() === name.toLowerCase()) {
-          const wanted = parseSemver(version);
-          const have = parseSemver(info.version);
-          if (!wanted || (have && have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-            return info;
-          }
-        }
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-      }
+  // 0. An exact version already downloaded needs no network access.
+  const cached = findCachedFormat(request);
+  if (cached && request.kind === 'name' && isExactVersion(cached.version, request.version)) return cached;
+
+  // 1. Try direct URLs — use the first that answers the request
+  for (const url of urls ?? []) {
+    try {
+      const info = await fetchDirectFormat(url);
+      if (selectFormatCandidate(request, [info], (f) => f)) return info;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
     }
   }
 
@@ -294,11 +279,11 @@ export async function resolveRemoteFormat(
   for (const indexUrl of allIndices) {
     try {
       const index = await fetchIndex(indexUrl);
-      const result = findEntry(index, name, version);
+      const result = findEntryForRequest(index, request);
       if (result) {
         // Check cache first
-        const cached = getCachedFormat(result.entry.name, result.entry.version);
-        if (cached) return cached;
+        const hit = getCachedFormat(result.entry.name, result.entry.version);
+        if (hit) return hit;
 
         const downloadUrl = getDownloadUrl(indexUrl, result.entry, result.formatType);
         return await fetchAndCacheFormat(result.entry, downloadUrl);
@@ -308,9 +293,30 @@ export async function resolveRemoteFormat(
     }
   }
 
+  // 3. No source had it (or none could be reached): a compatible cached download still answers the request.
+  if (cached) return cached;
+
   // If all sources failed with errors, propagate the last one
   if (lastError) throw lastError;
   return undefined;
+}
+
+/** Whether two version strings name the same SemVer version. */
+function isExactVersion(have: string, wanted: string): boolean {
+  const a = parseSemver(have);
+  const b = parseSemver(wanted);
+  return a !== null && b !== null && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+/**
+ * Find the cached download that best answers a format request, without network access.
+ * Matching follows {@link selectFormatCandidate}.
+ */
+export function findCachedFormat(
+  request: FormatRequest,
+  options: SelectFormatOptions = {},
+): StoryFormatInfo | undefined {
+  return selectFormatCandidate(request, [...discoverCachedFormats().values()], (f) => f, options);
 }
 
 /** Check if a format is already in the local cache. */

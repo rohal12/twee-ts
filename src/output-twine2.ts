@@ -31,7 +31,9 @@ export function toTwine2HTML(
     template = template.replaceAll('{{STORY_NAME}}', () => name);
   }
   if (template.includes('{{STORY_DATA}}')) {
-    const data = getTwine2DataChunk(story, startName, options);
+    // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
+    const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
+    const data = getTwine2DataChunk(built, startName, options);
     template = template.replace('{{STORY_DATA}}', () => data);
   }
 

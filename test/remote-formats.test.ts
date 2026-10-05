@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -14,6 +14,7 @@ import {
   fetchAndCacheFormat,
   fetchDirectFormat,
   resolveRemoteFormat,
+  resolveRemoteFormatRequest,
 } from '../src/remote-formats.js';
 import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
 
@@ -347,6 +348,7 @@ describe('getCacheSize', () => {
 const OFFICIAL_INDEX = 'https://videlais.github.io/story-formats-archive/official/index.json';
 const OFFICIAL_BASE = 'https://videlais.github.io/story-formats-archive/official';
 const UNOFFICIAL_INDEX = 'https://videlais.github.io/story-formats-archive/unofficial/index.json';
+const HARLOWE_FIXTURE = join(__dirname, 'fixtures', 'storyformats-harlowe', 'harlowe-3', 'format.js');
 
 function formatJs(name: string, version: string): string {
   return `window.storyFormat(${JSON.stringify({ name, version, proofing: false, source: '<html>{{STORY_DATA}}</html>' })});`;
@@ -494,5 +496,88 @@ describe('downloaded format metadata containment', () => {
     const info = await fetchDirectFormat('https://example.test/format.js');
     expect(info.filename).toBe(join(getCacheDir(), 'Good Format', '1.2.3', 'format.js'));
     expect(info.id).toBe('good-format-1');
+  });
+});
+
+describe('fetchDirectFormat with a Harlowe setup function', () => {
+  useTempCacheHome();
+
+  it('parses a format whose setup property is a real function', async () => {
+    stubFetch({ 'https://example.test/harlowe.js': readFileSync(HARLOWE_FIXTURE, 'utf-8') });
+    const info = await fetchDirectFormat('https://example.test/harlowe.js');
+    expect(info.name).toBe('Harlowe');
+    expect(info.version).toBe('3.3.9');
+    expect(info.id).toBe('harlowe-3');
+  });
+});
+
+describe('resolveRemoteFormatRequest with format IDs', () => {
+  useTempCacheHome();
+
+  it('resolves a directory-style ID against index names', async () => {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({
+        twine1: [],
+        twine2: [sfaEntry('SugarCube', '2.36.1'), sfaEntry('SugarCube', '2.37.3'), sfaEntry('Harlowe', '3.3.9')],
+      }),
+      [`${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`]: formatJs('SugarCube', '2.37.3'),
+    });
+    const info = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(info?.name).toBe('SugarCube');
+    expect(info?.version).toBe('2.37.3');
+  });
+
+  it('does not cross major versions for an ID', async () => {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '1.0.35')] }),
+      [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
+    });
+    await expect(resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' })).resolves.toBeUndefined();
+  });
+
+  it('matches a direct URL by ID', async () => {
+    stubFetch({ 'https://example.test/format.js': formatJs('SugarCube', '2.37.3') });
+    const info = await resolveRemoteFormatRequest(
+      { kind: 'id', id: 'sugarcube-2' },
+      [],
+      ['https://example.test/format.js'],
+    );
+    expect(info?.version).toBe('2.37.3');
+  });
+});
+
+describe('resolveRemoteFormat with a download cache and no network', () => {
+  useTempCacheHome();
+
+  async function cacheSugarCube(): Promise<void> {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '2.37.3')] }),
+      [`${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`]: formatJs('SugarCube', '2.37.3'),
+    });
+    const first = await resolveRemoteFormat('SugarCube', '2.37.3');
+    expect(first !== undefined && existsSync(first.filename)).toBe(true);
+    clearIndexCache();
+    vi.unstubAllGlobals();
+  }
+
+  it('uses an exactly matching cached format without fetching', async () => {
+    await cacheSugarCube();
+    stubOffline();
+    const info = await resolveRemoteFormat('SugarCube', '2.37.3');
+    expect(info?.version).toBe('2.37.3');
+  });
+
+  it('falls back to a compatible cached format when the network fails', async () => {
+    await cacheSugarCube();
+    stubOffline();
+    const byName = await resolveRemoteFormat('SugarCube', '2.30.0');
+    expect(byName?.version).toBe('2.37.3');
+    const byId = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(byId?.version).toBe('2.37.3');
+  });
+
+  it('still reports the network error when nothing is cached', async () => {
+    stubOffline();
+    await expect(resolveRemoteFormat('SugarCube', '2.37.3')).rejects.toThrow('offline');
   });
 });
