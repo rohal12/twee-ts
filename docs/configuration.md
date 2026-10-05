@@ -154,6 +154,8 @@ This creates:
 - `src/StoryData.tw` with a generated IFID
 - `src/Start.tw` with a starter passage
 
+Files that already exist are kept as they are and reported as skipped, so running `--init` in an existing project never replaces your story or its IFID.
+
 ## Validation
 
 twee-ts validates the config file on load. Invalid types or unknown values produce clear error messages:

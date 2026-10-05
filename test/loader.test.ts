@@ -246,3 +246,138 @@ describe('loadInlineSources: scripts and stylesheets', () => {
     expect(result.output).toMatch(/id="twine-user-stylesheet"[^>]*>[\s\S]*\.inline-marker/);
   });
 });
+
+describe('loadInlineSources: BOM and line-ending normalization', () => {
+  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  function loadInline(filename: string, content: string | Buffer): { story: Story; diagnostics: Diagnostic[] } {
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadInlineSources(story, [{ filename, content }], { trim: true }, diagnostics);
+    return { story, diagnostics };
+  }
+
+  function loadFromDisk(filename: string, content: string | Buffer): { story: Story; diagnostics: Diagnostic[] } {
+    const file = join(TMP_DIR, filename);
+    writeFileSync(file, content);
+    const story = freshStory();
+    const diagnostics: Diagnostic[] = [];
+    loadSources(story, [file], { trim: true }, diagnostics, new Set());
+    return { story, diagnostics };
+  }
+
+  /** Passages without source locations, which name the file and so differ between the loaders. */
+  function contents(story: Story): unknown[] {
+    return story.passages.map(({ name, tags, text, metadata }) => ({ name, tags, text, metadata }));
+  }
+
+  it('parses a tagged header followed by CRLF', () => {
+    const { story, diagnostics } = loadInline('inline.tw', ':: Start [tag]\r\nHello\r\n');
+    expect(diagnostics).toEqual([]);
+    expect(story.passages.map((p) => [p.name, p.tags, p.text])).toEqual([['Start', ['tag'], 'Hello']]);
+  });
+
+  it('parses a metadata header followed by CRLF', () => {
+    const { story, diagnostics } = loadInline('inline.tw', ':: Start [tag] {"position":"10,20"}\r\nHello\r\n');
+    expect(diagnostics).toEqual([]);
+    expect(story.passages[0]!.metadata).toEqual({ position: '10,20' });
+  });
+
+  it('strips a leading BOM from string content', () => {
+    const { story, diagnostics } = loadInline('inline.tw', '﻿:: Start\nHello');
+    expect(diagnostics).toEqual([]);
+    expect(story.passages.map((p) => p.name)).toEqual(['Start']);
+  });
+
+  it('strips a leading BOM and CRLF from Buffer content', () => {
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(':: Start [tag]\r\nHello\r\n')]);
+    const { story, diagnostics } = loadInline('inline.tw', bytes);
+    expect(diagnostics).toEqual([]);
+    expect(story.passages.map((p) => [p.name, p.text])).toEqual([['Start', 'Hello']]);
+  });
+
+  it('normalizes .twee2 inline sources', () => {
+    const { story, diagnostics } = loadInline('old.tw2', '﻿:: Start [tag] <10,20>\r\nHello\r\n');
+    expect(diagnostics).toEqual([]);
+    expect(story.passages[0]!.metadata).toEqual({ position: '10,20' });
+  });
+
+  it('normalizes inline stylesheets and scripts', () => {
+    const css = loadInline('app.css', '﻿body {\r\n  color: red;\r\n}\r\n');
+    expect(css.story.passages[0]!.text).toBe('body {\n  color: red;\n}\n');
+    const js = loadInline('app.js', Buffer.from('let a = 1;\rlet b = 2;'));
+    expect(js.story.passages[0]!.text).toBe('let a = 1;\nlet b = 2;');
+  });
+
+  it.each([
+    ['story.tw', '﻿:: Start [a b] {"position":"1,2"}\r\nHello\r\n\r\n:: Next\rThere\r'],
+    ['styles.css', '﻿body {\r\n}\r\n'],
+    ['app.js', 'one();\r\ntwo();\r'],
+  ])('loads %s from memory the same as from disk', (filename, content) => {
+    const inline = loadInline(filename, Buffer.from(content));
+    const disk = loadFromDisk(filename, content);
+    expect(inline.diagnostics).toEqual(disk.diagnostics);
+    expect(contents(inline.story)).toEqual(contents(disk.story));
+  });
+});
+
+describe('loadSources: Twine 2 HTML story name', () => {
+  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  const NAMED_HTML = `<tw-storydata name="Review Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
+</tw-storydata>`;
+
+  it('keeps the story name of a Twine 2 HTML file as a StoryTitle passage', () => {
+    const file = join(TMP_DIR, 'story.html');
+    writeFileSync(file, NAMED_HTML);
+    const story = freshStory();
+    const diag: Diagnostic[] = [];
+    loadSources(story, [file], { trim: true }, diag, new Set());
+    expect(diag).toEqual([]);
+    expect(story.name).toBe('Review Story');
+    expect(story.passages.map((p) => p.name)).toEqual(['StoryTitle', 'StoryData', 'Start']);
+    expect(story.passages[0]!.text).toBe('Review Story');
+  });
+
+  it('lets a later StoryTitle passage replace the HTML story name, with the usual duplicate warning', () => {
+    const html = join(TMP_DIR, 'a.html');
+    const twee = join(TMP_DIR, 'b.tw');
+    writeFileSync(html, NAMED_HTML);
+    writeFileSync(twee, ':: StoryTitle\nOverride');
+    const story = freshStory();
+    const diag: Diagnostic[] = [];
+    loadSources(story, [html, twee], { trim: true }, diag, new Set());
+    expect(story.name).toBe('Override');
+    expect(story.passages.filter((p) => p.name === 'StoryTitle').map((p) => p.text)).toEqual(['Override']);
+    expect(diag.map((d) => d.message)).toEqual(['Replacing existing passage "StoryTitle" with duplicate.']);
+  });
+
+  it('does not add a second StoryTitle when the HTML already has one', () => {
+    const file = join(TMP_DIR, 'story.html');
+    writeFileSync(
+      file,
+      NAMED_HTML.replace(
+        '</tw-storydata>',
+        '<tw-passagedata pid="2" name="StoryTitle" tags="" position="0,0" size="100,100">Passage Title</tw-passagedata>\n</tw-storydata>',
+      ),
+    );
+    const story = freshStory();
+    const diag: Diagnostic[] = [];
+    loadSources(story, [file], { trim: true }, diag, new Set());
+    expect(diag).toEqual([]);
+    expect(story.name).toBe('Passage Title');
+    expect(story.passages.filter((p) => p.name === 'StoryTitle')).toHaveLength(1);
+  });
+
+  it('adds no StoryTitle for an unnamed Twine 2 HTML file', () => {
+    const file = join(TMP_DIR, 'story.html');
+    writeFileSync(file, NAMED_HTML.replace(' name="Review Story"', ''));
+    const story = freshStory();
+    loadSources(story, [file], { trim: true }, [], new Set());
+    expect(story.name).toBe('');
+    expect(story.passages.some((p) => p.name === 'StoryTitle')).toBe(false);
+  });
+});
