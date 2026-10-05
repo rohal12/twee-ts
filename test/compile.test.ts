@@ -1194,3 +1194,292 @@ describe('compile with sources that are not valid UTF-8', () => {
     expect(result.diagnostics).toEqual([fallbackWarning(engine)]);
   });
 });
+
+const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+const STORY_DATA_TW = `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nHello\n`;
+
+function twine2HTML(opts: {
+  readonly name: string;
+  readonly ifid?: string;
+  readonly script?: string;
+  readonly style?: string;
+  readonly passage?: string;
+}): string {
+  const ifid = opts.ifid === undefined ? `ifid="${IFID}"` : opts.ifid;
+  return (
+    `<tw-storydata name="${opts.name}" startnode="1" ${ifid} format="Test Format" format-version="1.0.0">` +
+    (opts.style === undefined ? '' : `<style role="stylesheet" type="text/twine-css">${opts.style}</style>`) +
+    (opts.script === undefined ? '' : `<script role="script" type="text/twine-javascript">${opts.script}</script>`) +
+    `<tw-passagedata pid="1" name="${opts.passage ?? 'Start'}" tags="" position="0,0" size="100,100">Text</tw-passagedata>` +
+    `</tw-storydata>`
+  );
+}
+
+function replacements(diagnostics: readonly { readonly message: string }[]): string[] {
+  return diagnostics.map((d) => d.message).filter((m) => m.startsWith('Replacing existing passage'));
+}
+
+describe('passage names generated for loaded files are unique across the story', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-generated-names-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function write(name: string, content: string | Buffer): string {
+    const file = join(dir, name);
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, content);
+    return file;
+  }
+
+  function named(passages: readonly { name: string; tags: string[]; text: string }[], tag: string): string[][] {
+    return passages.filter((p) => p.tags.includes(tag)).map((p) => [p.name, p.text]);
+  }
+
+  it('keeps the story script and stylesheet of every imported Twine 2 HTML file', async () => {
+    const part1 = write('part1.html', twine2HTML({ name: 'One', script: 'window.one = 1;', style: '.one {}' }));
+    const part2 = write(
+      'part2.html',
+      twine2HTML({ name: 'Two', script: 'window.two = 2;', style: '.two {}', passage: 'Chapter 2' }),
+    );
+    const result = await compile({ sources: [part1, part2], outputMode: 'twine2-archive' });
+
+    expect(replacements(result.diagnostics)).toEqual([
+      'Replacing existing passage "StoryTitle" with duplicate.',
+      'Replacing existing passage "StoryData" with duplicate.',
+    ]);
+    expect(named(result.story.passages, 'script')).toEqual([
+      ['Story JavaScript', 'window.one = 1;'],
+      ['Story JavaScript 2', 'window.two = 2;'],
+    ]);
+    expect(named(result.story.passages, 'stylesheet')).toEqual([
+      ['Story Stylesheet', '.one {}'],
+      ['Story Stylesheet 2', '.two {}'],
+    ]);
+    expect(result.output).toContain('/* twine-user-script #2: "Story JavaScript 2" */\nwindow.two = 2;');
+    expect(result.output).toContain('/* twine-user-stylesheet #2: "Story Stylesheet 2" */\n.two {}');
+  });
+
+  for (const order of ['before', 'after'] as const) {
+    it(`keeps a real "Story JavaScript" passage loaded ${order} an imported story script`, async () => {
+      const html = write('story.html', twine2HTML({ name: 'Imported', script: 'window.code = 1;' }));
+      const twee = write('real.tw', ':: Story JavaScript\nA real passage.\n');
+      const result = await compile({
+        sources: order === 'before' ? [twee, html] : [html, twee],
+        outputMode: 'twine2-archive',
+      });
+
+      expect(result.diagnostics).toEqual([]);
+      const real = ['Story JavaScript', [], 'A real passage.'];
+      const code = ['Story JavaScript 2', ['script'], 'window.code = 1;'];
+      // The story script keeps its place in the passage list when a later real passage takes its name.
+      expect(
+        result.story.passages.filter((p) => p.name.startsWith('Story JavaScript')).map((p) => [p.name, p.tags, p.text]),
+      ).toEqual(order === 'before' ? [real, code] : [code, real]);
+      expect(result.output).toContain('window.code = 1;');
+    });
+  }
+
+  it('keeps stylesheets and scripts with the same file name in different folders', async () => {
+    const files = [
+      write('story.tw', STORY_DATA_TW),
+      write('a/style.css', '.a {}'),
+      write('b/style.css', '.b {}'),
+      write('a/main.js', 'window.a = 1;'),
+      write('b/main.js', 'window.b = 2;'),
+    ];
+    const result = await compile({ sources: files, outputMode: 'twine2-archive' });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(named(result.story.passages, 'stylesheet')).toEqual([
+      ['style.css', '.a {}'],
+      ['style.css 2', '.b {}'],
+    ]);
+    expect(named(result.story.passages, 'script')).toEqual([
+      ['main.js', 'window.a = 1;'],
+      ['main.js 2', 'window.b = 2;'],
+    ]);
+    expect(result.output).toContain('/* twine-user-stylesheet #2: "style.css 2" */\n.b {}');
+    expect(result.output).toContain('/* twine-user-script #2: "main.js 2" */\nwindow.b = 2;');
+  });
+
+  it('names in-memory stylesheets and scripts the same way', async () => {
+    const result = await compile({
+      sources: [
+        { filename: 'story.tw', content: STORY_DATA_TW },
+        { filename: 'a/style.css', content: '.a {}' },
+        { filename: 'b/style.css', content: '.b {}' },
+      ],
+      outputMode: 'twine2-archive',
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(named(result.story.passages, 'stylesheet')).toEqual([
+      ['style.css', '.a {}'],
+      ['style.css 2', '.b {}'],
+    ]);
+  });
+
+  for (const order of ['before', 'after'] as const) {
+    it(`does not let a media file named StoryTitle loaded ${order} the StoryTitle passage take its place`, async () => {
+      const title = write('title.tw', `:: StoryTitle\nMy Story\n\n${STORY_DATA_TW}`);
+      const image = write('images/StoryTitle.png', 'PNG');
+      const result = await compile({
+        sources: order === 'before' ? [image, title] : [title, image],
+        outputMode: 'twee3',
+      });
+
+      expect(result.diagnostics).toEqual([
+        {
+          level: 'warning',
+          message: `Passage "StoryTitle" from "${relative(process.cwd(), image)}" renamed to "StoryTitle 2"; "StoryTitle" is a compiler special passage name.`,
+        },
+      ]);
+      expect(result.story.name).toBe('My Story');
+      expect(result.story.passages.find((p) => p.name === 'StoryTitle')?.text).toBe('My Story');
+      expect(result.story.passages.find((p) => p.name === 'StoryTitle 2')).toEqual({
+        name: 'StoryTitle 2',
+        tags: ['Twine.image'],
+        text: 'data:image/png;base64,UE5H',
+      });
+    });
+  }
+
+  for (const order of ['before', 'after'] as const) {
+    it(`keeps a passage and a media file with its name loaded ${order} it`, async () => {
+      const twee = write('story.tw', `${STORY_DATA_TW}\n:: forest\nA real passage.\n`);
+      const image = write('img/forest.png', 'PNG');
+      const result = await compile({
+        sources: order === 'before' ? [image, twee] : [twee, image],
+        outputMode: 'twee3',
+      });
+
+      expect(result.diagnostics).toEqual([
+        {
+          level: 'warning',
+          message: `Passage "forest" from "${relative(process.cwd(), image)}" renamed to "forest 2"; another passage has the name "forest".`,
+        },
+      ]);
+      expect(result.story.passages.find((p) => p.name === 'forest')?.text).toBe('A real passage.');
+      expect(result.story.passages.find((p) => p.name === 'forest 2')?.tags).toEqual(['Twine.image']);
+    });
+  }
+
+  it('keeps two media files with the same name in different folders', async () => {
+    const files = [write('story.tw', STORY_DATA_TW), write('a/bg.png', 'A'), write('b/bg.png', 'B')];
+    const result = await compile({ sources: files, outputMode: 'twee3' });
+
+    expect(result.diagnostics).toEqual([
+      {
+        level: 'warning',
+        message: `Passage "bg" from "${relative(process.cwd(), files[2]!)}" renamed to "bg 2"; another passage has the name "bg".`,
+      },
+    ]);
+    expect(named(result.story.passages, 'Twine.image')).toEqual([
+      ['bg', 'data:image/png;base64,QQ=='],
+      ['bg 2', 'data:image/png;base64,Qg=='],
+    ]);
+  });
+
+  it('leaves the names alone when nothing collides', async () => {
+    const files = [
+      write('story.tw', `:: StoryTitle\nNames\n\n${STORY_DATA_TW}`),
+      write('style.css', '.a {}'),
+      write('main.js', 'window.a = 1;'),
+      write('photo.png', 'PNG'),
+      write('imported.html', twine2HTML({ name: 'Names', script: 'window.b = 2;', style: '.b {}', passage: 'Other' })),
+    ];
+    const result = await compile({ sources: files, outputMode: 'twee3' });
+
+    expect(result.story.passages.map((p) => p.name)).toEqual([
+      'StoryTitle',
+      'StoryData',
+      'Start',
+      'style.css',
+      'main.js',
+      'photo',
+      'Story Stylesheet',
+      'Story JavaScript',
+      'Other',
+    ]);
+  });
+});
+
+describe('StoryData from several sources', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-storydata-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('takes the story metadata from the last StoryData passage alone', async () => {
+    const result = await compile({
+      sources: [
+        {
+          filename: 'a.tw',
+          content:
+            `:: StoryData\n{"ifid":"${IFID}","options":["debug"],"start":"Old","tag-colors":{"old":"red"}}\n` +
+            ':: Start\nHi\n:: Old\nOld start',
+        },
+        { filename: 'b.tw', content: `:: StoryData\n{"ifid":"${IFID}"}` },
+      ],
+      outputMode: 'twee3',
+    });
+
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      'Replacing existing passage "StoryData" with duplicate.',
+    ]);
+    expect(JSON.parse(result.story.passages.find((p) => p.name === 'StoryData')!.text)).toEqual({ ifid: IFID });
+    expect(result.story.twine2.options.size).toBe(0);
+    expect(result.story.twine2.start).toBe('');
+    expect(result.story.twine2.tagColors.size).toBe(0);
+  });
+
+  it('takes the story metadata of an imported Twine 2 HTML file that follows a Twee StoryData', async () => {
+    const twee = join(dir, 'a.tw');
+    writeFileSync(
+      twee,
+      `:: StoryData\n{"ifid":"0B3F1A2C-1D4E-4F5A-8B6C-7D8E9F0A1B2C","format":"SugarCube","options":["debug"],"start":"Old","tag-colors":{"old":"red"}}\n\n:: Old\nOld start\n`,
+    );
+    const html = join(dir, 'b.html');
+    writeFileSync(html, twine2HTML({ name: 'Imported' }));
+    const result = await compile({ sources: [twee, html], outputMode: 'twee3' });
+
+    expect(result.story.ifid).toBe(IFID);
+    expect(result.story.twine2.format).toBe('Test Format');
+    expect(result.story.twine2.formatVersion).toBe('1.0.0');
+    expect(result.story.twine2.options.size).toBe(0);
+    expect(result.story.twine2.start).toBe('Start');
+    expect(result.story.twine2.tagColors.size).toBe(0);
+  });
+});
+
+describe('compiling a Twine 2 HTML file with a bad tw-storydata ifid', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-ifid-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  async function compileHTML(ifid: string) {
+    const file = join(dir, 'story.html');
+    writeFileSync(file, twine2HTML({ name: 'T', ifid }));
+    return compile({ sources: [file], outputMode: 'twee3' });
+  }
+
+  it('reports an invalid ifid once', async () => {
+    const result = await compileHTML('ifid="not-a-uuid"');
+    expect(result.diagnostics).toEqual([{ level: 'error', message: 'Cannot validate IFID; invalid IFID length: 10.' }]);
+  });
+
+  it('reports a missing ifid once', async () => {
+    const result = await compileHTML('');
+    expect(result.diagnostics).toEqual([
+      { level: 'error', message: expect.stringMatching(/^Story IFID not found\. Add an IFID to your story/) },
+    ]);
+  });
+});

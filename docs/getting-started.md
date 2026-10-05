@@ -98,6 +98,14 @@ To silence it, save the file as UTF-8. Unlike Tweego, twee-ts has no `--charset`
 
 In a Twee file, a byte order mark at the start of a line directly before `::` is removed too. A file made by joining Twee files (`cat a.tw b.tw > story.tw`) then keeps the passage headers of files that were saved with a byte order mark.
 
+### Passage names for loaded files
+
+Each stylesheet, script, font and media file becomes a passage named after the file, as in Tweego: `.css`, `.js` and font files by their file name (`style.css`), media files by their file name without the extension (`images/forest.png` becomes `forest`). A Twine 2 HTML file brings its story stylesheet and script as `Story Stylesheet` and `Story JavaScript`.
+
+These generated names never replace a passage, and no passage replaces them. When the name is already taken by another passage, or is a compiler special name (`StoryTitle`, `StoryData`, `StorySettings`, `StoryIncludes`), the file's passage gets the first free name of `name 2`, `name 3`, and so on. A passage from your Twee sources always keeps its name: if it comes after a file's passage with the same name, the file's passage moves to a free name. So `a/style.css` and `b/style.css` both reach the story, as `style.css` and `style.css 2`, and so do the scripts of several imported HTML files. Tweego instead lets the later of the two replace the earlier one.
+
+Stories refer to media passages by name, so twee-ts warns when a media file gets a new name. Stylesheets and scripts are found by their tag, so their new names are not reported; Twine 2 output shows them only in the comments that separate several stylesheets or scripts. When nothing collides, the names are the file names.
+
 ## Compatibility with Tweego
 
 twee-ts is a drop-in replacement for Tweego. It:

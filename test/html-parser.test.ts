@@ -546,3 +546,43 @@ describe('HTML whitespace round trips through compile()', () => {
     });
   }
 });
+
+describe('decompileHTML — story IFID', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const html = (ifidAttr: string): string =>
+    `<tw-storydata name="T" startnode="1" ${ifidAttr} format="Test Format" format-version="1.0.0">` +
+    `<tw-passagedata pid="1" name="Start" tags="">Hello</tw-passagedata></tw-storydata>`;
+
+  it('reports an invalid ifid attribute and keeps the value as written, uppercased', () => {
+    const { story, diagnostics } = decompileHTML(html('ifid="not-a-uuid"'));
+    expect(diagnostics).toEqual([
+      {
+        level: 'warning',
+        message:
+          'Cannot parse "tw-storydata" content attribute "ifid" as an IFID; value "not-a-uuid" (invalid IFID length: 10).',
+      },
+    ]);
+    expect(story.ifid).toBe('NOT-A-UUID');
+  });
+
+  it('reports a missing or empty ifid attribute and leaves the IFID empty', () => {
+    for (const attr of ['', 'ifid=""']) {
+      const { story, diagnostics } = decompileHTML(html(attr));
+      expect(diagnostics).toEqual([
+        {
+          level: 'warning',
+          message: 'Story IFID not found; the "tw-storydata" content attribute "ifid" is missing or empty.',
+        },
+      ]);
+      expect(story.ifid).toBe('');
+    }
+  });
+
+  it('accepts a valid bare or wrapped ifid without a diagnostic', () => {
+    for (const value of [IFID, IFID.toLowerCase(), `UUID://${IFID}//`]) {
+      const { story, diagnostics } = decompileHTML(html(`ifid="${value}"`));
+      expect(diagnostics).toEqual([]);
+      expect(story.ifid).toBe(IFID);
+    }
+  });
+});

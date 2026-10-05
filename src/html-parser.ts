@@ -4,9 +4,17 @@
  */
 import { parseDocument } from 'htmlparser2';
 import type { Passage, PassageMetadata, Diagnostic, DecompileOptions } from './types.js';
-import { createStory, storyAdd, storyPrepend, marshalStoryData, unmarshalStorySettings } from './story.js';
+import {
+  createStory,
+  storyAdd,
+  storyPrepend,
+  marshalStoryData,
+  unmarshalStorySettings,
+  withGeneratedName,
+  freeName,
+} from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
-import { normalizeIFID } from './ifid.js';
+import { normalizeIFID, validateIFID } from './ifid.js';
 import { isObfuscatable } from './passage.js';
 
 export interface DecompileResult {
@@ -23,11 +31,32 @@ interface HtmlNode {
   data?: string;
 }
 
+/** What decompiling reports beyond what it reads. */
+interface DecompileChecks {
+  /** Report a missing or invalid `tw-storydata` IFID. */
+  readonly ifid: boolean;
+}
+
 /**
  * Parse a Twine 2 or Twine 1 compiled HTML file back into a Story model.
  * Tweego always trims passage text; here `trim: false` keeps it exactly, as for Twee sources.
+ * A missing or invalid `tw-storydata` IFID is reported as a warning; an invalid one is kept as
+ * written (uppercased), a missing one stays empty.
  */
 export function decompileHTML(html: string, options: DecompileOptions = {}): DecompileResult {
+  return decompile(html, options, { ifid: true });
+}
+
+/**
+ * `decompileHTML()` for loading an HTML file into a compile. The importer's StoryData passage is
+ * checked when it is added to the story being compiled, which reports a missing or invalid IFID,
+ * so the IFID is not reported here as well.
+ */
+export function decompileHTMLForImport(html: string, options: DecompileOptions = {}): DecompileResult {
+  return decompile(html, options, { ifid: false });
+}
+
+function decompile(html: string, options: DecompileOptions, checks: DecompileChecks): DecompileResult {
   const diagnostics: Diagnostic[] = [];
   const story = createStory();
   const passageText = options.trim === false ? (text: string) => text : (text: string) => text.trim();
@@ -37,7 +66,7 @@ export function decompileHTML(html: string, options: DecompileOptions = {}): Dec
   // Try Twine 2 first (<tw-storydata>), then Twine 1 (<div id="store-area"> or <div id="storeArea">).
   const twine2Data = findElement(doc, 'tw-storydata');
   if (twine2Data) {
-    decompileTwine2(twine2Data, story, passageText, diagnostics);
+    decompileTwine2(twine2Data, story, passageText, checks, diagnostics);
     return { story, diagnostics };
   }
 
@@ -58,6 +87,7 @@ function decompileTwine2(
   storyData: HtmlNode,
   story: import('./types.js').Story,
   passageText: PassageText,
+  checks: DecompileChecks,
   diagnostics: Diagnostic[],
 ): void {
   // Parse tw-storydata attributes.
@@ -77,6 +107,7 @@ function decompileTwine2(
     }
   }
   if (attrs['ifid']) story.ifid = normalizeIFID(attrs['ifid']);
+  if (checks.ifid) diagnostics.push(...storyDataIFIDDiagnostics(attrs['ifid'] ?? ''));
   if (attrs['zoom']) {
     const parsed = parseFloat(attrs['zoom']);
     if (Number.isNaN(parsed)) {
@@ -116,10 +147,12 @@ function decompileTwine2(
         // Whitespace alone is no stylesheet or script, whether or not the text is trimmed.
         if (content.trim().length === 0) continue;
         const text = passageText(content);
-        const name = freeName(node.name === 'style' ? 'Story Stylesheet' : 'Story JavaScript', takenNames);
+        const base = node.name === 'style' ? 'Story Stylesheet' : 'Story JavaScript';
+        const name = freeName(base, (n) => !takenNames.has(n));
         takenNames.add(name);
         const tags = node.name === 'style' ? ['stylesheet'] : ['script'];
-        storyAdd(story, { name, tags, text }, diagnostics);
+        // Marked as generated, so that it also yields to passages of other files (see storyAdd()).
+        storyAdd(story, withGeneratedName({ name, tags, text }, { kind: 'code', base }), diagnostics);
         break;
       }
 
@@ -176,13 +209,24 @@ function passageDataName(node: HtmlNode): string {
   return node.attribs?.['name'] ?? '';
 }
 
-/** The first of `base`, `base 2`, `base 3`, … that is not in `taken`. */
-function freeName(base: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(base)) return base;
-  for (let n = 2; ; n++) {
-    const candidate = `${base} ${n}`;
-    if (!taken.has(candidate)) return candidate;
+/** Diagnostics for the `ifid` attribute of `tw-storydata`; `value` is empty when it is missing. */
+function storyDataIFIDDiagnostics(value: string): Diagnostic[] {
+  if (value === '') {
+    return [
+      {
+        level: 'warning',
+        message: 'Story IFID not found; the "tw-storydata" content attribute "ifid" is missing or empty.',
+      },
+    ];
   }
+  const err = validateIFID(value);
+  if (err === null) return [];
+  return [
+    {
+      level: 'warning',
+      message: `Cannot parse "tw-storydata" content attribute "ifid" as an IFID; value "${value}" (${err}).`,
+    },
+  ];
 }
 
 function decompileTwine1(

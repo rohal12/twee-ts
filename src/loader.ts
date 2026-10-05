@@ -6,9 +6,9 @@ import { basename, resolve } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from './types.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
-import { storyAdd, storyHas, storyPrepend } from './story.js';
+import { storyAdd, storyHas, storyPrepend, withGeneratedName } from './story.js';
 import { parseTwee } from './parser.js';
-import { decompileHTML } from './html-parser.js';
+import { decompileHTMLForImport } from './html-parser.js';
 import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from './util.js';
 import type { DecodedText } from './util.js';
 import { normalizeSourceText } from './source-text.js';
@@ -154,10 +154,10 @@ export function loadInlineSources(
         break;
       }
       case 'css':
-        storyAdd(story, { name: basename(source.filename), tags: ['stylesheet'], text: content }, diagnostics);
+        storyAdd(story, codePassage(basename(source.filename), 'stylesheet', content), diagnostics);
         break;
       case 'js':
-        storyAdd(story, { name: basename(source.filename), tags: ['script'], text: content }, diagnostics);
+        storyAdd(story, codePassage(basename(source.filename), 'script', content), diagnostics);
         break;
       default:
         diagnostics.push({
@@ -184,17 +184,32 @@ function parseTweeFile(filename: string, opts: LoadOptions): ParseResult {
   return { passages: result.passages, diagnostics: [...readDiagnostics, ...result.diagnostics] };
 }
 
+/**
+ * A stylesheet or script passage named after its file, as Tweego names it. The name only labels
+ * the code, so when another passage has it, the passage takes a free one (see `storyAdd()`).
+ */
+function codePassage(name: string, tag: string, text: string): Passage {
+  return withGeneratedName({ name, tags: [tag], text }, { kind: 'code', base: name });
+}
+
+/** Mark every passage of a parse result as a code passage named after its file. */
+function codeNames(result: ParseResult): ParseResult {
+  for (const p of result.passages) withGeneratedName(p, { kind: 'code', base: p.name });
+  return result;
+}
+
 function parseTaggedFile(tag: string, filename: string): ParseResult {
   const diagnostics: Diagnostic[] = [];
   const source = readUTF8(filename, diagnostics);
-  return { passages: [{ name: basename(filename), tags: [tag], text: source }], diagnostics };
+  return { passages: [codePassage(basename(filename), tag, source)], diagnostics };
 }
 
 function parseMediaFile(tag: string, filename: string): ParseResult {
   const source = readBase64(filename);
   const name = baseNameWithoutExt(filename);
+  const passage = { name, tags: [tag], text: `data:${mediaTypeFromFilename(filename)};base64,${source}` };
   return {
-    passages: [{ name, tags: [tag], text: `data:${mediaTypeFromFilename(filename)};base64,${source}` }],
+    passages: [withGeneratedName(passage, { kind: 'media', base: name, file: filename })],
     diagnostics: [],
   };
 }
@@ -206,7 +221,7 @@ function parseFontFile(filename: string): ParseResult {
   const ext = normalizedFileExt(filename);
   const mediaType = mediaTypeFromExt(ext);
   const hint = fontFormatHint(ext);
-  return {
+  return codeNames({
     passages: [
       {
         name,
@@ -215,12 +230,14 @@ function parseFontFile(filename: string): ParseResult {
       },
     ],
     diagnostics: [],
-  };
+  });
 }
 
 function parseHTMLFile(filename: string, opts: LoadOptions): ParseResult {
   const readDiagnostics: Diagnostic[] = [];
-  const { story, diagnostics } = decompileHTML(readUTF8(filename, readDiagnostics), { trim: opts.trim ?? true });
+  const { story, diagnostics } = decompileHTMLForImport(readUTF8(filename, readDiagnostics), {
+    trim: opts.trim ?? true,
+  });
   // Twine 2 HTML keeps the story name in an attribute, not a passage. Only passages reach the
   // outer story (and the cache), so carry the name as a StoryTitle passage, as Twine 1 HTML does.
   const passages =

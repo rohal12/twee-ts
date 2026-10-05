@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import type { Story, Diagnostic } from '../src/types.js';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import type { Story, Diagnostic, FileCacheEntry } from '../src/types.js';
 import { createStory } from '../src/story.js';
-import { loadSources, loadInlineSources } from '../src/loader.js';
+import { loadSources, loadInlineSources, loadSourcesCached } from '../src/loader.js';
 
 const TMP_DIR = join(__dirname, '__tmp_loader__');
 
@@ -403,5 +404,43 @@ describe('loadSources: Twine 2 HTML story name', () => {
     loadSources(story, [file], { trim: true }, [], new Set());
     expect(story.name).toBe('');
     expect(story.passages.some((p) => p.name === 'StoryTitle')).toBe(false);
+  });
+});
+
+describe('loadSourcesCached: generated passage names', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-names-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function write(name: string, content: string): string {
+    const file = join(dir, name);
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, content);
+    return file;
+  }
+
+  it('gives the same names when cached passages are replayed', () => {
+    const files = [
+      write('img/forest.png', 'PNG'),
+      write('a/style.css', '.a {}'),
+      write('b/style.css', '.b {}'),
+      write('story.tw', ':: forest\nA real passage.\n'),
+    ];
+    const cache = new Map<string, FileCacheEntry>();
+    const build = (): { names: string[]; messages: string[] } => {
+      const story = freshStory();
+      const diag: Diagnostic[] = [];
+      loadSourcesCached(story, files, { trim: true }, diag, new Set(), cache);
+      return { names: story.passages.map((p) => p.name), messages: diag.map((d) => d.message) };
+    };
+
+    const first = build();
+    expect(first.names).toEqual(['forest 2', 'style.css', 'style.css 2', 'forest']);
+    expect(first.messages).toHaveLength(1);
+    expect(build()).toEqual(first);
+    expect(cache.get(files[2]!)?.passages.map((p) => p.name)).toEqual(['style.css']);
   });
 });
