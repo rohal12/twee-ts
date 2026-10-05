@@ -74,7 +74,7 @@ function firstChildValue(node: HtmlNode): string {
   return first !== undefined && 'data' in first ? first.data : '';
 }
 
-function passages(story: { readonly passages: readonly { name: string; tags: string[]; text: string }[] }) {
+function passages(story: { readonly passages: readonly { name: string; tags: readonly string[]; text: string }[] }) {
   return story.passages.map((p) => [p.name, p.tags, p.text] as const);
 }
 

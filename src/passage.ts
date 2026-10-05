@@ -2,7 +2,7 @@
  * Passage helpers and output methods.
  * Ported from passage.go / passagedata.go.
  */
-import type { Passage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
+import type { Passage, ReadonlyPassage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
 import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13 } from './escape.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
@@ -30,43 +30,43 @@ const INFO_PASSAGE_NAMES = new Set([
 
 const INFO_TAGS = ['annotation', 'script', 'stylesheet', 'widget'];
 
-export function hasTag(p: Passage, tag: string): boolean {
+export function hasTag(p: ReadonlyPassage, tag: string): boolean {
   return p.tags.includes(tag);
 }
 
-export function hasAnyTag(p: Passage, ...tags: string[]): boolean {
+export function hasAnyTag(p: ReadonlyPassage, ...tags: string[]): boolean {
   return p.tags.some((t) => tags.includes(t));
 }
 
-export function hasTagStartingWith(p: Passage, prefix: string): boolean {
+export function hasTagStartingWith(p: ReadonlyPassage, prefix: string): boolean {
   return p.tags.some((t) => t.startsWith(prefix));
 }
 
-export function hasInfoTags(p: Passage): boolean {
+export function hasInfoTags(p: ReadonlyPassage): boolean {
   return hasAnyTag(p, ...INFO_TAGS) || hasTagStartingWith(p, 'Twine.');
 }
 
-export function hasInfoName(p: Passage): boolean {
+export function hasInfoName(p: ReadonlyPassage): boolean {
   return INFO_PASSAGE_NAMES.has(p.name);
 }
 
-export function isInfoPassage(p: Passage): boolean {
+export function isInfoPassage(p: ReadonlyPassage): boolean {
   return hasInfoName(p) || hasInfoTags(p);
 }
 
-export function isStoryPassage(p: Passage): boolean {
+export function isStoryPassage(p: ReadonlyPassage): boolean {
   return !hasInfoName(p) && !hasInfoTags(p);
 }
 
-export function hasMetadataPosition(p: Passage): boolean {
+export function hasMetadataPosition(p: ReadonlyPassage): boolean {
   return p.metadata != null && p.metadata.position != null && p.metadata.position !== '';
 }
 
-export function hasMetadataSize(p: Passage): boolean {
+export function hasMetadataSize(p: ReadonlyPassage): boolean {
   return p.metadata != null && p.metadata.size != null && p.metadata.size !== '';
 }
 
-export function hasAnyMetadata(p: Passage): boolean {
+export function hasAnyMetadata(p: ReadonlyPassage): boolean {
   if (!p.metadata) return false;
   return Object.values(p.metadata).some((v) => v != null && v !== '');
 }
@@ -93,7 +93,7 @@ export function unmarshalMetadata(json: string): PassageMetadata {
 }
 
 /** Convert passage to Twee source. */
-export function passageToTwee(p: Passage, outMode: OutputMode): string {
+export function passageToTwee(p: ReadonlyPassage, outMode: OutputMode): string {
   let output: string;
   if (outMode === 'twee3') {
     output = ':: ' + tweeEscape(p.name);
@@ -118,7 +118,11 @@ export function passageToTwee(p: Passage, outMode: OutputMode): string {
 }
 
 /** Generate `<tw-passagedata>` HTML for Twine 2. */
-export function passageToPassagedata(p: Passage, pid: number, options?: { readonly sourceInfo?: boolean }): string {
+export function passageToPassagedata(
+  p: ReadonlyPassage,
+  pid: number,
+  options?: { readonly sourceInfo?: boolean },
+): string {
   let position: string;
   let size: string;
 
@@ -150,7 +154,7 @@ export function passageToPassagedata(p: Passage, pid: number, options?: { readon
  * (Twine 1.4 `Tiddler.isObfuscateable()`). Its engine tests the stored name and tags, which these tiddlers keep
  * unencoded, so the decompiler tests them the same way.
  */
-export function isObfuscatable(p: Readonly<Pick<Passage, 'name' | 'tags'>>): boolean {
+export function isObfuscatable(p: Pick<ReadonlyPassage, 'name' | 'tags'>): boolean {
   return p.name !== 'StorySettings' && !p.tags.includes('Twine.image');
 }
 
@@ -159,7 +163,7 @@ export function isObfuscatable(p: Readonly<Pick<Passage, 'name' | 'tags'>>): boo
  * `isObfuscatable()`) has its name, each tag and its text ROT13-encoded, as Twine 1.4 writes it
  * (`Tiddler.toHtml()`), and as its engine.js decodes it.
  */
-export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false): string {
+export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13 = false): string {
   let position: string;
 
   if (hasMetadataPosition(p)) {
@@ -185,7 +189,7 @@ export function passageToTiddler(p: Passage, pid: number, obfuscateRot13 = false
  * - `'tweego'` (default): Strip newlines, strip comments, count NFKD-normalized characters, divide by 5.
  * - `'whitespace'`: Strip comments and markup, split on whitespace, count tokens.
  */
-export function countWords(p: Passage, method: WordCountMethod = 'tweego'): number {
+export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego'): number {
   switch (method) {
     case 'tweego': {
       let text = p.text;
