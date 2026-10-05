@@ -128,6 +128,7 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
 export async function watchWithWriteFilter(
   options: WatchOptions,
   shouldWrite: (result: CompileResult) => boolean,
+  hooks: WatchHooks = {},
 ): Promise<AbortController> {
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
@@ -197,6 +198,7 @@ export async function watchWithWriteFilter(
       }
     } finally {
       building = false;
+      hooks.onIdle?.();
     }
   };
 
@@ -226,6 +228,16 @@ export async function watchWithWriteFilter(
   if (outer?.aborted) onOuterAbort();
   else outer?.addEventListener('abort', onOuterAbort, { once: true });
   return controller;
+}
+
+/** Internal hooks into watchWithWriteFilter(); not part of the public API. */
+export interface WatchHooks {
+  /**
+   * Called each time the watch's builds have run out: the last one was delivered or, after
+   * an abort, dropped, and none is in flight. Lets a test wait for a build to finish when
+   * nothing it does shows.
+   */
+  readonly onIdle?: () => void;
 }
 
 /** A watch-mode build: the files that changed, or `undefined` for a full build. */

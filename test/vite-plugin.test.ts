@@ -4,12 +4,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
@@ -387,13 +388,14 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     dir: string,
     plugin: ReturnType<typeof tweeTsPlugin>,
     outDir = join(dir, 'dist'),
+    extra: Plugin[] = [],
   ): Promise<string> {
     const started = (await build({
       configFile: false,
       root: dir,
       logLevel: 'silent',
       build: { outDir, watch: {} },
-      plugins: [plugin],
+      plugins: [plugin, ...extra],
     })) as unknown as BuildWatcher;
     watcher = started;
     await new Promise<void>((done, fail) => {
@@ -457,27 +459,27 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
 
   it('neither loads nor watches its own HTML when it sits inside a source folder', async () => {
     const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const outDir = outDirInSources(dir);
+    const changes: string[] = [];
     const out = await watchBuild(
       dir,
       tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
-      outDirInSources(dir),
+      outDir,
+      [recordChanges(changes)],
     );
-    let builds = 0;
-    watcher!.on('event', (event) => {
-      if (event.code === 'BUNDLE_START') builds += 1;
-    });
 
     writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
     await vi.waitFor(() => expect(story(out)).toContain('NEW_TEXT'), settled);
     expect(story(out)).not.toContain('OLD_TEXT');
     expect(hasDeletedPassage(story(out))).toBe(false);
 
-    // Writing the story starts no build of its own, so the watcher goes quiet
-    // once the edit is built.
-    await new Promise((done) => setTimeout(done, 1_000));
-    builds = 0;
-    await new Promise((done) => setTimeout(done, 1_000));
-    expect(builds).toBe(0);
+    // Writing the story must start no build of its own. A second save marks the end of the
+    // check: the watcher reports changes in the order they happen, so once the save is
+    // built, a change from writing the last build would have been reported before it.
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('LAST_TEXT'));
+    await vi.waitFor(() => expect(story(out)).toContain('LAST_TEXT'), settled);
+    expect(changes.map((id) => basename(id))).toContain('start.tw');
+    expect(changes.filter((id) => isInside(id, outDir))).toEqual([]);
   });
 });
 
@@ -565,6 +567,28 @@ function writeConfig(dir: string, options: Record<string, unknown>, extra = ''):
   return file;
 }
 
+/**
+ * A plugin that records every file whose change the bundler's watcher reports, which
+ * starts a rebuild. Unlike counting builds, it tells a change the build caused by
+ * writing its own output from a save the test made (which the watcher may report twice).
+ */
+function recordChanges(changes: string[]): Plugin {
+  return {
+    name: 'record-changes',
+    watchChange(id) {
+      changes.push(id);
+    },
+  };
+}
+
+/** Whether `file` is the existing `folder` or inside it, by its path as given or its real path. */
+function isInside(file: string, folder: string): boolean {
+  return [folder, realpathSync(folder)].some((f) => {
+    const rel = relative(f, resolve(file));
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  });
+}
+
 function reloadsSent(send: { mock: { calls: unknown[][] } }): number {
   return send.mock.calls.filter(([payload]) => (payload as { type?: string }).type === 'full-reload').length;
 }
@@ -640,8 +664,17 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       timeout: 10_000,
       interval: 100,
     });
-    await new Promise((done) => setTimeout(done, 1500));
-    expect(reloadsSent(send)).toBe(1);
+    // Each bundle of the entry loads the config file, which writes a temporary copy next to
+    // it; a plugin that rebuilt for that copy would rebuild forever. The copy's events come
+    // from the real watcher, so the test can't hold them back: a second save marks the end
+    // of the check instead. A rebuild the copy started shows as a reload beyond the two saves'.
+    // (A request compiles again by itself only for the story's files, not for the entry's.)
+    writeFileSync(join(dir, 'main.ts'), ENTRY.replace('entry-ok', 'entry-saved-again'));
+    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-saved-again'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+    expect(reloadsSent(send)).toBe(2);
   });
 
   it("recovers when a missing import outside the entry's folder is created", async () => {
@@ -719,19 +752,28 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
 
   it('runs no rebuild after the server closes, in middleware mode too', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    // No file watcher: the test delivers the change itself, while fake timers hold the
+    // plugin's debounce, so the change is still waiting when the server closes.
     const mw = await createServer({
       configFile: false,
       root: dir,
       logLevel: 'silent',
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true, hmr: false, watch: null },
       plugins: [plugin(dir)],
     });
     const send = vi.spyOn(mw.ws, 'send');
-    const changed = new Promise<void>((done) => mw.watcher.once('change', () => done()));
-    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Late save.'));
-    await changed;
-    await mw.close();
-    await new Promise((done) => setTimeout(done, 500));
+    const file = join(dir, 'story/start.tw');
+    writeFileSync(file, STORY.replace('Hello from the story.', 'Late save.'));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mw.watcher.emit('all', 'change', file);
+      expect(vi.getTimerCount()).toBe(1);
+      await mw.close();
+      // Closing cancelled the debounce: no rebuild is left to start.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -1035,23 +1077,42 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     } finally {
       vi.useRealTimers();
     }
-    await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
-    await new Promise((done) => setTimeout(done, 300));
+    // A request waits for the compiles under way. With no watcher and no timer left, no
+    // other compile can start, so the reloads counted after it are all there will be.
+    expect(await page(url)).toContain('Second save.');
     expect(reloadsSent(send)).toBe(1);
     expect(send.mock.calls.some(([payload]) => (payload as { type?: string }).type === 'error')).toBe(false);
   });
 
   it('ends on the latest content when saves come further apart than the debounce', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
-    const url = await start(dir, plugin(dir));
+    // No file watcher, as above: the test delivers the events, and fake timers make each
+    // gap exactly 80 ms, longer than the plugin's debounce, however loaded the machine is.
+    const url = await start(dir, plugin(dir), undefined, { server: { watch: null } });
+    const send = vi.spyOn(server!.ws, 'send');
     const file = join(dir, 'story/start.tw');
-    const pause = () => new Promise((done) => setTimeout(done, 80));
-    unlinkSync(file);
-    await pause();
-    writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
-    await pause();
-    writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('Second save.'), { timeout: 10_000, interval: 100 });
+    /** Makes a save, lets its debounce run out, and waits for the compile it starts to report. */
+    const save = async (event: 'add' | 'change' | 'unlink', write: () => void): Promise<void> => {
+      const reported = send.mock.calls.length;
+      write();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        server!.watcher.emit('all', event, file);
+        vi.advanceTimersByTime(80);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+      await vi.waitFor(() => expect(send.mock.calls.length).toBeGreaterThan(reported), {
+        timeout: 10_000,
+        interval: 20,
+      });
+    };
+    await save('unlink', () => unlinkSync(file));
+    await save('add', () => writeFileSync(file, STORY.replace('Hello from the story.', 'First save.')));
+    await save('change', () => writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.')));
+    expect(reloadsSent(send)).toBe(2); // the deleted Start passage is reported as an error
+    expect(await page(url)).toContain('Second save.');
   });
 
   // The watcher can miss changes: after a folder is deleted and created again in

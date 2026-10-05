@@ -5,16 +5,18 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   rollup,
   watch,
   type OutputOptions,
+  type Plugin,
   type RollupBuild,
   type RollupLog,
   type RollupWatcher,
@@ -131,6 +133,28 @@ async function writeProject(
   } finally {
     await bundle.close();
   }
+}
+
+/**
+ * A plugin that records every file whose change Rollup's watcher reports, which
+ * starts a rebuild. Unlike counting builds, it tells a change the build caused by
+ * writing its own output from a save the test made (which the watcher may report twice).
+ */
+function recordChanges(changes: string[]): Plugin {
+  return {
+    name: 'record-changes',
+    watchChange(id) {
+      changes.push(id);
+    },
+  };
+}
+
+/** Whether `file` is the existing `folder` or inside it, by its path as given or its real path. */
+function isInside(file: string, folder: string): boolean {
+  return [folder, realpathSync(folder)].some((f) => {
+    const rel = relative(f, resolve(file));
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  });
 }
 
 /** Runs the plugin's buildStart with a stand-in for Rollup's context; returns the files it registered. */
@@ -429,6 +453,7 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     const dir = makeProject(storyWith('OLD_TEXT') + DELETED_PASSAGE);
     const outDir = join(dir, 'story/z-build');
     const out = join(outDir, OUTPUT_IN_SOURCES);
+    const changes: string[] = [];
     const started = watch({
       input: join(dir, 'entry.js'),
       plugins: [
@@ -438,15 +463,14 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
           outputFilename: OUTPUT_IN_SOURCES,
           compileOptions: COMPILE,
         }),
+        recordChanges(changes),
       ],
       output: { dir: outDir, format: 'es' },
       watch: { buildDelay: 50 },
       onLog: () => {},
     });
     watcher = started;
-    let builds = 0;
     started.on('event', (event) => {
-      if (event.code === 'BUNDLE_START') builds += 1;
       if (event.code === 'BUNDLE_END') void event.result.close();
     });
     await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT'), settled);
@@ -463,12 +487,13 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     expect(html).not.toContain('OLD_TEXT');
     expect(hasDeletedPassage(html)).toBe(false);
 
-    // Writing the story and the bundle starts no build of its own, so the watcher
-    // goes quiet once the last save is built.
-    await new Promise((done) => setTimeout(done, 1_000));
-    builds = 0;
-    await new Promise((done) => setTimeout(done, 1_000));
-    expect(builds).toBe(0);
+    // Writing the story and the bundle must start no build of its own. A second save marks
+    // the end of the check: the watcher reports changes in the order they happen, so once
+    // the save is built, a change from writing the last build would have been reported before it.
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('LAST_TEXT'), 'utf-8');
+    await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('LAST_TEXT'), settled);
+    expect(changes.map((id) => basename(id))).toContain('start.tw');
+    expect(changes.filter((id) => isInside(id, outDir))).toEqual([]);
   });
 });
 

@@ -255,9 +255,15 @@ describe('CLI exit status', () => {
       expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
       expect(cli.stderr()).toContain('output not written');
       expect(existsSync(join(dir, 'out.html'))).toBe(false);
-      // Give a would-be process.exit() time to land.
-      await new Promise((r) => setTimeout(r, 500));
+      // A process that exited after the failed build cannot build a good save.
+      write('broken.tw', VALID_STORY);
+      await waitFor(
+        () =>
+          (existsSync(join(dir, 'out.html')) && countOf(cli.stdout(), 'Built:') >= 2) || cli.child.exitCode !== null,
+        'the rebuild of the corrected save',
+      );
       expect(cli.child.exitCode).toBeNull();
+      expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('<tw-storydata');
     } finally {
       cli.child.kill();
     }
