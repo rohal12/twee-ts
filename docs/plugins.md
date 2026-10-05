@@ -38,6 +38,7 @@ interface TweeTsVitePluginOptions {
 ### Features
 
 - **Dev server**: the compiled story is served at the base URL with Vite's client added. Any change to a source (Twee, `.js` and `.css` files inside `sources`), the head file, a module, or a file the entry imports recompiles the story and reloads the page. Saves that land within 50 ms are compiled once. Each request for the story first compares the sources, the head file and the modules with what the last compile read, and compiles again if any changed, so the story served is current even when the file watcher misses a change (after a folder is deleted and created again in quick succession, as `git rebase` does, files added to it later go unseen, and under Deno so do edits to the files created with it); an open page then reloads only when you reload it.
+- **Excluded files**: `compileOptions.exclude` leaves files out of the story, in dev and in the build (see [Excluding files](./configuration#excluding-files)). A change to an excluded file recompiles nothing, unless the entry uses the file.
 - **Error overlay**: compile and bundling errors appear in Vite's overlay with file and line, and the last good story keeps being served until the next successful compile.
 - **Build output**: during `vite build` the compiled HTML is emitted with the configured filename. Without `entry`, the build needs no `index.html`: the plugin gives Vite a stand-in input of its own, so an `index.html` in the project root is not built over the story (unless you set `build.rollupOptions.input` / `build.rolldownOptions.input` yourself). Errors fail the build; warnings go through Vite's logger.
 - **Vite versions**: the plugin works with Vite 5 and newer; the `entry` option needs Vite 8.
@@ -161,6 +162,7 @@ Both plugins accept a `compileOptions` object that is spread into the `compile()
 
 ```typescript
 compileOptions: {
+  exclude: ['src/story/**/*.png'],
   startPassage: 'Prologue',
   tagAliases: { library: 'script' },
   modules: ['src/analytics.js'],

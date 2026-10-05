@@ -4,6 +4,7 @@
  * Ported from tweego.go + config.go.
  */
 import { writeFileSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import type {
   CompileOptions,
   CompileToFileOptions,
@@ -18,7 +19,7 @@ import type {
   FileCacheEntry,
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
-import { getFilenames, watchFilesystem } from './filesystem.js';
+import { getFilenames, isExcluded, watchFilesystem } from './filesystem.js';
 import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag } from './passage.js';
@@ -85,16 +86,31 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
   const modulePaths = options.modules ?? [];
   const allPaths = [...filePaths, ...modulePaths];
 
-  const handle = watchFilesystem(allPaths, options.outFile, (changedFiles) => {
-    buildOutput(options, cache, changedFiles)
-      .then((result) => {
-        writeFileSync(options.outFile, result.output, 'utf-8');
-        options.onBuild?.(result);
-      })
-      .catch((e) => {
-        options.onError?.(e instanceof Error ? e : new Error(String(e)));
-      });
-  });
+  // A change to an excluded source builds nothing. `exclude` leaves modules alone,
+  // so a module (or a file in a module folder) still rebuilds when a glob matches it.
+  const exclude = options.exclude ?? [];
+  const moduleRoots = modulePaths.map((p) => resolve(p));
+  const ignore = (filename: string): boolean => {
+    if (!isExcluded(filename, exclude)) return false;
+    const abs = resolve(filename);
+    return !moduleRoots.some((root) => abs === root || abs.startsWith(root + sep));
+  };
+
+  const handle = watchFilesystem(
+    allPaths,
+    options.outFile,
+    (changedFiles) => {
+      buildOutput(options, cache, changedFiles)
+        .then((result) => {
+          writeFileSync(options.outFile, result.output, 'utf-8');
+          options.onBuild?.(result);
+        })
+        .catch((e) => {
+          options.onError?.(e instanceof Error ? e : new Error(String(e)));
+        });
+    },
+    ignore,
+  );
 
   controller.signal.addEventListener('abort', () => handle.close());
   return controller;
@@ -128,7 +144,11 @@ async function buildOutput(
   }
 
   // Walk file paths to get all source filenames
-  const { filenames: sourceFilenames, diagnostics: sourcePathDiagnostics } = getFilenames(filePaths);
+  const { filenames: sourceFilenames, diagnostics: sourcePathDiagnostics } = getFilenames(
+    filePaths,
+    undefined,
+    options.exclude,
+  );
   diagnostics.push(...sourcePathDiagnostics);
 
   // Create story and load sources

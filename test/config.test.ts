@@ -93,6 +93,15 @@ describe('validateConfig', () => {
     expect(errors).toContain('"sourceInfo" must be a boolean.');
   });
 
+  it('accepts exclude globs', () => {
+    expect(validateConfig({ sources: ['src/'], exclude: ['**/*.png', 'src/art/**'] })).toEqual([]);
+  });
+
+  it('rejects exclude that is not an array of strings', () => {
+    expect(validateConfig({ exclude: '**/*.png' })).toContain('"exclude" must be an array.');
+    expect(validateConfig({ exclude: ['**/*.png', 42] })).toContain('"exclude" must be an array of strings.');
+  });
+
   it('accepts valid outputMode values', () => {
     for (const mode of ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json']) {
       const errors = validateConfig({ outputMode: mode });
@@ -163,6 +172,7 @@ describe('JSON Schema', () => {
 
     const expectedFields = [
       'sources',
+      'exclude',
       'output',
       'outputMode',
       'formatId',

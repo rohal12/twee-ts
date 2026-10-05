@@ -10,11 +10,12 @@ Sources can be files or directories. Directories are walked recursively for supp
 
 ### Input / Output
 
-| Flag                  | Description                                                                |
-| --------------------- | -------------------------------------------------------------------------- |
-| `-o, --output <file>` | Output file path. Defaults to stdout.                                      |
-| `-f, --format <id>`   | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`. |
-| `-s, --start <name>`  | Starting passage name. Default: `Start`.                                   |
+| Flag                  | Description                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `-o, --output <file>` | Output file path. Defaults to stdout.                                                                       |
+| `-f, --format <id>`   | Story format ID (e.g. `sugarcube-2`, `harlowe-3`). Default: `sugarcube-2`.                                  |
+| `-s, --start <name>`  | Starting passage name. Default: `Start`.                                                                    |
+| `--exclude <glob>`    | Leave out source files matching a glob. Repeatable. See [Excluding files](./configuration#excluding-files). |
 
 ### Output Modes
 
@@ -150,6 +151,9 @@ twee-ts -d -o story.twee story.html
 
 # Watch mode with stats logging
 twee-ts -w -l -o story.html src/
+
+# Leave images out of the story (quote globs so the shell doesn't expand them)
+twee-ts --exclude 'src/**/*.png' --exclude 'src/**/*.jpg' -o story.html src/
 
 # Use tag aliases from the CLI
 twee-ts --tag-alias library=script --tag-alias theme=stylesheet -o story.html src/

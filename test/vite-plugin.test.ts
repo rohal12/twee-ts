@@ -9,12 +9,13 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { build, createLogger, createServer, type InlineConfig, type Logger, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
+import { toPosix } from '../src/plugins/paths.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -85,6 +86,15 @@ function assetProject(): string {
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * An exclude glob for `pattern` inside the project `dir`. Exclude globs are read
+ * relative to the working directory, and the projects live outside it, in the
+ * temp folder, where `**` alone doesn't reach.
+ */
+function excludeGlob(dir: string, pattern: string): string {
+  return `${toPosix(relative(process.cwd(), dir))}/${pattern}`;
+}
 
 async function buildProject(
   dir: string,
@@ -159,6 +169,22 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     );
     expect(readdirSync(outDir)).toEqual(['index.html']);
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('leaves the files compileOptions.exclude matches out of the story', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    writeBinary(dir, 'story/art/scene.png', 64);
+    const outDir = await buildProject(
+      dir,
+      tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        compileOptions: { ...COMPILE, exclude: [excludeGlob(dir, 'story/art/**')] },
+      }),
+    );
+    const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+    expect(html).toContain('Hello from the story.');
+    expect(html).not.toContain('Twine.image');
   });
 
   it('without an entry: a root index.html does not replace the story', async () => {
@@ -809,6 +835,75 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     await page(url);
     await page(url);
     expect(reloadsSent(send)).toBe(0);
+  });
+
+  it('compiles nothing and reloads nothing for a change to an excluded file, announced or not', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    writeBinary(dir, 'story/art/scene.png', 64);
+    const compileOptions = { ...COMPILE, exclude: [excludeGlob(dir, 'story/art/**')] };
+    const url = await start(dir, plugin(dir, { compileOptions }), undefined, { server: { watch: null } });
+    expect(await page(url)).not.toContain('Twine.image');
+    const send = vi.spyOn(server!.ws, 'send');
+    writeBinary(dir, 'story/art/scene.png', 128);
+    writeBinary(dir, 'story/art/new.png', 64);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server!.watcher.emit('all', 'change', join(dir, 'story/art/scene.png'));
+      server!.watcher.emit('all', 'add', join(dir, 'story/art/new.png'));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    // The request compares the inputs with the last compile; the excluded files don't count.
+    expect(await page(url)).not.toContain('Twine.image');
+    expect(reloadsSent(send)).toBe(0);
+  });
+
+  it('still recompiles for a module that an exclude glob also matches', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'story/lib/mod.js': 'window.modMarker = 1;',
+      'app/main.ts': ENTRY,
+      'app/style.css': STYLE,
+    });
+    const module = join(dir, 'story/lib/mod.js');
+    const compileOptions = { ...COMPILE, exclude: [excludeGlob(dir, 'story/lib/**')], modules: [module] };
+    const url = await start(dir, plugin(dir, { compileOptions }), undefined, { server: { watch: null } });
+    const html = await page(url);
+    expect(html).toContain('window.modMarker = 1;');
+    expect(userScript(html)).not.toContain('modMarker');
+    writeFileSync(module, 'window.modMarker = 2;');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server!.watcher.emit('all', 'change', module);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(50);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await page(url)).toContain('window.modMarker = 2;');
+  });
+
+  it('rebundles when an excluded file the entry uses changes', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "import './style.css';\n",
+      'app/style.css': 'body { background: url(../story/art/bg.png); }\n',
+    });
+    const image = join(dir, 'story/art/bg.png');
+    mkdirSync(dirname(image), { recursive: true });
+    writeFileSync(image, Buffer.from('first-image'));
+    const compileOptions = { ...COMPILE, exclude: [excludeGlob(dir, 'story/art/**')] };
+    const url = await start(dir, plugin(dir, { compileOptions }));
+    const encoded = (text: string): string => Buffer.from(text).toString('base64');
+    const html = await page(url);
+    expect(html).not.toContain('Twine.image');
+    expect(userStylesheet(html)).toContain(encoded('first-image'));
+    writeFileSync(image, Buffer.from('second-image'));
+    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toContain(encoded('second-image')), {
+      timeout: 10_000,
+      interval: 100,
+    });
   });
 
   it('shows a malformed passage in the overlay and keeps serving the last good story', async () => {

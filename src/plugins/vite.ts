@@ -18,7 +18,7 @@ import { build, version as viteVersion } from 'vite';
 import type { ErrorPayload, InlineConfig, Logger, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, InlineSource } from '../types.js';
 import { compileIncremental, TweeTsError } from '../compiler.js';
-import { getFilenames } from '../filesystem.js';
+import { getFilenames, isExcluded } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { isInside, isViteConfigTemp, toPosix } from './paths.js';
 
@@ -192,24 +192,30 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
   return entry;
 }
 
+/** Absolute forward-slash paths of the head file and the modules, which `exclude` doesn't apply to. */
+function headInputs(options: TweeTsVitePluginOptions): string[] {
+  const extra = options.compileOptions;
+  return [...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) => toPosix(resolve(p)));
+}
+
 /** Absolute forward-slash paths whose changes recompile the story: sources, head file, modules. */
 function watchedInputs(options: TweeTsVitePluginOptions): string[] {
-  const extra = options.compileOptions;
-  return [...options.sources, ...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) =>
-    toPosix(resolve(p)),
-  );
+  return [...options.sources.map((p) => toPosix(resolve(p))), ...headInputs(options)];
 }
 
 /**
- * Every file under `inputs` (forward-slash paths), with what a change to it
- * alters: modification time, size and inode (a file replaced by a new one).
+ * Every file under `inputs` (forward-slash paths) but those `skip` returns true
+ * for, with what a change to it alters: modification time, size and inode (a
+ * file replaced by a new one).
  */
-function inputFiles(inputs: readonly string[]): Map<string, string> {
+function inputFiles(inputs: readonly string[], skip: (file: string) => boolean): Map<string, string> {
   const files = new Map<string, string>();
   for (const filename of getFilenames([...inputs]).filenames) {
+    const file = toPosix(resolve(filename));
+    if (skip(file)) continue;
     try {
       const stat = statSync(filename);
-      files.set(toPosix(resolve(filename)), `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
+      files.set(file, `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
     } catch {
       // Deleted since the walk found it; it counts as gone.
     }
@@ -486,6 +492,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const base = server.config.base;
       const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
       const inputs = watchedInputs(options);
+      const exclude = options.compileOptions?.exclude ?? [];
+      const notExcludable = headInputs(options);
+      // A source the compile leaves out (the head file and modules are never left out).
+      const excluded = (file: string): boolean => isExcluded(file, exclude) && !isInside(file, notExcludable);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
       const root = toPosix(server.config.root);
       server.watcher.add(inputs);
@@ -521,7 +531,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         if (closed) return;
         // Taken before the compile reads anything, so a file written during it
         // still counts as changed afterwards.
-        compiledInputs = inputFiles(inputs);
+        compiledInputs = inputFiles(inputs, excluded);
         // The compile cache trusts modification times, which a quick save may leave
         // unchanged (coarse file-system timestamps); forget the files that changed.
         for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
@@ -561,7 +571,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         // Loading the config for the entry build writes and deletes one of these;
         // reacting to it would bundle again, and again.
         if (isViteConfigTemp(changed)) return;
-        if (!isInside(changed, inputs) && !touchesEntry(changed)) return;
+        if ((!isInside(changed, inputs) || excluded(changed)) && !touchesEntry(changed)) return;
         pending.add(changed);
         clearTimeout(timer);
         timer = setTimeout(() => {
@@ -581,7 +591,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const catchUp = (): Promise<void> => {
         catchingUp ??= (async () => {
           await queue;
-          const changed = filesChanged(compiledInputs, inputFiles(inputs));
+          const changed = filesChanged(compiledInputs, inputFiles(inputs, excluded));
           if (changed.size === 0) return;
           // Changes the watcher did report, still waiting out the debounce, go into the same compile.
           for (const file of pending) changed.add(file);

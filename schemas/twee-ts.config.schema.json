@@ -15,6 +15,11 @@
       "items": { "type": "string" },
       "description": "Files or directories to compile."
     },
+    "exclude": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Glob patterns for files to leave out of sources, matched against each file's path relative to the working directory (e.g. \"**/*.png\", \"src/art/**\")."
+    },
     "output": {
       "type": "string",
       "description": "Output file path."
