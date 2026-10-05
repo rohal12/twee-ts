@@ -305,11 +305,6 @@ export function* tweeLexer(input: string): Generator<LexerItem, void, undefined>
       yield item;
     }
   }
-  // Drain any remaining items.
-  const remaining = ctx.drainItems();
-  for (const item of remaining) {
-    yield item;
-  }
 }
 
 /** Convenience class wrapper for the lexer generator. */
