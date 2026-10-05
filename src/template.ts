@@ -13,6 +13,11 @@ export interface TemplateSlot {
   readonly occurrences: 'first' | 'all';
   /** Text that replaces a match, given the matched text. Inserted literally and called only for a match. */
   readonly replacement: (match: string) => string;
+  /**
+   * Whether the match at `offset` in the scanned `text` is a placeholder. A match it rejects is left as it is, and
+   * does not count as the first one. Every match is a placeholder when this is left out.
+   */
+  readonly accepts?: (text: string, offset: number) => boolean;
 }
 
 /** A piece of a template: text to scan for `slots`, or text inserted as is. */
@@ -56,6 +61,9 @@ export function fillTemplateParts(parts: readonly TemplatePart[]): string {
       return part.text.replace(pattern, (match: string, ...groups: unknown[]) => {
         const slot = slots.find((_, i) => groups[i] !== undefined);
         if (slot === undefined || (slot.occurrences === 'first' && filled.has(slot))) return match;
+        // After the capture groups come the match offset and the scanned text.
+        const offset = groups[slots.length];
+        if (slot.accepts !== undefined && typeof offset === 'number' && !slot.accepts(part.text, offset)) return match;
         filled.add(slot);
         return slot.replacement(match);
       });
