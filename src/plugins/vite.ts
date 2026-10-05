@@ -23,6 +23,7 @@ import type { LocatedError } from './diagnostics.js';
 import { getFilenames, isExcluded, outputPaths, realPathOf, walkedEntry } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
+import { findHeadStartEnd } from '../modules.js';
 import { createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 
@@ -53,6 +54,8 @@ const ENTRY_STYLE_NAME = 'twee-ts-entry.css';
  * entry in dev. The plugin instance that build loads from the user's config file
  * sees it and stands aside.
  */
+/** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
+const PLUGIN_NAME = 'twee-ts';
 const INNER_BUILD_FLAG = '__tweeTsEntryBuild';
 
 /**
@@ -299,9 +302,9 @@ function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<st
 /** Adds Vite's client to the page so reloads and the error overlay reach it. */
 function injectViteClient(html: string, base: string): string {
   const tag = `<script type="module" src="${base}@vite/client"></script>`;
-  const head = /<head[^>]*>/i.exec(html);
-  if (!head) return tag + html;
-  const at = head.index + head[0].length;
+  // The real head start tag: not one in a comment, a script or an attribute value.
+  const at = findHeadStartEnd(html);
+  if (at === undefined) return tag + html;
   return html.slice(0, at) + tag + html.slice(at);
 }
 
@@ -446,18 +449,32 @@ async function flattenPlugins(option: unknown): Promise<unknown[]> {
   return value ? [value] : [];
 }
 
+/**
+ * The plugins passed to `createServer()` itself, flattened, without twee-ts: the entry build must not run this
+ * plugin, whose state belongs to the server, and a config file brings its own plugins when it is read again.
+ * Vite's resolved list is not used, as it holds the built-ins every build adds for itself.
+ */
+async function inlinePlugins(config: ResolvedConfig): Promise<Plugin[]> {
+  const plugins = (await flattenPlugins(config.inlineConfig.plugins)) as Plugin[];
+  return plugins.filter((plugin) => plugin.name !== PLUGIN_NAME);
+}
+
 /** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
 async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Promise<EntryBundle> {
   const watchFiles = new Set<string>();
+  // With a config file the entry build reads it again, plugins and all, so only what the server was given on top
+  // of it comes across. Without one, the resolved settings that change how code bundles do.
+  const { define, resolve: inlineResolve } = config.inlineConfig;
+  const settings: InlineConfig = config.configFile
+    ? { define, ...(inlineResolve?.alias ? { resolve: { alias: inlineResolve.alias } } : {}) }
+    : { define: config.define, resolve: { alias: config.resolve.alias } };
   const inline: InlineConfig & Record<string, unknown> = {
     configFile: config.configFile ?? false,
     root: config.root,
     mode: config.mode,
     customLogger: entryBuildLogger(config.logger),
     publicDir: false,
-    // With a config file the entry build reads it again, plugins and all. Without
-    // one, the settings that change how code bundles come across from the server.
-    ...(config.configFile ? {} : { define: config.define, resolve: { alias: config.resolve.alias } }),
+    ...settings,
     build: {
       ...entryBuildOptions(entryPath),
       write: false,
@@ -467,7 +484,7 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
       copyPublicDir: false,
       watch: null,
     },
-    plugins: [oneOffEntryBuild, recordWatchFiles(watchFiles)],
+    plugins: [...(await inlinePlugins(config)), oneOffEntryBuild, recordWatchFiles(watchFiles)],
     [INNER_BUILD_FLAG]: true,
   };
   const out = await build(inline);
@@ -504,7 +521,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   }
 
   return {
-    name: 'twee-ts',
+    name: PLUGIN_NAME,
 
     config(userConfig, env) {
       innerBuild = (userConfig as Record<string, unknown>)[INNER_BUILD_FLAG] === true;
