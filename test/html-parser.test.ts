@@ -69,6 +69,16 @@ describe('decompileHTML', () => {
     expect(story.twine2.tagColors.get('important')).toBe('red');
   });
 
+  it('stores a wrapped ifid attribute as the bare uppercase UUID', () => {
+    const html = MINIMAL_TWINE2_HTML.replace(
+      'ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC"',
+      'ifid="uuid://d674c58c-defa-4f70-b7a2-27742230c0fc//"',
+    );
+    const { story } = decompileHTML(html);
+    expect(story.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(JSON.parse(story.passages[0]!.text).ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+  });
+
   it('prepends StoryData passage', () => {
     const { story } = decompileHTML(MINIMAL_TWINE2_HTML);
     expect(story.passages[0]?.name).toBe('StoryData');
