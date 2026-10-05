@@ -114,6 +114,8 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 | `modules`  | `string[]` | `[]`    | JS or CSS files to inject into the HTML `<head>`.                |
 | `headFile` | `string`   | `""`    | Path to a raw HTML file whose contents are appended to `<head>`. |
 
+See [Head Injection](./cli#head-injection) for where they go in a template without a closing head tag.
+
 ### Tag Aliases
 
 | Key          | Type                     | Default | Description                                     |

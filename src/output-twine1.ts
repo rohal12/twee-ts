@@ -7,7 +7,7 @@ import type { Diagnostic, PassageOmission, ReadonlyPassage, ReadonlyStory, Story
 import { readUTF8 } from './util.js';
 import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
-import { headSlot } from './modules.js';
+import { placeHead } from './modules.js';
 import { fillTemplateParts, literal } from './template.js';
 import type { TemplateSlot } from './template.js';
 import { jsStringEscape, htmlCommentSanitize } from './escape.js';
@@ -23,9 +23,10 @@ export function toTwine1Archive(story: ReadonlyStory, _startName: string): strin
 /**
  * Fill the Twine 1 format template. The format's components are inserted first, one after another, as Tweego and
  * Twine 1 do. Then the first of each story placeholder (`"VERSION"`, `"TIME"`, `"START_AT"`, `"STORY_SIZE"`,
- * `"STORY"`), the IFID comment and `head` (before the first closing head tag) are found in one pass, so a start
- * passage name or story data holding a placeholder or a closing head tag stays literal. `options.diagnostics`
- * receives a warning for each format file that is not valid UTF-8.
+ * `"STORY"`), the IFID comment and `head` (before the first closing head tag or, with a warning, the body start
+ * tag; see `placeHead()`) are found in one pass, so a start passage name or story data holding a placeholder or a
+ * closing head tag stays literal. `options.diagnostics` receives a warning for each format file that is not valid
+ * UTF-8, and any warning about where `head` went.
  */
 export function toTwine1HTML(
   story: ReadonlyStory,
@@ -64,9 +65,16 @@ export function toTwine1HTML(
   const ifid: TemplateSlot | undefined = story.ifid
     ? { pattern: literal(storeArea), occurrences: 'first', replacement: (div) => `<!-- UUID://${safeIfid}// -->${div}` }
     : undefined;
-  const late = [ifid, headSlot(options?.head ?? '')].filter((slot) => slot !== undefined);
+  const placement = placeHead(
+    options?.head ?? '',
+    isPre14 ? [template, footer] : [template],
+    `Story format "${format.name}"`,
+  );
+  diagnostics?.push(...placement.diagnostics);
+  const late = [ifid, placement.slot].filter((slot) => slot !== undefined);
 
-  // Story instance replacements
+  // Story instance replacements. "START_AT" sits in a script element (`testplay = "START_AT";` in Sugarcane),
+  // which jsStringEscape() keeps whole.
   const displayStart = startName === 'Start' ? '' : startName;
   const slots: readonly TemplateSlot[] = [
     firstSlot('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`),

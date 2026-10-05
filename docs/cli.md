@@ -37,6 +37,10 @@ See [Output Modes](./output-modes) for details on each mode.
 | `-m, --module <file>` | JS or CSS file to inject into `<head>`. Repeatable.    |
 | `--head <file>`       | Raw HTML file whose contents are appended to `<head>`. |
 
+The modules and the head file go on their own lines before the story format template's closing head tag, as in Tweego. HTML lets a document leave that tag out, so a template without one gets them before its body start tag instead (which the browser still reads as part of the head), with a warning; a template with neither gets nothing, with a warning. Tweego drops them from such templates without a word.
+
+A font module (`.ttf`, `.otf`, `.woff`, `.woff2`) becomes an `@font-face` rule whose `font-family` is the file name without its extension, written as a CSS string, so quotes, backslashes and line breaks in the name are escaped.
+
 ### Compilation Behavior
 
 | Flag                         | Description                                                                      |

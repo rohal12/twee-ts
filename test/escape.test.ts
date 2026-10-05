@@ -13,6 +13,7 @@ import {
   rot13,
   scriptContentEscape,
   styleContentEscape,
+  cssStringEscape,
 } from '../src/escape.js';
 
 describe('attrEscape', () => {
@@ -79,6 +80,29 @@ describe('jsStringEscape', () => {
   it('returns empty string unchanged', () => {
     expect(jsStringEscape('')).toBe('');
   });
+  it('escapes every < so that the literal cannot end or change the script element around it', () => {
+    expect(jsStringEscape('</script><!--<SCRIPT>a<b')).toBe('\\x3C/script>\\x3C!--\\x3CSCRIPT>a\\x3Cb');
+  });
+  it('escapes the line separators that end a string literal before ES2019', () => {
+    expect(jsStringEscape('a\u2028b\u2029c')).toBe('a\\u2028b\\u2029c');
+  });
+  it('keeps the value of a double- or single-quoted string literal', () => {
+    const value = 'x</script>\\"\'\n\r\t\u2028\u2029<!--<script>--> é 😀';
+    expect(new Function(`return "${jsStringEscape(value)}";`)()).toBe(value);
+    expect(new Function(`return '${jsStringEscape(value)}';`)()).toBe(value);
+  });
+});
+
+describe('cssStringEscape', () => {
+  it('escapes backslashes and double quotes', () => {
+    expect(cssStringEscape('My "Fancy" \\Font')).toBe('My \\"Fancy\\" \\\\Font');
+  });
+  it('writes line breaks and other control characters as hex escapes ending in a space', () => {
+    expect(cssStringEscape('a\nb\rc\fd\te\u0001f\u007fg')).toBe('a\\a b\\d c\\c d\\9 e\\1 f\\7f g');
+  });
+  it('leaves other text alone', () => {
+    expect(cssStringEscape("Fira Sans 'Bold' é 😀")).toBe("Fira Sans 'Bold' é 😀");
+  });
 });
 
 describe('commentSanitize', () => {
@@ -90,6 +114,9 @@ describe('commentSanitize', () => {
 describe('htmlCommentSanitize', () => {
   it('breaks closing HTML comment sequences', () => {
     expect(htmlCommentSanitize('text --> end')).toBe('text -- > end');
+  });
+  it('breaks the --!> sequence, which also closes an HTML comment', () => {
+    expect(htmlCommentSanitize('text --!> end')).toBe('text --! > end');
   });
 });
 

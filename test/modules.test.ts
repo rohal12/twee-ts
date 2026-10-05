@@ -56,6 +56,15 @@ describe('loadModules', () => {
     expect(result).toContain('format("woff2")');
   });
 
+  // Windows file names cannot hold `"`, `\` or a line break.
+  it.skipIf(process.platform === 'win32')('writes the font family as a valid CSS string', () => {
+    const file = join(TMP_DIR, 'My "Fancy" \\Font\nTwo.woff');
+    writeFileSync(file, 'FONT');
+    expect(loadModules([file])).toContain(
+      '\tfont-family: "My \\"Fancy\\" \\\\Font\\a Two";\n\tsrc: url("data:font/woff;base64,Rk9OVA==") format("woff");\n}',
+    );
+  });
+
   it('skips duplicate files', () => {
     const file = join(TMP_DIR, 'dup.css');
     writeFileSync(file, 'body {}');
@@ -124,6 +133,41 @@ describe('modifyHead', () => {
 
   it('returns original HTML when no modules or head file', () => {
     expect(modifyHead(baseHtml, [])).toBe(baseHtml);
+  });
+
+  it('injects before the body start tag, with a warning, when there is no closing head tag', () => {
+    const headFile = join(TMP_DIR, 'head.html');
+    writeFileSync(headFile, '<meta>');
+    const diagnostics: Diagnostic[] = [];
+    expect(modifyHead('<html><title>T</title><BODY class="x"></body>', [], headFile, diagnostics)).toBe(
+      '<html><title>T</title><meta>\n<BODY class="x"></body>',
+    );
+    expect(diagnostics).toEqual([
+      {
+        level: 'warning',
+        message: 'The HTML has no closing head tag; the modules and head file were injected before its body start tag.',
+      },
+    ]);
+  });
+
+  it('does not take <bodyx> or <tbody> for a body start tag', () => {
+    const headFile = join(TMP_DIR, 'head.html');
+    writeFileSync(headFile, '<meta>');
+    const diagnostics: Diagnostic[] = [];
+    const html = '<table><tbody></tbody></table><bodyx>';
+    expect(modifyHead(html, [], headFile, diagnostics)).toBe(html);
+    expect(diagnostics).toEqual([
+      {
+        level: 'warning',
+        message: 'The HTML has no closing head tag and no body start tag; the modules and head file were not injected.',
+      },
+    ]);
+  });
+
+  it('reports nothing for HTML without head or body tags when there is nothing to inject', () => {
+    const diagnostics: Diagnostic[] = [];
+    expect(modifyHead('<p>hi</p>', [], undefined, diagnostics)).toBe('<p>hi</p>');
+    expect(diagnostics).toEqual([]);
   });
 
   it('preserves $& and other replacement patterns in module content', () => {
