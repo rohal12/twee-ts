@@ -430,17 +430,21 @@ describe('loadSourcesCached: generated passage names', () => {
       write('story.tw', ':: forest\nA real passage.\n'),
     ];
     const cache = new Map<string, FileCacheEntry>();
-    const build = (): { names: string[]; messages: string[] } => {
+    const build = (changedFiles?: ReadonlySet<string>): { names: string[]; messages: string[] } => {
       const story = freshStory();
       const diag: Diagnostic[] = [];
-      loadSourcesCached(story, files, { trim: true }, diag, new Set(), cache);
+      loadSourcesCached(story, files, { trim: true }, diag, new Set(), cache, changedFiles);
       return { names: story.passages.map((p) => p.name), messages: diag.map((d) => d.message) };
     };
 
     const first = build();
     expect(first.names).toEqual(['forest 2', 'style.css', 'style.css 2', 'forest']);
     expect(first.messages).toHaveLength(1);
+    // Replayed by modification time, then as unchanged files of a watch build.
     expect(build()).toEqual(first);
+    expect(build(new Set())).toEqual(first);
+    // A changed file is parsed again and still yields to the real passage.
+    expect(build(new Set([files[0]!]))).toEqual(first);
     expect(cache.get(files[2]!)?.passages.map((p) => p.name)).toEqual(['style.css']);
   });
 });
