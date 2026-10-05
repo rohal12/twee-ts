@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { DomUtils, parseDocument } from 'htmlparser2';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import {
@@ -327,5 +328,69 @@ describe('vite plugin: user configuration in the dev entry build', { timeout: 30
       plugins: [tweeTsPlugin(ENTRY_STORY_OPTIONS(dir))],
     });
     expect(entryScript(await (await fetch(url)).text())).toContain('recursion-free');
+  });
+});
+
+describe('vite plugin: the client script in the served head', { timeout: 30_000 }, () => {
+  function clientScripts(html: string) {
+    return DomUtils.getElementsByTagName('script', parseDocument(html), true).filter(
+      (script) => script.attribs.src === '/@vite/client',
+    );
+  }
+
+  async function serveTemplate(source: string): Promise<string> {
+    const dir = makeProject({
+      'story/start.tw': STORY.replace(':: StoryTitle\nGaps\n\n', ''),
+      'formats/probe-1/format.js': `window.storyFormat(${JSON.stringify({ name: 'Probe', version: '1.0.0', source })});`,
+    });
+    const url = await start(dir, {
+      sources: [join(dir, 'story')],
+      format: 'probe-1',
+      compileOptions: { ...COMPILE, formatPaths: [join(dir, 'formats')] },
+    });
+    return (await fetch(url)).text();
+  }
+
+  const parentName = (script: { parent: unknown }): string | undefined =>
+    (script.parent as { name?: string } | null)?.name;
+  const BODY = '<body>{{STORY_DATA}}</body></html>';
+
+  it('puts exactly one client element in the real head and leaves a comment look-alike alone', async () => {
+    const html = await serveTemplate(`<!-- License: <head> -->\n<!doctype html><html><head></head>${BODY}`);
+    expect(html).toContain('<!-- License: <head> -->');
+    const scripts = clientScripts(html);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0] && parentName(scripts[0])).toBe('head');
+  });
+
+  it('leaves a head look-alike in an inline script string intact and the script valid', async () => {
+    const inline = 'var s = "<head>"; var t = 1;';
+    const html = await serveTemplate(`<!doctype html><html><script>${inline}</script><head></head>${BODY}`);
+    expect(html).toContain(`<script>${inline}</script>`);
+    expect(() => new Function(inline)).not.toThrow();
+    const scripts = clientScripts(html);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0] && parentName(scripts[0])).toBe('head');
+  });
+
+  it('leaves a head look-alike in an attribute value intact', async () => {
+    const html = await serveTemplate(`<!doctype html><html><meta content="<head>"><head></head>${BODY}`);
+    expect(html).toContain('<meta content="<head>">');
+    const scripts = clientScripts(html);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0] && parentName(scripts[0])).toBe('head');
+  });
+
+  it('places the client in a head whose quoted attribute holds a >', async () => {
+    const html = await serveTemplate(`<!doctype html><html><head data-x="a>b"></head>${BODY}`);
+    expect(html).toContain('<head data-x="a>b">');
+    const scripts = clientScripts(html);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0] && parentName(scripts[0])).toBe('head');
+  });
+
+  it('still falls back to the start of the page without a head tag', async () => {
+    const html = await serveTemplate('<body>{{STORY_DATA}}</body>');
+    expect(html.startsWith('<script type="module" src="/@vite/client"></script>')).toBe(true);
   });
 });

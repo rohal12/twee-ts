@@ -23,6 +23,7 @@ import type { LocatedError } from './diagnostics.js';
 import { getFilenames, isExcluded, outputPaths, realPathOf, walkedEntry } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
+import { findHeadStartEnd } from '../modules.js';
 import { createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 
@@ -301,9 +302,9 @@ function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<st
 /** Adds Vite's client to the page so reloads and the error overlay reach it. */
 function injectViteClient(html: string, base: string): string {
   const tag = `<script type="module" src="${base}@vite/client"></script>`;
-  const head = /<head[^>]*>/i.exec(html);
-  if (!head) return tag + html;
-  const at = head.index + head[0].length;
+  // The real head start tag: not one in a comment, a script or an attribute value.
+  const at = findHeadStartEnd(html);
+  if (at === undefined) return tag + html;
   return html.slice(0, at) + tag + html.slice(at);
 }
 

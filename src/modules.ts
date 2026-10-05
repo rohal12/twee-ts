@@ -136,7 +136,7 @@ const CLOSING_HEAD_PREFIX = '<\\/[Hh][Ee][Aa][Dd](?=[\\t\\n\\f\\r />])';
 /** `<body` in any letter case, followed by whitespace, `/` or `>` (so not `<bodyx>`). */
 const BODY_START_PREFIX = '<[Bb][Oo][Dd][Yy](?=[\\t\\n\\f\\r />])';
 
-/** The offsets of the first real closing head tag and body start tag in an HTML text, when it has them. */
+/** The offsets of the first real closing head tag, body start tag and head start tag end in an HTML text. */
 interface HeadTags {
   readonly closingHead: number | undefined;
   readonly bodyStart: number | undefined;
@@ -154,8 +154,22 @@ const isLetter = (c: string | undefined): boolean => c !== undefined && /^[A-Za-
  * a full HTML tokenizer; it needs no more than the tags and where they end.
  */
 export function scanHeadTags(html: string): HeadTags {
+  const { closingHead, bodyStart } = scanTags(html);
+  return { closingHead, bodyStart };
+}
+
+/**
+ * The offset just after the first real head start tag, where content goes to come first in the head; found like
+ * the tags of `scanHeadTags()`, so not one in a comment, a script or an attribute value. `undefined` without one.
+ */
+export function findHeadStartEnd(html: string): number | undefined {
+  return scanTags(html).headStartEnd;
+}
+
+function scanTags(html: string): HeadTags & { readonly headStartEnd: number | undefined } {
   let closingHead: number | undefined;
   let bodyStart: number | undefined;
+  let headStartEnd: number | undefined;
   let i = 0;
 
   while (i < html.length) {
@@ -176,6 +190,7 @@ export function scanHeadTags(html: string): HeadTags {
     } else if (isLetter(next)) {
       const { name, end } = readTag(html, lt + 1);
       if (name === 'body' && bodyStart === undefined) bodyStart = lt;
+      if (name === 'head' && headStartEnd === undefined) headStartEnd = end;
       i = RAW_TEXT_ELEMENTS.has(name) ? rawTextEnd(html, name, end) : end;
     } else {
       i = lt + 1;
@@ -183,7 +198,7 @@ export function scanHeadTags(html: string): HeadTags {
     if (closingHead !== undefined && bodyStart !== undefined) break;
   }
 
-  return { closingHead, bodyStart };
+  return { closingHead, bodyStart, headStartEnd };
 }
 
 /** Read a tag whose name starts at `from`: its lowercase name, and the offset after its `>` (or the end). */
@@ -219,7 +234,7 @@ function rawTextEnd(html: string, name: string, from: number): number {
  * The slot that inserts `content` on its own line before the first real tag of the kind `which` names (see
  * `scanHeadTags()`), which is kept as written. A look-alike inside a script or comment is left alone.
  */
-function beforeTag(pattern: string, which: keyof HeadTags, content: string): TemplateSlot {
+function beforeTag(pattern: string, which: 'closingHead' | 'bodyStart', content: string): TemplateSlot {
   const cache = new Map<string, number | undefined>();
   const offsetIn = (text: string): number | undefined => {
     if (!cache.has(text)) cache.set(text, scanHeadTags(text)[which]);
