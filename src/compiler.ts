@@ -27,7 +27,7 @@ import { generateIFID } from './ifid.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
-import { modifyHead } from './modules.js';
+import { loadHeadContent } from './modules.js';
 import { startPassageDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
 import { VERSION } from './version.js';
@@ -329,22 +329,21 @@ async function buildOutput(
         throw new TweeTsError('No story format available for HTML output.', diagnostics);
       }
 
-      if (format.isTwine2) {
-        output = toTwine2HTML(story, format, startName, { sourceInfo });
-      } else {
-        if (story.name === '' && !storyHas(story, 'StoryTitle')) {
-          diagnostics.push({
-            level: 'error',
-            message: 'Special passage "StoryTitle" not found.',
-          });
-        }
-        output = toTwine1HTML(story, format, startName);
+      if (!format.isTwine2 && story.name === '' && !storyHas(story, 'StoryTitle')) {
+        diagnostics.push({
+          level: 'error',
+          message: 'Special passage "StoryTitle" not found.',
+        });
       }
 
-      // Inject modules and head file
+      // Modules and head file, injected before the template's closing head tag while the template is filled
       const modules = getFilenames(options.modules ?? [], outFile);
       diagnostics.push(...modules.diagnostics);
-      output = modifyHead(output, modules.filenames, options.headFile, diagnostics);
+      const head = loadHeadContent(modules.filenames, options.headFile, diagnostics);
+
+      output = format.isTwine2
+        ? toTwine2HTML(story, format, startName, { sourceInfo, head })
+        : toTwine1HTML(story, format, startName, { head });
       break;
     }
 

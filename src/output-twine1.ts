@@ -7,6 +7,9 @@ import { join, dirname } from 'node:path';
 import type { PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
 import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
+import { headSlot } from './modules.js';
+import { fillTemplateParts, literal } from './template.js';
+import type { TemplateSlot } from './template.js';
 import { jsStringEscape, htmlCommentSanitize } from './escape.js';
 import { VERSION } from './version.js';
 
@@ -17,7 +20,18 @@ export function toTwine1Archive(story: ReadonlyStory, _startName: string): strin
   return `<div id="storeArea" data-size="${count}">${data}</div>\n`;
 }
 
-export function toTwine1HTML(story: ReadonlyStory, format: StoryFormatInfo, startName: string): string {
+/**
+ * Fill the Twine 1 format template. The format's components are inserted first, one after another, as Tweego and
+ * Twine 1 do. Then the first of each story placeholder (`"VERSION"`, `"TIME"`, `"START_AT"`, `"STORY_SIZE"`,
+ * `"STORY"`), the IFID comment and `head` (before the first closing head tag) are found in one pass, so a start
+ * passage name or story data holding a placeholder or a closing head tag stays literal.
+ */
+export function toTwine1HTML(
+  story: ReadonlyStory,
+  format: StoryFormatInfo,
+  startName: string,
+  options?: { readonly head?: string },
+): string {
   const formatDir = dirname(format.filename);
   const parentDir = dirname(formatDir);
   let template = readFormatSource(format);
@@ -36,38 +50,54 @@ export function toTwine1HTML(story: ReadonlyStory, format: StoryFormatInfo, star
     template = tryReplaceComponent(template, '"MODERNIZR"', join(parentDir, 'modernizr.js'), true);
   }
 
+  // A pre-1.4 format has no "STORY" placeholder: the story data and a footer go after the template.
+  const isPre14 = !template.includes('"STORY"');
+  const footer = isPre14 ? readFooter(formatDir) : '';
+
+  // The IFID comment and the head content are also looked for in the footer, if the template has no place for them.
+  const storeArea = (template + footer).includes('<div id="store-area"')
+    ? '<div id="store-area"'
+    : '<div id="storeArea"';
+  const safeIfid = htmlCommentSanitize(story.ifid);
+  const ifid: TemplateSlot | undefined = story.ifid
+    ? { pattern: literal(storeArea), occurrences: 'first', replacement: (div) => `<!-- UUID://${safeIfid}// -->${div}` }
+    : undefined;
+  const late = [ifid, headSlot(options?.head ?? '')].filter((slot) => slot !== undefined);
+
   // Story instance replacements
   const displayStart = startName === 'Start' ? '' : startName;
-  template = template.replace('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`);
-  template = template.replace('"TIME"', `Built on ${new Date().toUTCString()}`);
-  const startAtValue = `"${jsStringEscape(displayStart)}"`;
-  template = template.replace('"START_AT"', () => startAtValue);
-  template = template.replace('"STORY_SIZE"', `"${count}"`);
+  const slots: readonly TemplateSlot[] = [
+    firstSlot('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`),
+    firstSlot('"TIME"', `Built on ${new Date().toUTCString()}`),
+    firstSlot('"START_AT"', `"${jsStringEscape(displayStart)}"`),
+    firstSlot('"STORY_SIZE"', `"${count}"`),
+    firstSlot('"STORY"', data),
+    ...late,
+  ];
 
-  if (template.includes('"STORY"')) {
-    template = template.replace('"STORY"', () => data);
-  } else {
-    // Pre-1.4 format: append data + footer
-    let footer: string;
-    try {
-      footer = readFileSync(join(formatDir, 'footer.html'), 'utf-8');
-    } catch {
-      footer = '</div>\n</body>\n</html>\n';
-    }
-    template += data + footer;
+  return fillTemplateParts(
+    isPre14
+      ? [
+          { kind: 'scan', text: template, slots },
+          { kind: 'verbatim', text: data },
+          { kind: 'scan', text: footer, slots: late },
+        ]
+      : [{ kind: 'scan', text: template, slots }],
+  );
+}
+
+/** A slot replacing the first `token` with `value`. */
+function firstSlot(token: string, value: string): TemplateSlot {
+  return { pattern: literal(token), occurrences: 'first', replacement: () => value };
+}
+
+/** The footer of a pre-1.4 format, or the default one when the format has none. */
+function readFooter(formatDir: string): string {
+  try {
+    return readFileSync(join(formatDir, 'footer.html'), 'utf-8');
+  } catch {
+    return '</div>\n</body>\n</html>\n';
   }
-
-  // IFID replacement
-  if (story.ifid) {
-    const safeIfid = htmlCommentSanitize(story.ifid);
-    if (template.includes('<div id="store-area"')) {
-      template = template.replace('<div id="store-area"', `<!-- UUID://${safeIfid}// --><div id="store-area"`);
-    } else {
-      template = template.replace('<div id="storeArea"', `<!-- UUID://${safeIfid}// --><div id="storeArea"`);
-    }
-  }
-
-  return template;
 }
 
 /**

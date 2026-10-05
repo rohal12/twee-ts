@@ -13,6 +13,9 @@ import {
 } from './escape.js';
 import { passageToPassagedata, hasTag } from './passage.js';
 import { readFormatSource } from './formats.js';
+import { headSlot } from './modules.js';
+import { fillTemplate, literal } from './template.js';
+import type { TemplateSlot } from './template.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
@@ -25,26 +28,34 @@ export function toTwine2Archive(
   return getTwine2DataChunk(story, startName, options) + '\n';
 }
 
+/**
+ * Fill the Twine 2 format template: every `{{STORY_NAME}}` gets the escaped story name and the first
+ * `{{STORY_DATA}}` the story data (as Tweego does), and `head` goes before the first closing head tag. All three are
+ * found in the template in one pass, so a story name, passage text or head content holding a placeholder or a
+ * closing head tag stays literal.
+ */
 export function toTwine2HTML(
   story: ReadonlyStory,
   format: StoryFormatInfo,
   startName: string,
-  options?: { readonly sourceInfo?: boolean },
+  options?: { readonly sourceInfo?: boolean; readonly head?: string },
 ): string {
-  let template = readFormatSource(format);
-
-  if (template.includes('{{STORY_NAME}}')) {
-    const name = htmlEscape(story.name);
-    template = template.replaceAll('{{STORY_NAME}}', () => name);
-  }
-  if (template.includes('{{STORY_DATA}}')) {
-    // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
-    const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
-    const data = getTwine2DataChunk(built, startName, options);
-    template = template.replace('{{STORY_DATA}}', () => data);
-  }
-
-  return template;
+  const name = htmlEscape(story.name);
+  const head = headSlot(options?.head ?? '');
+  const slots: readonly TemplateSlot[] = [
+    { pattern: literal('{{STORY_NAME}}'), occurrences: 'all', replacement: () => name },
+    {
+      pattern: literal('{{STORY_DATA}}'),
+      occurrences: 'first',
+      replacement: () => {
+        // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
+        const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
+        return getTwine2DataChunk(built, startName, options);
+      },
+    },
+    ...(head === undefined ? [] : [head]),
+  ];
+  return fillTemplate(readFormatSource(format), slots);
 }
 
 const OMITTING_TAGS: readonly OmittingTag[] = ['Twine.private', 'script', 'stylesheet'];

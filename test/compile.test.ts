@@ -610,3 +610,224 @@ describe('a wrapped IFID is written as the bare UUID', () => {
     expect(babelComments(result.output)).toEqual([`<!-- UUID://${BARE}// -->`]);
   });
 });
+
+describe('format template placeholders', () => {
+  const TMP_DIR = join(__dirname, '__tmp_template_placeholders__');
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const html = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
+
+  function story(title: string, start: string): { filename: string; content: string } {
+    return {
+      filename: 'story.tw',
+      content: `:: StoryTitle\n${title}\n\n:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\n${start}\n`,
+    };
+  }
+
+  /** Writes a Twine 2 format whose template is `source` and returns compile options for it. */
+  function twine2Format(source: string) {
+    mkdirSync(join(TMP_DIR, 'custom-2'), { recursive: true });
+    const format = { name: 'Custom', version: '1.0.0', source };
+    writeFileSync(join(TMP_DIR, 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
+    return { formatId: 'custom-2', formatPaths: [TMP_DIR], useTweegoPath: false, noRemote: true };
+  }
+
+  /** Writes a Twine 1 format whose header is `header` and returns compile options for it. */
+  function twine1Format(header: string) {
+    mkdirSync(join(TMP_DIR, 'custom-1'), { recursive: true });
+    writeFileSync(join(TMP_DIR, 'custom-1', 'header.html'), header);
+    return { formatId: 'custom-1', formatPaths: [TMP_DIR], useTweegoPath: false, noRemote: true };
+  }
+
+  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  it('keeps a title holding {{STORY_DATA}} and passage text holding {{STORY_NAME}} literal', async () => {
+    const result = await compile({ ...html, sources: [story('{{STORY_DATA}}', 'Hi {{STORY_NAME}} {{STORY_DATA}}')] });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.output).toMatch(/^<html><head><title>\{\{STORY_DATA\}\}<\/title><\/head><body><!-- UUID:/);
+    expect(result.output.match(/<tw-storydata/g)).toHaveLength(1);
+    const { story: decompiled } = decompileHTML(result.output);
+    expect(decompiled.name).toBe('{{STORY_DATA}}');
+    expect(decompiled.passages.map((p) => [p.name, p.text])).toEqual([
+      ['StoryData', expect.any(String)],
+      ['Start', 'Hi {{STORY_NAME}} {{STORY_DATA}}'],
+    ]);
+  });
+
+  it('inserts replacement patterns in the title literally', async () => {
+    const title = "A $& B $' C $` D $$ E";
+    const result = await compile({ ...html, sources: [story(title, 'Hello')] });
+
+    expect(result.output).toContain('<title>A $&amp; B $&#39; C $` D $$ E</title>');
+    expect(decompileHTML(result.output).story.name).toBe(title);
+  });
+
+  it('fills every {{STORY_NAME}} but only the first {{STORY_DATA}}, as Tweego does', async () => {
+    const options = twine2Format(
+      '<title>{{STORY_NAME}}</title><h1>{{STORY_NAME}}</h1>{{STORY_DATA}}<p>{{STORY_DATA}}</p>',
+    );
+    const result = await compile({ ...options, sources: [story('Name', 'Hello')] });
+
+    expect(result.output).toMatch(
+      /^<title>Name<\/title><h1>Name<\/h1><!-- UUID:.*<\/tw-storydata><p>\{\{STORY_DATA\}\}<\/p>$/,
+    );
+  });
+
+  it('keeps a Twine 1 start passage named like a placeholder from taking the story data', async () => {
+    const options = twine1Format(
+      '<html><head><script>var start="START_AT", size="STORY_SIZE";</script></head>' +
+        '<body><div id="storeArea">"STORY"</div></body></html>',
+    );
+    const result = await compile({
+      ...options,
+      startPassage: 'STORY',
+      sources: [{ filename: 'story.tw', content: ':: StoryTitle\nT\n\n:: STORY\nhi\n' }],
+    });
+
+    expect(result.output).toContain('<script>var start="STORY", size="2";</script>');
+    expect(result.output).toMatch(
+      /<div id="storeArea"><div tiddler="StoryTitle".*<div tiddler="STORY"[^>]*>hi<\/div><\/div>/,
+    );
+  });
+
+  it('keeps a Twine 1 format without "STORY" a pre-1.4 format when the start passage is named STORY', async () => {
+    const options = twine1Format('<html><body><script>var start="START_AT";</script><div id="storeArea">');
+    const result = await compile({
+      ...options,
+      startPassage: 'STORY',
+      sources: [{ filename: 'story.tw', content: ':: StoryTitle\nT\n\n:: STORY\nhi\n' }],
+    });
+
+    expect(result.output).toMatch(
+      /^<html><body><script>var start="STORY";<\/script><!-- UUID:\/\/[^ ]+\/\/ --><div id="storeArea"><div tiddler=/,
+    );
+    expect(result.output).toMatch(/hi<\/div><\/div>\n<\/body>\n<\/html>\n$/);
+  });
+});
+
+describe('module and head file injection', () => {
+  const TMP_DIR = join(__dirname, '__tmp_head_injection__');
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const STORY = `:: StoryTitle\nHead\n\n:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nHello\n`;
+  const META = '<meta name="review" content="injected">';
+  const MODULE = '<style id="style-module-mod" type="text/css">h1 { color: red; }</style>';
+
+  function twine2Format(source: string) {
+    mkdirSync(join(TMP_DIR, 'formats', 'custom-2'), { recursive: true });
+    const format = { name: 'Custom', version: '1.0.0', source };
+    writeFileSync(join(TMP_DIR, 'formats', 'custom-2', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
+    return { formatId: 'custom-2', formatPaths: [join(TMP_DIR, 'formats')], useTweegoPath: false, noRemote: true };
+  }
+
+  function twine1Format(header: string) {
+    mkdirSync(join(TMP_DIR, 'formats', 'custom-1'), { recursive: true });
+    writeFileSync(join(TMP_DIR, 'formats', 'custom-1', 'header.html'), header);
+    return { formatId: 'custom-1', formatPaths: [join(TMP_DIR, 'formats')], useTweegoPath: false, noRemote: true };
+  }
+
+  function headOptions() {
+    writeFileSync(join(TMP_DIR, 'mod.css'), 'h1 { color: red; }');
+    writeFileSync(join(TMP_DIR, 'head.html'), META);
+    return { modules: [join(TMP_DIR, 'mod.css')], headFile: join(TMP_DIR, 'head.html') };
+  }
+
+  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
+  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+
+  const CLOSING_TAGS: readonly (readonly [string, string])[] = [
+    ['lowercase', '</head>'],
+    ['uppercase', '</HEAD>'],
+    ['mixed-case', '</Head>'],
+    ['space before >', '</head >'],
+    ['newline before >', '</head\n>'],
+    ['mixed case and whitespace', '</hEaD\t >'],
+  ];
+
+  for (const [label, close] of CLOSING_TAGS) {
+    it(`injects modules and the head file before a ${label} closing head tag in a Twine 2 template`, async () => {
+      const options = twine2Format(
+        `<html><head><title>{{STORY_NAME}}</title>${close}<body>{{STORY_DATA}}</body></html>`,
+      );
+      const result = await compile({
+        ...options,
+        ...headOptions(),
+        sources: [{ filename: 'story.tw', content: STORY }],
+      });
+
+      expect(result.diagnostics).toEqual([]);
+      expect(result.output).toContain(`<html><head><title>Head</title>${MODULE}\n${META}\n${close}<body><!-- UUID:`);
+      expect(decompileHTML(result.output).story.passages.map((p) => p.name)).toEqual(['StoryData', 'Start']);
+    });
+
+    it(`injects modules and the head file before a ${label} closing head tag in a Twine 1 header`, async () => {
+      const options = twine1Format(
+        `<html><head><title>T</title>${close}<body><div id="storeArea">"STORY"</div></body></html>`,
+      );
+      const result = await compile({
+        ...options,
+        ...headOptions(),
+        sources: [{ filename: 'story.tw', content: STORY }],
+      });
+
+      expect(result.output).toContain(`<title>T</title>${MODULE}\n${META}\n${close}<body><!-- UUID:`);
+    });
+  }
+
+  it('injects only before the first closing head tag', async () => {
+    const options = twine2Format(
+      '<html><head><title>{{STORY_NAME}}</title></HEAD><body><template></head></template>{{STORY_DATA}}</body></html>',
+    );
+    const result = await compile({ ...options, ...headOptions(), sources: [{ filename: 'story.tw', content: STORY }] });
+
+    expect(result.output.split(META)).toHaveLength(2);
+    expect(result.output).toContain(`${META}\n</HEAD><body><template></head></template>`);
+  });
+
+  it('does not inject at a closing head tag inside the story data', async () => {
+    const options = twine2Format('<html><head><title>{{STORY_NAME}}</title><body>{{STORY_DATA}}</body></html>');
+    const script = 'window.tag = "</head>";';
+    const result = await compile({
+      ...options,
+      ...headOptions(),
+      sources: [
+        { filename: 'story.tw', content: STORY },
+        { filename: 'tag.tw', content: `:: Code [script]\n${script}\n` },
+      ],
+    });
+
+    expect(result.output).not.toContain(META);
+    const { story } = decompileHTML(result.output);
+    expect(story.passages.find((p) => p.tags.includes('script'))?.text).toBe(script);
+  });
+
+  it('does not fill placeholders in the injected module and head file content', async () => {
+    const options = twine2Format('<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>');
+    writeFileSync(join(TMP_DIR, 'mod.js'), 'window.placeholders = ["{{STORY_DATA}}", "{{STORY_NAME}}"];');
+    writeFileSync(join(TMP_DIR, 'head.html'), '<meta name="{{STORY_NAME}}" content="{{STORY_DATA}}">');
+    const result = await compile({
+      ...options,
+      modules: [join(TMP_DIR, 'mod.js')],
+      headFile: join(TMP_DIR, 'head.html'),
+      sources: [{ filename: 'story.tw', content: STORY }],
+    });
+
+    expect(result.output).toContain('window.placeholders = ["{{STORY_DATA}}", "{{STORY_NAME}}"];</script>');
+    expect(result.output).toContain('<meta name="{{STORY_NAME}}" content="{{STORY_DATA}}">\n</head><body><!-- UUID:');
+    expect(decompileHTML(result.output).story.passages.map((p) => p.name)).toEqual(['StoryData', 'Start']);
+  });
+
+  it('injects at the template tag, not at a Twine 1 start passage named like a closing head tag', async () => {
+    const options = twine1Format(
+      '<html><head><script>var start="START_AT";</script></head><body><div id="storeArea">"STORY"</div></body></html>',
+    );
+    const result = await compile({
+      ...options,
+      ...headOptions(),
+      startPassage: '</head>',
+      sources: [{ filename: 'story.tw', content: ':: StoryTitle\nT\n\n:: </head>\nhi\n' }],
+    });
+
+    expect(result.output).toContain(`<script>var start="</head>";</script>${MODULE}\n${META}\n</head><body>`);
+  });
+});
