@@ -7,6 +7,7 @@ import type { Passage, PassageMetadata, Diagnostic, DecompileOptions } from './t
 import { createStory, storyAdd, storyPrepend, marshalStoryData, unmarshalStorySettings } from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
 import { normalizeIFID } from './ifid.js';
+import { isObfuscatable } from './passage.js';
 
 export interface DecompileResult {
   story: import('./types.js').Story;
@@ -192,11 +193,13 @@ function decompileTwine1(
 ): void {
   const passages = (storeArea.children ?? []).filter(isTiddler).map((node) => tiddlerToPassage(node, passageText));
 
-  // The Twine 1 writer ROT13-encodes every tiddler but StorySettings when StorySettings says
-  // `obfuscate:rot13`, so read the settings before adding (and so interpreting) anything else.
+  // When StorySettings says `obfuscate:rot13`, Twine 1.4 (and twee-ts) ROT13-encode the name, tags and text of
+  // every obfuscatable tiddler, so read the settings before adding (and so interpreting) anything else. Whether a
+  // tiddler is obfuscatable is decided on its stored name and tags, which such tiddlers keep unencoded.
   const obfuscated = isRot13Obfuscated(passages);
   for (const p of passages) {
-    const passage = obfuscated && p.name !== 'StorySettings' ? { ...p, text: rot13(p.text) } : p;
+    const passage =
+      obfuscated && isObfuscatable(p) ? { ...p, name: rot13(p.name), tags: p.tags.map(rot13), text: rot13(p.text) } : p;
     storyAdd(story, passage, diagnostics);
   }
 }

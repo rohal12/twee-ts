@@ -101,6 +101,17 @@ describe('loadSources', () => {
     expect(passage!.text).toContain('font-family: "myfont"');
   });
 
+  // Windows file names cannot hold `"`, `\` or a line break.
+  it.skipIf(process.platform === 'win32')('writes the font family of a font file as a valid CSS string', () => {
+    const file = join(TMP_DIR, 'My "Fancy" \\Font\nTwo.woff');
+    writeFileSync(file, 'FONT');
+    const story = freshStory();
+    loadSources(story, [file], {}, [], new Set());
+    expect(story.passages.map((p) => p.text)).toEqual([
+      '@font-face {\n\tfont-family: "My \\"Fancy\\" \\\\Font\\a Two";\n\tsrc: url("data:font/woff;base64,Rk9OVA==") format("woff");\n}',
+    ]);
+  });
+
   it('warns on duplicate files', () => {
     const file = join(TMP_DIR, 'dup.tw');
     writeFileSync(file, ':: Start\nHello');

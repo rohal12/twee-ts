@@ -12,6 +12,7 @@ import { decompileHTML } from './html-parser.js';
 import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from './util.js';
 import type { DecodedText } from './util.js';
 import { normalizeSourceText } from './source-text.js';
+import { cssStringEscape } from './escape.js';
 
 interface LoadOptions {
   trim?: boolean;
@@ -210,7 +211,7 @@ function parseFontFile(filename: string): ParseResult {
       {
         name,
         tags: ['stylesheet'],
-        text: `@font-face {\n\tfont-family: "${family}";\n\tsrc: url("data:${mediaType};base64,${source}") format("${hint}");\n}`,
+        text: `@font-face {\n\tfont-family: "${cssStringEscape(family)}";\n\tsrc: url("data:${mediaType};base64,${source}") format("${hint}");\n}`,
       },
     ],
     diagnostics: [],

@@ -20,7 +20,7 @@ import {
 } from './escape.js';
 import { passageToPassagedata, hasTag } from './passage.js';
 import { readFormatSource } from './formats.js';
-import { headSlot } from './modules.js';
+import { placeHead } from './modules.js';
 import { fillTemplate, literal } from './template.js';
 import type { TemplateSlot } from './template.js';
 import { VERSION } from './version.js';
@@ -37,9 +37,11 @@ export function toTwine2Archive(
 
 /**
  * Fill the Twine 2 format template: every `{{STORY_NAME}}` gets the escaped story name and the first
- * `{{STORY_DATA}}` the story data (as Tweego does), and `head` goes before the first closing head tag. All three are
- * found in the template in one pass, so a story name, passage text or head content holding a placeholder or a
- * closing head tag stays literal. `options.diagnostics` receives a warning when the format file is not valid UTF-8.
+ * `{{STORY_DATA}}` the story data (as Tweego does), and `head` goes before the first closing head tag (or, with a
+ * warning, the body start tag; see `placeHead()`). All three are found in the template in one pass, so a story
+ * name, passage text or head content holding a placeholder or a closing head tag stays literal.
+ * `options.diagnostics` receives a warning when the format file is not valid UTF-8, and any warning about where
+ * `head` went.
  */
 export function toTwine2HTML(
   story: ReadonlyStory,
@@ -48,7 +50,10 @@ export function toTwine2HTML(
   options?: { readonly sourceInfo?: boolean; readonly head?: string; readonly diagnostics?: Diagnostic[] },
 ): string {
   const name = htmlEscape(story.name);
-  const head = headSlot(options?.head ?? '');
+  const template = readFormatSource(format, options?.diagnostics);
+  const placement = placeHead(options?.head ?? '', [template], `Story format "${format.name}" ${format.version}`);
+  options?.diagnostics?.push(...placement.diagnostics);
+  const head = placement.slot;
   const slots: readonly TemplateSlot[] = [
     { pattern: literal('{{STORY_NAME}}'), occurrences: 'all', replacement: () => name },
     {
@@ -62,7 +67,7 @@ export function toTwine2HTML(
     },
     ...(head === undefined ? [] : [head]),
   ];
-  return fillTemplate(readFormatSource(format, options?.diagnostics), slots);
+  return fillTemplate(template, slots);
 }
 
 const OMITTING_TAGS: readonly OmittingTag[] = ['Twine.private', 'script', 'stylesheet'];

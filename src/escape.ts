@@ -56,16 +56,40 @@ export function tweeEscape(s: string): string {
   return s.replace(/[\\[\]{}]/g, (ch) => '\\' + ch);
 }
 
-/** Escape a string for safe inclusion in a JavaScript string literal. */
+const JS_STRING_ESCAPES: Readonly<Record<string, string>> = {
+  '\\': '\\\\',
+  '"': '\\"',
+  "'": "\\'",
+  '\n': '\\n',
+  '\r': '\\r',
+  '\t': '\\t',
+  '<': '\\x3C',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029',
+};
+
+/**
+ * Escape a string for the inside of a single- or double-quoted JavaScript string literal, including one written
+ * into an HTML `<script>` element. Besides backslashes, quotes and line breaks (with U+2028 and U+2029, which end
+ * a string literal in JavaScript before ES2019), every `<` becomes `\x3C`, so the literal holds no `</script`
+ * that would end the element and no `<!--` or `<script` that would change where it ends. The string's value is
+ * unchanged.
+ */
 export function jsStringEscape(s: string): string {
   if (s.length === 0) return s;
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
+  return s.replace(/[\\"'\n\r\t<\u2028\u2029]/g, (ch) => JS_STRING_ESCAPES[ch] ?? ch);
+}
+
+/**
+ * Escape a string for the inside of a double-quoted CSS string (such as a `font-family` name): `\` and `"` get
+ * a backslash, and line breaks and other control characters become hex escapes followed by a space (`\a ` for a
+ * line feed), since a raw line break ends a CSS string and a backslash before one is a line continuation.
+ */
+export function cssStringEscape(s: string): string {
+  if (s.length === 0) return s;
+  return s.replace(/[\\"\u0000-\u001f\u007f]/g, (ch) =>
+    ch === '\\' || ch === '"' ? `\\${ch}` : `\\${ch.charCodeAt(0).toString(16)} `,
+  );
 }
 
 /** Sanitize a string for safe inclusion in a CSS or JS block comment. */
@@ -73,9 +97,9 @@ export function commentSanitize(s: string): string {
   return s.replace(/\*\//g, '* /');
 }
 
-/** Sanitize a string for safe inclusion in an HTML comment. */
+/** Sanitize a string for safe inclusion in an HTML comment: break up `-->` and `--!>`, which both end one. */
 export function htmlCommentSanitize(s: string): string {
-  return s.replace(/-->/g, '-- >');
+  return s.replace(/--(!?)>/g, '--$1 >');
 }
 
 /**
