@@ -187,6 +187,152 @@ describe('storyInspect', () => {
     expect(map.links.get('Start')).toContain('Target');
   });
 
+  describe('SugarCube link markup', () => {
+    const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+
+    async function inspectStart(startText: string, otherPassages: readonly string[] = []) {
+      const others = otherPassages.map((name) => `:: ${name}\nText.`).join('\n\n');
+      const result = await compile({
+        sources: [
+          { filename: 'links.tw', content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\n${startText}\n\n${others}` },
+        ],
+        outputMode: 'json',
+      });
+      return storyInspect(result.story);
+    }
+
+    async function startLinks(startText: string): Promise<string[] | undefined> {
+      return (await inspectStart(startText)).links.get('Start');
+    }
+
+    it('reads a reverse-arrow link as linking to the passage before the arrow', async () => {
+      const map = await inspectStart('[[Room<-go]]', ['Room']);
+      expect(map.links.get('Start')).toEqual(['Room']);
+      expect(map.brokenLinks).toEqual([]);
+      expect(map.orphans).not.toContain('Room');
+    });
+
+    it('reads links that have a setter', async () => {
+      const map = await inspectStart('[[go->Missing][$flag = true]]');
+      expect(map.links.get('Start')).toEqual(['Missing']);
+      expect(map.brokenLinks).toEqual([{ from: 'Start', to: 'Missing' }]);
+      expect(map.deadEnds).not.toContain('Start');
+      expect(await startLinks('[[Room][$flag = true]]')).toEqual(['Room']);
+      expect(await startLinks('[[Room<-go][$flag = true]]')).toEqual(['Room']);
+      expect(await startLinks('[[go|Room][$flag to "]]"]]')).toEqual(['Room']);
+    });
+
+    it('reads a setter that holds square brackets', async () => {
+      expect(await startLinks('[[go->Room][$arr[0] = 1]]')).toEqual(['Room']);
+      expect(await startLinks('[[go|Room][$grid[1][2] to $list[$i]]] and [[Hall]]')).toEqual(['Room', 'Hall']);
+    });
+
+    it('reads several links on one line', async () => {
+      expect(await startLinks('[[A]] or [[b->B][$x = 1]] or [[C<-c]] or [[d|D]]')).toEqual(['A', 'B', 'C', 'D']);
+    });
+
+    it('splits at the first delimiter, as SugarCube does', async () => {
+      expect(await startLinks('[[a->b->Room]]')).toEqual(['b->Room']);
+      expect(await startLinks('[[a|b->Room]]')).toEqual(['b->Room']);
+      expect(await startLinks('[[Room<-a->b]]')).toEqual(['Room']);
+      expect(await startLinks('[[a->Room<-b]]')).toEqual(['Room<-b']);
+    });
+
+    it('reads link text that holds square brackets or a quoted delimiter', async () => {
+      expect(await startLinks('[[Go [north]->Room]]')).toEqual(['Room']);
+      expect(await startLinks('[["a|b"->Room]]')).toEqual(['Room']);
+    });
+
+    it('drops the ~ that forces an internal link', async () => {
+      expect(await startLinks('[[Go|~Room]]')).toEqual(['Room']);
+    });
+
+    it('reads a quoted passage name as SugarCube evaluates it', async () => {
+      const map = await inspectStart(`[[here|"Room"][$back to passage()]] [[there|'Hall']] [[x|" "]]`, [
+        'Room',
+        'Hall',
+      ]);
+      expect(map.links.get('Start')).toEqual(['Room', 'Hall', '" "']);
+      expect(map.brokenLinks).toEqual([{ from: 'Start', to: '" "' }]);
+    });
+
+    it('reads no link from markup SugarCube rejects', async () => {
+      expect(await startLinks('[[Go to\nRoom]]')).toEqual([]);
+      expect(await startLinks('[[a]b]]')).toEqual([]);
+      expect(await startLinks('[[go|Room][$x = 1]x]]')).toEqual([]);
+      expect(await startLinks('[[go|Room][$x to "a]]')).toEqual([]);
+      // SugarCube goes on after a rejected opener, so a later link is still read.
+      expect(await startLinks('[[a [[Room]]')).toEqual(['Room']);
+    });
+
+    it('reads no link from image markup', async () => {
+      expect(await startLinks('[img[pic.png][Room]] [img[Title|pic.png]]')).toEqual([]);
+    });
+
+    it('reads link markup in a macro argument', async () => {
+      expect(await startLinks('<<button [[Go|Room][$x to 1]]>><</button>>')).toEqual(['Room']);
+      expect(await startLinks('<<actions [[A]] [[B<-b]]>>')).toEqual(['A', 'B']);
+    });
+
+    it('reads link markup in the strings of macro arguments and scripts', async () => {
+      expect(await startLinks('<<set _out to "[[Go->Room][$x = 1]]">><<print _out>>')).toEqual(['Room']);
+      expect(await startLinks(`<<script>>$(output).wiki('[[Go|Room]]');<</script>>`)).toEqual(['Room']);
+      expect(await startLinks('<<print `[[Go|${_dest}]]`>>')).toEqual([]);
+    });
+
+    it('reads no link from JavaScript outside its strings', async () => {
+      expect(await startLinks('<<set $grid to [[0]]>>')).toEqual([]);
+      expect(await startLinks('<<script>>const grid = [[0, 1]];<</script>>')).toEqual([]);
+      expect(await startLinks('<script>const grid = [[0]];</script>')).toEqual([]);
+    });
+
+    it('reads no link in comments', async () => {
+      const map = await inspectStart(
+        [
+          '<!-- [[Ghost]] -->',
+          '/% [[Ghost]] %/',
+          '/* [[Ghost->Ghost][$x = 1]] */',
+          '/*',
+          '[[Ghost<-old]]',
+          '*/',
+          '[[Room]]',
+        ].join('\n'),
+        ['Room'],
+      );
+      expect(map.links.get('Start')).toEqual(['Room']);
+      expect(map.brokenLinks).toEqual([]);
+    });
+
+    it('keeps the passages only a comment links to orphaned, and reads unclosed comments as text', async () => {
+      const map = await inspectStart('<!-- [[Old]] --> Text.', ['Old']);
+      expect(map.links.get('Start')).toEqual([]);
+      expect(map.deadEnds).toContain('Start');
+      expect(map.orphans).toContain('Old');
+      expect(await startLinks('<!-- [[Room]]')).toEqual(['Room']);
+      expect(await startLinks('/* [[Room]]')).toEqual(['Room']);
+    });
+
+    it('does not read a comment opener inside link markup or a macro tag', async () => {
+      expect(await startLinks('[[Go /* back|Room]] [[Hall]] */')).toEqual(['Room', 'Hall']);
+      expect(await startLinks('<<set _p to "/*">> [[Room]] <<set _q to "*/">>')).toEqual(['Room']);
+    });
+
+    it('reads a script passage for link markup only in its strings', async () => {
+      const result = await compile({
+        sources: [
+          {
+            filename: 'script.tw',
+            content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nText.\n\n:: Story JavaScript [script]\nconst grid = [[0]];\n$(document).on(':passagerender', () => $('#x').wiki('[[Room]]'));\n// [[Ghost]]\n\n:: Room\nText.`,
+          },
+        ],
+        outputMode: 'json',
+      });
+      const map = storyInspect(result.story);
+      expect(map.links.get('Story JavaScript')).toEqual(['Room']);
+      expect(map.brokenLinks).toEqual([]);
+    });
+  });
+
   describe('SugarCube macro arguments', () => {
     const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
 
@@ -547,16 +693,15 @@ describe('storyInspect', () => {
       ).toEqual(['A']);
     });
 
-    it('reads a call after a stray <<-, <<=, <<if or <<set in link markup or verbatim text', async () => {
-      expect(await startLinks('[[<<-- Back|Prev]]\n<<link "Go on" "Room">><</link>>')).toEqual(['Prev', 'Room']);
+    it('reads a call after a stray <<-, <<=, <<if or <<set in verbatim text', async () => {
+      // SugarCube reads link markup before a << in it can start a tag. The first <- in the markup
+      // divides it, so the first link is to a passage named "<".
+      expect(await startLinks('[[<<-- Back|Prev]]\n<<link "Go on" "Room">><</link>>')).toEqual(['<', 'Room']);
       expect(await startLinks('[[<<== Back|Prev]] <<goto "Room">>')).toEqual(['Prev', 'Room']);
       // Text between the stray tag and the call is read as it would be in a tag's arguments, not
       // as JavaScript: italics or a URL there hide nothing when no later >> ends the tag.
-      expect(await startLinks('[[<<- Back|Prev]] //Whispers// <<goto "R">>')).toEqual(['Prev', 'R']);
-      expect(await startLinks('[[<<- Back|Prev]] See http://example.com <<link "Next" "N">><</link>>')).toEqual([
-        'Prev',
-        'N',
-      ]);
+      expect(await startLinks('{{{<<- Back}}} //Whispers// <<goto "R">>')).toEqual(['R']);
+      expect(await startLinks('{{{<<- Back}}} See http://example.com <<link "Next" "N">><</link>>')).toEqual(['N']);
       expect(await startLinks('{{{<<if}}} <<goto "Room">>')).toEqual(['Room']);
       expect(await startLinks('<nowiki><<set</nowiki> <<goto "Room">>')).toEqual(['Room']);
     });

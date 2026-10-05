@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   findJavaScriptPassageLinks,
-  findMacroPassageLinks,
+  findPassageLinks,
   findMacroTags,
   parseMacroArgs,
   scriptBodyCloser,
@@ -212,7 +212,39 @@ describe('parseMacroArgs', () => {
   });
 });
 
-describe('findMacroPassageLinks', () => {
+describe('findPassageLinks', () => {
+  it('reads link markup and calls in the order they come', () => {
+    expect(findPassageLinks('[[A]] <<goto "B">> [[c->C][$x[0] to 1]] <<link [[d|D]]>><</link>> [[E<-e]]')).toEqual([
+      { via: 'markup', passage: 'A' },
+      { via: 'goto', passage: 'B' },
+      { via: 'markup', passage: 'C' },
+      { via: 'markup', passage: 'D' },
+      { via: 'markup', passage: 'E' },
+    ]);
+  });
+
+  it('reads no link markup or call in comments', () => {
+    const text = '<!-- [[A]] --> /% [[B]] <<goto "B">> %/ /* [[C]]\n[[C2]] */ [[Room]]';
+    expect(findPassageLinks(text)).toEqual([{ via: 'markup', passage: 'Room' }]);
+  });
+
+  it('reads link markup before a comment or tag that starts inside it', () => {
+    expect(findPassageLinks('[[a /* b|A]] [[B]] */')).toEqual([
+      { via: 'markup', passage: 'A' },
+      { via: 'markup', passage: 'B' },
+    ]);
+    expect(findPassageLinks('[[<<== Back|Prev]] <<goto "Room">>')).toEqual([
+      { via: 'markup', passage: 'Prev' },
+      { via: 'goto', passage: 'Room' },
+    ]);
+  });
+
+  it('reads on after markup SugarCube rejects, from just after its opener', () => {
+    expect(findPassageLinks('[[<<goto "A">>\n')).toEqual([]);
+    expect(findPassageLinks('[[a<<goto "A">>\n')).toEqual([{ via: 'goto', passage: 'A' }]);
+    expect(findPassageLinks('[img[x.png][<<goto "A">>]] [img[x.png]')).toEqual([]);
+  });
+
   it('stays fast when many comments, markup or elements are never closed', () => {
     const n = 40000;
     for (const opener of [
@@ -230,16 +262,14 @@ describe('findMacroPassageLinks', () => {
       '<style>',
       '<<script>>',
     ]) {
-      expect(findMacroPassageLinks(opener.repeat(n) + '<<goto "A">>'), opener).toEqual([
-        { macro: 'goto', passage: 'A' },
-      ]);
+      expect(findPassageLinks(opener.repeat(n) + '<<goto "A">>'), opener).toEqual([{ via: 'goto', passage: 'A' }]);
     }
   }, 20_000);
 
   it('stays fast when stray openers in comments run over many <<script>> openers', () => {
     const n = 40000;
-    expect(findMacroPassageLinks('/* <<x " */<<script>>'.repeat(n) + '" >><<goto "A">>')).toEqual([
-      { macro: 'goto', passage: 'A' },
+    expect(findPassageLinks('/* <<x " */<<script>>'.repeat(n) + '" >><<goto "A">>')).toEqual([
+      { via: 'goto', passage: 'A' },
     ]);
   }, 20_000);
 
@@ -252,8 +282,8 @@ describe('findMacroPassageLinks', () => {
       '/* <<x " */<<script>>' + '<<1'.repeat(30),
     ];
     for (const block of blocks) {
-      expect(findMacroPassageLinks(block.repeat(n) + '" >><<goto "A">>'), block).toContainEqual({
-        macro: 'goto',
+      expect(findPassageLinks(block.repeat(n) + '" >><<goto "A">>'), block).toContainEqual({
+        via: 'goto',
         passage: 'A',
       });
     }
@@ -272,13 +302,13 @@ describe('findMacroPassageLinks', () => {
       '">>' + ' '.repeat(size),
     ]) {
       const text = '/*<<x */"' + '<<script>>'.repeat(openers) + long + '">><<goto "A">>';
-      expect(findMacroPassageLinks(text)).toContainEqual({ macro: 'goto', passage: 'A' });
+      expect(findPassageLinks(text)).toContainEqual({ via: 'goto', passage: 'A' });
     }
   }, 20_000);
 
   it('returns very many calls from one element without failing', () => {
     const n = 200000;
-    expect(findMacroPassageLinks('<script>' + `x('<<goto "A">>');`.repeat(n) + '</script>')).toHaveLength(n);
+    expect(findPassageLinks('<script>' + `x('<<goto "A">>');`.repeat(n) + '</script>')).toHaveLength(n);
   }, 20_000);
 });
 
@@ -328,13 +358,32 @@ describe('findJavaScriptPassageLinks', () => {
       String.raw`f('\<<goto "F">>');`,
     ];
     for (const [index, line] of source.entries()) {
-      expect(findJavaScriptPassageLinks(line), line).toEqual([{ macro: 'goto', passage: 'GABCDEF'[index] }]);
+      expect(findJavaScriptPassageLinks(line), line).toEqual([{ via: 'goto', passage: 'GABCDEF'[index] }]);
     }
+  });
+
+  it('reads link markup whose [[ an escape makes', () => {
+    const source = [
+      String.raw`f('[[G]]');`,
+      String.raw`f('[\[A]]');`,
+      String.raw`f('\x5b[B]]');`,
+      String.raw`f('\u005B[C]]');`,
+      String.raw`f('\u{5b}[D]]');`,
+      "f('[\\\n[E]]');",
+      String.raw`f('\[[F]]');`,
+    ];
+    for (const [index, line] of source.entries()) {
+      expect(findJavaScriptPassageLinks(line), line).toEqual([{ via: 'markup', passage: 'GABCDEF'[index] }]);
+    }
+  });
+
+  it('reads no link markup outside strings', () => {
+    expect(findJavaScriptPassageLinks('const grid = [[0, 1], [2]];\nf(a[[0]]); // [[A]]\n/* [[B]] */')).toEqual([]);
   });
 
   it('reads a call in a <script> element that a string holds', () => {
     // The outer string's \x5c is a backslash, so the element's own string reads \x3c<goto S>>.
     const source = String.raw`jQuery(document.body).wiki('<script>$.wiki("\x5cx3c<goto S>>")</script>');`;
-    expect(findJavaScriptPassageLinks(source)).toEqual([{ macro: 'goto', passage: 'S' }]);
+    expect(findJavaScriptPassageLinks(source)).toEqual([{ via: 'goto', passage: 'S' }]);
   });
 });
