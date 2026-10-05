@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Modules are injected at the real head end tag, not at tag text inside inline scripts, comments, raw-text elements or attribute values (#201)
+- Sources are loaded in the order supplied when inline sources and files are mixed, for plain and incremental builds (#202)
+- `compile()` and `compileToFile()` check the abort signal after format resolution and before writing, so an aborted build rejects and keeps the previous output (#203)
+- Remote format checksums are verified against the downloaded bytes, so a UTF-8 BOM no longer fails a correct checksum (#204)
+- Each caller of a shared format request keeps its own timeout and its own checksum validation (#205, #206)
+- A format downloaded through an index is rejected when its name or version differs from the selected entry (#207)
+
+### Changed
+
+- CI runs coverage in its own job, with thresholds that fail the build when coverage drops, a job summary and an uploaded report
+
 ## [1.18.0] - 2026-10-05
 
 ### Added
