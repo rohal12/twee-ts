@@ -15,7 +15,7 @@ import {
   clearCachedFormats,
   getCacheSize,
 } from '../src/remote-formats.js';
-import type { Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
+import type { CompileResult, Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from '../src/types.js';
 
 import { VERSION } from '../src/version.js';
 
@@ -188,6 +188,12 @@ async function main(): Promise<void> {
     wordCountMethod,
   };
 
+  // The file list is left out when the story itself goes to stdout.
+  const log: BuildLogOptions = {
+    files: outPath !== undefined && (values['log-files'] ?? false),
+    stats: values['log-stats'] ?? false,
+  };
+
   if (values.watch) {
     if (outPath === undefined) {
       console.error('Error: Watch mode requires an output file (-o).');
@@ -208,6 +214,7 @@ async function main(): Promise<void> {
           if (errors > 0) {
             console.error(`Build has ${pluralize(errors, 'error')}; output not written. Still watching for changes.`);
           }
+          logBuild(result, log);
         },
         onError(error) {
           console.error(`Build error: ${error.message}`);
@@ -231,11 +238,19 @@ async function main(): Promise<void> {
       writeFileSync(outPath, result.output, 'utf-8');
     }
 
-    if (outPath !== undefined && values['log-files']) {
-      console.log(`\nFiles: ${result.stats.files.join(', ')}`);
-    }
-    if (values['log-stats']) logStats(result);
+    logBuild(result, log);
   }
+}
+
+/** What --log-files and --log-stats print after a build, one-shot or in watch mode. */
+interface BuildLogOptions {
+  readonly files: boolean;
+  readonly stats: boolean;
+}
+
+function logBuild(result: CompileResult, log: BuildLogOptions): void {
+  if (log.files) console.log(`\nFiles: ${result.stats.files.join(', ')}`);
+  if (log.stats) logStats(result);
 }
 
 function countErrors(diagnostics: readonly Diagnostic[]): number {

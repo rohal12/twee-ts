@@ -94,8 +94,8 @@ Lint failed.
 | Flag              | Description                                                                                                                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported, the output file keeps the last good build, and the watcher keeps running. See [Exit Status](#exit-status). |
-| `-l, --log-stats` | Print passage count, word count, and file count after compilation.                                                                                                                                           |
-| `--log-files`     | Print the list of input files after compilation.                                                                                                                                                             |
+| `-l, --log-stats` | Print passage count, word count, and file count after compilation, and after every build in watch mode.                                                                                                      |
+| `--log-files`     | Print the list of input files after compilation, and after every build in watch mode.                                                                                                                        |
 
 ### Config & Project
 
