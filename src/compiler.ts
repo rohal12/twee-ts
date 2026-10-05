@@ -97,7 +97,9 @@ export async function compileIncremental(
 
 /**
  * Watch for file changes and recompile. Every build is written to `outFile`, including
- * one whose diagnostics report errors.
+ * one whose diagnostics report errors. Builds run one at a time: changes made during a
+ * build go into one follow-up build after it, and the superseded build is neither
+ * written nor reported.
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
   return watchWithWriteFilter(options, () => true);
@@ -134,24 +136,84 @@ export async function watchWithWriteFilter(
     return !notExcludable.some((root) => abs === root || abs.startsWith(root + sep));
   };
 
+  // One build at a time. Changes reported while a build is in flight wait in `queued` and
+  // go into a single follow-up build once it finishes; the build they arrived during is
+  // superseded, and its result is neither written nor reported.
+  let building = false;
+  let queued: WatchBuildRequest | undefined;
+
+  const deliver = (outcome: WatchBuildOutcome): void => {
+    try {
+      if (!outcome.ok) throw outcome.error;
+      if (shouldWrite(outcome.result)) writeFileSync(options.outFile, outcome.result.output, 'utf-8');
+      options.onBuild?.(outcome.result);
+    } catch (e) {
+      options.onError?.(toError(e));
+    }
+  };
+
+  // Runs `first`, then the follow-up for whatever was queued meanwhile, until nothing is.
+  // `building` is cleared in the same step as the last delivery, so a change reported
+  // right after it starts a new build rather than waiting in `queued`.
+  const drain = async (first: WatchBuildRequest): Promise<void> => {
+    building = true;
+    try {
+      let request: WatchBuildRequest | undefined = first;
+      while (request !== undefined) {
+        const current: WatchBuildRequest = request;
+        const outcome = await buildOutput(options, cache, current.changedFiles, options.outFile).then(
+          (result): WatchBuildOutcome => ({ ok: true, result }),
+          (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),
+        );
+        if (controller.signal.aborted) return;
+        // The follow-up also covers this build's changes, so it doesn't depend on what this one cached.
+        request = queued === undefined ? undefined : mergeBuildRequests(current, queued);
+        queued = undefined;
+        if (request === undefined) deliver(outcome);
+      }
+    } finally {
+      building = false;
+    }
+  };
+
   const handle = watchFilesystem(
     allPaths,
     options.outFile,
     (changedFiles) => {
-      buildOutput(options, cache, changedFiles, options.outFile)
-        .then((result) => {
-          if (shouldWrite(result)) writeFileSync(options.outFile, result.output, 'utf-8');
-          options.onBuild?.(result);
-        })
-        .catch((e) => {
-          options.onError?.(e instanceof Error ? e : new Error(String(e)));
-        });
+      if (controller.signal.aborted) return;
+      const request: WatchBuildRequest = { changedFiles };
+      if (building) {
+        queued = queued === undefined ? request : mergeBuildRequests(queued, request);
+        return;
+      }
+      void drain(request);
     },
     ignore,
   );
 
-  controller.signal.addEventListener('abort', () => handle.close());
+  controller.signal.addEventListener('abort', () => {
+    queued = undefined;
+    handle.close();
+  });
   return controller;
+}
+
+/** A watch-mode build: the files that changed, or `undefined` for a full build. */
+interface WatchBuildRequest {
+  readonly changedFiles: ReadonlySet<string> | undefined;
+}
+
+type WatchBuildOutcome =
+  { readonly ok: true; readonly result: CompileResult } | { readonly ok: false; readonly error: Error };
+
+/** One build covering both requests: a full build if either is one, else every changed file. */
+function mergeBuildRequests(a: WatchBuildRequest, b: WatchBuildRequest): WatchBuildRequest {
+  if (a.changedFiles === undefined || b.changedFiles === undefined) return { changedFiles: undefined };
+  return { changedFiles: new Set([...a.changedFiles, ...b.changedFiles]) };
+}
+
+function toError(e: unknown): Error {
+  return e instanceof Error ? e : new Error(String(e));
 }
 
 /**

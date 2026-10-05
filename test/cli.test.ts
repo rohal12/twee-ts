@@ -236,6 +236,27 @@ describe('CLI exit status', () => {
       cli.child.kill();
     }
   }, 60_000);
+
+  it('prints the file list and statistics after every build in watch mode with --log-files and --log-stats', async () => {
+    const src = write('story.tw', VALID_STORY);
+    const cli = startCli(dir, [...baseArgs, '-w', '--log-files', '--log-stats', src, '-o', 'out.html']);
+    // The statistics end each build's report.
+    const reports = (): number => countOf(cli.stdout(), '\nStatistics:\n');
+    const complete = (n: number): boolean => reports() >= n && cli.stdout().trimEnd().endsWith('Files: 1');
+    try {
+      await waitFor(() => complete(1) || cli.child.exitCode !== null, 'the first build');
+      expect(cli.stdout()).toContain('\nFiles: story.tw\n');
+      expect(cli.stdout()).toContain('\nStatistics:\n  Passages: 3\n  Words: 2\n  Files: 1\n');
+
+      write('story.tw', `${VALID_STORY}\n:: Second\nTwo more.\n`);
+      await waitFor(() => complete(2) || cli.child.exitCode !== null, 'the rebuild');
+      expect(countOf(cli.stdout(), '\nFiles: story.tw\n')).toBe(2);
+      expect(cli.stdout()).toContain('\nStatistics:\n  Passages: 4\n  Words: 4\n  Files: 1\n');
+      expect(cli.child.exitCode).toBeNull();
+    } finally {
+      cli.child.kill();
+    }
+  }, 60_000);
 });
 
 describe('CLI output inside a source folder', () => {

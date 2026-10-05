@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { dirname, join, relative } from 'node:path';
-import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { watchFilesystem } from '../src/filesystem.js';
 import { watch } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
@@ -397,5 +397,143 @@ describe('watch on individual files', () => {
       expect((await builds.next()).output).toContain(meta('HEAD_UPDATED'));
       expect(builds.errors).toEqual([]);
     });
+  });
+});
+
+describe('watch with a build still in flight', () => {
+  const story = join(TMP_DIR, 'story');
+  const start = join(story, 'start.tw');
+  const outFile = join(TMP_DIR, 'out.html');
+  const FORMAT_URL = 'https://formats.invalid/format.js';
+  const FORMAT_JS = `window.storyFormat(${JSON.stringify({
+    name: 'WatchSerial',
+    version: '1.0.0',
+    source: '<html><head></head><body>{{STORY_DATA}}</body></html>',
+  })});`;
+  const SLOW_FORMAT = { formatId: 'watchserial-1', formatUrls: [FORMAT_URL], useTweegoPath: false };
+  const source = (text: string): string =>
+    `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n${text}\n`;
+  const startText = (result: CompileResult): string | undefined =>
+    result.story.passages.find((p) => p.name === 'Start')?.text;
+
+  let controller: AbortController | undefined;
+  let origCacheHome: string | undefined;
+
+  /**
+   * Answers requests for FORMAT_URL, holding back the first until `releaseFirst()`, so the initial
+   * build stays in flight (as one waiting for a slow remote format does). `releaseFirst(false)`
+   * fails that request, which leaves nothing in the download cache: any later build fetches again.
+   */
+  function stubSlowFormat() {
+    let releaseFirst: (ok: boolean) => void = () => {};
+    let notifyFirst: () => void = () => {};
+    const gate = new Promise<boolean>((done) => (releaseFirst = done));
+    const firstRequested = new Promise<void>((done) => (notifyFirst = done));
+    const state = { requests: 0, inFlight: 0, maxInFlight: 0 };
+    vi.stubGlobal('fetch', async (url: unknown) => {
+      // A failed format request moves on to the format indices, which have nothing.
+      if (String(url) !== FORMAT_URL) return new Response('', { status: 404 });
+      state.requests++;
+      state.inFlight++;
+      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+      try {
+        if (state.requests === 1) {
+          notifyFirst();
+          if (!(await gate)) return new Response('', { status: 404 });
+        }
+        return new Response(FORMAT_JS);
+      } finally {
+        state.inFlight--;
+      }
+    });
+    return { state, firstRequested, releaseFirst: (ok = true) => releaseFirst(ok) };
+  }
+
+  /** Delivers a change to `filename` in the story folder and lets its debounce run out. */
+  function change(filename: string): void {
+    vi.useFakeTimers(FAKE_TIMERS);
+    emit(story, filename);
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+  }
+
+  beforeEach(() => {
+    mkdirSync(story, { recursive: true });
+    writeFileSync(start, source('OLD_CONTENT'));
+    origCacheHome = process.env['XDG_CACHE_HOME'];
+    process.env['XDG_CACHE_HOME'] = join(TMP_DIR, 'cache');
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    vi.unstubAllGlobals();
+    if (origCacheHome !== undefined) process.env['XDG_CACHE_HOME'] = origCacheHome;
+    else delete process.env['XDG_CACHE_HOME'];
+    rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('builds the changes made during a slow build once, after it, and never writes the stale result', async () => {
+    const format = stubSlowFormat();
+    const builds = buildQueue();
+    controller = await watch({
+      ...SLOW_FORMAT,
+      sources: [story],
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    await format.firstRequested; // the initial build has read OLD_CONTENT and waits for its format
+
+    // Two changes, in separate debounce windows, while it waits.
+    writeFileSync(start, source('NEW_CONTENT'));
+    change('start.tw');
+    writeFileSync(join(story, 'more.tw'), ':: More\nMORE_CONTENT\n');
+    change('more.tw');
+    format.releaseFirst();
+
+    const first = await builds.next();
+    expect(startText(first)).toBe('NEW_CONTENT');
+    expect(first.output).toContain('MORE_CONTENT');
+    expect(readFileSync(outFile, 'utf-8')).toContain('NEW_CONTENT');
+    expect(readFileSync(outFile, 'utf-8')).not.toContain('OLD_CONTENT');
+    // One build at a time: the follow-up started after the initial build finished.
+    expect(format.state.maxInFlight).toBe(1);
+
+    // The next build reported is the next change's: no stale build arrives in between,
+    // and the parse cache still holds the latest content of the file it doesn't reparse.
+    writeFileSync(start, source('NEWEST_CONTENT'));
+    change('start.tw');
+    const second = await builds.next();
+    expect(startText(second)).toBe('NEWEST_CONTENT');
+    expect(second.output).toContain('MORE_CONTENT');
+    expect(readFileSync(outFile, 'utf-8')).toContain('NEWEST_CONTENT');
+    expect(builds.errors).toEqual([]);
+  });
+
+  it('neither writes nor reports a build that finishes after the watch is aborted, nor starts another', async () => {
+    const format = stubSlowFormat();
+    const reported: CompileResult[] = [];
+    const errors: Error[] = [];
+    controller = await watch({
+      ...SLOW_FORMAT,
+      sources: [story],
+      outFile,
+      onBuild: (result) => reported.push(result),
+      onError: (error) => errors.push(error),
+    });
+    await format.firstRequested;
+    writeFileSync(start, source('NEW_CONTENT'));
+    change('start.tw');
+
+    controller.abort();
+    format.releaseFirst(false); // a build started after this one would fetch the format again
+    // Give the released build time to finish; nothing it does may show.
+    await new Promise((done) => setTimeout(done, 200));
+
+    expect(reported).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(existsSync(outFile)).toBe(false);
+    expect(format.state.requests).toBe(1);
   });
 });
