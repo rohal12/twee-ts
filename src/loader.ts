@@ -2,7 +2,7 @@
  * File loading: dispatch by file extension.
  * Ported from storyload.go.
  */
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from './types.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
@@ -347,6 +347,9 @@ export function loadSourcesCached(
   changedFiles?: ReadonlySet<string>,
 ): void {
   const currentFiles = new Set<string>();
+  // changedFiles may name a file in any form (absolute, `./`-prefixed or relative to the working
+  // directory); it is matched to `filenames`, whatever their form, by resolved path.
+  const changedPaths = changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => resolve(f)));
 
   for (const filename of filenames) {
     if (processedFiles.has(filename)) {
@@ -361,10 +364,10 @@ export function loadSourcesCached(
     const cached = entry?.parseOptionsKey === optionsKey ? entry : undefined;
     // A file changedFiles names is always reparsed: a save can keep the modification time
     // (a timestamp-preserving write, or a filesystem with coarse timestamps).
-    const changed = changedFiles?.has(filename) ?? false;
+    const changed = changedPaths?.has(resolve(filename)) ?? false;
 
     // If changedFiles is provided and this file isn't changed and we have a cache hit, skip stat
-    if (changedFiles && cached && !changed) {
+    if (changedPaths && cached && !changed) {
       diagnostics.push(...cached.diagnostics);
       for (const p of cached.passages) {
         storyAdd(story, p, diagnostics);
@@ -378,7 +381,9 @@ export function loadSourcesCached(
     try {
       mtimeMs = statSync(filename).mtimeMs;
     } catch {
-      // File may have been deleted between getFilenames and here
+      // File may have been deleted between getFilenames and here. Its entry goes too, so a
+      // later build that doesn't name it in changedFiles can't replay its old passages.
+      cache.delete(filename);
       continue;
     }
 
@@ -409,6 +414,9 @@ export function loadSourcesCached(
         storyAdd(story, p, diagnostics);
       }
     } catch (e) {
+      // A file that fails to load keeps no entry: the next build tries it again, and reports
+      // the error again while it persists, rather than replaying its old passages.
+      cache.delete(filename);
       diagnostics.push({
         level: 'error',
         message: `load ${filename}: ${e instanceof Error ? e.message : String(e)}`,

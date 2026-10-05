@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { CompileResult, Diagnostic, FileCacheEntry, Story } from '../src/types.js';
 import { createStory } from '../src/story.js';
@@ -536,5 +536,81 @@ describe('incremental cache and explicitly changed files', () => {
     const start = (result: CompileResult): string | undefined => passageText(result.story, 'Start');
     expect(start(fresh)).toBe('UPDATED_CONTENT');
     expect(start(incremental)).toBe('UPDATED_CONTENT');
+  });
+
+  describe('compileIncremental() matches changedFiles to the cached files however a path is written', () => {
+    const source = (text: string): string =>
+      `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n${text}`;
+    const forms: readonly { readonly form: string; readonly path: (file: string) => string }[] = [
+      { form: 'an absolute path', path: (file) => resolve(file) },
+      { form: 'a ./-prefixed relative path', path: (file) => `.${sep}${relative(process.cwd(), file)}` },
+      { form: 'the path relative to the working directory', path: (file) => relative(process.cwd(), file) },
+    ];
+
+    it.each(forms)('reparses a file named by $form', async ({ path }) => {
+      const dir = makeTmpDir();
+      const file = writeFile(dir, 'story.tw', source('ORIGINAL_CONTENT'));
+      setMtime(file, STAMP_MS);
+      const cache = new Map<string, FileCacheEntry>();
+      const options = { sources: [dir], outputMode: 'json' as const };
+      await compileIncremental(options, cache);
+
+      writeFile(dir, 'story.tw', source('UPDATED_CONTENT'));
+      setMtime(file, STAMP_MS);
+      const result = await compileIncremental(options, cache, new Set([path(file)]));
+      expect(passageText(result.story, 'Start')).toBe('UPDATED_CONTENT');
+    });
+  });
+});
+
+describe('incremental cache and a file that fails to load', () => {
+  const passageText = (story: Story, name: string): string | undefined =>
+    story.passages.find((p) => p.name === name)?.text;
+  const errors = (diagnostics: readonly Diagnostic[]): string[] =>
+    diagnostics.filter((d) => d.level === 'error').map((d) => d.message);
+
+  it('drops the entry of a changed file it cannot read, so later builds neither replay nor hide it', () => {
+    const dir = makeTmpDir();
+    const a = writeFile(dir, 'a.tw', ':: A\nOLD_A');
+    const b = writeFile(dir, 'b.tw', ':: B\nb1');
+    const cache = new Map<string, FileCacheEntry>();
+    loadSourcesCached(createStory(), [a, b], opts, [], new Set(), cache);
+
+    // a.tw becomes unreadable: reading a folder fails as an unreadable or locked file does.
+    rmSync(a);
+    mkdirSync(a);
+    const story2 = createStory();
+    const diag2: Diagnostic[] = [];
+    loadSourcesCached(story2, [a, b], opts, diag2, new Set(), cache, new Set([a]));
+    expect(passageText(story2, 'A')).toBeUndefined();
+    expect(errors(diag2)).toEqual([expect.stringMatching(/^load .*a\.tw: EISDIR/)]);
+    expect(cache.has(a)).toBe(false);
+
+    // A build for another file's change tries a.tw again rather than replaying its old passages.
+    writeFile(dir, 'b.tw', ':: B\nb2');
+    const story3 = createStory();
+    const diag3: Diagnostic[] = [];
+    loadSourcesCached(story3, [a, b], opts, diag3, new Set(), cache, new Set([b]));
+    expect(passageText(story3, 'A')).toBeUndefined();
+    expect(passageText(story3, 'B')).toBe('b2');
+    expect(errors(diag3)).toEqual([expect.stringMatching(/^load .*a\.tw: EISDIR/)]);
+  });
+
+  it('drops the entry of a changed file that is gone, so its old passages are not replayed when it is back', () => {
+    const dir = makeTmpDir();
+    const a = writeFile(dir, 'a.tw', ':: A\nOLD_A');
+    const b = writeFile(dir, 'b.tw', ':: B\nb1');
+    const cache = new Map<string, FileCacheEntry>();
+    loadSourcesCached(createStory(), [a, b], opts, [], new Set(), cache);
+
+    // Deleted after source discovery listed it.
+    rmSync(a);
+    loadSourcesCached(createStory(), [a, b], opts, [], new Set(), cache, new Set([a]));
+    expect(cache.has(a)).toBe(false);
+
+    writeFile(dir, 'a.tw', ':: A\nNEW_A');
+    const story = createStory();
+    loadSourcesCached(story, [a, b], opts, [], new Set(), cache, new Set([b]));
+    expect(passageText(story, 'A')).toBe('NEW_A');
   });
 });
