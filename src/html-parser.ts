@@ -3,7 +3,7 @@
  * Ported from storyload.go:loadHTML().
  */
 import { parseDocument } from 'htmlparser2';
-import type { Passage, PassageMetadata, Diagnostic, IFID } from './types.js';
+import type { Passage, PassageMetadata, Diagnostic, IFID, DecompileOptions } from './types.js';
 import { createStory, storyAdd, storyPrepend, marshalStoryData, unmarshalStorySettings } from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
 
@@ -23,23 +23,25 @@ interface HtmlNode {
 
 /**
  * Parse a Twine 2 or Twine 1 compiled HTML file back into a Story model.
+ * Tweego always trims passage text; here `trim: false` keeps it exactly, as for Twee sources.
  */
-export function decompileHTML(html: string): DecompileResult {
+export function decompileHTML(html: string, options: DecompileOptions = {}): DecompileResult {
   const diagnostics: Diagnostic[] = [];
   const story = createStory();
+  const passageText = options.trim === false ? (text: string) => text : (text: string) => text.trim();
 
   const doc = parseDocument(html) as unknown as HtmlNode;
 
   // Try Twine 2 first (<tw-storydata>), then Twine 1 (<div id="store-area"> or <div id="storeArea">).
   const twine2Data = findElement(doc, 'tw-storydata');
   if (twine2Data) {
-    decompileTwine2(twine2Data, story, diagnostics);
+    decompileTwine2(twine2Data, story, passageText, diagnostics);
     return { story, diagnostics };
   }
 
   const twine1Data = findElementByIdPattern(doc, /^store(?:-a|A)rea$/);
   if (twine1Data) {
-    decompileTwine1(twine1Data, story, diagnostics);
+    decompileTwine1(twine1Data, story, passageText, diagnostics);
     return { story, diagnostics };
   }
 
@@ -47,7 +49,15 @@ export function decompileHTML(html: string): DecompileResult {
   return { story, diagnostics };
 }
 
-function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story, diagnostics: Diagnostic[]): void {
+/** Turns stored passage text into passage text: trimmed at both ends, or kept as is. */
+type PassageText = (text: string) => string;
+
+function decompileTwine2(
+  storyData: HtmlNode,
+  story: import('./types.js').Story,
+  passageText: PassageText,
+  diagnostics: Diagnostic[],
+): void {
   // Parse tw-storydata attributes.
   let startnode = 0;
   const attrs = storyData.attribs ?? {};
@@ -93,8 +103,10 @@ function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story,
     switch (node.name) {
       case 'style':
       case 'script': {
-        const text = getTextContent(node).trim();
-        if (text.length === 0) continue;
+        const content = getTextContent(node);
+        // Whitespace alone is no stylesheet or script, whether or not the text is trimmed.
+        if (content.trim().length === 0) continue;
+        const text = passageText(content);
         const name = node.name === 'style' ? 'Story Stylesheet' : 'Story JavaScript';
         const tags = node.name === 'style' ? ['stylesheet'] : ['script'];
         storyAdd(story, { name, tags, text }, diagnostics);
@@ -135,7 +147,7 @@ function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story,
           story.twine2.start = name;
         }
 
-        const text = getTextContent(node).trim();
+        const text = passageText(getTextContent(node));
         const passage: Passage = { name, tags, text };
         if (metadata.position || metadata.size) {
           passage.metadata = metadata;
@@ -150,8 +162,13 @@ function decompileTwine2(storyData: HtmlNode, story: import('./types.js').Story,
   storyPrepend(story, { name: 'StoryData', tags: [], text: marshalStoryData(story) }, diagnostics);
 }
 
-function decompileTwine1(storeArea: HtmlNode, story: import('./types.js').Story, diagnostics: Diagnostic[]): void {
-  const passages = (storeArea.children ?? []).filter(isTiddler).map(tiddlerToPassage);
+function decompileTwine1(
+  storeArea: HtmlNode,
+  story: import('./types.js').Story,
+  passageText: PassageText,
+  diagnostics: Diagnostic[],
+): void {
+  const passages = (storeArea.children ?? []).filter(isTiddler).map((node) => tiddlerToPassage(node, passageText));
 
   // The Twine 1 writer ROT13-encodes every tiddler but StorySettings when StorySettings says
   // `obfuscate:rot13`, so read the settings before adding (and so interpreting) anything else.
@@ -166,11 +183,11 @@ function isTiddler(node: HtmlNode): boolean {
   return node.type === 'tag' && node.name === 'div' && node.attribs !== undefined && 'tiddler' in node.attribs;
 }
 
-function tiddlerToPassage(node: HtmlNode): Passage {
+function tiddlerToPassage(node: HtmlNode, passageText: PassageText): Passage {
   const nodeAttrs = node.attribs ?? {};
   const name = nodeAttrs['tiddler'] ?? '';
   const tags = nodeAttrs['tags'] ? nodeAttrs['tags'].split(/\s+/).filter((s: string) => s.length > 0) : [];
-  const text = tiddlerUnescape(getTextContent(node)).trim();
+  const text = passageText(tiddlerUnescape(getTextContent(node)));
 
   const passage: Passage = { name, tags, text };
   const position = nodeAttrs['twine-position'];

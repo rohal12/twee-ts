@@ -46,7 +46,7 @@ export function loadSources(
           break;
         case 'htm':
         case 'html':
-          loadHTML(story, filename, diagnostics);
+          loadHTML(story, filename, opts, diagnostics);
           break;
         case 'css':
           loadTagged(story, 'stylesheet', filename, diagnostics);
@@ -211,8 +211,8 @@ function parseFontFile(filename: string): ParseResult {
   };
 }
 
-function parseHTMLFile(filename: string): ParseResult {
-  const { story, diagnostics } = decompileHTML(readUTF8(filename));
+function parseHTMLFile(filename: string, opts: LoadOptions): ParseResult {
+  const { story, diagnostics } = decompileHTML(readUTF8(filename), { trim: opts.trim ?? true });
   // Twine 2 HTML keeps the story name in an attribute, not a passage. Only passages reach the
   // outer story (and the cache), so carry the name as a StoryTitle passage, as Twine 1 HTML does.
   const passages =
@@ -224,13 +224,16 @@ function parseHTMLFile(filename: string): ParseResult {
 
 /**
  * Identity of the options that affect how a file parses, stored on its cache entry.
- * Only Twee files depend on them; every other file type yields the same key for all options.
+ * Twee files depend on `trim` and `twee2Compat`, HTML files on `trim`; every other file type
+ * yields the same key for all options.
  */
 function parseOptionsKey(filename: string, opts: LoadOptions): string {
   const ext = normalizedFileExt(filename);
+  const trim = opts.trim ?? true;
+  if (ext === 'htm' || ext === 'html') return JSON.stringify({ trim });
   const twee2File = ext === 'tw2' || ext === 'twee2';
   if (!twee2File && ext !== 'tw' && ext !== 'twee') return '';
-  return JSON.stringify({ trim: opts.trim ?? true, twee2Compat: twee2File || (opts.twee2Compat ?? false) });
+  return JSON.stringify({ trim, twee2Compat: twee2File || (opts.twee2Compat ?? false) });
 }
 
 function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined {
@@ -244,7 +247,7 @@ function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined
       return parseTweeFile(filename, { ...opts, twee2Compat: true });
     case 'htm':
     case 'html':
-      return parseHTMLFile(filename);
+      return parseHTMLFile(filename, opts);
     case 'css':
       return parseTaggedFile('stylesheet', filename);
     case 'js':
@@ -285,8 +288,8 @@ function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined
   }
 }
 
-function loadHTML(story: Story, filename: string, diagnostics: Diagnostic[]): void {
-  const result = parseHTMLFile(filename);
+function loadHTML(story: Story, filename: string, opts: LoadOptions, diagnostics: Diagnostic[]): void {
+  const result = parseHTMLFile(filename, opts);
   diagnostics.push(...result.diagnostics);
   for (const p of result.passages) {
     storyAdd(story, p, diagnostics);

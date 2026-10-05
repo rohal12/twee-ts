@@ -335,3 +335,100 @@ describe('HTML round trips through compile()', () => {
     expect(story.passages.find((p) => p.name === 'Start')!.text).toBe('Hello world');
   });
 });
+
+describe('decompileHTML — passage whitespace', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const TWINE2_HTML = `<tw-storydata name="Spaced" startnode="1" ifid="${IFID}" hidden>
+<style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">
+  body { color: red; }
+</style>
+<script role="script" id="twine-user-script" type="text/twine-javascript">  window.x = 1;  </script>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">\n  indented content  \n</tw-passagedata>
+</tw-storydata>`;
+  const TWINE1_HTML = `<div id="storeArea" hidden>
+<div tiddler="Start" tags="" twine-position="100,100">\\n  indented content  \\n</div>
+</div>`;
+
+  function text(html: string, name: string, options?: { trim?: boolean }): string | undefined {
+    return decompileHTML(html, options).story.passages.find((p) => p.name === name)?.text;
+  }
+
+  it('trims Twine 2 passage text at both ends by default, as the Twee lexer does', () => {
+    expect(text(TWINE2_HTML, 'Start')).toBe('indented content');
+    expect(text(TWINE2_HTML, 'Start', { trim: true })).toBe('indented content');
+  });
+
+  it('keeps Twine 2 passage text exactly when trim is off', () => {
+    expect(text(TWINE2_HTML, 'Start', { trim: false })).toBe('\n  indented content  \n');
+  });
+
+  it('applies the trim option to the Twine 2 story stylesheet and script', () => {
+    expect(text(TWINE2_HTML, 'Story Stylesheet')).toBe('body { color: red; }');
+    expect(text(TWINE2_HTML, 'Story JavaScript')).toBe('window.x = 1;');
+    expect(text(TWINE2_HTML, 'Story Stylesheet', { trim: false })).toBe('\n  body { color: red; }\n');
+    expect(text(TWINE2_HTML, 'Story JavaScript', { trim: false })).toBe('  window.x = 1;  ');
+  });
+
+  it('still skips a whitespace-only stylesheet or script when trim is off', () => {
+    const html = `<tw-storydata name="Blank" startnode="1" ifid="${IFID}" hidden>
+<style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">
+</style>
+<script role="script" id="twine-user-script" type="text/twine-javascript">  </script>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
+</tw-storydata>`;
+    const names = decompileHTML(html, { trim: false }).story.passages.map((p) => p.name);
+    expect(names).toEqual(['StoryData', 'Start']);
+  });
+
+  it('trims Twine 1 tiddler text by default and keeps it exactly when trim is off', () => {
+    expect(text(TWINE1_HTML, 'Start')).toBe('indented content');
+    expect(text(TWINE1_HTML, 'Start', { trim: false })).toBe('\n  indented content  \n');
+  });
+});
+
+describe('HTML whitespace round trips through compile()', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-trim-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const SOURCE = [
+    ':: StoryData',
+    JSON.stringify({ ifid: 'D674C58C-DEFA-4F70-B7A2-27742230C0FC' }),
+    '',
+    ':: StoryTitle',
+    'Spaced',
+    '',
+    ':: Start',
+    '  indented content  ',
+    '',
+  ].join('\n');
+
+  for (const archive of ['twine2-archive', 'twine1-archive'] as const) {
+    describe(archive, () => {
+      async function archived(): Promise<string> {
+        const first = await compile({
+          sources: [{ filename: 'story.tw', content: SOURCE }],
+          outputMode: archive,
+          trim: false,
+        });
+        expect(first.story.passages.find((p) => p.name === 'Start')?.text).toBe('  indented content  ');
+        const file = join(dir, 'story.html');
+        writeFileSync(file, first.output, 'utf-8');
+        return file;
+      }
+
+      it('keeps passage whitespace with trim off', async () => {
+        const again = await compile({ sources: [await archived()], outputMode: 'json', trim: false });
+        expect(again.story.passages.find((p) => p.name === 'Start')?.text).toBe('  indented content  ');
+      });
+
+      it('trims passage whitespace with trim on', async () => {
+        const again = await compile({ sources: [await archived()], outputMode: 'json' });
+        expect(again.story.passages.find((p) => p.name === 'Start')?.text).toBe('indented content');
+      });
+    });
+  }
+});

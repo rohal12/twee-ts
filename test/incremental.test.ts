@@ -345,6 +345,37 @@ describe('incremental cache and parse options', () => {
     expect(cache.get(file)).toBe(entry);
   });
 
+  it('reparses an unchanged Twine 2 HTML file when trim changes', () => {
+    const file = writeFile(
+      dir,
+      'story.html',
+      `<tw-storydata name="Spaced" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">  content with spaces  </tw-passagedata>
+</tw-storydata>`,
+    );
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    expect(load(file, { trim: true }, cache).start).toBe('content with spaces');
+    expect(load(file, { trim: false }, cache).start).toBe('  content with spaces  ');
+    expect(load(file, { trim: true }, cache, new Set()).start).toBe('content with spaces');
+  });
+
+  it('keeps Twine 1 HTML entries when only twee2Compat changes', () => {
+    const file = writeFile(
+      dir,
+      'story.html',
+      '<div id="storeArea" hidden><div tiddler="Start" tags="">  content with spaces  </div></div>',
+    );
+    setMtime(file, 1000000);
+    const cache = new Map<string, FileCacheEntry>();
+
+    expect(load(file, { trim: false }, cache).start).toBe('  content with spaces  ');
+    const entry = cache.get(file);
+    load(file, { trim: false, twee2Compat: true }, cache);
+    expect(cache.get(file)).toBe(entry);
+  });
+
   it('keeps entries for files the parse options do not affect', () => {
     const file = writeFile(dir, 'styles.css', '  body { color: red; }  ');
     setMtime(file, 1000000);

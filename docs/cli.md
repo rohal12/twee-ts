@@ -42,7 +42,7 @@ See [Output Modes](./output-modes) for details on each mode.
 | Flag                         | Description                                                                      |
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | `--twee2-compat`             | Enable Twee2 syntax compatibility.                                               |
-| `--no-trim`                  | Don't trim leading/trailing whitespace from passages.                            |
+| `--no-trim`                  | Don't trim leading/trailing whitespace from passages, in Twee and HTML sources.  |
 | `-t, --test`                 | Enable test/debug mode (sets `debug` option in story data).                      |
 | `--tag-alias <alias=target>` | Map a custom tag to a special tag. Repeatable. See [Tag Aliases](./tag-aliases). |
 | `--source-info`              | Emit source file and line as `data-` attributes on passage elements.             |

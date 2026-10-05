@@ -204,6 +204,20 @@ const { passages, diagnostics } = parseTwee(':: Start\nHello!', { filename: 'sto
 
 `parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. In-memory sources passed to `compile()` get the same normalization.
 
+### HTML Decompiler
+
+```typescript
+import { decompileHTML } from '@rohal12/twee-ts';
+
+// Parse compiled Twine 2 or Twine 1 HTML back into a story model
+const { story, diagnostics } = decompileHTML(html);
+
+// Keep passage text exactly as stored, with its leading and trailing whitespace
+const untrimmed = decompileHTML(html, { trim: false });
+```
+
+`trim` (default `true`) trims whitespace at both ends of passage text, as the Twee lexer does, and applies to the Twine 2 story stylesheet and script too. `compile()` passes its own `trim` option through when it loads `.html` files.
+
 ### Story Formats
 
 ```typescript
@@ -310,6 +324,7 @@ All public types are re-exported from the main entry point:
 import type {
   CompileOptions,
   CompileToFileOptions,
+  DecompileOptions,
   WatchOptions,
   CompileResult,
   CompileStats,
