@@ -164,6 +164,15 @@ export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2
   };
 };
 
+// --- Passage omission (why an output leaves a passage out) ---
+
+export type OmittingTag = 'Twine.private' | 'script' | 'stylesheet';
+
+export type PassageOmission =
+  | { readonly kind: 'special-name'; readonly name: 'StoryData' | 'StoryTitle' }
+  | { readonly kind: 'tag'; readonly tag: OmittingTag }
+  | { readonly kind: 'empty-story-settings' };
+
 // --- Story format ---
 
 export interface StoryFormatInfo {

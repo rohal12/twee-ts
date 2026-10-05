@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { ReadonlyStory, StoryFormatInfo } from './types.js';
+import type { PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
 import { hasTag, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { jsStringEscape, htmlCommentSanitize } from './escape.js';
@@ -70,13 +70,20 @@ export function toTwine1HTML(story: ReadonlyStory, format: StoryFormatInfo, star
   return template;
 }
 
+/**
+ * Why Twine 1 output leaves a passage out of its tiddlers, or `undefined` when the passage is emitted.
+ */
+export function twine1PassageOmission(p: ReadonlyPassage): PassageOmission | undefined {
+  return hasTag(p, 'Twine.private') ? { kind: 'tag', tag: 'Twine.private' } : undefined;
+}
+
 function getTwine1PassageChunk(story: ReadonlyStory): { data: string; count: number } {
   const obfuscateRot13 = story.twine1.settings.get('obfuscate') === 'rot13';
   let data = '';
   let count = 0;
 
   for (const p of story.passages) {
-    if (hasTag(p, 'Twine.private')) continue;
+    if (twine1PassageOmission(p) !== undefined) continue;
     count++;
     data += passageToTiddler(p, count, obfuscateRot13);
   }
