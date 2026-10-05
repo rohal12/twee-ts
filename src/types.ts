@@ -164,6 +164,15 @@ export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2
   };
 };
 
+// --- Passage omission (why an output leaves a passage out) ---
+
+export type OmittingTag = 'Twine.private' | 'script' | 'stylesheet';
+
+export type PassageOmission =
+  | { readonly kind: 'special-name'; readonly name: 'StoryData' | 'StoryTitle' }
+  | { readonly kind: 'tag'; readonly tag: OmittingTag }
+  | { readonly kind: 'empty-story-settings' };
+
 // --- Story format ---
 
 export interface StoryFormatInfo {
@@ -231,6 +240,12 @@ export interface SFAIndex {
 
 export interface FileCacheEntry {
   readonly mtimeMs: number;
+  /**
+   * Identity of the parse options (`trim`, `twee2Compat`) the entry was parsed with. An entry is
+   * reused only when this matches the current options; an entry without it is treated as stale
+   * and reparsed. The value is opaque: leave it to twee-ts to set.
+   */
+  readonly parseOptionsKey?: string;
   readonly passages: readonly Passage[];
   readonly diagnostics: readonly Diagnostic[];
 }

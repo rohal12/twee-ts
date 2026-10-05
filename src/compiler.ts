@@ -28,6 +28,7 @@ import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { modifyHead } from './modules.js';
+import { startPassageDiagnostics } from './start-passage.js';
 import { resolveRemoteFormat, clearIndexCache } from './remote-formats.js';
 import { VERSION } from './version.js';
 
@@ -209,8 +210,10 @@ async function buildOutput(
     }
   }
 
-  // Merge config from StoryData: command-line > StoryData > default
-  const startName = options.startPassage || story.twine2.start || DEFAULT_START_NAME;
+  // Merge config from StoryData: command-line > StoryData > default.
+  // An explicit override is recorded on the story so JSON output and inspection see it too.
+  if (options.startPassage) story.twine2.start = options.startPassage;
+  const startName = story.twine2.start || DEFAULT_START_NAME;
 
   // Apply test mode
   if (testMode) {
@@ -243,12 +246,7 @@ async function buildOutput(
 
     case 'html': {
       // Sanity checks for HTML mode
-      if (!storyHas(story, startName)) {
-        diagnostics.push({
-          level: 'error',
-          message: `Starting passage "${startName}" not found.`,
-        });
-      }
+      diagnostics.push(...startPassageDiagnostics(story, startName, format?.isTwine2 === false ? 'twine1' : 'twine2'));
 
       if (!format) {
         throw new TweeTsError('No story format available for HTML output.', diagnostics);

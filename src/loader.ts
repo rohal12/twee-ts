@@ -6,10 +6,11 @@ import { basename } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from './types.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
-import { storyAdd, storyPrepend } from './story.js';
+import { storyAdd, storyHas, storyPrepend } from './story.js';
 import { parseTwee } from './parser.js';
 import { decompileHTML } from './html-parser.js';
 import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
+import { normalizeSourceText } from './source-text.js';
 
 interface LoadOptions {
   trim?: boolean;
@@ -123,7 +124,10 @@ export function loadInlineSources(
       // Treat as a file path — handled externally
       continue;
     }
-    const content = typeof source.content === 'string' ? source.content : source.content.toString('utf-8');
+    // Normalize like readUTF8() does for files, so in-memory and on-disk sources load the same.
+    const content = normalizeSourceText(
+      typeof source.content === 'string' ? source.content : source.content.toString('utf-8'),
+    );
 
     const ext = normalizedFileExt(source.filename);
     switch (ext) {
@@ -208,9 +212,25 @@ function parseFontFile(filename: string): ParseResult {
 }
 
 function parseHTMLFile(filename: string): ParseResult {
-  const source = readUTF8(filename);
-  const result = decompileHTML(source);
-  return { passages: result.story.passages, diagnostics: [...result.diagnostics] };
+  const { story, diagnostics } = decompileHTML(readUTF8(filename));
+  // Twine 2 HTML keeps the story name in an attribute, not a passage. Only passages reach the
+  // outer story (and the cache), so carry the name as a StoryTitle passage, as Twine 1 HTML does.
+  const passages =
+    story.name !== '' && !storyHas(story, 'StoryTitle')
+      ? [{ name: 'StoryTitle', tags: [], text: story.name }, ...story.passages]
+      : story.passages;
+  return { passages, diagnostics: [...diagnostics] };
+}
+
+/**
+ * Identity of the options that affect how a file parses, stored on its cache entry.
+ * Only Twee files depend on them; every other file type yields the same key for all options.
+ */
+function parseOptionsKey(filename: string, opts: LoadOptions): string {
+  const ext = normalizedFileExt(filename);
+  const twee2File = ext === 'tw2' || ext === 'twee2';
+  if (!twee2File && ext !== 'tw' && ext !== 'twee') return '';
+  return JSON.stringify({ trim: opts.trim ?? true, twee2Compat: twee2File || (opts.twee2Compat ?? false) });
 }
 
 function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined {
@@ -324,7 +344,10 @@ export function loadSourcesCached(
     }
 
     currentFiles.add(filename);
-    const cached = cache.get(filename);
+    const optionsKey = parseOptionsKey(filename, opts);
+    // An entry parsed under other options (or without a recorded key) is stale.
+    const entry = cache.get(filename);
+    const cached = entry?.parseOptionsKey === optionsKey ? entry : undefined;
 
     // If changedFiles is provided and this file isn't changed and we have a cache hit, skip stat
     if (changedFiles && cached && !changedFiles.has(filename)) {
@@ -362,6 +385,7 @@ export function loadSourcesCached(
 
       cache.set(filename, {
         mtimeMs,
+        parseOptionsKey: optionsKey,
         passages: result.passages,
         diagnostics: result.diagnostics,
       });

@@ -2,7 +2,7 @@
  * Twine 2 HTML and archive output.
  * Ported from storyout.go.
  */
-import type { ReadonlyStory, ReadonlyPassage, StoryFormatInfo } from './types.js';
+import type { OmittingTag, PassageOmission, ReadonlyStory, ReadonlyPassage, StoryFormatInfo } from './types.js';
 import {
   attrEscape,
   htmlEscape,
@@ -11,7 +11,7 @@ import {
   scriptContentEscape,
   styleContentEscape,
 } from './escape.js';
-import { passageToPassagedata, hasTag, hasAnyTag } from './passage.js';
+import { passageToPassagedata, hasTag } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { VERSION } from './version.js';
 
@@ -43,6 +43,21 @@ export function toTwine2HTML(
   }
 
   return template;
+}
+
+const OMITTING_TAGS: readonly OmittingTag[] = ['Twine.private', 'script', 'stylesheet'];
+
+/**
+ * Why Twine 2 output leaves a passage out of its `<tw-passagedata>` elements,
+ * or `undefined` when the passage is emitted (and so can be the starting passage).
+ */
+export function twine2PassageOmission(story: ReadonlyStory, p: ReadonlyPassage): PassageOmission | undefined {
+  if (p.name === 'StoryTitle' || p.name === 'StoryData') return { kind: 'special-name', name: p.name };
+  const tag = OMITTING_TAGS.find((t) => hasTag(p, t));
+  if (tag !== undefined) return { kind: 'tag', tag };
+  // Drop empty StorySettings
+  if (p.name === 'StorySettings' && story.twine1.settings.size === 0) return { kind: 'empty-story-settings' };
+  return undefined;
 }
 
 function getTwine2DataChunk(
@@ -109,13 +124,7 @@ function getTwine2DataChunk(
   // Normal passage elements
   pid = 1;
   for (const p of story.passages) {
-    if (p.name === 'StoryTitle' || p.name === 'StoryData' || hasAnyTag(p, 'script', 'stylesheet', 'Twine.private')) {
-      continue;
-    }
-    // Drop empty StorySettings
-    if (p.name === 'StorySettings' && story.twine1.settings.size === 0) {
-      continue;
-    }
+    if (twine2PassageOmission(story, p) !== undefined) continue;
 
     parts.push(passageToPassagedata(p, pid, options));
     if (startName === p.name) {
