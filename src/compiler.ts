@@ -85,9 +85,11 @@ export async function compileForOutputFile(
  * Plugins and advanced users can manage their own cache and changed-file tracking.
  *
  * Without `changedFiles`, a cached file is reused while its modification time is unchanged.
- * With it, a file it names (by the path source discovery gives it, relative to the working
- * directory) is always reparsed, whatever its modification time, and every other cached
- * file is reused as it is.
+ * With it, a file it names is always reparsed, whatever its modification time, and every
+ * other cached file is reused as it is. A file may be named by an absolute path or by a path
+ * relative to the working directory, with or without a leading `./`: entries are matched to
+ * the source files by resolved path. A file that fails to load is dropped from the cache, so
+ * the next build tries it again.
  */
 export async function compileIncremental(
   options: CompileOptions,
@@ -99,9 +101,9 @@ export async function compileIncremental(
 
 /**
  * Watch for file changes and recompile. Every build is written to `outFile`, including
- * one whose diagnostics report errors. Builds run one at a time: changes made during a
- * build go into one follow-up build after it, and the superseded build is neither
- * written nor reported.
+ * one whose diagnostics report errors. Builds run one at a time, and each one is written
+ * and reported as it finishes, in order: changes made during a build go into one
+ * follow-up build after it. A watched path that can't be watched is passed to `onError`.
  */
 export async function watch(options: WatchOptions): Promise<AbortController> {
   return watchWithWriteFilter(options, () => true);
@@ -138,11 +140,22 @@ export async function watchWithWriteFilter(
     return !notExcludable.some((root) => abs === root || abs.startsWith(root + sep));
   };
 
-  // One build at a time. Changes reported while a build is in flight wait in `queued` and
-  // go into a single follow-up build once it finishes; the build they arrived during is
-  // superseded, and its result is neither written nor reported.
+  // One build at a time. Changes reported while a build is in flight wait in `queued` and go
+  // into a single follow-up build once it finishes. Every finished build is delivered first:
+  // it can't be older than what was delivered before it, and delivering each one means a
+  // steady stream of changes still produces regular output and reports.
   let building = false;
   let queued: WatchBuildRequest | undefined;
+
+  // onError is the last place an error can go; an exception from it is reported to the
+  // console instead, so that it never ends the watch as an unhandled rejection.
+  const reportError = (error: Error): void => {
+    try {
+      options.onError?.(error);
+    } catch (e) {
+      console.error(`twee-ts watch: onError threw while handling "${error.message}": ${toError(e).message}`);
+    }
+  };
 
   const deliver = (outcome: WatchBuildOutcome): void => {
     try {
@@ -150,7 +163,7 @@ export async function watchWithWriteFilter(
       if (shouldWrite(outcome.result)) writeFileSync(options.outFile, outcome.result.output, 'utf-8');
       options.onBuild?.(outcome.result);
     } catch (e) {
-      options.onError?.(toError(e));
+      reportError(toError(e));
     }
   };
 
@@ -162,16 +175,14 @@ export async function watchWithWriteFilter(
     try {
       let request: WatchBuildRequest | undefined = first;
       while (request !== undefined) {
-        const current: WatchBuildRequest = request;
-        const outcome = await buildOutput(options, cache, current.changedFiles, options.outFile).then(
+        const outcome = await buildOutput(options, cache, request.changedFiles, options.outFile).then(
           (result): WatchBuildOutcome => ({ ok: true, result }),
           (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),
         );
         if (controller.signal.aborted) return;
-        // The follow-up also covers this build's changes, so it doesn't depend on what this one cached.
-        request = queued === undefined ? undefined : mergeBuildRequests(current, queued);
+        deliver(outcome);
+        request = queued;
         queued = undefined;
-        if (request === undefined) deliver(outcome);
       }
     } finally {
       building = false;
@@ -188,9 +199,10 @@ export async function watchWithWriteFilter(
         queued = queued === undefined ? request : mergeBuildRequests(queued, request);
         return;
       }
-      void drain(request);
+      drain(request).catch((e: unknown) => reportError(toError(e)));
     },
     ignore,
+    reportError,
   );
 
   controller.signal.addEventListener('abort', () => {

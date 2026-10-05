@@ -5,6 +5,7 @@
 import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { compileForOutputFile, watchWithWriteFilter } from '../src/compiler.js';
+import { WatchPathError } from '../src/filesystem.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
 import { discoverFormats, getFormatSearchDirs } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
@@ -220,7 +221,13 @@ async function main(): Promise<void> {
           logBuild(result, log);
         },
         onError(error) {
-          console.error(`Build error: ${error.message}`);
+          if (error instanceof WatchPathError) {
+            // The other paths are still watched; with nothing left to watch, the process exits with status 1.
+            console.error(`error: ${error.message}`);
+            process.exitCode = 1;
+          } else {
+            console.error(`Build error: ${error.message}`);
+          }
         },
       },
       (result) => countErrors(result.diagnostics) === 0,

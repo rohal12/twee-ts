@@ -1,59 +1,155 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { dirname, join, relative } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import type { EventEmitter } from 'node:events';
 import { watchFilesystem } from '../src/filesystem.js';
+import type { WatchHandle } from '../src/filesystem.js';
 import { watch } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
 
 type WatchListener = (event: string, filename: string | null) => void;
 
-const listeners = vi.hoisted(() => new Map<string, WatchListener>());
+/** A watch the fake fs.watch started: on the folder that was at `path` when it started. */
+interface FakeWatcher {
+  readonly path: string;
+  readonly recursive: boolean;
+  /** The watched folder's identity (device and inode) when the watch started. */
+  readonly identity: string;
+  readonly listener: WatchListener;
+  readonly emitter: EventEmitter;
+  closed: boolean;
+}
+
+const fake = vi.hoisted(() => ({
+  watchers: [] as FakeWatcher[],
+  /** Paths fs.watch fails on, with the error code it throws. */
+  failing: new Map<string, string>(),
+  identityOf: (_path: string): string | undefined => undefined,
+}));
 
 // fs.watch records each watcher's listener instead of asking the OS, so the tests deliver
-// the events themselves and don't depend on how fast or reliably the OS reports them.
+// the events themselves and don't depend on how fast or reliably the OS reports them. As the
+// OS does, a watch follows the folder it started on, not the path: once that folder is
+// deleted or replaced, events for the path no longer reach it.
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
+  const { EventEmitter } = await import('node:events');
+  fake.identityOf = (path: string): string | undefined => {
+    try {
+      const stats = actual.statSync(path);
+      return `${stats.dev}:${stats.ino}`;
+    } catch {
+      return undefined;
+    }
+  };
   return {
     ...actual,
-    watch: (pathname: string, _options: unknown, listener: WatchListener) => {
-      listeners.set(pathname, listener);
-      return { close: () => listeners.delete(pathname) };
+    watch: (pathname: string, options: { recursive?: boolean }, listener: WatchListener) => {
+      const code = fake.failing.get(pathname);
+      const identity = fake.identityOf(pathname);
+      if (code !== undefined || identity === undefined) {
+        const error = code ?? 'ENOENT';
+        throw Object.assign(new Error(`${error}: fake fs.watch failed, watch '${pathname}'`), { code: error });
+      }
+      const emitter = new EventEmitter();
+      const watcher: FakeWatcher = {
+        path: pathname,
+        recursive: options.recursive ?? false,
+        identity,
+        listener,
+        emitter,
+        closed: false,
+      };
+      fake.watchers.push(watcher);
+      return Object.assign(emitter, {
+        close: () => {
+          watcher.closed = true;
+        },
+      });
     },
   };
 });
 
-/** Delivers a change event to the watcher on `root`, for `filename` relative to it. */
+/** The open watches on the folder now at `path`. */
+function liveWatchers(path: string): FakeWatcher[] {
+  const identity = fake.identityOf(path);
+  return fake.watchers.filter((w) => !w.closed && w.path === path && w.identity === identity);
+}
+
+/** Delivers a change event to the watches on the folder at `root`, for `filename` relative to it. */
 function emit(root: string, filename: string): void {
-  const listener = listeners.get(root);
-  if (!listener) throw new Error(`no watcher on ${root}`);
-  listener('change', filename);
+  const watchers = liveWatchers(root);
+  if (watchers.length === 0) throw new Error(`no watcher on ${root}`);
+  for (const w of watchers) w.listener('change', filename);
+}
+
+/**
+ * Delivers an event to the watches still open on a folder that was at `path` but has since
+ * been deleted or moved, as the OS does once for the folder itself.
+ */
+function emitToOld(path: string, filename: string): void {
+  const identity = fake.identityOf(path);
+  const watchers = fake.watchers.filter((w) => !w.closed && w.path === path && w.identity !== identity);
+  if (watchers.length === 0) throw new Error(`no watcher on a former ${path}`);
+  for (const w of watchers) w.listener('rename', filename);
+}
+
+/** Emits an 'error' on every open watch on `path`, current or former folder. */
+function emitError(path: string, error: Error): void {
+  for (const w of fake.watchers.filter((x) => !x.closed && x.path === path)) w.emitter.emit('error', error);
 }
 
 const FAKE_TIMERS = { toFake: ['setTimeout', 'clearTimeout'] } as const;
 
 afterEach(() => {
   vi.useRealTimers();
-  listeners.clear();
+  fake.watchers.length = 0;
+  fake.failing.clear();
 });
 
 describe('watchFilesystem', () => {
-  beforeEach(() => vi.useFakeTimers(FAKE_TIMERS));
+  let root: string;
+  let story: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers(FAKE_TIMERS);
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-watchfs-'));
+    story = join(root, 'story');
+    mkdirSync(story);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** `filename` relative to the working directory, as the watcher reports it. */
+  const rel = (filename: string): string => relative(process.cwd(), filename);
 
   it('schedules no rebuild for a file the ignore test rejects', () => {
     const builds: (ReadonlySet<string> | undefined)[] = [];
     const handle = watchFilesystem(
-      ['story'],
-      'out.html',
+      [story],
+      join(root, 'out.html'),
       (files) => builds.push(files),
       (file) => file.endsWith('.png'),
     );
     try {
       expect(builds).toEqual([undefined]); // the initial full build
-      emit('story', join('art', 'scene.png'));
+      emit(story, join('art', 'scene.png'));
       expect(vi.getTimerCount()).toBe(0);
-      emit('story', 'start.tw');
+      emit(story, 'start.tw');
       vi.advanceTimersByTime(500);
-      expect(builds).toEqual([undefined, new Set([join('story', 'start.tw')])]);
+      expect(builds).toEqual([undefined, new Set([rel(join(story, 'start.tw'))])]);
     } finally {
       handle.close();
     }
@@ -62,8 +158,8 @@ describe('watchFilesystem', () => {
   it('asks the ignore test about the path relative to the working directory', () => {
     const asked: string[] = [];
     const handle = watchFilesystem(
-      ['story'],
-      'out.html',
+      [story],
+      join(root, 'out.html'),
       () => {},
       (file) => {
         asked.push(file);
@@ -71,11 +167,172 @@ describe('watchFilesystem', () => {
       },
     );
     try {
-      emit('story', join('art', 'scene.png'));
-      expect(asked).toEqual([join('story', 'art', 'scene.png')]);
+      emit(story, join('art', 'scene.png'));
+      expect(asked).toEqual([rel(join(story, 'art', 'scene.png'))]);
     } finally {
       handle.close();
     }
+  });
+
+  describe('with a watched path that goes away or is not there yet', () => {
+    let builds: (ReadonlySet<string> | undefined)[];
+    let errors: Error[];
+    let handle: WatchHandle | undefined;
+
+    beforeEach(() => {
+      builds = [];
+      errors = [];
+      writeFileSync(join(story, 'a.tw'), ':: A\nOne\n');
+    });
+
+    afterEach(() => {
+      handle?.close();
+      handle = undefined;
+    });
+
+    function start(paths: string[]): void {
+      handle = watchFilesystem(
+        paths,
+        join(root, 'out.html'),
+        (files) => builds.push(files),
+        () => false,
+        (error) => errors.push(error),
+      );
+    }
+
+    /** Lets the debounce run out; returns the builds it started. */
+    function settle(): (ReadonlySet<string> | undefined)[] {
+      const before = builds.length;
+      vi.advanceTimersByTime(500);
+      return builds.slice(before);
+    }
+
+    it('follows a source folder that is deleted and created again', () => {
+      start([story]);
+      rmSync(story, { recursive: true });
+      emitToOld(story, ''); // what the OS reports to a watch on a deleted folder
+      emit(root, 'story');
+      expect(settle()).toEqual([undefined]); // a full build without the folder
+      expect(liveWatchers(story)).toEqual([]);
+
+      mkdirSync(story);
+      writeFileSync(join(story, 'a.tw'), ':: A\nTwo\n');
+      emit(root, 'story');
+      expect(settle()).toEqual([undefined]); // a full build: files created before the new watch went unseen
+
+      emit(story, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(story, 'a.tw'))])]);
+      expect(errors).toEqual([]);
+    });
+
+    it('follows a source folder that is renamed away and replaced', () => {
+      start([story]);
+      renameSync(story, join(root, 'story-old'));
+      emit(root, 'story');
+      emit(root, 'story-old');
+      expect(settle()).toEqual([undefined]);
+
+      mkdirSync(story);
+      writeFileSync(join(story, 'a.tw'), ':: A\nTwo\n');
+      emit(root, 'story');
+      expect(settle()).toEqual([undefined]);
+
+      emit(story, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(story, 'a.tw'))])]);
+      // The old folder is no longer a source: nothing watches it.
+      expect(fake.watchers.filter((w) => !w.closed && w.path === story && w.recursive)).toHaveLength(1);
+      expect(errors).toEqual([]);
+    });
+
+    it('waits for a source folder that does not exist yet', () => {
+      const later = join(root, 'later');
+      start([later]);
+      expect(builds).toEqual([undefined]);
+      expect(errors).toEqual([]);
+
+      mkdirSync(later);
+      writeFileSync(join(later, 'a.tw'), ':: A\nOne\n');
+      emit(root, 'later');
+      expect(settle()).toEqual([undefined]);
+
+      emit(later, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(later, 'a.tw'))])]);
+    });
+
+    it('waits for a missing source folder whose parent folders are missing too', () => {
+      const deep = join(root, 'one', 'two', 'deep');
+      start([deep]);
+
+      mkdirSync(join(root, 'one'));
+      emit(root, 'one');
+      expect(settle()).toEqual([]); // nothing to build yet; the wait moves down a level
+
+      mkdirSync(deep, { recursive: true });
+      writeFileSync(join(deep, 'a.tw'), ':: A\nOne\n');
+      emit(join(root, 'one'), 'two');
+      expect(settle()).toEqual([undefined]);
+
+      emit(deep, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(deep, 'a.tw'))])]);
+      expect(errors).toEqual([]);
+    });
+
+    it('follows a watched file whose folder is deleted and created again', () => {
+      const head = join(root, 'elsewhere', 'head.txt');
+      mkdirSync(dirname(head));
+      writeFileSync(head, 'one');
+      start([story, head]);
+
+      rmSync(dirname(head), { recursive: true });
+      emitToOld(dirname(head), 'elsewhere'); // the OS names the deleted folder itself
+      expect(settle()).toEqual([undefined]);
+
+      mkdirSync(dirname(head));
+      writeFileSync(head, 'two');
+      emit(root, 'elsewhere');
+      expect(settle()).toEqual([undefined]);
+
+      emit(dirname(head), 'head.txt');
+      expect(settle()).toEqual([new Set([rel(head)])]);
+      expect(errors).toEqual([]);
+    });
+
+    it('survives an error from a watch and follows the folder once it is back', () => {
+      start([story]);
+      rmSync(story, { recursive: true });
+      // Windows reports a deleted watched folder as an error (EPERM) on its watch.
+      expect(() =>
+        emitError(story, Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })),
+      ).not.toThrow();
+      expect(settle()).toEqual([undefined]);
+
+      mkdirSync(story);
+      emit(root, 'story');
+      expect(settle()).toEqual([undefined]);
+      emit(story, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(story, 'a.tw'))])]);
+      // The error is explained by the folder going away: nothing to report.
+      expect(errors).toEqual([]);
+    });
+
+    it('reports a source folder that cannot be watched, once', () => {
+      fake.failing.set(story, 'EACCES');
+      start([story]);
+      expect(builds).toEqual([undefined]);
+      expect(errors.map((e) => e.message)).toEqual([expect.stringMatching(/^Cannot watch .*story.*EACCES/)]);
+
+      // Later events in its parent folder try again and stay quiet while it still fails.
+      emit(root, 'story');
+      expect(errors).toHaveLength(1);
+
+      // Once it can be watched, it is: with a full build, as changes in it went unseen.
+      fake.failing.delete(story);
+      emit(root, 'story');
+      expect(settle()).toEqual([undefined]);
+      emit(story, 'a.tw');
+      expect(settle()).toEqual([new Set([rel(join(story, 'a.tw'))])]);
+      expect(errors).toHaveLength(1);
+    });
   });
 });
 
@@ -449,6 +706,41 @@ describe('watch with a build still in flight', () => {
     return { state, firstRequested, releaseFirst: (ok = true) => releaseFirst(ok) };
   }
 
+  /**
+   * Answers requests for FORMAT_URL, holding back each one until the test releases it by its
+   * number (from 1): `release(n, true)` answers with the format, `release(n, false)` fails it.
+   */
+  function stubHeldFormat() {
+    const held: ((ok: boolean) => void)[] = [];
+    const waiting: { readonly count: number; readonly done: () => void }[] = [];
+    const state = { inFlight: 0, maxInFlight: 0 };
+    vi.stubGlobal('fetch', async (url: unknown) => {
+      if (String(url) !== FORMAT_URL) return new Response('', { status: 404 });
+      state.inFlight++;
+      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+      try {
+        const ok = await new Promise<boolean>((release) => {
+          held.push(release);
+          for (const w of waiting.filter((x) => x.count <= held.length)) w.done();
+        });
+        return ok ? new Response(FORMAT_JS) : new Response('', { status: 404 });
+      } finally {
+        state.inFlight--;
+      }
+    });
+    return {
+      state,
+      /** Resolves once `count` format requests have been made. */
+      requested: (count: number): Promise<void> =>
+        held.length >= count ? Promise.resolve() : new Promise((done) => waiting.push({ count, done })),
+      release: (n: number, ok: boolean): void => {
+        const release = held[n - 1];
+        if (!release) throw new Error(`format request ${n} has not been made`);
+        release(ok);
+      },
+    };
+  }
+
   /** Delivers a change to `filename` in the story folder and lets its debounce run out. */
   function change(filename: string): void {
     vi.useFakeTimers(FAKE_TIMERS);
@@ -473,7 +765,7 @@ describe('watch with a build still in flight', () => {
     rmSync(TMP_DIR, { recursive: true, force: true });
   });
 
-  it('builds the changes made during a slow build once, after it, and never writes the stale result', async () => {
+  it('delivers a slow build, then builds the changes made during it once, after it', async () => {
     const format = stubSlowFormat();
     const builds = buildQueue();
     controller = await watch({
@@ -492,23 +784,58 @@ describe('watch with a build still in flight', () => {
     change('more.tw');
     format.releaseFirst();
 
+    // The initial build is written and reported: nothing newer has been written yet.
     const first = await builds.next();
-    expect(startText(first)).toBe('NEW_CONTENT');
-    expect(first.output).toContain('MORE_CONTENT');
+    expect(startText(first)).toBe('OLD_CONTENT');
+    expect(first.output).not.toContain('MORE_CONTENT');
+
+    // Then one follow-up build with both changes.
+    const second = await builds.next();
+    expect(startText(second)).toBe('NEW_CONTENT');
+    expect(second.output).toContain('MORE_CONTENT');
     expect(readFileSync(outFile, 'utf-8')).toContain('NEW_CONTENT');
-    expect(readFileSync(outFile, 'utf-8')).not.toContain('OLD_CONTENT');
     // One build at a time: the follow-up started after the initial build finished.
     expect(format.state.maxInFlight).toBe(1);
 
-    // The next build reported is the next change's: no stale build arrives in between,
-    // and the parse cache still holds the latest content of the file it doesn't reparse.
+    // The next build reported is the next change's: the two changes made one build, and the
+    // parse cache still holds the latest content of the file it doesn't reparse.
     writeFileSync(start, source('NEWEST_CONTENT'));
     change('start.tw');
-    const second = await builds.next();
-    expect(startText(second)).toBe('NEWEST_CONTENT');
-    expect(second.output).toContain('MORE_CONTENT');
+    const third = await builds.next();
+    expect(startText(third)).toBe('NEWEST_CONTENT');
+    expect(third.output).toContain('MORE_CONTENT');
     expect(readFileSync(outFile, 'utf-8')).toContain('NEWEST_CONTENT');
     expect(builds.errors).toEqual([]);
+  });
+
+  it('reports every build while changes keep arriving during each one', async () => {
+    const format = stubHeldFormat();
+    const builds = buildQueue();
+    controller = await watch({
+      ...SLOW_FORMAT,
+      sources: [story],
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+
+    // Each build waits for its format; a change arrives during every one of them.
+    for (let n = 1; n <= 3; n++) {
+      await format.requested(n);
+      writeFileSync(start, source(`EDIT_${n}`));
+      change('start.tw');
+      format.release(n, false); // the format server fails: nothing is cached, so the next build waits again
+      await format.requested(n + 1); // the follow-up build has started...
+      // ...after the build before it was reported.
+      expect(builds.errors).toHaveLength(n);
+      expect(builds.errors[n - 1]?.message).toBe('No story format available for HTML output.');
+    }
+
+    format.release(4, true);
+    const built = await builds.next();
+    expect(startText(built)).toBe('EDIT_3');
+    expect(readFileSync(outFile, 'utf-8')).toContain('EDIT_3');
+    expect(format.state.maxInFlight).toBe(1);
   });
 
   it('neither writes nor reports a build that finishes after the watch is aborted, nor starts another', async () => {
@@ -535,5 +862,180 @@ describe('watch with a build still in flight', () => {
     expect(errors).toEqual([]);
     expect(existsSync(outFile)).toBe(false);
     expect(format.state.requests).toBe(1);
+  });
+});
+
+describe('watch with callbacks that throw', () => {
+  let root: string;
+  let story: string;
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-watch-throw-'));
+    story = join(root, 'story');
+    mkdirSync(story);
+    writeFileSync(join(story, 'start.tw'), STORY);
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    vi.restoreAllMocks();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('contains an exception thrown by onError and keeps watching', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const builds = buildQueue();
+      const errors: string[] = [];
+      controller = await watch({
+        sources: [story],
+        outputMode: 'twine2-archive',
+        outFile: join(root, 'out.html'),
+        onBuild(result) {
+          builds.onBuild(result);
+          throw new Error('onBuild failed');
+        },
+        onError(error) {
+          errors.push(error.message);
+          throw new Error('onError failed');
+        },
+      });
+      await builds.next();
+      // An unhandled rejection is raised once the microtasks have run, before the next macrotask.
+      await new Promise((done) => setImmediate(done));
+      expect(rejections).toEqual([]);
+      expect(errors).toEqual(['onBuild failed']);
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('onError failed'));
+
+      // Watching goes on: a later change still builds.
+      vi.useFakeTimers(FAKE_TIMERS);
+      writeFileSync(join(story, 'start.tw'), STORY.replace('Hello from the story.', 'UPDATED_CONTENT'));
+      emit(story, 'start.tw');
+      vi.advanceTimersByTime(500);
+      vi.useRealTimers();
+      expect((await builds.next()).output).toContain('UPDATED_CONTENT');
+      await new Promise((done) => setImmediate(done));
+      expect(rejections).toEqual([]);
+      expect(errors).toEqual(['onBuild failed', 'onBuild failed']);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+});
+
+describe('watch with a source folder that goes away or is not there yet', () => {
+  let root: string;
+  let story: string;
+  let outFile: string;
+  let controller: AbortController | undefined;
+  const source = (text: string): string =>
+    `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n${text}\n`;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-watch-root-'));
+    story = join(root, 'story');
+    outFile = join(root, 'out.html');
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Delivers the events `deliver` sends and lets their debounce run out. */
+  function events(deliver: () => void): void {
+    vi.useFakeTimers(FAKE_TIMERS);
+    deliver();
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+  }
+
+  async function startWatch(): Promise<ReturnType<typeof buildQueue>> {
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outputMode: 'twine2-archive',
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    return builds;
+  }
+
+  it('builds a source folder that is deleted and created again, and follows edits in it', async () => {
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('V1'));
+    const builds = await startWatch();
+    expect((await builds.next()).output).toContain('V1');
+
+    rmSync(story, { recursive: true });
+    events(() => emit(root, 'story'));
+    expect((await builds.next()).output).not.toContain('V1');
+
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('V2'));
+    events(() => emit(root, 'story'));
+    expect((await builds.next()).output).toContain('V2');
+    expect(readFileSync(outFile, 'utf-8')).toContain('V2');
+
+    writeFileSync(join(story, 'a.tw'), source('V3'));
+    events(() => emit(story, 'a.tw'));
+    expect((await builds.next()).output).toContain('V3');
+    expect(readFileSync(outFile, 'utf-8')).toContain('V3');
+    expect(builds.errors).toEqual([]);
+  });
+
+  it('builds a source folder that is renamed away and replaced from the new folder', async () => {
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('V1'));
+    const builds = await startWatch();
+    await builds.next();
+
+    renameSync(story, join(root, 'story-old'));
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('V2'));
+    events(() => {
+      emit(root, 'story-old');
+      emit(root, 'story');
+    });
+    expect((await builds.next()).output).toContain('V2');
+
+    writeFileSync(join(story, 'a.tw'), source('V3'));
+    events(() => emit(story, 'a.tw'));
+    expect((await builds.next()).output).toContain('V3');
+    expect(readFileSync(outFile, 'utf-8')).toContain('V3');
+    expect(builds.errors).toEqual([]);
+  });
+
+  it('waits for a source folder that does not exist yet and builds it once it does', async () => {
+    const builds = await startWatch();
+    const first = await builds.next();
+    expect(first.diagnostics).toContainEqual(
+      expect.objectContaining({ message: expect.stringMatching(/^path .*story: ENOENT/) }),
+    );
+
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('ARRIVED'));
+    events(() => emit(root, 'story'));
+    expect((await builds.next()).output).toContain('ARRIVED');
+    expect(readFileSync(outFile, 'utf-8')).toContain('ARRIVED');
+    expect(builds.errors).toEqual([]);
+  });
+
+  it('reports a source folder that cannot be watched to onError', async () => {
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), source('V1'));
+    fake.failing.set(story, 'EACCES');
+    const builds = await startWatch();
+    expect((await builds.next()).output).toContain('V1');
+    expect(builds.errors.map((e) => e.message)).toEqual([expect.stringMatching(/^Cannot watch .*story: EACCES/)]);
   });
 });

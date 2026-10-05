@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -207,6 +207,57 @@ describe('CLI exit status', () => {
       cli.child.kill();
     }
   }, 30_000);
+
+  it('waits in watch mode for a source folder that does not exist yet, and builds it once it does', async () => {
+    const out = join(dir, 'out.html');
+    const cli = startCli(dir, [...baseArgs, '-w', 'later', '-o', 'out.html']);
+    try {
+      await waitFor(
+        () => (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+        'the first build',
+      );
+      expect(cli.stderr()).toMatch(/warning: path later: ENOENT/);
+
+      mkdirSync(join(dir, 'later'));
+      write(join('later', 'story.tw'), VALID_STORY.replace('Hello.', 'ARRIVED_CONTENT'));
+      await waitFor(() => existsSync(out) || cli.child.exitCode !== null, 'the build of the new folder');
+      expect(cli.child.exitCode).toBeNull();
+      expect(readFileSync(out, 'utf-8')).toContain('ARRIVED_CONTENT');
+    } finally {
+      cli.child.kill();
+    }
+  }, 30_000);
+
+  // A folder its owner can't read; root reads it anyway, and Windows has no such mode bits.
+  const canMakeUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+  it.runIf(canMakeUnreadable)(
+    'reports a source folder it cannot watch in watch mode, and builds it once it can',
+    async () => {
+      const out = join(dir, 'out.html');
+      mkdirSync(join(dir, 'locked'));
+      write(join('locked', 'story.tw'), VALID_STORY.replace('Hello.', 'UNLOCKED_CONTENT'));
+      chmodSync(join(dir, 'locked'), 0o000);
+      const cli = startCli(dir, [...baseArgs, '-w', 'locked', '-o', 'out.html']);
+      try {
+        await waitFor(
+          () =>
+            (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+          'the first build',
+        );
+        expect(cli.stderr()).toMatch(/error: Cannot watch locked: EACCES/);
+
+        chmodSync(join(dir, 'locked'), 0o755);
+        await waitFor(() => existsSync(out) || cli.child.exitCode !== null, 'the build of the readable folder');
+        expect(cli.child.exitCode).toBeNull();
+        expect(readFileSync(out, 'utf-8')).toContain('UNLOCKED_CONTENT');
+      } finally {
+        cli.child.kill();
+        chmodSync(join(dir, 'locked'), 0o755);
+      }
+    },
+    30_000,
+  );
 
   it('keeps the last good output in watch mode when a rebuild reports errors, and recovers on a good save', async () => {
     const out = join(dir, 'out.html');
