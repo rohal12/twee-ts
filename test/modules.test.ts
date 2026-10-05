@@ -1,17 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { Diagnostic } from '../src/types.js';
 import { loadModules, modifyHead } from '../src/modules.js';
 
-const TMP_DIR = join(__dirname, '__tmp_modules__');
+let tmpDir: string;
 
 describe('loadModules', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it('loads CSS files as <style> tags', () => {
-    const file = join(TMP_DIR, 'theme.css');
+    const file = join(tmpDir, 'theme.css');
     writeFileSync(file, 'body { color: red; }');
     const result = loadModules([file]);
     expect(result).toContain('<style');
@@ -21,7 +24,7 @@ describe('loadModules', () => {
   });
 
   it('loads JS files as <script> tags', () => {
-    const file = join(TMP_DIR, 'app.js');
+    const file = join(tmpDir, 'app.js');
     writeFileSync(file, 'console.log("hi")');
     const result = loadModules([file]);
     expect(result).toContain('<script');
@@ -31,7 +34,7 @@ describe('loadModules', () => {
   });
 
   it('escapes closing script tags in JS files', () => {
-    const file = join(TMP_DIR, 'tags.js');
+    const file = join(tmpDir, 'tags.js');
     writeFileSync(file, 'document.write("<script src=x.js></SCRIPT >");');
     const result = loadModules([file]);
     expect(result).toBe(
@@ -40,14 +43,14 @@ describe('loadModules', () => {
   });
 
   it('escapes closing style tags in CSS files', () => {
-    const file = join(TMP_DIR, 'tags.css');
+    const file = join(tmpDir, 'tags.css');
     writeFileSync(file, 'p::after { content: "</Style>"; }');
     const result = loadModules([file]);
     expect(result).toBe('<style id="style-module-tags" type="text/css">p::after { content: "<\\/Style>"; }</style>');
   });
 
   it('loads font files as @font-face style blocks', () => {
-    const file = join(TMP_DIR, 'myfont.woff2');
+    const file = join(tmpDir, 'myfont.woff2');
     writeFileSync(file, Buffer.from([0x00, 0x01]));
     const result = loadModules([file]);
     expect(result).toContain('@font-face');
@@ -58,7 +61,7 @@ describe('loadModules', () => {
 
   // Windows file names cannot hold `"`, `\` or a line break.
   it.skipIf(process.platform === 'win32')('writes the font family as a valid CSS string', () => {
-    const file = join(TMP_DIR, 'My "Fancy" \\Font\nTwo.woff');
+    const file = join(tmpDir, 'My "Fancy" \\Font\nTwo.woff');
     writeFileSync(file, 'FONT');
     expect(loadModules([file])).toContain(
       '\tfont-family: "My \\"Fancy\\" \\\\Font\\a Two";\n\tsrc: url("data:font/woff;base64,Rk9OVA==") format("woff");\n}',
@@ -66,7 +69,7 @@ describe('loadModules', () => {
   });
 
   it('skips duplicate files', () => {
-    const file = join(TMP_DIR, 'dup.css');
+    const file = join(tmpDir, 'dup.css');
     writeFileSync(file, 'body {}');
     const result = loadModules([file, file]);
     const count = (result.match(/<style/g) || []).length;
@@ -74,14 +77,14 @@ describe('loadModules', () => {
   });
 
   it('skips empty CSS/JS files', () => {
-    const file = join(TMP_DIR, 'empty.css');
+    const file = join(tmpDir, 'empty.css');
     writeFileSync(file, '   ');
     const result = loadModules([file]);
     expect(result).toBe('');
   });
 
   it('skips unknown file types', () => {
-    const file = join(TMP_DIR, 'readme.md');
+    const file = join(tmpDir, 'readme.md');
     writeFileSync(file, '# Hello');
     const result = loadModules([file]);
     expect(result).toBe('');
@@ -93,13 +96,15 @@ describe('loadModules', () => {
 });
 
 describe('modifyHead', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   const baseHtml = '<html><head><title>Test</title></head><body></body></html>';
 
   it('injects module content before </head>', () => {
-    const file = join(TMP_DIR, 'inject.css');
+    const file = join(tmpDir, 'inject.css');
     writeFileSync(file, 'h1 { font-size: 2em; }');
     const result = modifyHead(baseHtml, [file]);
     expect(result).toContain('<style');
@@ -108,14 +113,14 @@ describe('modifyHead', () => {
   });
 
   it('injects head file content before </head>', () => {
-    const headFile = join(TMP_DIR, 'head.html');
+    const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta name="custom" content="value">');
     const result = modifyHead(baseHtml, [], headFile);
     expect(result).toContain('<meta name="custom" content="value">');
   });
 
   it.each(['</HEAD>', '</Head>', '</head >', '</head\n>'])('injects before a closing head tag written %j', (close) => {
-    const headFile = join(TMP_DIR, 'head.html');
+    const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta name="review" content="injected">');
     const result = modifyHead(`<html><head><title>Test</title>${close}<body></body></html>`, [], headFile);
     expect(result).toBe(
@@ -124,7 +129,7 @@ describe('modifyHead', () => {
   });
 
   it('injects only before the first closing head tag', () => {
-    const headFile = join(TMP_DIR, 'head.html');
+    const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta>');
     expect(modifyHead('<head></HEAD><body></head></body>', [], headFile)).toBe(
       '<head><meta>\n</HEAD><body></head></body>',
@@ -136,7 +141,7 @@ describe('modifyHead', () => {
   });
 
   it('injects before the body start tag, with a warning, when there is no closing head tag', () => {
-    const headFile = join(TMP_DIR, 'head.html');
+    const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta>');
     const diagnostics: Diagnostic[] = [];
     expect(modifyHead('<html><title>T</title><BODY class="x"></body>', [], headFile, diagnostics)).toBe(
@@ -151,7 +156,7 @@ describe('modifyHead', () => {
   });
 
   it('does not take <bodyx> or <tbody> for a body start tag', () => {
-    const headFile = join(TMP_DIR, 'head.html');
+    const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta>');
     const diagnostics: Diagnostic[] = [];
     const html = '<table><tbody></tbody></table><bodyx>';
@@ -171,7 +176,7 @@ describe('modifyHead', () => {
   });
 
   it('preserves $& and other replacement patterns in module content', () => {
-    const file = join(TMP_DIR, 'regex-lib.js');
+    const file = join(tmpDir, 'regex-lib.js');
     writeFileSync(file, 'var x = "test".replace(/t/, "$&$&");');
     const result = modifyHead(baseHtml, [file]);
     expect(result).toContain('$&$&');
@@ -179,7 +184,7 @@ describe('modifyHead', () => {
   });
 
   it("preserves $` and $' replacement patterns in module content", () => {
-    const file = join(TMP_DIR, 'patterns.js');
+    const file = join(tmpDir, 'patterns.js');
     writeFileSync(file, 'var a = "$`"; var b = "$\'";');
     const result = modifyHead(baseHtml, [file]);
     expect(result).toContain('$`');
@@ -188,7 +193,7 @@ describe('modifyHead', () => {
 
   it('collects diagnostics for missing head file', () => {
     const diagnostics: Diagnostic[] = [];
-    const result = modifyHead(baseHtml, [], join(TMP_DIR, 'missing.html'), diagnostics);
+    const result = modifyHead(baseHtml, [], join(tmpDir, 'missing.html'), diagnostics);
     expect(result).toBe(baseHtml);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0].level).toBe('warning');

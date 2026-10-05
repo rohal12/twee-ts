@@ -6,18 +6,20 @@ import type { Story, Diagnostic, FileCacheEntry } from '../src/types.js';
 import { createStory } from '../src/story.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from '../src/loader.js';
 
-const TMP_DIR = join(__dirname, '__tmp_loader__');
+let tmpDir: string;
 
 function freshStory(): Story {
   return createStory();
 }
 
 describe('loadSources', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it('loads .tw files as passages', () => {
-    const file = join(TMP_DIR, 'story.tw');
+    const file = join(tmpDir, 'story.tw');
     writeFileSync(file, ':: Start\nHello world');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -26,7 +28,7 @@ describe('loadSources', () => {
   });
 
   it('loads .twee2 files with twee2 compat', () => {
-    const file = join(TMP_DIR, 'story.twee2');
+    const file = join(tmpDir, 'story.twee2');
     writeFileSync(file, ':: Start\nHello');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -35,7 +37,7 @@ describe('loadSources', () => {
   });
 
   it('loads .css files as stylesheet passages', () => {
-    const file = join(TMP_DIR, 'style.css');
+    const file = join(tmpDir, 'style.css');
     writeFileSync(file, 'body { color: red; }');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -44,7 +46,7 @@ describe('loadSources', () => {
   });
 
   it('loads .js files as script passages', () => {
-    const file = join(TMP_DIR, 'script.js');
+    const file = join(tmpDir, 'script.js');
     writeFileSync(file, 'console.log("hi")');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -53,7 +55,7 @@ describe('loadSources', () => {
   });
 
   it('loads image files as Twine.image passages', () => {
-    const file = join(TMP_DIR, 'photo.png');
+    const file = join(tmpDir, 'photo.png');
     writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -64,7 +66,7 @@ describe('loadSources', () => {
   });
 
   it('loads audio files as Twine.audio passages', () => {
-    const file = join(TMP_DIR, 'sound.mp3');
+    const file = join(tmpDir, 'sound.mp3');
     writeFileSync(file, Buffer.from([0xff, 0xfb]));
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -73,7 +75,7 @@ describe('loadSources', () => {
   });
 
   it('loads video files as Twine.video passages', () => {
-    const file = join(TMP_DIR, 'clip.mp4');
+    const file = join(tmpDir, 'clip.mp4');
     writeFileSync(file, Buffer.from([0x00, 0x00]));
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -82,7 +84,7 @@ describe('loadSources', () => {
   });
 
   it('loads vtt files as Twine.vtt passages', () => {
-    const file = join(TMP_DIR, 'subs.vtt');
+    const file = join(tmpDir, 'subs.vtt');
     writeFileSync(file, 'WEBVTT\n\n00:00.000 --> 00:01.000\nHello');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -91,7 +93,7 @@ describe('loadSources', () => {
   });
 
   it('loads font files as stylesheet passages with @font-face', () => {
-    const file = join(TMP_DIR, 'myfont.ttf');
+    const file = join(tmpDir, 'myfont.ttf');
     writeFileSync(file, Buffer.from([0x00, 0x01, 0x00, 0x00]));
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -104,7 +106,7 @@ describe('loadSources', () => {
 
   // Windows file names cannot hold `"`, `\` or a line break.
   it.skipIf(process.platform === 'win32')('writes the font family of a font file as a valid CSS string', () => {
-    const file = join(TMP_DIR, 'My "Fancy" \\Font\nTwo.woff');
+    const file = join(tmpDir, 'My "Fancy" \\Font\nTwo.woff');
     writeFileSync(file, 'FONT');
     const story = freshStory();
     loadSources(story, [file], {}, [], new Set());
@@ -114,7 +116,7 @@ describe('loadSources', () => {
   });
 
   it('warns on duplicate files', () => {
-    const file = join(TMP_DIR, 'dup.tw');
+    const file = join(tmpDir, 'dup.tw');
     writeFileSync(file, ':: Start\nHello');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -124,7 +126,7 @@ describe('loadSources', () => {
   });
 
   it('skips unknown file types', () => {
-    const file = join(TMP_DIR, 'data.json');
+    const file = join(tmpDir, 'data.json');
     writeFileSync(file, '{}');
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -135,12 +137,12 @@ describe('loadSources', () => {
   it('collects error diagnostics for unreadable files', () => {
     const story = freshStory();
     const diag: Diagnostic[] = [];
-    loadSources(story, [join(TMP_DIR, 'missing.tw')], { trim: true }, diag, new Set());
+    loadSources(story, [join(tmpDir, 'missing.tw')], { trim: true }, diag, new Set());
     expect(diag.some((d) => d.level === 'error')).toBe(true);
   });
 
   it('prepends StoryTitle if story has a name but no StoryTitle passage', () => {
-    const file = join(TMP_DIR, 'named.tw');
+    const file = join(tmpDir, 'named.tw');
     writeFileSync(file, ':: Start\nContent');
     const story = freshStory();
     story.name = 'My Story';
@@ -260,8 +262,10 @@ describe('loadInlineSources: scripts and stylesheets', () => {
 });
 
 describe('loadInlineSources: BOM and line-ending normalization', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   function loadInline(filename: string, content: string | Buffer): { story: Story; diagnostics: Diagnostic[] } {
     const story = freshStory();
@@ -271,7 +275,7 @@ describe('loadInlineSources: BOM and line-ending normalization', () => {
   }
 
   function loadFromDisk(filename: string, content: string | Buffer): { story: Story; diagnostics: Diagnostic[] } {
-    const file = join(TMP_DIR, filename);
+    const file = join(tmpDir, filename);
     writeFileSync(file, content);
     const story = freshStory();
     const diagnostics: Diagnostic[] = [];
@@ -348,15 +352,17 @@ describe('loadInlineSources: BOM and line-ending normalization', () => {
 });
 
 describe('loadSources: Twine 2 HTML story name', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   const NAMED_HTML = `<tw-storydata name="Review Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
 <tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
 </tw-storydata>`;
 
   it('keeps the story name of a Twine 2 HTML file as a StoryTitle passage', () => {
-    const file = join(TMP_DIR, 'story.html');
+    const file = join(tmpDir, 'story.html');
     writeFileSync(file, NAMED_HTML);
     const story = freshStory();
     const diag: Diagnostic[] = [];
@@ -368,8 +374,8 @@ describe('loadSources: Twine 2 HTML story name', () => {
   });
 
   it('lets a later StoryTitle passage replace the HTML story name, with the usual duplicate warning', () => {
-    const html = join(TMP_DIR, 'a.html');
-    const twee = join(TMP_DIR, 'b.tw');
+    const html = join(tmpDir, 'a.html');
+    const twee = join(tmpDir, 'b.tw');
     writeFileSync(html, NAMED_HTML);
     writeFileSync(twee, ':: StoryTitle\nOverride');
     const story = freshStory();
@@ -381,7 +387,7 @@ describe('loadSources: Twine 2 HTML story name', () => {
   });
 
   it('does not add a second StoryTitle when the HTML already has one', () => {
-    const file = join(TMP_DIR, 'story.html');
+    const file = join(tmpDir, 'story.html');
     writeFileSync(
       file,
       NAMED_HTML.replace(
@@ -398,7 +404,7 @@ describe('loadSources: Twine 2 HTML story name', () => {
   });
 
   it('adds no StoryTitle for an unnamed Twine 2 HTML file', () => {
-    const file = join(TMP_DIR, 'story.html');
+    const file = join(tmpDir, 'story.html');
     writeFileSync(file, NAMED_HTML.replace(' name="Review Story"', ''));
     const story = freshStory();
     loadSources(story, [file], { trim: true }, [], new Set());

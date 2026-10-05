@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { compile } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
 import type { CompileOptions, InlineSource } from '../src/types.js';
@@ -178,22 +179,28 @@ describe('Twine 2 HTML rejects a starting passage it does not emit', () => {
 });
 
 describe('Twine 1 HTML rejects a starting passage it does not emit', () => {
-  const TMP_DIR = join(__dirname, '__tmp_start_twine1__');
-  const twine1Options = { formatId: 'twine1-test', formatPaths: [TMP_DIR], useTweegoPath: false, noRemote: true };
+  let formatDir: string;
+  const twine1Options = (): Partial<CompileOptions> => ({
+    formatId: 'twine1-test',
+    formatPaths: [formatDir],
+    useTweegoPath: false,
+    noRemote: true,
+  });
 
   beforeAll(() => {
-    mkdirSync(join(TMP_DIR, 'twine1-test'), { recursive: true });
+    formatDir = mkdtempSync(join(tmpdir(), 'twee-ts-start-twine1-'));
+    mkdirSync(join(formatDir, 'twine1-test'));
     writeFileSync(
-      join(TMP_DIR, 'twine1-test', 'header.html'),
+      join(formatDir, 'twine1-test', 'header.html'),
       '<html><body>"START_AT"<div id="storeArea">"STORY"</div></body></html>',
     );
   });
 
-  afterAll(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  afterAll(() => rmSync(formatDir, { recursive: true, force: true }));
 
   it('reports a Twine.private start passage', async () => {
     const result = await compile({
-      ...twine1Options,
+      ...twine1Options(),
       sources: [source(storyData() + ':: StoryTitle\nTitle\n\n:: Start [Twine.private]\nsecret')],
     });
     expect(errors(result.diagnostics)).toEqual([
@@ -203,7 +210,7 @@ describe('Twine 1 HTML rejects a starting passage it does not emit', () => {
 
   it('accepts a script-tagged start passage, which Twine 1 output keeps', async () => {
     const result = await compile({
-      ...twine1Options,
+      ...twine1Options(),
       sources: [source(storyData() + ':: StoryTitle\nTitle\n\n:: Start [script]\nconsole.log(1)')],
     });
     expect(errors(result.diagnostics)).toEqual([]);

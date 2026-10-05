@@ -1,49 +1,54 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { Diagnostic } from '../src/types.js';
 import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from '../src/util.js';
 
-const TMP_DIR = join(__dirname, '__tmp_util__');
+let tmpDir: string;
 
 describe('readUTF8', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-util-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it('reads a plain UTF-8 file', () => {
-    const file = join(TMP_DIR, 'plain.txt');
+    const file = join(tmpDir, 'plain.txt');
     writeFileSync(file, 'hello world');
     expect(readUTF8(file)).toBe('hello world');
   });
 
   it('strips UTF-8 BOM', () => {
-    const file = join(TMP_DIR, 'bom.txt');
+    const file = join(tmpDir, 'bom.txt');
     writeFileSync(file, '\uFEFFhello');
     expect(readUTF8(file)).toBe('hello');
   });
 
   it('normalizes CRLF to LF', () => {
-    const file = join(TMP_DIR, 'crlf.txt');
+    const file = join(tmpDir, 'crlf.txt');
     writeFileSync(file, 'line1\r\nline2\r\nline3');
     expect(readUTF8(file)).toBe('line1\nline2\nline3');
   });
 
   it('normalizes standalone CR to LF', () => {
-    const file = join(TMP_DIR, 'cr.txt');
+    const file = join(tmpDir, 'cr.txt');
     writeFileSync(file, 'line1\rline2');
     expect(readUTF8(file)).toBe('line1\nline2');
   });
 });
 
 describe('readUTF8 with text that is not UTF-8', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-util-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   // "café €“x”" and CRLF in Windows-1252: é = E9, € = 80, “ = 93, ” = 94.
   const WINDOWS_1252 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0x80, 0x93, 0x78, 0x94, 0x0d, 0x0a]);
 
   it('reads a Windows-1252 file as Windows-1252 and warns, naming the file', () => {
-    const file = join(TMP_DIR, 'legacy.tw');
+    const file = join(tmpDir, 'legacy.tw');
     writeFileSync(file, WINDOWS_1252);
     const diagnostics: Diagnostic[] = [];
     expect(readUTF8(file, diagnostics)).toBe('café €“x”\n');
@@ -57,13 +62,13 @@ describe('readUTF8 with text that is not UTF-8', () => {
   });
 
   it('decodes the same way without a diagnostics array', () => {
-    const file = join(TMP_DIR, 'legacy.css');
+    const file = join(tmpDir, 'legacy.css');
     writeFileSync(file, WINDOWS_1252);
     expect(readUTF8(file)).toBe('café €“x”\n');
   });
 
   it('reports nothing for valid UTF-8 with non-ASCII characters', () => {
-    const file = join(TMP_DIR, 'utf8.tw');
+    const file = join(tmpDir, 'utf8.tw');
     writeFileSync(file, '\uFEFFcafé €“x” \u{1F600}');
     const diagnostics: Diagnostic[] = [];
     expect(readUTF8(file, diagnostics)).toBe('café €“x” \u{1F600}');
@@ -96,11 +101,13 @@ describe('decodeText', () => {
 });
 
 describe('readBase64', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-util-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it('reads a file as base64', () => {
-    const file = join(TMP_DIR, 'data.bin');
+    const file = join(tmpDir, 'data.bin');
     writeFileSync(file, Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
     expect(readBase64(file)).toBe('SGVsbG8=');
   });

@@ -151,20 +151,20 @@ describe('clearIndexCache', () => {
 });
 
 describe('discoverCachedFormats', () => {
-  const TMP_CACHE = join(__dirname, '.tmp-cache-test');
+  let cacheHome: string;
 
   beforeEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-test-'));
   });
 
   afterEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    rmSync(cacheHome, { recursive: true, force: true });
   });
 
   it('discovers formats in cache directory', () => {
     // Set XDG_CACHE_HOME to our tmp dir so getCacheDir uses it
     const orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = TMP_CACHE;
+    process.env['XDG_CACHE_HOME'] = cacheHome;
     try {
       const cacheDir = getCacheDir();
       const formatDir = join(cacheDir, 'MockFormat', '2.1.0');
@@ -189,7 +189,7 @@ describe('discoverCachedFormats', () => {
 
   it('returns empty map when cache dir does not exist', () => {
     const orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = join(TMP_CACHE, 'nonexistent');
+    process.env['XDG_CACHE_HOME'] = join(cacheHome, 'nonexistent');
     try {
       const formats = discoverCachedFormats();
       expect(formats.size).toBe(0);
@@ -219,18 +219,18 @@ function withCacheHome(tmpDir: string, fn: () => void): void {
 }
 
 describe('listCachedFormats', () => {
-  const TMP_CACHE = join(__dirname, '.tmp-cache-list');
+  let cacheHome: string;
 
   beforeEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-list-'));
   });
 
   afterEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    rmSync(cacheHome, { recursive: true, force: true });
   });
 
   it('lists cached formats with size and date', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       const formatDir = join(cacheDir, 'MockFormat', '2.1.0');
       mkdirSync(formatDir, { recursive: true });
@@ -246,13 +246,13 @@ describe('listCachedFormats', () => {
   });
 
   it('returns empty array when cache does not exist', () => {
-    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+    withCacheHome(join(cacheHome, 'nonexistent'), () => {
       expect(listCachedFormats()).toEqual([]);
     });
   });
 
   it('lists multiple formats', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       for (const [name, version] of [
         ['FormatA', '1.0.0'],
@@ -275,18 +275,18 @@ describe('listCachedFormats', () => {
 });
 
 describe('clearCachedFormats', () => {
-  const TMP_CACHE = join(__dirname, '.tmp-cache-clear');
+  let cacheHome: string;
 
   beforeEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-clear-'));
   });
 
   afterEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    rmSync(cacheHome, { recursive: true, force: true });
   });
 
   it('clears all cached formats', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       const dir = join(cacheDir, 'MockFormat', '2.1.0');
       mkdirSync(dir, { recursive: true });
@@ -299,7 +299,7 @@ describe('clearCachedFormats', () => {
   });
 
   it('clears formats by name', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       for (const [name, version] of [
         ['FormatA', '1.0.0'],
@@ -323,13 +323,13 @@ describe('clearCachedFormats', () => {
   });
 
   it('returns 0 when cache does not exist', () => {
-    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+    withCacheHome(join(cacheHome, 'nonexistent'), () => {
       expect(clearCachedFormats()).toBe(0);
     });
   });
 
   it('returns 0 when name does not match', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       const dir = join(cacheDir, 'MockFormat', '2.1.0');
       mkdirSync(dir, { recursive: true });
@@ -342,18 +342,18 @@ describe('clearCachedFormats', () => {
 });
 
 describe('getCacheSize', () => {
-  const TMP_CACHE = join(__dirname, '.tmp-cache-size');
+  let cacheHome: string;
 
   beforeEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-size-'));
   });
 
   afterEach(() => {
-    rmSync(TMP_CACHE, { recursive: true, force: true });
+    rmSync(cacheHome, { recursive: true, force: true });
   });
 
   it('returns total size and count', () => {
-    withCacheHome(TMP_CACHE, () => {
+    withCacheHome(cacheHome, () => {
       const cacheDir = getCacheDir();
       const dir = join(cacheDir, 'MockFormat', '2.1.0');
       mkdirSync(dir, { recursive: true });
@@ -366,7 +366,7 @@ describe('getCacheSize', () => {
   });
 
   it('returns zero for empty cache', () => {
-    withCacheHome(join(TMP_CACHE, 'nonexistent'), () => {
+    withCacheHome(join(cacheHome, 'nonexistent'), () => {
       const { totalBytes, count } = getCacheSize();
       expect(totalBytes).toBe(0);
       expect(count).toBe(0);

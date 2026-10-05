@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -7,9 +7,18 @@ import { createStory } from '../src/story.js';
 import { loadSourcesCached } from '../src/loader.js';
 import { compile, compileIncremental } from '../src/compiler.js';
 
+/** The temp folders the current test made; each is removed after it. */
+const tmpDirs: string[] = [];
+
 function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), 'twee-ts-incremental-'));
+  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-incremental-'));
+  tmpDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 function writeFile(dir: string, name: string, content: string): string {
   const path = join(dir, name);

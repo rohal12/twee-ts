@@ -14,49 +14,51 @@ import {
 import { getFilenames, isExcluded, outputPaths, realPathOf, watchFilesystem } from '../src/filesystem.js';
 import type { WatchHandle } from '../src/filesystem.js';
 
-const TMP_DIR = join(__dirname, '__tmp_fs__');
+let tmpDir: string;
 
 describe('getFilenames', () => {
-  beforeEach(() => mkdirSync(TMP_DIR, { recursive: true }));
-  afterEach(() => rmSync(TMP_DIR, { recursive: true, force: true }));
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-fs-'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it('collects files from a directory', () => {
-    writeFileSync(join(TMP_DIR, 'a.tw'), '');
-    writeFileSync(join(TMP_DIR, 'b.css'), '');
-    const result = getFilenames([TMP_DIR]).filenames;
+    writeFileSync(join(tmpDir, 'a.tw'), '');
+    writeFileSync(join(tmpDir, 'b.css'), '');
+    const result = getFilenames([tmpDir]).filenames;
     expect(result).toHaveLength(2);
     expect(result.some((f) => f.endsWith('a.tw'))).toBe(true);
     expect(result.some((f) => f.endsWith('b.css'))).toBe(true);
   });
 
   it('collects files recursively', () => {
-    const sub = join(TMP_DIR, 'sub');
+    const sub = join(tmpDir, 'sub');
     mkdirSync(sub);
-    writeFileSync(join(TMP_DIR, 'root.tw'), '');
+    writeFileSync(join(tmpDir, 'root.tw'), '');
     writeFileSync(join(sub, 'nested.tw'), '');
-    const result = getFilenames([TMP_DIR]).filenames;
+    const result = getFilenames([tmpDir]).filenames;
     expect(result).toHaveLength(2);
     expect(result.some((f) => f.includes('nested.tw'))).toBe(true);
   });
 
   it('accepts individual file paths', () => {
-    const file = join(TMP_DIR, 'single.tw');
+    const file = join(tmpDir, 'single.tw');
     writeFileSync(file, '');
     const result = getFilenames([file]).filenames;
     expect(result).toHaveLength(1);
   });
 
   it('excludes the output file', () => {
-    const outFile = join(TMP_DIR, 'output.html');
-    writeFileSync(join(TMP_DIR, 'story.tw'), '');
+    const outFile = join(tmpDir, 'output.html');
+    writeFileSync(join(tmpDir, 'story.tw'), '');
     writeFileSync(outFile, '');
-    const result = getFilenames([TMP_DIR], outFile).filenames;
+    const result = getFilenames([tmpDir], outFile).filenames;
     expect(result).toHaveLength(1);
     expect(result[0]).toContain('story.tw');
   });
 
   it('reports a non-existent path as a warning, like Tweego', () => {
-    const missing = join(TMP_DIR, 'nonexistent');
+    const missing = join(tmpDir, 'nonexistent');
     const { filenames, diagnostics } = getFilenames([missing]);
     expect(filenames).toEqual([]);
     expect(diagnostics).toEqual([
@@ -65,9 +67,9 @@ describe('getFilenames', () => {
   });
 
   it('keeps collecting the other paths after a missing one', () => {
-    const file = join(TMP_DIR, 'story.tw');
+    const file = join(tmpDir, 'story.tw');
     writeFileSync(file, '');
-    const { filenames, diagnostics } = getFilenames([join(TMP_DIR, 'nonexistent'), file]);
+    const { filenames, diagnostics } = getFilenames([join(tmpDir, 'nonexistent'), file]);
     expect(filenames).toHaveLength(1);
     expect(filenames[0]).toContain('story.tw');
     expect(diagnostics).toHaveLength(1);
@@ -76,7 +78,7 @@ describe('getFilenames', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'reports an unreadable directory as a warning',
     () => {
-      const locked = join(TMP_DIR, 'locked');
+      const locked = join(tmpDir, 'locked');
       mkdirSync(locked);
       chmodSync(locked, 0o000);
       try {
@@ -94,35 +96,38 @@ describe('getFilenames', () => {
   });
 
   describe('with exclude globs', () => {
-    /** TMP_DIR relative to the working directory, with forward slashes, as a pattern spells it. */
-    const tmpPattern = relative(process.cwd(), TMP_DIR).replace(/\\/g, '/');
+    /**
+     * `pattern` inside tmpDir. Exclude globs are read relative to the working
+     * directory, and tmpDir lies outside it, where `**` alone doesn't reach.
+     */
+    const inTmp = (pattern: string): string => `${relative(process.cwd(), tmpDir).replace(/\\/g, '/')}/${pattern}`;
     const names = (filenames: string[]): string[] => filenames.map((f) => basename(f)).sort();
 
     beforeEach(() => {
-      mkdirSync(join(TMP_DIR, 'art'));
-      writeFileSync(join(TMP_DIR, 'story.tw'), '');
-      writeFileSync(join(TMP_DIR, 'cover.png'), '');
-      writeFileSync(join(TMP_DIR, 'art', 'scene.png'), '');
-      writeFileSync(join(TMP_DIR, 'art', 'notes.tw'), '');
+      mkdirSync(join(tmpDir, 'art'));
+      writeFileSync(join(tmpDir, 'story.tw'), '');
+      writeFileSync(join(tmpDir, 'cover.png'), '');
+      writeFileSync(join(tmpDir, 'art', 'scene.png'), '');
+      writeFileSync(join(tmpDir, 'art', 'notes.tw'), '');
     });
 
     it('leaves out the files that match', () => {
-      const { filenames, diagnostics } = getFilenames([TMP_DIR], undefined, ['**/*.png']);
+      const { filenames, diagnostics } = getFilenames([tmpDir], undefined, [inTmp('**/*.png')]);
       expect(names(filenames)).toEqual(['notes.tw', 'story.tw']);
       expect(diagnostics).toEqual([]);
     });
 
     it('matches against the path relative to the working directory', () => {
-      const { filenames } = getFilenames([TMP_DIR], undefined, [`${tmpPattern}/art/**`]);
+      const { filenames } = getFilenames([tmpDir], undefined, [inTmp('art/**')]);
       expect(names(filenames)).toEqual(['cover.png', 'story.tw']);
     });
 
     it('leaves out a file listed directly when it matches', () => {
-      expect(getFilenames([join(TMP_DIR, 'cover.png')], undefined, ['**/*.png']).filenames).toEqual([]);
+      expect(getFilenames([join(tmpDir, 'cover.png')], undefined, [inTmp('**/*.png')]).filenames).toEqual([]);
     });
 
     it('keeps every file when no pattern matches', () => {
-      expect(getFilenames([TMP_DIR], undefined, ['**/*.mp3']).filenames).toHaveLength(4);
+      expect(getFilenames([tmpDir], undefined, [inTmp('**/*.mp3')]).filenames).toHaveLength(4);
     });
   });
 });
@@ -328,20 +333,24 @@ describe('isExcluded', () => {
 // These use the OS's own file watcher, which reports a change to a watched file
 // by the file's name alone; test/watch.test.ts covers the rest with a stand-in.
 describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
-  const story = join(TMP_DIR, 'story');
-  const start = join(story, 'start.tw');
-  const outFile = join(TMP_DIR, 'out.html');
+  let story: string;
+  let start: string;
+  let outFile: string;
   let handle: WatchHandle | undefined;
 
   beforeEach(() => {
-    mkdirSync(story, { recursive: true });
+    tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-fs-watch-'));
+    story = join(tmpDir, 'story');
+    start = join(story, 'start.tw');
+    outFile = join(tmpDir, 'out.html');
+    mkdirSync(story);
     writeFileSync(start, ':: Start\nOne\n');
   });
 
   afterEach(() => {
     handle?.close();
     handle = undefined;
-    rmSync(TMP_DIR, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   /** Starts watching `paths`; `next()` waits (up to 10 s) for the next rebuild's changed files. */
@@ -386,7 +395,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
   });
 
   it('rebuilds for a named file of a type it would not build for in a folder', async () => {
-    const head = join(TMP_DIR, 'head.txt');
+    const head = join(tmpDir, 'head.txt');
     writeFileSync(head, '<meta name="a">');
     const builds = watchBuilds([story, head]);
     await builds.next();
