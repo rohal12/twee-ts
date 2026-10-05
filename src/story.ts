@@ -6,21 +6,182 @@ import type { Story, ReadonlyStory, Passage, Diagnostic, WordCountMethod, IFID }
 import { normalizeIFID, validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
 
-/** Module-level index: maps passage names to their array indices for O(1) lookups. */
-const passageIndex = new WeakMap<Story, Map<string, number>>();
+// --- Passage name index ---
 
-function getIndex(story: Story): Map<string, number> {
-  let index = passageIndex.get(story);
-  if (!index) {
-    // Rebuild for stories not created via createStory() (e.g., tests, external code)
-    index = new Map();
-    for (let i = 0; i < story.passages.length; i++) {
-      const passage = story.passages[i];
-      if (passage) index.set(passage.name, i);
-    }
-    passageIndex.set(story, index);
-  }
+/**
+ * A story's passage positions by name, for O(1) lookups. `story.passages` is a plain mutable
+ * array that code outside this module may change (StoryBuilder documents it), so the index
+ * records what it was built from and is rebuilt when that no longer matches.
+ */
+interface NameIndex {
+  /** The array the index describes; assigning `story.passages` gives a different one. */
+  readonly passages: readonly Passage[];
+  /** The name at each position when the index was last updated. */
+  readonly names: string[];
+  /** Position by name; with duplicate names in the array, the last position. */
+  readonly positions: Map<string, number>;
+}
+
+const passageIndex = new WeakMap<Story, NameIndex>();
+
+function buildIndex(story: Story): NameIndex {
+  const names = story.passages.map((p) => p.name);
+  const index: NameIndex = { passages: story.passages, names, positions: new Map(names.map((name, i) => [name, i])) };
+  passageIndex.set(story, index);
   return index;
+}
+
+/**
+ * The index, rebuilt if `story.passages` was reassigned or changed length. O(1); `position()`
+ * also checks every hit. A change that keeps the length, such as replacing an element, can still
+ * hide a passage from a lookup, so `storyVerifyIndex()` checks every position.
+ */
+function currentIndex(story: Story): NameIndex {
+  const index = passageIndex.get(story);
+  return index !== undefined && index.passages === story.passages && index.names.length === story.passages.length
+    ? index
+    : buildIndex(story);
+}
+
+/**
+ * Rebuild the index unless it matches `story.passages` at every position. O(n): for entry points
+ * that run after code outside the compiler may have changed the passages, such as StoryBuilder.
+ */
+function storyVerifyIndex(story: Story): void {
+  const index = currentIndex(story);
+  if (!story.passages.every((p, i) => p.name === index.names[i])) buildIndex(story);
+}
+
+/** The position of the passage named `name`, or -1. */
+function position(story: Story, name: string): number {
+  const i = currentIndex(story).positions.get(name);
+  if (i === undefined) return -1;
+  if (story.passages[i]?.name === name) return i;
+  return buildIndex(story).positions.get(name) ?? -1;
+}
+
+/** Add a passage whose name no passage has yet at the end. */
+function push(story: Story, p: Passage): void {
+  const index = currentIndex(story);
+  index.positions.set(p.name, story.passages.length);
+  index.names.push(p.name);
+  story.passages.push(p);
+}
+
+/** Put a passage at position `i`, in place of the passage there. */
+function replaceAt(story: Story, i: number, p: Passage): void {
+  const renamed = story.passages[i]?.name !== p.name;
+  story.passages[i] = p;
+  // Only moving a generated name aside renames a position; that is rare, so rebuild then.
+  if (renamed) buildIndex(story);
+}
+
+// --- Generated passage names ---
+
+/** Names of compiler special passages, which storyAdd() reads into the story model. */
+const SPECIAL_PASSAGE_NAMES: ReadonlySet<string> = new Set([
+  'StoryData',
+  'StoryIncludes',
+  'StorySettings',
+  'StoryTitle',
+]);
+
+/**
+ * Where a passage name that the compiler made up came from. Generated names yield to every other
+ * name in the story: see `storyAdd()`.
+ * - `code`: a stylesheet or script (a `.css`, `.js` or font file, or an imported Twine 2 story's
+ *   stylesheet or script). Output finds these by tag, so a new name is not reported.
+ * - `media`: an image, audio, video or text track file. Stories refer to these by passage name,
+ *   so a new name is reported.
+ */
+export type GeneratedName =
+  | { readonly kind: 'code'; readonly base: string }
+  | { readonly kind: 'media'; readonly base: string; readonly file: string };
+
+/** Passages whose names were generated, kept by identity so that cached passages keep the mark. */
+const generatedNames = new WeakMap<Passage, GeneratedName>();
+
+/**
+ * Mark a passage's name as generated (from a file name, or for imported story code) and return
+ * the passage. `origin.base` is the name that free names are numbered from: `base`, `base 2`, ….
+ */
+export function withGeneratedName(p: Passage, origin: GeneratedName): Passage {
+  generatedNames.set(p, origin);
+  return p;
+}
+
+/** The first of `base`, `base 2`, `base 3`, … that `isFree` accepts. */
+export function freeName(base: string, isFree: (name: string) => boolean): string {
+  if (isFree(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} ${n}`;
+    if (isFree(candidate)) return candidate;
+  }
+}
+
+/** Whether a generated name may take `name`: no passage has it and it is no special name. */
+function isFreeForGenerated(story: Story, name: string): boolean {
+  return !SPECIAL_PASSAGE_NAMES.has(name) && position(story, name) === -1;
+}
+
+function reportRename(origin: GeneratedName, from: string, to: string, diagnostics: Diagnostic[]): void {
+  switch (origin.kind) {
+    case 'code':
+      return;
+    case 'media': {
+      const reason = SPECIAL_PASSAGE_NAMES.has(from)
+        ? `"${from}" is a compiler special passage name`
+        : `another passage has the name "${from}"`;
+      diagnostics.push({
+        level: 'warning',
+        message: `Passage "${from}" from "${origin.file}" renamed to "${to}"; ${reason}.`,
+      });
+      return;
+    }
+    default: {
+      const _exhaustive: never = origin;
+      throw new Error(`unhandled generated name: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
+
+/** Add a passage with a generated name, under the first free name if its own is taken. */
+function addGenerated(story: Story, p: Passage, origin: GeneratedName, diagnostics: Diagnostic[]): void {
+  if (isFreeForGenerated(story, p.name)) {
+    push(story, p);
+    return;
+  }
+  const name = freeName(origin.base, (n) => isFreeForGenerated(story, n));
+  reportRename(origin, p.name, name, diagnostics);
+  push(story, withGeneratedName({ ...p, name }, origin));
+}
+
+/**
+ * If a passage with a generated name has `name`, give it the first free name, in its place in the
+ * passage list, so that a passage from the sources can take the name.
+ */
+function moveGeneratedAside(story: Story, name: string, diagnostics: Diagnostic[]): void {
+  const i = position(story, name);
+  const existing = i === -1 ? undefined : story.passages[i];
+  const origin = existing === undefined ? undefined : generatedNames.get(existing);
+  if (existing === undefined || origin === undefined) return;
+  const free = freeName(origin.base, (n) => isFreeForGenerated(story, n));
+  reportRename(origin, name, free, diagnostics);
+  replaceAt(story, i, withGeneratedName({ ...existing, name: free }, origin));
+}
+
+// --- Story ---
+
+function defaultTwine2Metadata(): Story['twine2'] {
+  return {
+    format: '',
+    formatVersion: '',
+    options: new Map(),
+    start: '',
+    tags: '',
+    tagColors: new Map(),
+    zoom: 1,
+  };
 }
 
 export function createStory(): Story {
@@ -30,65 +191,51 @@ export function createStory(): Story {
     passages: [],
     legacyIFID: '' as IFID,
     twine1: { settings: new Map() },
-    twine2: {
-      format: '',
-      formatVersion: '',
-      options: new Map(),
-      start: '',
-      tags: '',
-      tagColors: new Map(),
-      zoom: 1,
-    },
+    twine2: defaultTwine2Metadata(),
   };
-  passageIndex.set(story, new Map());
+  buildIndex(story);
   return story;
 }
 
 export function storyHas(story: Story, name: string): boolean {
-  return getIndex(story).has(name);
+  return position(story, name) !== -1;
 }
 
 export function storyIndex(story: Story, name: string): number {
-  return getIndex(story).get(name) ?? -1;
+  return position(story, name);
 }
 
 export function storyGet(story: Story, name: string): Passage | undefined {
-  const i = storyIndex(story, name);
+  const i = position(story, name);
   return i === -1 ? undefined : story.passages[i];
 }
 
 export function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const index = getIndex(story);
-  const i = index.get(p.name) ?? -1;
+  const i = position(story, p.name);
   if (i === -1) {
-    index.set(p.name, story.passages.length);
-    story.passages.push(p);
+    push(story, p);
   } else {
     diagnostics.push({
       level: 'warning',
       message: `Replacing existing passage "${p.name}" with duplicate.`,
     });
-    story.passages[i] = p;
+    replaceAt(story, i, p);
   }
 }
 
 export function storyPrepend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const index = getIndex(story);
-  const i = index.get(p.name) ?? -1;
+  moveGeneratedAside(story, p.name, diagnostics);
+  const i = position(story, p.name);
   if (i === -1) {
     story.passages.unshift(p);
-    // Rebuild index: unshift shifts all existing indices by 1
-    index.clear();
-    for (let j = 0; j < story.passages.length; j++) {
-      const passage = story.passages[j];
-      if (passage) index.set(passage.name, j);
-    }
+    // Every position moves up by one.
+    buildIndex(story);
   } else {
     diagnostics.push({
       level: 'warning',
       message: `Replacing existing passage "${p.name}" with duplicate.`,
     });
-    story.passages[i] = p;
+    replaceAt(story, i, p);
   }
 }
 
@@ -141,23 +288,26 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
   }
   const data = raw as StoryDataJSON;
 
-  if (typeof data.ifid === 'string' && data.ifid) story.ifid = normalizeIFID(data.ifid);
-  if (typeof data.format === 'string' && data.format) story.twine2.format = data.format;
-  if (typeof data['format-version'] === 'string' && data['format-version'])
-    story.twine2.formatVersion = data['format-version'];
+  // StoryData holds all of this metadata, so a field it leaves out gets its default, not the
+  // value of an earlier StoryData passage. The StorySettings IFID is kept apart (legacyIFID).
+  const twine2 = defaultTwine2Metadata();
+  story.ifid = typeof data.ifid === 'string' ? normalizeIFID(data.ifid) : ('' as IFID);
+  if (typeof data.format === 'string') twine2.format = data.format;
+  if (typeof data['format-version'] === 'string') twine2.formatVersion = data['format-version'];
   if (Array.isArray(data.options)) {
     for (const opt of data.options) {
-      if (typeof opt === 'string') story.twine2.options.set(opt, true);
+      if (typeof opt === 'string') twine2.options.set(opt, true);
     }
   }
-  if (typeof data.start === 'string' && data.start) story.twine2.start = data.start;
-  if (typeof data.tags === 'string') story.twine2.tags = data.tags;
+  if (typeof data.start === 'string') twine2.start = data.start;
+  if (typeof data.tags === 'string') twine2.tags = data.tags;
   if (typeof data['tag-colors'] === 'object' && data['tag-colors'] !== null && !Array.isArray(data['tag-colors'])) {
     for (const [tag, color] of Object.entries(data['tag-colors'])) {
-      if (typeof color === 'string') story.twine2.tagColors.set(tag, color);
+      if (typeof color === 'string') twine2.tagColors.set(tag, color);
     }
   }
-  if (typeof data.zoom === 'number' && data.zoom !== 0) story.twine2.zoom = data.zoom;
+  if (typeof data.zoom === 'number' && data.zoom !== 0) twine2.zoom = data.zoom;
+  story.twine2 = twine2;
 
   return null;
 }
@@ -218,8 +368,21 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
 /**
  * Process a passage and add it to the story, handling special passages.
  * Creates new passage objects where text is modified rather than mutating the input.
+ *
+ * A passage replaces an earlier one with the same name, except where either name was generated
+ * (see `withGeneratedName()`): a generated name never replaces a passage and is never replaced.
+ * A passage with a generated name takes the first free name of `base`, `base 2`, … when its own
+ * is taken or is a compiler special name. A passage with a name from the sources that a generated
+ * name holds takes it over, and the generated one moves to the first free name in its place.
  */
 export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
+  const origin = generatedNames.get(p);
+  if (origin !== undefined) {
+    addGenerated(story, p, origin, diagnostics);
+    return;
+  }
+  moveGeneratedAside(story, p.name, diagnostics);
+
   let processed = p;
 
   switch (p.name) {
@@ -288,7 +451,9 @@ export function getStoryStats(
 
 /**
  * Builder that separates the mutable construction phase from the immutable consumption phase.
- * During construction, the internal `Story` is mutable via `add()` and direct access.
+ * During construction, the internal `Story` is mutable via `add()` and direct access: you may
+ * push, splice, sort, rename or reassign `story.passages` between calls, and `add()` and `has()`
+ * see the passages as they are then.
  * After `build()`, the story is returned as `ReadonlyStory`.
  */
 export class StoryBuilder {
@@ -301,11 +466,17 @@ export class StoryBuilder {
 
   /** Add a passage, handling special passages (StoryData, StoryTitle, etc.). */
   add(passage: Passage, diagnostics: Diagnostic[]): void {
+    // A found name is checked at its position, so it is current. Only a new name (or a generated
+    // one, which looks up other names) needs every position checked first.
+    if (generatedNames.has(passage) || !storyHas(this.story, passage.name)) storyVerifyIndex(this.story);
     storyAdd(this.story, passage, diagnostics);
   }
 
   /** Check if a passage name exists. */
   has(name: string): boolean {
+    // A found name is checked at its position; only "not found" needs every position checked.
+    if (storyHas(this.story, name)) return true;
+    storyVerifyIndex(this.story);
     return storyHas(this.story, name);
   }
 

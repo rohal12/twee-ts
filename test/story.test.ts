@@ -8,6 +8,7 @@ import {
   marshalStoryData,
   unmarshalStoryData,
   unmarshalStorySettings,
+  StoryBuilder,
 } from '../src/story.js';
 import type { Diagnostic, Passage } from '../src/types.js';
 
@@ -171,5 +172,145 @@ describe('unmarshalStorySettings', () => {
     const story = createStory();
     unmarshalStorySettings(story, 'ifid:UUID://D674C58C-DEFA-4F70-B7A2-27742230C0FC//', []);
     expect(story.legacyIFID).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+  });
+});
+
+describe('a later StoryData passage', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const FULL = JSON.stringify({
+    ifid: IFID,
+    format: 'SugarCube',
+    'format-version': '2.37.3',
+    options: ['debug'],
+    start: 'Old',
+    tags: 'draft',
+    'tag-colors': { old: 'red' },
+    zoom: 0.6,
+  });
+
+  it('replaces the story metadata of an earlier one instead of merging into it', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('StoryData', FULL), diag);
+    storyAdd(story, mkPassage('StoryData', JSON.stringify({ ifid: IFID })), diag);
+
+    expect(diag.map((d) => d.message)).toEqual(['Replacing existing passage "StoryData" with duplicate.']);
+    expect(story.ifid).toBe(IFID);
+    expect(story.twine2).toEqual({
+      format: '',
+      formatVersion: '',
+      options: new Map(),
+      start: '',
+      tags: '',
+      tagColors: new Map(),
+      zoom: 1,
+    });
+    expect(JSON.parse(storyGet(story, 'StoryData')!.text)).toEqual({ ifid: IFID });
+  });
+
+  it('clears the IFID when it has none, so the StorySettings IFID can stand in', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('StorySettings', `ifid:${IFID}`), diag);
+    storyAdd(story, mkPassage('StoryData', JSON.stringify({ ifid: '0B3F1A2C-1D4E-4F5A-8B6C-7D8E9F0A1B2C' })), diag);
+    storyAdd(story, mkPassage('StoryData', JSON.stringify({ format: 'Harlowe' })), diag);
+
+    expect(story.ifid).toBe('');
+    expect(story.legacyIFID).toBe(IFID);
+    expect(story.twine2.format).toBe('Harlowe');
+  });
+
+  it('keeps the earlier metadata when it is not valid JSON', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('StoryData', FULL), diag);
+    storyAdd(story, mkPassage('StoryData', '{ not json'), diag);
+
+    expect(story.twine2.start).toBe('Old');
+    expect(story.twine2.options).toEqual(new Map([['debug', true]]));
+    expect(diag.map((d) => d.level)).toEqual(['warning', 'warning']);
+  });
+});
+
+describe('StoryBuilder name index after direct changes to story.passages', () => {
+  function built(...names: string[]): { builder: StoryBuilder; diag: Diagnostic[] } {
+    const builder = new StoryBuilder();
+    const diag: Diagnostic[] = [];
+    for (const name of names) builder.add(mkPassage(name, name.toLowerCase()), diag);
+    return { builder, diag };
+  }
+
+  function contents(builder: StoryBuilder): string[] {
+    return builder.story.passages.map((p) => `${p.name}=${p.text}`);
+  }
+
+  it('sees a pushed passage', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages.push(mkPassage('C', 'c'));
+    expect(builder.has('C')).toBe(true);
+    builder.add(mkPassage('C', 'C again'), diag);
+    expect(contents(builder)).toEqual(['A=a', 'B=b', 'C=C again']);
+  });
+
+  it('forgets a spliced-out passage and adds it again without overwriting another (#171)', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages.push(mkPassage('C', 'c'));
+    builder.story.passages.splice(0, 1);
+    expect(builder.has('A')).toBe(false);
+    builder.add(mkPassage('A', 'A again'), diag);
+    expect(contents(builder)).toEqual(['B=b', 'C=c', 'A=A again']);
+    expect(diag).toEqual([]);
+  });
+
+  it('follows a reassigned passage array', () => {
+    const { builder, diag } = built('A', 'B', 'C');
+    builder.story.passages = builder.story.passages.filter((p) => p.name !== 'A');
+    expect(builder.has('A')).toBe(false);
+    expect(builder.has('C')).toBe(true);
+    builder.add(mkPassage('C', 'C again'), diag);
+    builder.add(mkPassage('A', 'A again'), diag);
+    expect(contents(builder)).toEqual(['B=b', 'C=C again', 'A=A again']);
+    expect(diag.map((d) => d.message)).toEqual(['Replacing existing passage "C" with duplicate.']);
+  });
+
+  it('follows a sorted passage array', () => {
+    const { builder, diag } = built('C', 'B', 'A');
+    builder.story.passages.sort((a, b) => a.name.localeCompare(b.name));
+    builder.add(mkPassage('C', 'C again'), diag);
+    expect(contents(builder)).toEqual(['A=a', 'B=b', 'C=C again']);
+  });
+
+  it('sees a passage that took the place of another without changing the length', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages.splice(0, 1, mkPassage('D', 'd'));
+    expect(builder.has('D')).toBe(true);
+    expect(builder.has('A')).toBe(false);
+    builder.add(mkPassage('D', 'D again'), diag);
+    expect(contents(builder)).toEqual(['D=D again', 'B=b']);
+  });
+
+  it('sees a passage renamed in place', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages[0]!.name = 'Z';
+    expect(builder.has('Z')).toBe(true);
+    expect(builder.has('A')).toBe(false);
+    builder.add(mkPassage('A', 'A again'), diag);
+    expect(contents(builder)).toEqual(['Z=a', 'B=b', 'A=A again']);
+  });
+});
+
+describe('storyHas and storyAdd after direct changes to story.passages', () => {
+  it('follow a reassigned or resized passage array', () => {
+    const story = createStory();
+    const diag: Diagnostic[] = [];
+    storyAdd(story, mkPassage('A', 'a'), diag);
+    storyAdd(story, mkPassage('B', 'b'), diag);
+    story.passages = story.passages.filter((p) => p.name !== 'A');
+    expect(storyHas(story, 'A')).toBe(false);
+    story.passages.push(mkPassage('C', 'c'));
+    expect(storyHas(story, 'C')).toBe(true);
+    storyAdd(story, mkPassage('A', 'A again'), diag);
+    expect(story.passages.map((p) => `${p.name}=${p.text}`)).toEqual(['B=b', 'C=c', 'A=A again']);
+    expect(diag).toEqual([]);
   });
 });

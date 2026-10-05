@@ -191,6 +191,8 @@ twee-ts recognizes the following special passage names. These passages carry met
 | `MenuShare`      | Menu sharing passages                                   |
 | `MenuStory`      | Menu story passages                                     |
 
+When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value.
+
 ### StorySettings (Twine 1)
 
 The `StorySettings` passage configures Twine 1-specific behavior using `key:value` pairs, one per line:

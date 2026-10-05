@@ -232,6 +232,8 @@ const untrimmed = decompileHTML(html, { trim: false });
 
 `trim` (default `true`) trims whitespace at both ends of passage text, as the Twee lexer does, and applies to the Twine 2 story stylesheet and script too. `compile()` passes its own `trim` option through when it loads `.html` files.
 
+A `<tw-storydata>` `ifid` that is not a valid IFID gives a warning in `diagnostics`, and `story.ifid` keeps the value as written, uppercased. A missing or empty `ifid` gives a warning too, and `story.ifid` stays empty. When `compile()` loads the same file, these are reported once, as errors, by the `StoryData` check, as for a Twee `StoryData` passage.
+
 ### Story Formats
 
 ```typescript
