@@ -386,6 +386,108 @@ describe('decompileHTML — passage whitespace', () => {
   });
 });
 
+describe('decompileHTML — story stylesheet and script names', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const CASES = [
+    { element: 'style', tag: 'stylesheet', name: 'Story Stylesheet', code: 'body { color: red; }' },
+    { element: 'script', tag: 'script', name: 'Story JavaScript', code: 'globalThis.essentialSetup = true;' },
+  ] as const;
+
+  function replacements(diagnostics: readonly { message: string }[]): string[] {
+    return diagnostics.map((d) => d.message).filter((m) => m.includes('Replacing existing passage'));
+  }
+
+  for (const { element, tag, name, code } of CASES) {
+    describe(name, () => {
+      const html = `<tw-storydata name="Clash" startnode="2" ifid="${IFID}" hidden>
+<${element} type="text/twine-${element === 'style' ? 'css' : 'javascript'}">${code}</${element}>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">[[${name}]]</tw-passagedata>
+<tw-passagedata pid="2" name="${name}" tags="" position="200,100" size="100,100">This is a real story passage.</tw-passagedata>
+<tw-passagedata pid="3" name="${name} 2" tags="" position="300,100" size="100,100">Another real passage.</tw-passagedata>
+</tw-storydata>`;
+
+      it(`keeps both a real "${name}" passage and the story ${tag}`, () => {
+        const { story, diagnostics } = decompileHTML(html);
+        expect(replacements(diagnostics)).toEqual([]);
+        expect(story.passages.map((p) => [p.name, p.tags, p.text])).toEqual([
+          ['StoryData', [], expect.any(String)],
+          [`${name} 3`, [tag], code],
+          ['Start', [], `[[${name}]]`],
+          [name, [], 'This is a real story passage.'],
+          [`${name} 2`, [], 'Another real passage.'],
+        ]);
+        expect(story.twine2.start).toBe(name);
+      });
+    });
+  }
+
+  it('gives a second style or script element its own name', () => {
+    const html = `<tw-storydata name="Twice" startnode="1" ifid="${IFID}" hidden>
+<script type="text/twine-javascript">first();</script>
+<script type="text/twine-javascript">second();</script>
+<tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
+</tw-storydata>`;
+    const { story, diagnostics } = decompileHTML(html);
+    expect(replacements(diagnostics)).toEqual([]);
+    const scripts = story.passages.filter((p) => p.tags.includes('script'));
+    expect(scripts.map((p) => [p.name, p.text])).toEqual([
+      ['Story JavaScript', 'first();'],
+      ['Story JavaScript 2', 'second();'],
+    ]);
+  });
+});
+
+describe('HTML round trips with passages named like the story stylesheet or script', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-names-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const CASES = [
+    { tag: 'stylesheet', name: 'Story Stylesheet', code: 'body { color: red; }' },
+    { tag: 'script', name: 'Story JavaScript', code: 'globalThis.essentialSetup = true;' },
+  ] as const;
+
+  for (const archive of ['twine2-archive', 'twine1-archive'] as const) {
+    for (const { tag, name, code } of CASES) {
+      it(`keeps a real "${name}" passage and the ${tag} through ${archive} and back`, async () => {
+        const source = [
+          ':: StoryData',
+          JSON.stringify({ ifid: 'D674C58C-DEFA-4F70-B7A2-27742230C0FC' }),
+          '',
+          ':: Start',
+          `[[${name}]]`,
+          '',
+          `:: ${name}`,
+          'This is a real story passage.',
+          '',
+          `:: Code [${tag}]`,
+          code,
+          '',
+        ].join('\n');
+        const first = await compile({ sources: [{ filename: 'story.tw', content: source }], outputMode: archive });
+        expect(first.diagnostics).toEqual([]);
+
+        const { story, diagnostics } = decompileHTML(first.output);
+        expect(diagnostics).toEqual([]);
+        expect(story.passages.find((p) => p.name === name)).toMatchObject({
+          tags: [],
+          text: 'This is a real story passage.',
+        });
+        expect(story.passages.filter((p) => p.tags.includes(tag)).map((p) => p.text)).toEqual([code]);
+
+        const file = join(dir, 'story.html');
+        writeFileSync(file, first.output, 'utf-8');
+        const again = await compile({ sources: [file], outputMode: archive });
+        expect(again.diagnostics).toEqual([]);
+        expect(again.output).toBe(first.output);
+      });
+    }
+  }
+});
+
 describe('HTML whitespace round trips through compile()', () => {
   let dir: string;
 

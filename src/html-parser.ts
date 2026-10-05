@@ -95,9 +95,16 @@ function decompileTwine2(
     }
   }
 
+  // The story stylesheet and script get generated passage names. Ordinary passages may use those
+  // names too, so reserve every real passage name first and give the code passages names left free.
+  const children = storyData.children ?? [];
+  const takenNames = new Set(
+    children.filter((node) => node.type === 'tag' && node.name === 'tw-passagedata').map(passageDataName),
+  );
+
   // Process child elements.
   // htmlparser2 uses type 'style'/'script' for those elements instead of 'tag'.
-  for (const node of storyData.children ?? []) {
+  for (const node of children) {
     if (node.type !== 'tag' && node.type !== 'style' && node.type !== 'script') continue;
 
     switch (node.name) {
@@ -107,7 +114,8 @@ function decompileTwine2(
         // Whitespace alone is no stylesheet or script, whether or not the text is trimmed.
         if (content.trim().length === 0) continue;
         const text = passageText(content);
-        const name = node.name === 'style' ? 'Story Stylesheet' : 'Story JavaScript';
+        const name = freeName(node.name === 'style' ? 'Story Stylesheet' : 'Story JavaScript', takenNames);
+        takenNames.add(name);
         const tags = node.name === 'style' ? ['stylesheet'] : ['script'];
         storyAdd(story, { name, tags, text }, diagnostics);
         break;
@@ -124,7 +132,7 @@ function decompileTwine2(
       case 'tw-passagedata': {
         let pid = 0;
         const pAttrs = node.attribs ?? {};
-        const name = pAttrs['name'] ?? '';
+        const name = passageDataName(node);
         const tags = pAttrs['tags'] ? pAttrs['tags'].split(/\s+/).filter((s: string) => s.length > 0) : [];
         const metadata: PassageMetadata = {};
 
@@ -160,6 +168,19 @@ function decompileTwine2(
 
   // Prepend StoryData passage with serialized metadata.
   storyPrepend(story, { name: 'StoryData', tags: [], text: marshalStoryData(story) }, diagnostics);
+}
+
+function passageDataName(node: HtmlNode): string {
+  return node.attribs?.['name'] ?? '';
+}
+
+/** The first of `base`, `base 2`, `base 3`, … that is not in `taken`. */
+function freeName(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 function decompileTwine1(
