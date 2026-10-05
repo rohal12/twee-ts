@@ -51,6 +51,9 @@ function parseFormatObject(text: string, start: number, end: number): ObjectPars
 }
 
 /** Check a parsed format object's fields. Per spec, `name` is optional; `version` and `source` are required. */
+/** The name given to a format.js that names no format. */
+export const UNNAMED_FORMAT_NAME = 'Untitled Story Format';
+
 function toFormatJSON(raw: unknown): FormatDecodeResult {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, reason: 'Story format JSON chunk is not an object.' };
@@ -62,7 +65,7 @@ function toFormatJSON(raw: unknown): FormatDecodeResult {
     return { ok: false, reason: `Story format version ${JSON.stringify(obj.version)} is not a SemVer version.` };
   }
   const data: Twine2FormatJSON = {
-    name: typeof obj.name === 'string' ? obj.name : 'Untitled Story Format',
+    name: typeof obj.name === 'string' ? obj.name : UNNAMED_FORMAT_NAME,
     version: obj.version,
     source: obj.source,
     proofing: obj.proofing === true,
