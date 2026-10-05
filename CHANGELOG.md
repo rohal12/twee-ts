@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `exclude` option: glob patterns for source files to leave out, matched against each file's path relative to the working directory. It works in `compile()`, `compileToFile()`, `compileIncremental()` and `watch()`, as the `exclude` key in `twee-ts.config.json`, as `--exclude <glob>` (repeatable) on the CLI, and as `compileOptions.exclude` in the Vite and Rollup plugins. Like Tweego, twee-ts loads every image, audio and video file in a source folder as a base64 passage, so artwork kept next to the passages and served separately went into the HTML a second time; with enough of it the build failed with `RangeError: Invalid string length`. In watch mode and the Vite dev server, a change to an excluded file triggers no rebuild. Modules and the head file are never excluded. Needs Node.js 22.5 or newer, for `path.matchesGlob`
+
 ## [1.15.4] - 2026-10-02
 
 ### Fixed
