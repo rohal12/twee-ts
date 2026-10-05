@@ -348,9 +348,12 @@ export function loadSourcesCached(
     // An entry parsed under other options (or without a recorded key) is stale.
     const entry = cache.get(filename);
     const cached = entry?.parseOptionsKey === optionsKey ? entry : undefined;
+    // A file changedFiles names is always reparsed: a save can keep the modification time
+    // (a timestamp-preserving write, or a filesystem with coarse timestamps).
+    const changed = changedFiles?.has(filename) ?? false;
 
     // If changedFiles is provided and this file isn't changed and we have a cache hit, skip stat
-    if (changedFiles && cached && !changedFiles.has(filename)) {
+    if (changedFiles && cached && !changed) {
       diagnostics.push(...cached.diagnostics);
       for (const p of cached.passages) {
         storyAdd(story, p, diagnostics);
@@ -368,8 +371,8 @@ export function loadSourcesCached(
       continue;
     }
 
-    // Cache hit with matching mtime: replay
-    if (cached && cached.mtimeMs === mtimeMs) {
+    // Cache hit with matching mtime, for a file not known to have changed: replay
+    if (cached && !changed && cached.mtimeMs === mtimeMs) {
       diagnostics.push(...cached.diagnostics);
       for (const p of cached.passages) {
         storyAdd(story, p, diagnostics);

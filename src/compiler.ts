@@ -67,6 +67,11 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
 /**
  * Compile with incremental caching support.
  * Plugins and advanced users can manage their own cache and changed-file tracking.
+ *
+ * Without `changedFiles`, a cached file is reused while its modification time is unchanged.
+ * With it, a file it names (by the path source discovery gives it, relative to the working
+ * directory) is always reparsed, whatever its modification time, and every other cached
+ * file is reused as it is.
  */
 export async function compileIncremental(
   options: CompileOptions,
