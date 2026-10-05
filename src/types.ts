@@ -193,8 +193,10 @@ export interface InspectOptions {
    * Check link destinations against this output's passage rules. A link to a passage that the
    * output leaves out (in Twine 2: `script`, `stylesheet` and `Twine.private` passages,
    * StoryData, StoryTitle and an empty StorySettings; in Twine 1: `Twine.private` passages) is
-   * then a broken link, and says why. Without a target, a link is broken only when no passage
-   * has its name.
+   * then a broken link, and says why. The passages it leaves out also give no links, as their
+   * text never reaches the player, except script passages, which Twine 2 output runs. Without a
+   * target, every source passage gives links, and a link is broken only when no passage has its
+   * name.
    */
   readonly target?: PassageOutputTarget;
 }

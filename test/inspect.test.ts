@@ -143,6 +143,71 @@ describe('storyInspect', () => {
     });
   });
 
+  describe('links from passages an output leaves out', () => {
+    async function inspectStory(options?: Parameters<typeof storyInspect>[1]) {
+      const result = await compile({
+        sources: [
+          {
+            filename: 'omitted-sources.tw',
+            content:
+              ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n' +
+              ':: StoryTitle\nSee [[Credits]]\n\n' +
+              ':: Start\n[[Next]]\n\n:: Next\nThe end.\n\n:: Epilogue\nLater.\n\n:: Credits\nThanks.\n\n' +
+              ':: Notes [Twine.private]\nTODO: write [[Epilogue]] and [[Missing]] later.\n\n' +
+              ':: Logic [script]\nwindow.next = "[[Next]] [[Gone]]";\n\n' +
+              ':: Hidden Logic [script Twine.private]\nwindow.x = "[[Lost]]";\n\n' +
+              ':: Empty Notes [Twine.private]\n',
+          },
+        ],
+        outputMode: 'json',
+      });
+      return storyInspect(result.story, options);
+    }
+
+    it('reads every source passage without a target', async () => {
+      const map = await inspectStory();
+      expect(map.links.get('Notes')).toEqual(['Epilogue', 'Missing']);
+      expect(map.links.get('StoryTitle')).toEqual(['Credits']);
+      expect(map.brokenLinks).toEqual([
+        { from: 'Notes', to: 'Missing' },
+        { from: 'Logic', to: 'Gone' },
+        { from: 'Hidden Logic', to: 'Lost' },
+      ]);
+      expect(map.orphans).toEqual([]);
+    });
+
+    it('reads no links from passages that Twine 2 output leaves out, but still reads scripts', async () => {
+      const map = await inspectStory({ target: 'twine2' });
+      expect(map.links.get('Notes')).toEqual([]);
+      expect(map.links.get('StoryTitle')).toEqual([]);
+      expect(map.links.get('Hidden Logic')).toEqual([]);
+      // Twine 2 output runs script passages, so links built in their strings are real.
+      expect(map.links.get('Logic')).toEqual(['Next', 'Gone']);
+      expect(map.brokenLinks).toEqual([{ from: 'Logic', to: 'Gone' }]);
+      // A link from a left-out passage does not keep a story passage from being an orphan.
+      expect(map.orphans).toEqual(['Epilogue', 'Credits']);
+    });
+
+    it('reads no links from Twine.private passages for Twine 1 output, which keeps StoryTitle', async () => {
+      const map = await inspectStory({ target: 'twine1' });
+      expect(map.links.get('Notes')).toEqual([]);
+      expect(map.links.get('StoryTitle')).toEqual(['Credits']);
+      expect(map.brokenLinks).toEqual([{ from: 'Logic', to: 'Gone' }]);
+      expect(map.orphans).toEqual(['Epilogue']);
+    });
+
+    it('never reports a left-out passage as a dead end or an orphan', async () => {
+      for (const options of [undefined, { target: 'twine2' as const }, { target: 'twine1' as const }]) {
+        const map = await inspectStory(options);
+        expect(map.storyPassages).toEqual(['Start', 'Next', 'Epilogue', 'Credits']);
+        expect(map.deadEnds).toEqual(['Next', 'Epilogue', 'Credits']);
+        for (const leftOut of ['Notes', 'Empty Notes', 'Hidden Logic', 'StoryTitle', 'StoryData']) {
+          expect(map.orphans).not.toContain(leftOut);
+        }
+      }
+    });
+  });
+
   it('detects dead ends', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],

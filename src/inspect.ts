@@ -35,7 +35,8 @@ export interface StoryMap {
    * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
    * (see `sugarcube-macros.ts`). Links and calls in comments are not read. A script passage is
    * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
-   * CSS and links to nothing.
+   * CSS and links to nothing. With a `target` (see `InspectOptions`), a passage that output leaves
+   * out links to nothing, except a script passage, which Twine 2 output runs.
    */
   links: Map<string, string[]>;
   /**
@@ -100,6 +101,17 @@ function passageLinks(p: ReadonlyPassage): string[] {
   if (hasTag(p, 'script')) return extractLinksFromText(textAsRead(p), true);
   if (hasTag(p, 'stylesheet')) return [];
   return extractLinksFromText(textAsRead(p), false);
+}
+
+/**
+ * Whether the `target` output keeps the links in `p`: always without a target, which describes
+ * every source passage. With one, a passage the output leaves out never reaches the player, so it
+ * links nowhere, except a script passage, which Twine 2 output leaves out as a passage but runs.
+ */
+function readsLinks(story: ReadonlyStory, p: ReadonlyPassage, { target }: InspectOptions): boolean {
+  if (target === undefined) return true;
+  const omission = passageOmission(story, p, target);
+  return omission === undefined || (omission.kind === 'tag' && omission.tag === 'script');
 }
 
 /**
@@ -171,7 +183,9 @@ function joinLines(text: string): string {
  * By default, a link is broken only when no passage has its name. Pass a `target` to check links
  * against what that output emits: `storyInspect(result.story, { target: 'twine2' })` also reports
  * links to passages Twine 2 output leaves out, such as script, stylesheet and `Twine.private`
- * passages.
+ * passages. With a target, passages that output leaves out also give no links (script passages
+ * excepted, as Twine 2 output runs them), so they report no broken links and keep no passage from
+ * being an orphan.
  */
 export function storyInspect(story: ReadonlyStory, options: InspectOptions = {}): StoryMap {
   const destinations = destinationOmissions(story, options);
@@ -207,7 +221,7 @@ export function storyInspect(story: ReadonlyStory, options: InspectOptions = {})
     }
 
     // Links
-    links.set(p.name, passageLinks(p));
+    links.set(p.name, readsLinks(story, p, options) ? passageLinks(p) : []);
   }
 
   // Broken links: link targets that don't exist as passages, or that the target output leaves out

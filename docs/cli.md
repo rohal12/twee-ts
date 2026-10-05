@@ -70,7 +70,7 @@ Like a build, linting leaves the output file (`-o`, or `output` in the config fi
 
 A link is broken when no passage has its name, or when its passage is one that Twine 2 output leaves out: a passage tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, or an empty StorySettings. The passage exists in the source but not in the playable story, so the link fails when it is clicked. The report says why. Links to special passages that the output keeps, such as StoryInit, PassageHeader or a `widget` passage, are valid.
 
-Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so bracketed text in them, such as `content: "[[Decorative]]"`, is not a link.
+Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so bracketed text in them, such as `content: "[[Decorative]]"`, is not a link. Passages that Twine 2 output leaves out never reach the player, so no links are read from `Twine.private` passages, StoryData or StoryTitle: a link in a private notes passage is not a broken link, and it does not keep a passage from being listed as an orphan. Script passages are still read, because Twine 2 output runs them.
 
 ```sh
 $ twee-ts --lint ./story/

@@ -43,7 +43,8 @@ export interface LintResult {
  * Uses JSON output mode internally to avoid format resolution, so it checks
  * the starting passage itself, against the Twine 2 passage rules. Link
  * destinations are checked against the same rules: a link to a passage that
- * Twine 2 output leaves out is broken.
+ * Twine 2 output leaves out is broken, and a passage it leaves out (other than
+ * a script passage) gives no links.
  */
 export async function lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult> {
   return lintForOutputFile(options, undefined);
