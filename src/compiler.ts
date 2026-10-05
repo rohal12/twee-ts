@@ -20,7 +20,7 @@ import type {
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
 import { getFilenames, isExcluded, watchFilesystem } from './filesystem.js';
-import { discoverFormats, getFormatSearchDirs, getFormatIdByNameAndVersion } from './formats.js';
+import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag } from './passage.js';
 import { generateIFID } from './ifid.js';
@@ -29,7 +29,7 @@ import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { modifyHead } from './modules.js';
 import { startPassageDiagnostics } from './start-passage.js';
-import { resolveRemoteFormat, clearIndexCache } from './remote-formats.js';
+import { clearIndexCache } from './remote-formats.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
@@ -176,46 +176,18 @@ async function buildOutput(
     story.passages = applyTagAliases(story.passages, options.tagAliases);
   }
 
-  // Resolve format
+  // Resolve format: explicit formatId > StoryData format > default, looked up locally,
+  // in the download cache, then remotely. An unavailable request is an error, never another format.
   let format: StoryFormatInfo | undefined;
-  let formatId = options.formatId ?? '';
 
   if (outputMode === 'html') {
-    const formatSearchDirs = getFormatSearchDirs(options.formatPaths, options.useTweegoPath ?? true);
-    const formats = discoverFormats(formatSearchDirs);
-
-    if (!formatId && story.twine2.format) {
-      formatId = getFormatIdByNameAndVersion(formats, story.twine2.format, story.twine2.formatVersion) ?? '';
-    }
-    if (!formatId) {
-      formatId = DEFAULT_FORMAT_ID;
-    }
-
-    format = formats.get(formatId);
-
-    // Remote format fallback
-    if (!format && !noRemote) {
-      // Determine the format name and version for remote lookup
-      const remoteName = story.twine2.format || formatId;
-      const remoteVersion = story.twine2.formatVersion || '';
-
-      try {
-        format = await resolveRemoteFormat(remoteName, remoteVersion, options.formatIndices, options.formatUrls);
-      } catch (e) {
-        diagnostics.push({
-          level: 'warning',
-          message: `Remote format fetch failed for "${remoteName}": ${e instanceof Error ? e.message : String(e)}`,
-        });
-      }
-    }
-
-    if (!format) {
-      const reason = noRemote ? ' (remote fetching disabled)' : '';
-      diagnostics.push({
-        level: 'error',
-        message: `Story format "${formatId}" is not available${reason}. Found: ${[...formats.keys()].join(', ') || 'none'}`,
-      });
-    }
+    const request = formatRequestFor(
+      options.formatId,
+      story.twine2.format,
+      story.twine2.formatVersion,
+      DEFAULT_FORMAT_ID,
+    );
+    format = await resolveStoryFormat(request, { ...options, noRemote }, diagnostics);
   }
 
   // Merge config from StoryData: command-line > StoryData > default.

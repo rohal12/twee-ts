@@ -2,11 +2,12 @@
  * Remote story format fetching, caching, and checksum verification.
  * Uses the Story Formats Archive (SFA) as the default source.
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import type { SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
-import { parseSemver, semverCompare, parseFormatJSON } from './formats.js';
+import type { FormatRequest, SFAIndex, SFAIndexEntry, StoryFormatInfo } from './types.js';
+import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate } from './formats.js';
+import type { SelectFormatOptions } from './formats.js';
 
 const DEFAULT_SFA_INDICES = [
   'https://videlais.github.io/story-formats-archive/official/index.json',
@@ -18,6 +19,65 @@ export function getCacheDir(): string {
   const xdg = process.env['XDG_CACHE_HOME'];
   const base = xdg || join(homedir(), '.cache');
   return join(base, 'twee-ts', 'storyformats');
+}
+
+/**
+ * Whether a string can serve as one directory name inside the cache: not empty, not `.` or `..`,
+ * and free of path separators. Format names and versions come from downloaded metadata, so they
+ * are untrusted path input.
+ */
+function isSafeSegment(segment: string): boolean {
+  return segment !== '' && segment !== '.' && segment !== '..' && !/[/\\\0]/.test(segment);
+}
+
+/** Whether absolute path `target` lies strictly inside absolute path `root`. */
+function isInside(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  return rel !== '' && !isAbsolute(rel) && rel.split(sep)[0] !== '..';
+}
+
+/** The cache directory for one format version. Throws when the name or version could leave the cache. */
+function cachedFormatDir(name: string, version: string): string {
+  if (!isSafeSegment(name)) {
+    throw new Error(`Refusing to cache a story format with an unsafe name: ${JSON.stringify(name)}`);
+  }
+  if (!isSafeSegment(version) || !parseSemver(version)) {
+    throw new Error(`Refusing to cache story format "${name}" with an unsafe version: ${JSON.stringify(version)}`);
+  }
+  const root = resolve(getCacheDir());
+  const dir = resolve(root, name, version);
+  if (!isInside(root, dir)) {
+    throw new Error(`Refusing to cache a story format outside the cache directory ${root}: ${dir}`);
+  }
+  return dir;
+}
+
+/** Create `dir` as a plain directory, or check that it already is one (a symlink could lead out of the cache). */
+function ensurePlainDirectory(dir: string): void {
+  const stat = lstatSync(dir, { throwIfNoEntry: false });
+  if (stat === undefined) {
+    mkdirSync(dir);
+    return;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Refusing to write a story format outside the cache directory: ${dir} is not a plain directory`);
+  }
+}
+
+/** Write a downloaded format.js to `<cache>/<name>/<version>/format.js` and return its path. */
+function writeCachedFormat(name: string, version: string, text: string): string {
+  const dir = cachedFormatDir(name, version);
+  const root = resolve(getCacheDir());
+  mkdirSync(root, { recursive: true });
+  ensurePlainDirectory(join(root, name));
+  ensurePlainDirectory(dir);
+
+  const formatPath = join(dir, 'format.js');
+  if (lstatSync(formatPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`Refusing to write a story format outside the cache directory: ${formatPath} is a symlink`);
+  }
+  writeFileSync(formatPath, text, 'utf-8');
+  return formatPath;
 }
 
 /** In-memory index cache, keyed by URL. Cleared each compile. */
@@ -52,12 +112,6 @@ function validateSFAIndex(json: unknown): SFAIndex {
   return { twine1, twine2 };
 }
 
-/** Generate a format ID from name and version. */
-function makeFormatId(name: string, version: string): string {
-  const major = parseSemver(version)?.[0] ?? '0';
-  return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
-}
-
 /** Fetch and parse an SFA index.json, with in-memory caching. */
 export async function fetchIndex(url: string): Promise<SFAIndex> {
   const cached = indexCache.get(url);
@@ -82,36 +136,16 @@ interface FindEntryResult {
  * Exact version preferred, then highest version with same major.
  */
 export function findEntry(index: SFAIndex, name: string, version: string): FindEntryResult | undefined {
-  const wanted = parseSemver(version);
+  return findEntryForRequest(index, { kind: 'name', name, version });
+}
 
-  const searchArrays: Array<{ entries: SFAIndexEntry[]; formatType: 'twine1' | 'twine2' }> = [
-    { entries: index.twine2 ?? [], formatType: 'twine2' },
-    { entries: index.twine1 ?? [], formatType: 'twine1' },
+/** Find the best matching entry in an SFA index for a name or ID request (twine2 entries first). */
+function findEntryForRequest(index: SFAIndex, request: FormatRequest): FindEntryResult | undefined {
+  const candidates: FindEntryResult[] = [
+    ...(index.twine2 ?? []).map((entry) => ({ entry, formatType: 'twine2' as const })),
+    ...(index.twine1 ?? []).map((entry) => ({ entry, formatType: 'twine1' as const })),
   ];
-
-  let bestResult: FindEntryResult | undefined;
-  let bestVersion: [number, number, number] | null = null;
-
-  for (const { entries, formatType } of searchArrays) {
-    for (const entry of entries) {
-      if (entry.name.toLowerCase() !== name.toLowerCase()) continue;
-      const have = parseSemver(entry.version);
-      if (!have) continue;
-
-      // Exact match — return immediately
-      if (wanted && semverCompare(have, wanted) === 0) return { entry, formatType };
-
-      // Same-major, highest version
-      if (wanted === null || (have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-        if (!bestVersion || semverCompare(have, bestVersion) > 0) {
-          bestVersion = have;
-          bestResult = { entry, formatType };
-        }
-      }
-    }
-  }
-
-  return bestResult;
+  return selectFormatCandidate(request, candidates, (c) => c.entry);
 }
 
 /** Verify SHA-256 checksum using Web Crypto API (Node 22 built-in). */
@@ -131,6 +165,9 @@ function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry, formatType: 'twi
 
 /** Download a format, verify its checksum, write to cache, and return StoryFormatInfo. */
 export async function fetchAndCacheFormat(entry: SFAIndexEntry, downloadUrl: string): Promise<StoryFormatInfo> {
+  // Index metadata is untrusted: reject a name or version that would leave the cache before downloading.
+  cachedFormatDir(entry.name, entry.version);
+
   const res = await fetch(downloadUrl);
   if (!res.ok) {
     throw new Error(`Failed to download format from ${downloadUrl}: ${res.status} ${res.statusText}`);
@@ -156,12 +193,7 @@ export async function fetchAndCacheFormat(entry: SFAIndexEntry, downloadUrl: str
     throw new Error(`Failed to parse format JSON from ${downloadUrl}`);
   }
 
-  // Write to cache
-  const cacheDir = getCacheDir();
-  const formatDir = join(cacheDir, entry.name, entry.version);
-  mkdirSync(formatDir, { recursive: true });
-  const formatPath = join(formatDir, 'format.js');
-  writeFileSync(formatPath, text, 'utf-8');
+  const formatPath = writeCachedFormat(entry.name, entry.version, text);
 
   return {
     id,
@@ -181,20 +213,13 @@ export async function fetchDirectFormat(url: string): Promise<StoryFormatInfo> {
   }
   const text = await res.text();
 
-  const tempId = 'direct-url';
-  const data = parseFormatJSON(text, tempId);
+  const data = parseFormatJSON(text);
   if (!data) {
     throw new Error(`Failed to parse format JSON from ${url}`);
   }
 
   const id = makeFormatId(data.name, data.version);
-
-  // Write to cache
-  const cacheDir = getCacheDir();
-  const formatDir = join(cacheDir, data.name, data.version);
-  mkdirSync(formatDir, { recursive: true });
-  const formatPath = join(formatDir, 'format.js');
-  writeFileSync(formatPath, text, 'utf-8');
+  const formatPath = writeCachedFormat(data.name, data.version, text);
 
   return {
     id,
@@ -208,9 +233,11 @@ export async function fetchDirectFormat(url: string): Promise<StoryFormatInfo> {
 
 /**
  * Try to resolve a remote story format by name and version.
+ * 0. Use an exactly matching cached download, without touching the network
  * 1. Try direct format URLs
  * 2. Try custom index URLs
  * 3. Try default SFA indices
+ * 4. Fall back to a compatible cached download (e.g. when offline)
  */
 export async function resolveRemoteFormat(
   name: string,
@@ -218,23 +245,32 @@ export async function resolveRemoteFormat(
   indices?: string[],
   urls?: string[],
 ): Promise<StoryFormatInfo | undefined> {
+  return resolveRemoteFormatRequest({ kind: 'name', name, version }, indices, urls);
+}
+
+/**
+ * Resolve a story format request remotely, in the same order as {@link resolveRemoteFormat}.
+ * An ID request such as 'sugarcube-2' matches the format whose name and major version build that ID
+ * (SugarCube 2.x), taking the greatest version available.
+ */
+export async function resolveRemoteFormatRequest(
+  request: FormatRequest,
+  indices?: string[],
+  urls?: string[],
+): Promise<StoryFormatInfo | undefined> {
   let lastError: Error | undefined;
 
-  // 1. Try direct URLs — check if any match by name
-  if (urls) {
-    for (const url of urls) {
-      try {
-        const info = await fetchDirectFormat(url);
-        if (info.name.toLowerCase() === name.toLowerCase()) {
-          const wanted = parseSemver(version);
-          const have = parseSemver(info.version);
-          if (!wanted || (have && have[0] === wanted[0] && semverCompare(have, wanted) >= 0)) {
-            return info;
-          }
-        }
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-      }
+  // 0. An exact version already downloaded needs no network access.
+  const cached = findCachedFormat(request);
+  if (cached && request.kind === 'name' && isExactVersion(cached.version, request.version)) return cached;
+
+  // 1. Try direct URLs — use the first that answers the request
+  for (const url of urls ?? []) {
+    try {
+      const info = await fetchDirectFormat(url);
+      if (selectFormatCandidate(request, [info], (f) => f)) return info;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
     }
   }
 
@@ -243,11 +279,11 @@ export async function resolveRemoteFormat(
   for (const indexUrl of allIndices) {
     try {
       const index = await fetchIndex(indexUrl);
-      const result = findEntry(index, name, version);
+      const result = findEntryForRequest(index, request);
       if (result) {
         // Check cache first
-        const cached = getCachedFormat(result.entry.name, result.entry.version);
-        if (cached) return cached;
+        const hit = getCachedFormat(result.entry.name, result.entry.version);
+        if (hit) return hit;
 
         const downloadUrl = getDownloadUrl(indexUrl, result.entry, result.formatType);
         return await fetchAndCacheFormat(result.entry, downloadUrl);
@@ -257,13 +293,35 @@ export async function resolveRemoteFormat(
     }
   }
 
+  // 3. No source had it (or none could be reached): a compatible cached download still answers the request.
+  if (cached) return cached;
+
   // If all sources failed with errors, propagate the last one
   if (lastError) throw lastError;
   return undefined;
 }
 
+/** Whether two version strings name the same SemVer version. */
+function isExactVersion(have: string, wanted: string): boolean {
+  const a = parseSemver(have);
+  const b = parseSemver(wanted);
+  return a !== null && b !== null && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+/**
+ * Find the cached download that best answers a format request, without network access.
+ * Matching follows {@link selectFormatCandidate}.
+ */
+export function findCachedFormat(
+  request: FormatRequest,
+  options: SelectFormatOptions = {},
+): StoryFormatInfo | undefined {
+  return selectFormatCandidate(request, [...discoverCachedFormats().values()], (f) => f, options);
+}
+
 /** Check if a format is already in the local cache. */
 function getCachedFormat(name: string, version: string): StoryFormatInfo | undefined {
+  if (!isSafeSegment(name) || !isSafeSegment(version)) return undefined;
   const formatPath = join(getCacheDir(), name, version, 'format.js');
   try {
     if (!existsSync(formatPath)) return undefined;
@@ -388,8 +446,18 @@ export function listCachedFormats(): readonly CachedFormatEntry[] {
   return entries;
 }
 
-/** Clear all cached formats, or only those matching a given name. Returns the number of entries removed. */
+/**
+ * Clear all cached formats, or only those matching a given name. Returns the number of entries removed.
+ * A name must be a single cache entry name (as `listCachedFormats()` reports it); anything with a
+ * path separator or `.`/`..` throws instead of deleting outside the format's own directory.
+ */
 export function clearCachedFormats(name?: string): number {
+  if (name && !isSafeSegment(name)) {
+    throw new Error(
+      `Refusing to clear ${JSON.stringify(name)}: it is not a cached format name. Use a name as "cache list" shows it.`,
+    );
+  }
+
   const cacheDir = getCacheDir();
   if (!existsSync(cacheDir)) return 0;
 
@@ -400,8 +468,13 @@ export function clearCachedFormats(name?: string): number {
     return count;
   }
 
-  const nameDir = join(cacheDir, name);
-  if (!existsSync(nameDir)) return 0;
+  const root = resolve(cacheDir);
+  const nameDir = resolve(root, name);
+  if (!isInside(root, nameDir)) {
+    throw new Error(`Refusing to clear ${JSON.stringify(name)}: it is not a cached format name.`);
+  }
+  // lstat, so a symlinked entry is never followed out of the cache: only plain directories are entries.
+  if (!lstatSync(nameDir, { throwIfNoEntry: false })?.isDirectory()) return 0;
 
   let versions: string[];
   try {

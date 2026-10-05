@@ -999,7 +999,8 @@ describe('Special Passages — StoryData', () => {
         ':: Start',
         'Hello',
       ].join('\n');
-      const result = await compileInline(source);
+      // Archive output carries StoryData's format as written; full HTML names the format it was built with.
+      const result = await compileInline(source, { outputMode: 'twine2-archive' });
       expect(result.output).toContain('format="SugarCube"');
     });
 
@@ -1044,7 +1045,8 @@ describe('Special Passages — StoryData', () => {
         ':: Start',
         'Hello',
       ].join('\n');
-      const result = await compileInline(source);
+      // Archive output carries StoryData's format as written; full HTML names the format it was built with.
+      const result = await compileInline(source, { outputMode: 'twine2-archive' });
       expect(result.output).toContain('format-version="2.28.2"');
     });
 
@@ -1732,7 +1734,8 @@ describe('Twine 2 HTML Output Structure', () => {
       ':: Start',
       'Hello',
     ].join('\n');
-    const result = await compileInline(source);
+    // Archive output carries StoryData's format as written; full HTML names the format it was built with.
+    const result = await compileInline(source, { outputMode: 'twine2-archive' });
     expect(result.output).toContain('format="SugarCube"');
   });
 
@@ -1747,7 +1750,8 @@ describe('Twine 2 HTML Output Structure', () => {
       ':: Start',
       'Hello',
     ].join('\n');
-    const result = await compileInline(source);
+    // Archive output carries StoryData's format as written; full HTML names the format it was built with.
+    const result = await compileInline(source, { outputMode: 'twine2-archive' });
     expect(result.output).toContain('format-version="2.28.2"');
   });
 
@@ -2657,7 +2661,8 @@ describe('Requirements and Recommendations — Additional Coverage', () => {
         ':: Begin',
         'Hello',
       ].join('\n');
-      const result = await compileInline(source);
+      // Archive output carries StoryData's format as written; full HTML names the format it was built with.
+      const result = await compileInline(source, { outputMode: 'twine2-archive' });
       expect(result.output).toContain('name="Full Roundtrip Test"');
       expect(result.output).toContain('ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC"');
       expect(result.output).toContain('format="SugarCube"');

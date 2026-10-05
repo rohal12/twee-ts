@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   getCacheDir,
   findEntry,
@@ -10,6 +11,10 @@ import {
   listCachedFormats,
   clearCachedFormats,
   getCacheSize,
+  fetchAndCacheFormat,
+  fetchDirectFormat,
+  resolveRemoteFormat,
+  resolveRemoteFormatRequest,
 } from '../src/remote-formats.js';
 import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
 
@@ -335,5 +340,244 @@ describe('getCacheSize', () => {
       expect(totalBytes).toBe(0);
       expect(count).toBe(0);
     });
+  });
+});
+
+// --- Network-free helpers for the remote resolution tests ---
+
+const OFFICIAL_INDEX = 'https://videlais.github.io/story-formats-archive/official/index.json';
+const OFFICIAL_BASE = 'https://videlais.github.io/story-formats-archive/official';
+const UNOFFICIAL_INDEX = 'https://videlais.github.io/story-formats-archive/unofficial/index.json';
+const HARLOWE_FIXTURE = join(__dirname, 'fixtures', 'storyformats-harlowe', 'harlowe-3', 'format.js');
+
+function formatJs(name: string, version: string): string {
+  return `window.storyFormat(${JSON.stringify({ name, version, proofing: false, source: '<html>{{STORY_DATA}}</html>' })});`;
+}
+
+function sfaEntry(name: string, version: string): SFAIndexEntry {
+  return { name, version, proofing: false, files: ['format.js'], checksums: {} };
+}
+
+/** Stub `fetch` with a URL → body table; unknown URLs answer 404. Returns the list of requested URLs. */
+function stubFetch(routes: Readonly<Record<string, string>>): string[] {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      const body = routes[url];
+      return body === undefined
+        ? new Response('missing', { status: 404, statusText: 'Not Found' })
+        : new Response(body);
+    }),
+  );
+  return calls;
+}
+
+/** Stub `fetch` so every request fails as if the machine were offline. */
+function stubOffline(): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      throw new TypeError('offline');
+    }),
+  );
+}
+
+/** Give each test its own XDG cache root under the OS temp dir. */
+function useTempCacheHome(): { readonly root: () => string } {
+  let root = '';
+  let orig: string | undefined;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-cache-'));
+    orig = process.env['XDG_CACHE_HOME'];
+    process.env['XDG_CACHE_HOME'] = root;
+    clearIndexCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (orig !== undefined) process.env['XDG_CACHE_HOME'] = orig;
+    else delete process.env['XDG_CACHE_HOME'];
+    rmSync(root, { recursive: true, force: true });
+  });
+  return { root: () => root };
+}
+
+describe('clearCachedFormats containment', () => {
+  const tmp = useTempCacheHome();
+
+  function populate(): void {
+    const dir = join(getCacheDir(), 'MockFormat', '2.1.0');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
+    // Siblings of the storyformats directory that must survive any named clear.
+    writeFileSync(join(tmp.root(), 'twee-ts', 'keep.txt'), 'keep');
+    writeFileSync(join(tmp.root(), 'outside.txt'), 'keep');
+  }
+
+  it.each(['..', '../..', '.', 'MockFormat/..', 'MockFormat/2.1.0', '../twee-ts', 'a\\..\\..', '/'])(
+    'rejects %j without deleting anything',
+    (name) => {
+      populate();
+      expect(() => clearCachedFormats(name)).toThrow(/not a cached format name/);
+      expect(existsSync(join(tmp.root(), 'twee-ts', 'keep.txt'))).toBe(true);
+      expect(existsSync(join(tmp.root(), 'outside.txt'))).toBe(true);
+      expect(listCachedFormats()).toHaveLength(1);
+    },
+  );
+
+  it('does not follow a symlinked entry out of the cache', () => {
+    populate();
+    const outside = join(tmp.root(), 'elsewhere');
+    mkdirSync(join(outside, '1.0.0'), { recursive: true });
+    writeFileSync(join(outside, '1.0.0', 'format.js'), MOCK_FORMAT_SOURCE);
+    symlinkSync(outside, join(getCacheDir(), 'Linked'), 'dir');
+
+    expect(clearCachedFormats('Linked')).toBe(0);
+    expect(existsSync(join(outside, '1.0.0', 'format.js'))).toBe(true);
+  });
+
+  it('still clears a plain named entry', () => {
+    populate();
+    expect(clearCachedFormats('MockFormat')).toBe(1);
+    expect(listCachedFormats()).toEqual([]);
+    expect(existsSync(join(tmp.root(), 'twee-ts', 'keep.txt'))).toBe(true);
+  });
+});
+
+describe('downloaded format metadata containment', () => {
+  const tmp = useTempCacheHome();
+
+  it.each([
+    ['a traversal name', '../../escaped', '1.0.0'],
+    ['a separator in the name', 'nested/escaped', '1.0.0'],
+    ['a traversal suffix on the version', 'Escaper', '1.0.0/../../../escaped'],
+  ])('fetchDirectFormat rejects %s', async (_label, name, version) => {
+    stubFetch({ 'https://example.test/format.js': formatJs(name, version) });
+    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/unsafe/);
+    expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
+    expect(existsSync(join(tmp.root(), 'twee-ts', 'escaped'))).toBe(false);
+    expect(existsSync(join(getCacheDir(), 'nested'))).toBe(false);
+  });
+
+  it('fetchAndCacheFormat rejects an unsafe index entry before downloading', async () => {
+    const calls = stubFetch({ 'https://example.test/format.js': formatJs('Escaper', '1.0.0') });
+    await expect(
+      fetchAndCacheFormat(sfaEntry('../../escaped', '1.0.0'), 'https://example.test/format.js'),
+    ).rejects.toThrow(/unsafe/);
+    expect(calls).toEqual([]);
+    expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
+  });
+
+  it('resolveRemoteFormat writes nothing outside the cache for a malicious index entry', async () => {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('../../escaped', '1.0.0')] }),
+      [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
+      [`${OFFICIAL_BASE}/twine2/../../escaped/1.0.0/format.js`]: formatJs('Escaper', '1.0.0'),
+    });
+    await expect(resolveRemoteFormat('../../escaped', '1.0.0')).rejects.toThrow(/unsafe/);
+    expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
+  });
+
+  it('refuses to write through a symlink planted in the cache', async () => {
+    const outside = join(tmp.root(), 'elsewhere');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(getCacheDir(), { recursive: true });
+    symlinkSync(outside, join(getCacheDir(), 'Linked'), 'dir');
+    stubFetch({ 'https://example.test/format.js': formatJs('Linked', '1.0.0') });
+
+    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/outside/);
+    expect(existsSync(join(outside, '1.0.0', 'format.js'))).toBe(false);
+  });
+
+  it('caches a well-formed direct download under name/version', async () => {
+    stubFetch({ 'https://example.test/format.js': formatJs('Good Format', '1.2.3') });
+    const info = await fetchDirectFormat('https://example.test/format.js');
+    expect(info.filename).toBe(join(getCacheDir(), 'Good Format', '1.2.3', 'format.js'));
+    expect(info.id).toBe('good-format-1');
+  });
+});
+
+describe('fetchDirectFormat with a Harlowe setup function', () => {
+  useTempCacheHome();
+
+  it('parses a format whose setup property is a real function', async () => {
+    stubFetch({ 'https://example.test/harlowe.js': readFileSync(HARLOWE_FIXTURE, 'utf-8') });
+    const info = await fetchDirectFormat('https://example.test/harlowe.js');
+    expect(info.name).toBe('Harlowe');
+    expect(info.version).toBe('3.3.9');
+    expect(info.id).toBe('harlowe-3');
+  });
+});
+
+describe('resolveRemoteFormatRequest with format IDs', () => {
+  useTempCacheHome();
+
+  it('resolves a directory-style ID against index names', async () => {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({
+        twine1: [],
+        twine2: [sfaEntry('SugarCube', '2.36.1'), sfaEntry('SugarCube', '2.37.3'), sfaEntry('Harlowe', '3.3.9')],
+      }),
+      [`${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`]: formatJs('SugarCube', '2.37.3'),
+    });
+    const info = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(info?.name).toBe('SugarCube');
+    expect(info?.version).toBe('2.37.3');
+  });
+
+  it('does not cross major versions for an ID', async () => {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '1.0.35')] }),
+      [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
+    });
+    await expect(resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' })).resolves.toBeUndefined();
+  });
+
+  it('matches a direct URL by ID', async () => {
+    stubFetch({ 'https://example.test/format.js': formatJs('SugarCube', '2.37.3') });
+    const info = await resolveRemoteFormatRequest(
+      { kind: 'id', id: 'sugarcube-2' },
+      [],
+      ['https://example.test/format.js'],
+    );
+    expect(info?.version).toBe('2.37.3');
+  });
+});
+
+describe('resolveRemoteFormat with a download cache and no network', () => {
+  useTempCacheHome();
+
+  async function cacheSugarCube(): Promise<void> {
+    stubFetch({
+      [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '2.37.3')] }),
+      [`${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`]: formatJs('SugarCube', '2.37.3'),
+    });
+    const first = await resolveRemoteFormat('SugarCube', '2.37.3');
+    expect(first !== undefined && existsSync(first.filename)).toBe(true);
+    clearIndexCache();
+    vi.unstubAllGlobals();
+  }
+
+  it('uses an exactly matching cached format without fetching', async () => {
+    await cacheSugarCube();
+    stubOffline();
+    const info = await resolveRemoteFormat('SugarCube', '2.37.3');
+    expect(info?.version).toBe('2.37.3');
+  });
+
+  it('falls back to a compatible cached format when the network fails', async () => {
+    await cacheSugarCube();
+    stubOffline();
+    const byName = await resolveRemoteFormat('SugarCube', '2.30.0');
+    expect(byName?.version).toBe('2.37.3');
+    const byId = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(byId?.version).toBe('2.37.3');
+  });
+
+  it('still reports the network error when nothing is cached', async () => {
+    stubOffline();
+    await expect(resolveRemoteFormat('SugarCube', '2.37.3')).rejects.toThrow('offline');
   });
 });

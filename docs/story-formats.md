@@ -8,7 +8,8 @@ twee-ts searches for formats in the following order:
 
 1. **`formatPaths`** — directories listed in the config or passed via the API
 2. **`TWEEGO_PATH`** — the environment variable used by Tweego (unless `useTweegoPath: false`)
-3. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom URLs (unless `noRemote: true`)
+3. **Download cache** — formats downloaded earlier (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
+4. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom URLs (unless `noRemote: true`)
 
 ### Listing Available Formats
 
@@ -59,7 +60,7 @@ Twine 2 `format.js` files contain a JSON object with the following fields:
 | `url`         | No       | Format homepage URL                                |
 | `license`     | No       | Format license                                     |
 
-twee-ts uses relaxed JSON parsing for `format.js`, tolerating trailing commas, single-quoted strings, and unquoted property keys found in some formats (e.g. older versions of Harlowe).
+twee-ts uses relaxed JSON parsing for `format.js`, tolerating trailing commas, single-quoted strings, and unquoted property keys found in some formats (e.g. older versions of Harlowe). It also drops Harlowe's function-valued `setup` property, whether the format comes from a local directory or a download.
 
 ### SemVer Version Pruning
 
@@ -98,6 +99,8 @@ Or in the config file:
 }
 ```
 
+A remote lookup by format ID translates the ID to a name and major version: `sugarcube-2` finds the greatest SugarCube 2.x in an index, or a direct URL whose `format.js` names SugarCube 2.x.
+
 ### Disabling Remote Fetching
 
 ```sh
@@ -110,6 +113,8 @@ twee-ts --no-remote
 }
 ```
 
+Formats already in the download cache are still used.
+
 ## Format Selection
 
 The format is selected in this order of precedence:
@@ -118,7 +123,11 @@ The format is selected in this order of precedence:
 2. The `format` and `formatVersion` fields in the `StoryData` passage
 3. Default: `sugarcube-2`
 
-When the `StoryData` passage specifies a format by name and version, twee-ts matches it against available formats using semantic versioning.
+The first of these that is set is the format twee-ts looks for, in every source above. If it can't be found, the build fails with an error naming it; twee-ts never swaps in a different story format.
+
+When the `StoryData` passage specifies a format by name and version, twee-ts matches it against available formats using semantic versioning: the same major version, at or above the requested version. If only an older version of the same major is available, twee-ts uses it and warns.
+
+The compiled HTML's `<tw-storydata>` element records the format and version it was built with. Archive output (`twine2-archive`) keeps the `StoryData` values as written.
 
 ## Special Passages
 

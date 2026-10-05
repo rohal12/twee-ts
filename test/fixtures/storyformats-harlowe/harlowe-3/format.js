@@ -1,0 +1,1 @@
+window.storyFormat({"name":"Harlowe","version":"3.3.9","author":"Test","description":"A Harlowe-like test format with a real function-valued setup property.","proofing":false,"source":"<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>","setup": function(){"use strict";var e={mode:"harlowe"};this.harloweSetup=function(){return e.mode}}});
