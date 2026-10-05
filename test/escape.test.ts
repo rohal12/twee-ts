@@ -100,6 +100,9 @@ describe('cssStringEscape', () => {
   it('writes line breaks and other control characters as hex escapes ending in a space', () => {
     expect(cssStringEscape('a\nb\rc\fd\te\u0001f\u007fg')).toBe('a\\a b\\d c\\c d\\9 e\\1 f\\7f g');
   });
+  it('returns an empty string unchanged', () => {
+    expect(cssStringEscape('')).toBe('');
+  });
   it('leaves other text alone', () => {
     expect(cssStringEscape("Fira Sans 'Bold' é 😀")).toBe("Fira Sans 'Bold' é 😀");
   });
