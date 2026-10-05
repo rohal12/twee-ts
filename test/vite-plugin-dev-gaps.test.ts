@@ -1,9 +1,18 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
-import { build, createLogger, createServer, type Logger, type ViteDevServer } from 'vite';
+import {
+  build,
+  createLogger,
+  createServer,
+  type InlineConfig,
+  type Logger,
+  type Plugin,
+  type ViteDevServer,
+} from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
@@ -185,5 +194,138 @@ describe('vite plugin: build details', { timeout: 30_000 }, () => {
       plugins: [tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE })],
     });
     expect(readFileSync(join(dir, 'dist', 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+});
+
+const ENTRY_STORY_OPTIONS = (dir: string): Parameters<typeof tweeTsPlugin>[0] => ({
+  sources: [join(dir, 'story')],
+  format: 'test-format-1',
+  entry: join(dir, 'app/main.ts'),
+  compileOptions: COMPILE,
+});
+
+/** The text of the story's user script, where the bundled entry ends up. */
+function entryScript(html: string): string {
+  return /<script[^>]*id="twine-user-script"[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
+}
+
+function virtualPlugin(name: string, value: string): Plugin {
+  return {
+    name: 'test-virtual',
+    resolveId(id) {
+      if (id === name) return `\0${name}`;
+      return undefined;
+    },
+    load(id) {
+      if (id === `\0${name}`) return `export default ${JSON.stringify(value)};`;
+      return undefined;
+    },
+  };
+}
+
+function writeViteConfig(dir: string, options: unknown, extra: string): string {
+  const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+  const file = join(dir, 'vite.config.mjs');
+  writeFileSync(
+    file,
+    `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\nexport default {\n${extra}  plugins: [tweeTsPlugin(${JSON.stringify(options)})],\n};\n`,
+  );
+  return file;
+}
+
+describe('vite plugin: user configuration in the dev entry build', { timeout: 30_000 }, () => {
+  const VIRTUAL_ENTRY = 'import message from "virtual:test-message";\nglobalThis.m = message;\n';
+
+  async function serve(config: InlineConfig): Promise<string> {
+    const port = await freePort();
+    server = await createServer({
+      logLevel: 'silent',
+      ...config,
+      server: { host: '127.0.0.1', port, strictPort: true },
+    });
+    await server.listen();
+    return `http://127.0.0.1:${port}/`;
+  }
+
+  it('applies an inline plugin with configFile:false in dev and in a production build', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': VIRTUAL_ENTRY });
+    const config = (): InlineConfig => ({
+      configFile: false,
+      root: dir,
+      logLevel: 'silent',
+      plugins: [virtualPlugin('virtual:test-message', 'virtual-ok'), tweeTsPlugin(ENTRY_STORY_OPTIONS(dir))],
+    });
+    const built = await build({ ...config(), build: { write: false } });
+    const results = Array.isArray(built) ? built : [built];
+    const outputs = results.flatMap((b) => ('output' in b ? b.output : []));
+    const file = outputs.find((o) => o.fileName === 'index.html');
+    expect(file && 'source' in file ? String(file.source) : '').toContain('virtual-ok');
+
+    const url = await serve(config());
+    const html = await (await fetch(url)).text();
+    expect(html).not.toContain('The story has not compiled yet.');
+    expect(entryScript(html)).toContain('virtual-ok');
+  });
+
+  it('applies a transform-only inline plugin to the dev entry', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'globalThis.marker = "__TOKEN__";\n' });
+    const transformer: Plugin = {
+      name: 'test-transform',
+      transform(code, id) {
+        if (id.endsWith('main.ts')) return code.replace('__TOKEN__', 'transformed-ok');
+        return undefined;
+      },
+    };
+    const url = await serve({
+      configFile: false,
+      root: dir,
+      plugins: [transformer, tweeTsPlugin(ENTRY_STORY_OPTIONS(dir))],
+    });
+    expect(entryScript(await (await fetch(url)).text())).toContain('transformed-ok');
+  });
+
+  it('keeps an inline define override when a config file also defines the value', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': 'declare const __VALUE__: string;\nglobalThis.value = __VALUE__;\n',
+    });
+    const configFile = writeViteConfig(
+      dir,
+      ENTRY_STORY_OPTIONS(dir),
+      `  define: { __VALUE__: JSON.stringify('from-file') },\n`,
+    );
+    const url = await serve({ configFile, root: dir, define: { __VALUE__: JSON.stringify('from-inline') } });
+    const script = entryScript(await (await fetch(url)).text());
+    expect(script).toContain('from-inline');
+    expect(script).not.toContain('from-file');
+  });
+
+  it('applies inline plugins and aliases next to a config file', async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'lib/mark.ts': "export const libMark = 'alias-ok';\n",
+      'app/main.ts':
+        'import message from "virtual:test-message";\nimport { libMark } from "@lib/mark";\nglobalThis.m = message + libMark;\n',
+    });
+    const configFile = writeViteConfig(dir, ENTRY_STORY_OPTIONS(dir), '');
+    const url = await serve({
+      configFile,
+      root: dir,
+      plugins: [virtualPlugin('virtual:test-message', 'virtual-ok')],
+      resolve: { alias: { '@lib': join(dir, 'lib') } },
+    });
+    const script = entryScript(await (await fetch(url)).text());
+    expect(script).toContain('virtual-ok');
+    expect(script).toContain('alias-ok');
+  });
+
+  it('does not run the twee-ts plugin again inside the entry build', async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'globalThis.ok = "recursion-free";\n' });
+    const url = await serve({
+      configFile: false,
+      root: dir,
+      plugins: [tweeTsPlugin(ENTRY_STORY_OPTIONS(dir))],
+    });
+    expect(entryScript(await (await fetch(url)).text())).toContain('recursion-free');
   });
 });

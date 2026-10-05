@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A same-major older story format from the project's configured format URLs is used, with the older-version warning, when no at-or-above version is available, as for local and shared-cache formats (#224)
+- The Vite dev server's entry build uses the plugins and the `define` and alias overrides passed to `createServer()`, with or without a config file (#222)
 
 ## [1.18.1] - 2026-10-05
 
