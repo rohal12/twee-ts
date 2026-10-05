@@ -64,7 +64,7 @@ export default {
 };
 ```
 
-Also available: `@rohal12/twee-ts/rollup`.
+Also available: `@rohal12/twee-ts/rollup`. In both plugins, compile errors fail the build and emit no HTML; warnings go through the bundler's warnings.
 
 ## Documentation
 

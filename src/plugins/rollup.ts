@@ -1,10 +1,13 @@
 /**
  * Ready-made Rollup plugin for twee-ts.
- * Compiles .tw files and emits HTML as an asset.
+ * Compiles .tw files and emits HTML as an asset. Compile errors fail the build
+ * and emit nothing; warnings go through Rollup's warnings.
  */
 import { resolve } from 'node:path';
-import type { CompileOptions } from '../types.js';
+import type { CompileOptions, CompileResult, Diagnostic } from '../types.js';
 import { compile } from '../compiler.js';
+import { fatalError, formatDiagnostic, splitDiagnostics } from './diagnostics.js';
+import type { LocatedError } from './diagnostics.js';
 
 export interface TweeTsRollupPluginOptions {
   /** Source directories/files to compile. */
@@ -34,26 +37,29 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       for (const input of inputs) this.addWatchFile(resolve(input));
     },
 
-    async generateBundle(this: { emitFile: (opts: { type: string; fileName: string; source: string }) => void }) {
-      const result = await compile({
-        sources: options.sources,
-        formatId: options.format,
-        ...options.compileOptions,
-      });
-
-      this.emitFile({
-        type: 'asset',
-        fileName: outputFilename,
-        source: result.output,
-      });
-
-      for (const d of result.diagnostics) {
-        if (d.level === 'warning') {
-          console.warn(`[twee-ts] ${d.message}`);
-        } else {
-          console.error(`[twee-ts] ${d.message}`);
-        }
+    async generateBundle(this: {
+      emitFile: (opts: { type: 'asset'; fileName: string; source: string }) => void;
+      error: (error: LocatedError) => never;
+      warn: (message: string) => void;
+    }): Promise<void> {
+      let result: CompileResult;
+      try {
+        result = await compile({
+          sources: options.sources,
+          formatId: options.format,
+          ...options.compileOptions,
+        });
+      } catch (e) {
+        return this.error(fatalError(e));
       }
+      let warnings: Diagnostic[];
+      try {
+        warnings = splitDiagnostics(result);
+      } catch (e) {
+        return this.error(e as LocatedError);
+      }
+      for (const w of warnings) this.warn(formatDiagnostic(w));
+      this.emitFile({ type: 'asset', fileName: outputFilename, source: result.output });
     },
   };
 }

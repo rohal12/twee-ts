@@ -133,7 +133,13 @@ interface TweeTsRollupPluginOptions {
 }
 ```
 
-Under `rollup --watch`, a change to a source, the head file or a module builds the story again.
+### Errors and warnings
+
+- **Errors fail the build.** When the compile reports an error (a missing starting passage, malformed Twee, a story format that can't be found), the plugin fails the build through Rollup's `this.error()` and emits no HTML. Rollup reports it as an error from the `twee-ts` plugin, with the file and line where the compiler knows them.
+- **Warnings** (a duplicate passage, unreadable passage metadata) go through Rollup's `this.warn()`, so they reach `onwarn`/`onLog` and Rollup's warning output like any other plugin warning. The story is still emitted.
+- **Watch mode**: under `rollup --watch`, a change to a source, the head file or a module builds the story again. A failed build is reported and the watcher keeps running, so fixing the story rebuilds it.
+
+The same holds when the Rollup plugin runs inside a `vite build`.
 
 ### Full Example
 
