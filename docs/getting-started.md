@@ -26,6 +26,8 @@ your-project/
 │   └── Start.tw
 ```
 
+Files that already exist are left alone, so `--init` is safe to run in an existing project.
+
 ## Compile
 
 With the config file in place, compile with no arguments:
