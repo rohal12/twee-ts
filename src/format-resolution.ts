@@ -16,7 +16,12 @@ import {
   rankedTwine2Formats,
   selectFormatCandidate,
 } from './formats.js';
-import { findCachedFormat, resolveFormatUrls, resolveRemoteFormatRequest } from './remote-formats.js';
+import {
+  findCachedFormat,
+  findCachedUrlFormat,
+  resolveFormatUrls,
+  resolveRemoteFormatRequest,
+} from './remote-formats.js';
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
@@ -72,8 +77,8 @@ function findLocalFormat(
  * then format indices (unless `noRemote`). Names and IDs match the same way in each (see
  * `selectFormatCandidate`), so a request that a local format answers never reaches the cache or the
  * network. Local formats that cannot be used are reported as warnings. When a StoryData request
- * names a version that none of them has, an older version of
- * the same format and major version is used with a warning. Anything else is an error diagnostic,
+ * names a version that none of them has, an older version of the same format and major version
+ * is used with a warning, from local formats, the project's cached format URLs, or the shared cache. Anything else is an error diagnostic,
  * and the result is `undefined`.
  */
 export async function resolveStoryFormat(
@@ -127,6 +132,9 @@ export async function resolveStoryFormat(
   if (request.kind === 'name') {
     const older =
       selectFormatCandidate(request, rankedTwine2Formats(pruned), (f) => f, { allowOlder: true }) ??
+      // Every configured URL was downloaded above unless remote fetching is off or it failed, so
+      // its cached copy is the whole answer here.
+      findCachedUrlFormat(request, options.formatUrls ?? [], { allowOlder: true }) ??
       findCachedFormat(request, { allowOlder: true });
     if (older) {
       diagnostics.push({

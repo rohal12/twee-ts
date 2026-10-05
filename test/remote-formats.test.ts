@@ -851,6 +851,77 @@ describe('downloads from format URLs and the shared download cache', () => {
   });
 });
 
+describe('same-major older fallback from format URLs', () => {
+  useTempHome();
+
+  const storyFor = (version: string) => [
+    {
+      filename: 's.tw',
+      content: `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"SugarCube","format-version":"${version}"}\n\n:: Start\nHi\n`,
+    },
+  ];
+  const compileFor = (version: string, options: { formatUrls?: string[]; noRemote?: boolean } = {}) =>
+    compile({ sources: storyFor(version), useTweegoPath: false, ...options });
+  const taggedVersion = (tag: string, version: string): string =>
+    taggedSugarCube(tag).replace('"2.37.3"', JSON.stringify(version));
+  const olderWarnings = (result: CompileResult): string[] =>
+    result.diagnostics.filter((d) => d.message.includes('is not available; using')).map((d) => d.message);
+
+  it('uses the older copy from a first online download, with a warning', async () => {
+    const calls = stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    const result = await compileFor('2.38.0', { formatUrls: [FORK_URL], noRemote: false });
+    expect(titleOf(result)).toBe('FORK');
+    expect(olderWarnings(result)).toHaveLength(1);
+    expect(calls).toContain(FORK_URL);
+  });
+
+  it('uses the primed copy offline, with the same warning as a local older format', async () => {
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    await fetchDirectFormat(FORK_URL);
+    vi.unstubAllGlobals();
+    stubOffline();
+    const result = await compileFor('2.38.0', { formatUrls: [FORK_URL], noRemote: true });
+    expect(titleOf(result)).toBe('FORK');
+    expect(olderWarnings(result)).toEqual([expect.stringContaining('using SugarCube 2.37.3 instead')]);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('downloads nothing when remote fetching is off and the URL is not cached', async () => {
+    const calls = stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    await expect(compileFor('2.38.0', { formatUrls: [FORK_URL], noRemote: true })).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
+
+  it('rejects an older copy of another major version', async () => {
+    stubFetch({ [FORK_URL]: taggedVersion('FORK', '1.0.0') });
+    await expect(compileFor('2.38.0', { formatUrls: [FORK_URL] })).rejects.toThrow();
+  });
+
+  it('does not warn for an exact or newer copy', async () => {
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    for (const wanted of ['2.37.3', '2.36.0']) {
+      const result = await compileFor(wanted, { formatUrls: [FORK_URL] });
+      expect(titleOf(result)).toBe('FORK');
+      expect(olderWarnings(result)).toEqual([]);
+    }
+  });
+
+  it('prefers an at-or-above copy from the index over an older copy from a format URL', async () => {
+    stubFetch({ ...OFFICIAL_ROUTES, [FORK_URL]: taggedVersion('FORK', '2.36.0') });
+    const result = await compileFor('2.37.0', { formatUrls: [FORK_URL] });
+    expect(titleOf(result)).toBe('OFFICIAL');
+    expect(olderWarnings(result)).toEqual([]);
+  });
+
+  it('never uses another project’s copy of the same name and version from the URL cache', async () => {
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    await fetchDirectFormat(FORK_URL);
+    const calls = stubFetch({});
+    await expect(compileFor('2.38.0', { formatUrls: ['https://example.test/other/format.js'] })).rejects.toThrow();
+    expect(calls).toContain('https://example.test/other/format.js');
+  });
+});
+
 describe('cancelling and timing out format downloads', () => {
   const tmp = useTempHome();
 

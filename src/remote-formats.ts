@@ -474,6 +474,22 @@ export async function resolveFormatUrls(
   return undefined;
 }
 
+/**
+ * Find the best format among the cached copies of direct format URLs, without network access.
+ * Matching follows {@link selectFormatCandidate}, so `allowOlder` admits a same-major older version.
+ * Each URL keeps its own copy; the shared name and version downloads are never consulted.
+ *
+ * Internal, for format resolution; not part of the public API.
+ */
+export function findCachedUrlFormat(
+  request: FormatRequest,
+  urls: readonly string[],
+  options: SelectFormatOptions = {},
+): StoryFormatInfo | undefined {
+  const cached = urls.flatMap((url) => getCachedDirectFormat(url) ?? []);
+  return selectFormatCandidate(request, cached, (f) => f, options);
+}
+
 /** Whether `info` is a format the request accepts. */
 function answers(request: FormatRequest, info: StoryFormatInfo): boolean {
   return selectFormatCandidate(request, [info], (f) => f) !== undefined;
