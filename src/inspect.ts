@@ -10,8 +10,9 @@
  *   expect(map.passages).toContain('Start');
  *   expect(map.brokenLinks).toHaveLength(0);
  */
-import type { ReadonlyPassage, ReadonlyStory } from './types.js';
+import type { InspectOptions, PassageOmission, ReadonlyPassage, ReadonlyStory } from './types.js';
 import { hasTag, isInfoPassage, isStoryPassage } from './passage.js';
+import { passageOmission } from './passage-omission.js';
 import { findJavaScriptPassageLinks, findPassageLinks } from './sugarcube-macros.js';
 
 export interface StoryMap {
@@ -32,10 +33,15 @@ export interface StoryMap {
    * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
    * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
    * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
-   * (see `sugarcube-macros.ts`). Links and calls in comments are not read.
+   * (see `sugarcube-macros.ts`). Links and calls in comments are not read. A script passage is
+   * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
+   * CSS and links to nothing.
    */
   links: Map<string, string[]>;
-  /** Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage. */
+  /**
+   * Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage, or, with a `target`
+   * (see `InspectOptions`), where that output leaves the `to` passage out (`omission` says why).
+   */
   brokenLinks: BrokenLink[];
   /** Story passages with no outgoing links (potential dead ends). */
   deadEnds: string[];
@@ -48,6 +54,11 @@ export interface StoryMap {
 export interface BrokenLink {
   from: string;
   to: string;
+  /**
+   * Set when a passage named `to` exists, but the inspected output leaves it out of the story
+   * (only with a `target`): why it is left out. Absent when no passage has the name.
+   */
+  omission?: PassageOmission;
 }
 
 /**
@@ -78,6 +89,37 @@ function extractLinksFromText(text: string, isScript: boolean): string[] {
     found.filter((link) => link.via === via).map((link) => link.passage),
   );
   return [...new Set(ordered)];
+}
+
+/**
+ * The passages that `p` links to. A script passage is JavaScript, read for links only in its
+ * strings. A stylesheet is CSS, which the story puts in a style element and never wikifies, so it
+ * links nowhere; a passage tagged both is a script, as Twine 2 output takes it.
+ */
+function passageLinks(p: ReadonlyPassage): string[] {
+  if (hasTag(p, 'script')) return extractLinksFromText(textAsRead(p), true);
+  if (hasTag(p, 'stylesheet')) return [];
+  return extractLinksFromText(textAsRead(p), false);
+}
+
+/**
+ * Each passage name, mapped to why the `target` output leaves that passage out, or to `undefined`
+ * when a link can reach it: always without a target, and otherwise when the output emits a
+ * passage of that name.
+ */
+function destinationOmissions(
+  story: ReadonlyStory,
+  { target }: InspectOptions,
+): ReadonlyMap<string, PassageOmission | undefined> {
+  const omissions = new Map<string, PassageOmission | undefined>();
+  for (const p of story.passages) {
+    const omission = target === undefined ? undefined : passageOmission(story, p, target);
+    // One emitted passage of a name is enough for a link to reach it.
+    if (!omissions.has(p.name) || omission === undefined) {
+      omissions.set(p.name, omission);
+    }
+  }
+  return omissions;
 }
 
 /** Passages SugarCube runs from their raw text, never joining their lines. */
@@ -125,9 +167,14 @@ function joinLines(text: string): string {
  * expect(map.brokenLinks).toEqual([]);
  * expect(map.deadEnds).not.toContain('Start');
  * ```
+ *
+ * By default, a link is broken only when no passage has its name. Pass a `target` to check links
+ * against what that output emits: `storyInspect(result.story, { target: 'twine2' })` also reports
+ * links to passages Twine 2 output leaves out, such as script, stylesheet and `Twine.private`
+ * passages.
  */
-export function storyInspect(story: ReadonlyStory): StoryMap {
-  const allNames = new Set(story.passages.map((p) => p.name));
+export function storyInspect(story: ReadonlyStory, options: InspectOptions = {}): StoryMap {
+  const destinations = destinationOmissions(story, options);
 
   const passages: string[] = [];
   const storyPassages: string[] = [];
@@ -160,16 +207,20 @@ export function storyInspect(story: ReadonlyStory): StoryMap {
     }
 
     // Links
-    const targets = extractLinksFromText(textAsRead(p), hasTag(p, 'script'));
-    links.set(p.name, targets);
+    links.set(p.name, passageLinks(p));
   }
 
-  // Broken links: link targets that don't exist as passages
+  // Broken links: link targets that don't exist as passages, or that the target output leaves out
   const brokenLinks: BrokenLink[] = [];
   for (const [from, targets] of links) {
     for (const to of targets) {
-      if (!allNames.has(to)) {
+      if (!destinations.has(to)) {
         brokenLinks.push({ from, to });
+        continue;
+      }
+      const omission = destinations.get(to);
+      if (omission !== undefined) {
+        brokenLinks.push({ from, to, omission });
       }
     }
   }

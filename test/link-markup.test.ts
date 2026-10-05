@@ -95,4 +95,20 @@ describe('readSquareBracketedMarkup', () => {
     expect(budget.left).toBeLessThanOrEqual(0);
     expect(readSquareBracketedMarkup('[[Room]]', 0, budget)).toBeUndefined();
   });
+
+  it('spends only what a rejected reading looked at, not the rest of the text', () => {
+    const rest = 'x'.repeat(5000);
+    for (const [opener, read] of [
+      ['[[unfinished\n', 13],
+      ['[["unclosed quote\n', 18],
+      ['[[a|b][$x to 1\n', 15],
+      ['[[a]b]] ', 5],
+      ['[[a|b][$x][$y]] ', 11],
+      ['[img[pic.png][Room\n', 19],
+    ] as const) {
+      const budget = { left: 1000 };
+      expect(readSquareBracketedMarkup(opener + rest, 0, budget), opener).toBeUndefined();
+      expect(1000 - budget.left, opener).toBe(read);
+    }
+  });
 });

@@ -6,6 +6,7 @@ import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
 import { compileForOutputFile } from './compiler.js';
 import { storyInspect } from './inspect.js';
+import { describeOmission } from './passage-omission.js';
 import { startPassageDiagnostics } from './start-passage.js';
 
 export interface LintResult {
@@ -25,7 +26,11 @@ export interface LintResult {
   storyPassages: number;
   /** Info/special passage count. */
   infoPassages: number;
-  /** Broken links: link targets that don't exist as passages. */
+  /**
+   * Broken links: link targets that don't exist as passages, or that Twine 2 output leaves out
+   * (script, stylesheet and `Twine.private` passages, StoryData, StoryTitle, an empty
+   * StorySettings); for those, `omission` says why.
+   */
   brokenLinks: BrokenLink[];
   /** Story passages with no outgoing links. */
   deadEnds: string[];
@@ -36,7 +41,9 @@ export interface LintResult {
 /**
  * Lint a story: compile without output rendering, then inspect structure.
  * Uses JSON output mode internally to avoid format resolution, so it checks
- * the starting passage itself, against the Twine 2 passage rules.
+ * the starting passage itself, against the Twine 2 passage rules. Link
+ * destinations are checked against the same rules: a link to a passage that
+ * Twine 2 output leaves out is broken.
  */
 export async function lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult> {
   return lintForOutputFile(options, undefined);
@@ -54,7 +61,7 @@ export async function lintForOutputFile(
   outFile: string | undefined,
 ): Promise<LintResult> {
   const result = await compileForOutputFile({ ...options, outputMode: 'json' }, outFile);
-  const map = storyInspect(result.story);
+  const map = storyInspect(result.story, { target: 'twine2' });
 
   return {
     diagnostics: [...result.diagnostics, ...startPassageDiagnostics(result.story, map.start, 'twine2')],
@@ -92,7 +99,11 @@ export function formatLintReport(result: LintResult): string {
     lines.push('');
     lines.push(`Broken links (${result.brokenLinks.length}):`);
     for (const link of result.brokenLinks) {
-      lines.push(`  ${link.from} -> ${link.to} (passage "${link.to}" does not exist)`);
+      const why =
+        link.omission === undefined
+          ? 'does not exist'
+          : `${describeOmission(link.omission)}, so it is left out of the story data`;
+      lines.push(`  ${link.from} -> ${link.to} (passage "${link.to}" ${why})`);
     }
   }
 

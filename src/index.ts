@@ -69,6 +69,10 @@ export type {
   TweeTsConfig,
   FileCacheEntry,
   WordCountMethod,
+  InspectOptions,
+  PassageOutputTarget,
+  PassageOmission,
+  OmittingTag,
 } from './types.js';
 export type { CachedFormatEntry } from './remote-formats.js';
 export type { DecompileResult } from './html-parser.js';

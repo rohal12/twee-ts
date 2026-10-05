@@ -98,6 +98,51 @@ describe('storyInspect', () => {
     expect(map.brokenLinks[0]).toEqual({ from: 'Start', to: 'MissingRoom' });
   });
 
+  describe('links to passages an output leaves out', () => {
+    async function inspectStory(options?: Parameters<typeof storyInspect>[1]) {
+      const result = await compile({
+        sources: [
+          {
+            filename: 'omitted.tw',
+            content:
+              ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n' +
+              ':: Start\n[[Secret]] [[Logic]] [[StoryInit]] [[Room]]\n\n' +
+              ':: Secret [Twine.private]\nHidden\n\n:: Logic [script]\nwindow.x = 1;\n\n' +
+              ':: StoryInit\n<<set $x to 1>>\n\n:: Room\nText.',
+          },
+        ],
+        outputMode: 'json',
+      });
+      return storyInspect(result.story, options);
+    }
+
+    it('reports none without a target, describing every source passage', async () => {
+      expect((await inspectStory()).brokenLinks).toEqual([]);
+    });
+
+    it('reports the links Twine 2 output cannot follow, with the reason', async () => {
+      expect((await inspectStory({ target: 'twine2' })).brokenLinks).toEqual([
+        { from: 'Start', to: 'Secret', omission: { kind: 'tag', tag: 'Twine.private' } },
+        { from: 'Start', to: 'Logic', omission: { kind: 'tag', tag: 'script' } },
+      ]);
+    });
+
+    it('reports only Twine.private destinations for Twine 1 output, which keeps scripts', async () => {
+      expect((await inspectStory({ target: 'twine1' })).brokenLinks).toEqual([
+        { from: 'Start', to: 'Secret', omission: { kind: 'tag', tag: 'Twine.private' } },
+      ]);
+    });
+
+    it('leaves dead ends and orphans as they are', async () => {
+      const plain = await inspectStory();
+      const checked = await inspectStory({ target: 'twine2' });
+      expect(checked.deadEnds).toEqual(plain.deadEnds);
+      expect(checked.orphans).toEqual(plain.orphans);
+      // A passage linking only to left-out passages still has links, which are reported as broken.
+      expect(checked.deadEnds).not.toContain('Start');
+    });
+  });
+
   it('detects dead ends', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],
@@ -329,6 +374,26 @@ describe('storyInspect', () => {
       });
       const map = storyInspect(result.story);
       expect(map.links.get('Story JavaScript')).toEqual(['Room']);
+      expect(map.brokenLinks).toEqual([]);
+    });
+
+    it('reads no link from a stylesheet, whose text is CSS', async () => {
+      const css = 'body::before { content: "[[Decorative]]"; }\n.x::after { content: "[[Room]]"; }';
+      const result = await compile({
+        sources: [
+          {
+            filename: 'style.tw',
+            content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nText.\n\n:: Theme [stylesheet]\n${css}\n\n:: Room\nText.\n\n:: Both [script stylesheet]\n$.wiki('[[Room]]');`,
+          },
+          { filename: 'theme.css', content: css },
+        ],
+        outputMode: 'json',
+      });
+      const map = storyInspect(result.story);
+      expect(map.links.get('Theme')).toEqual([]);
+      expect(map.links.get('theme.css')).toEqual([]);
+      // Twine 2 output puts a passage tagged both script and stylesheet in its script.
+      expect(map.links.get('Both')).toEqual(['Room']);
       expect(map.brokenLinks).toEqual([]);
     });
   });
