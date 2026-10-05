@@ -42,6 +42,7 @@ interface TweeTsVitePluginOptions {
 - **Error overlay**: compile and bundling errors appear in Vite's overlay with file and line, and the last good story keeps being served until the next successful compile.
 - **Build output**: during `vite build` the compiled HTML is emitted with the configured filename. Without `entry`, the build needs no `index.html`: the plugin gives Vite a stand-in input of its own, so an `index.html` in the project root is not built over the story (unless you set `build.rollupOptions.input` / `build.rolldownOptions.input` yourself). Errors fail the build; warnings go through Vite's logger.
 - **Build watch**: `vite build --watch` builds the story again when a source, the head file or a module changes, and when a file is added to or deleted from a source folder.
+- **Output inside `sources`**: the story HTML a build writes (`outputFilename` in `build.outDir`) is never read as a source, so it can sit inside a source folder; a later build, the dev server and their watchers leave it out. Under `vite build --watch`, a file added straight to a folder that holds the HTML is picked up with the next change that starts a build.
 - **Vite versions**: the plugin works with Vite 5 and newer; the `entry` option needs Vite 8.
 - **Script entry**: see below.
 
@@ -138,6 +139,7 @@ interface TweeTsRollupPluginOptions {
 - **Errors fail the build.** When the compile reports an error (a missing starting passage, malformed Twee, a story format that can't be found), the plugin fails the build through Rollup's `this.error()` and emits no HTML. Rollup reports it as an error from the `twee-ts` plugin, with the file and line where the compiler knows them.
 - **Warnings** (a duplicate passage, unreadable passage metadata) go through Rollup's `this.warn()`, so they reach `onwarn`/`onLog` and Rollup's warning output like any other plugin warning. The story is still emitted.
 - **Watch mode**: under `rollup --watch`, a change to a source, the head file or a module builds the story again. A failed build is reported and the watcher keeps running, so fixing the story rebuilds it.
+- **Output inside `sources`**: the story HTML is never read as a source when Rollup writes it (`outputFilename` in `output.dir`, or next to `output.file`), so it can sit inside a source folder. Under `rollup --watch`, the files a build wrote start no build of their own, and a file added straight to a folder that holds them is picked up with the next change that starts a build.
 
 The same holds when the Rollup plugin runs inside a `vite build`.
 

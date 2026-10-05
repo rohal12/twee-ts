@@ -96,6 +96,28 @@ function excludeGlob(dir: string, pattern: string): string {
   return `${toPosix(relative(process.cwd(), dir))}/${pattern}`;
 }
 
+/** STORY with `text` as its Start passage's text. */
+function storyWith(text: string): string {
+  return STORY.replace('Hello from the story.', text);
+}
+
+/** A passage to delete between two builds. */
+const DELETED_PASSAGE = '\n:: Deleted\nDelete me\n';
+
+/** Whether the story HTML holds a passage named Deleted. */
+function hasDeletedPassage(html: string): boolean {
+  return html.includes('name="Deleted"');
+}
+
+/**
+ * A folder for the build output inside the story sources. Its name sorts after
+ * start.tw, so a story HTML loaded back from it would be read last and its
+ * passages would replace the edited ones.
+ */
+function outDirInSources(dir: string): string {
+  return join(dir, 'story/z-build');
+}
+
 async function buildProject(
   dir: string,
   plugin: ReturnType<typeof tweeTsPlugin>,
@@ -185,6 +207,19 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
     expect(html).toContain('Hello from the story.');
     expect(html).not.toContain('Twine.image');
+  });
+
+  it('leaves the HTML of the last build out of the story when it sits inside a source folder', async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const plugin = tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    const buildOptions = { outDir: outDirInSources(dir), emptyOutDir: false };
+    await buildProject(dir, plugin, buildOptions);
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    await buildProject(dir, plugin, buildOptions);
+    const html = readFileSync(join(outDirInSources(dir), 'index.html'), 'utf-8');
+    expect(html).toContain('NEW_TEXT');
+    expect(html).not.toContain('OLD_TEXT');
+    expect(hasDeletedPassage(html)).toBe(false);
   });
 
   it('without an entry: a root index.html does not replace the story', async () => {
@@ -298,8 +333,11 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
   });
 
   /** Starts `vite build --watch` and waits for its first build; returns the story's path. */
-  async function watchBuild(dir: string, plugin: ReturnType<typeof tweeTsPlugin>): Promise<string> {
-    const outDir = join(dir, 'dist');
+  async function watchBuild(
+    dir: string,
+    plugin: ReturnType<typeof tweeTsPlugin>,
+    outDir = join(dir, 'dist'),
+  ): Promise<string> {
     const started = (await build({
       configFile: false,
       root: dir,
@@ -365,6 +403,31 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
 
     writeFileSync(join(dir, 'lib/mod.js'), 'window.modMarker = 2;');
     await vi.waitFor(() => expect(story(out)).toContain('window.modMarker = 2;'), settled);
+  });
+
+  it('neither loads nor watches its own HTML when it sits inside a source folder', async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const out = await watchBuild(
+      dir,
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
+      outDirInSources(dir),
+    );
+    let builds = 0;
+    watcher!.on('event', (event) => {
+      if (event.code === 'BUNDLE_START') builds += 1;
+    });
+
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    await vi.waitFor(() => expect(story(out)).toContain('NEW_TEXT'), settled);
+    expect(story(out)).not.toContain('OLD_TEXT');
+    expect(hasDeletedPassage(story(out))).toBe(false);
+
+    // Writing the story starts no build of its own, so the watcher goes quiet
+    // once the edit is built.
+    await new Promise((done) => setTimeout(done, 1_000));
+    builds = 0;
+    await new Promise((done) => setTimeout(done, 1_000));
+    expect(builds).toBe(0);
   });
 });
 
@@ -941,6 +1004,36 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     }
     // The request compares the inputs with the last compile; the excluded files don't count.
     expect(await page(url)).not.toContain('Twine.image');
+    expect(reloadsSent(send)).toBe(0);
+  });
+
+  it("leaves a build's HTML inside a source folder out of the story and ignores its changes", async () => {
+    const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
+    const outDir = outDirInSources(dir);
+    const storyPlugin = (): ReturnType<typeof tweeTsPlugin> =>
+      tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    await buildProject(dir, storyPlugin(), { outDir, emptyOutDir: false });
+    const built = join(outDir, 'index.html');
+    expect(readFileSync(built, 'utf-8')).toContain('OLD_TEXT');
+
+    writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
+    const url = await start(dir, storyPlugin(), undefined, { build: { outDir }, server: { watch: null } });
+    const html = await page(url);
+    expect(html).toContain('NEW_TEXT');
+    expect(html).not.toContain('OLD_TEXT');
+    expect(hasDeletedPassage(html)).toBe(false);
+
+    // Another build writing the HTML recompiles nothing, announced or not.
+    const send = vi.spyOn(server!.ws, 'send');
+    writeFileSync(built, readFileSync(built, 'utf-8').replace('OLD_TEXT', 'REBUILT_TEXT'));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server!.watcher.emit('all', 'change', built);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await page(url)).not.toContain('REBUILT_TEXT');
     expect(reloadsSent(send)).toBe(0);
   });
 
