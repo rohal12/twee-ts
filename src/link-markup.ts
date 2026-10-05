@@ -36,10 +36,20 @@ interface ComponentEnd {
   readonly last: boolean;
 }
 
-/** Characters a reading may still look at: it stops, as having failed, when they run out. */
+/**
+ * Characters a reading may still look at: it stops, as having failed, when they run out.
+ * `scanned` is how far it has looked so far: the index just past the last character it read.
+ */
 interface Reader {
   readonly text: string;
   readonly limit: number;
+  scanned: number;
+}
+
+/** Records that the reading has looked at the characters before `pos`, and returns `result`. */
+function readTo<T>(reader: Reader, pos: number, result: T): T {
+  reader.scanned = Math.max(reader.scanned, pos);
+  return result;
 }
 
 /**
@@ -49,16 +59,17 @@ interface Reader {
  * `budget.left`, if given, is how many characters the reading may look at; it is reduced by as
  * many as were read, and once it runs out, every reading fails. Unclosed markup is read to the end
  * of its line, so reading every `[[` of a long line that never closes one would otherwise take
- * quadratic time.
+ * quadratic time. A reading is charged for the characters it looked at, up to where it ended or
+ * failed (a line feed, say), and no more, so markup left unclosed on short lines costs little.
  */
 export function readSquareBracketedMarkup(
   text: string,
   start: number,
   budget: { left: number } = { left: Infinity },
 ): SquareBracketedMarkup | undefined {
-  const reader: Reader = { text, limit: Math.min(text.length, start + Math.max(budget.left, 0)) };
+  const reader: Reader = { text, limit: Math.min(text.length, start + Math.max(budget.left, 0)), scanned: start };
   const markup = readMarkup(reader, start);
-  budget.left -= (markup?.end ?? reader.limit) - start;
+  budget.left -= Math.max(reader.scanned, markup?.end ?? start) - start;
   return markup;
 }
 
@@ -136,7 +147,7 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
     pos += 1;
     switch (ch) {
       case '\n':
-        return undefined;
+        return readTo(reader, pos, undefined);
       case '"': {
         const end = readQuoted(reader, pos, '"');
         if (end === undefined) {
@@ -172,7 +183,7 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
       case ']': {
         depth -= 1;
         if (depth === 1) {
-          const end = componentEnd(text, pos);
+          const end = componentEnd(reader, pos);
           if (end === undefined) {
             return undefined;
           }
@@ -185,7 +196,7 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
         break;
     }
   }
-  return undefined;
+  return readTo(reader, pos, undefined);
 }
 
 /**
@@ -201,7 +212,7 @@ function readComponent(reader: Reader, from: number, setter: boolean): Component
     pos += 1;
     switch (ch) {
       case '\n':
-        return undefined;
+        return readTo(reader, pos, undefined);
       case '"':
       case "'": {
         if (ch === "'" && !setter) {
@@ -220,14 +231,14 @@ function readComponent(reader: Reader, from: number, setter: boolean): Component
       case ']':
         depth -= 1;
         if (depth === 1) {
-          return componentEnd(text, pos);
+          return componentEnd(reader, pos);
         }
         break;
       default:
         break;
     }
   }
-  return undefined;
+  return readTo(reader, pos, undefined);
 }
 
 /** Reads a setter, the last component; returns the index after its closing `]]`. */
@@ -237,14 +248,15 @@ function readSetter(reader: Reader, from: number): number | undefined {
 }
 
 /** What the `]` just before `pos`, which brings the depth back to one, ends; `undefined` if malformed. */
-function componentEnd(text: string, pos: number): ComponentEnd | undefined {
-  switch (text[pos]) {
+function componentEnd(reader: Reader, pos: number): ComponentEnd | undefined {
+  // Whatever it holds, the character at `pos` has been looked at.
+  switch (reader.text[pos]) {
     case '[':
-      return { textEnd: pos - 1, next: pos + 1, last: false };
+      return readTo(reader, pos + 1, { textEnd: pos - 1, next: pos + 1, last: false });
     case ']':
-      return { textEnd: pos - 1, next: pos + 1, last: true };
+      return readTo(reader, pos + 1, { textEnd: pos - 1, next: pos + 1, last: true });
     default:
-      return undefined;
+      return readTo(reader, pos + 1, undefined);
   }
 }
 
@@ -263,14 +275,14 @@ function readQuoted(reader: Reader, from: number, quote: string): number | undef
       return pos;
     }
     if (ch === '\n') {
-      return undefined;
+      return readTo(reader, pos, undefined);
     }
     if (ch === '\\') {
       if (pos >= reader.limit || text[pos] === '\n') {
-        return undefined;
+        return readTo(reader, Math.min(pos + 1, reader.limit), undefined);
       }
       pos += 1;
     }
   }
-  return undefined;
+  return readTo(reader, pos, undefined);
 }

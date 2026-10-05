@@ -266,6 +266,20 @@ describe('findPassageLinks', () => {
     }
   }, 20_000);
 
+  it('reads a link after unclosed link openers on short lines of their own', () => {
+    // Each opener's reading stops at its line's end, so the limit on markup reading must not
+    // count the long text after it.
+    const text = '[[unfinished\n'.repeat(20) + 'ordinary prose '.repeat(1000) + '\n[[Missing]]';
+    expect(findPassageLinks(text)).toEqual([{ via: 'markup', passage: 'Missing' }]);
+  });
+
+  it('stays fast, and reads on, when very many short lines each hold an unclosed link opener', () => {
+    const n = 200_000;
+    for (const line of ['[[a\n', '[["a\n', '[[a]b\n', '[[a|b][$x\n', '[img[a][b\n']) {
+      expect(findPassageLinks(line.repeat(n) + '[[Room]]'), line).toEqual([{ via: 'markup', passage: 'Room' }]);
+    }
+  }, 20_000);
+
   it('stays fast when stray openers in comments run over many <<script>> openers', () => {
     const n = 40000;
     expect(findPassageLinks('/* <<x " */<<script>>'.repeat(n) + '" >><<goto "A">>')).toEqual([

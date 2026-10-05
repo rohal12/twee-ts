@@ -61,6 +61,13 @@ describe('lint', () => {
     expect(formatLintReport(result)).toContain('Lint passed.');
   });
 
+  it('reads a link after unclosed link openers on short lines of their own', async () => {
+    const text = '[[unfinished\n'.repeat(20) + 'ordinary prose '.repeat(1000) + '\n[[Missing]]';
+    const source = `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n${text}`;
+    const result = await lint({ sources: [{ filename: 'story.tw', content: source }] });
+    expect(result.brokenLinks).toEqual([{ from: 'Start', to: 'Missing' }]);
+  });
+
   it('detects dead ends and orphans', async () => {
     const result = await lint({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],
