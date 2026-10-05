@@ -24,9 +24,9 @@ export interface StoryMap {
   infoPassages: string[];
   /** All unique tags used across the story, sorted alphabetically. */
   tags: string[];
-  /** Map of tag → passage names that carry that tag. */
+  /** Map of tag → passage names that carry that tag, each listed once even if the tag is repeated. */
   passagesByTag: Map<string, string[]>;
-  /** Map of passage name → tags on that passage. */
+  /** Map of passage name → tags on that passage, as written (a repeated tag appears twice). */
   tagsByPassage: Map<string, string[]>;
   /**
    * Map of passage name → passage names it links to.
@@ -210,7 +210,8 @@ export function storyInspect(story: ReadonlyStory, options: InspectOptions = {})
 
     // Tags
     tagsByPassage.set(p.name, [...p.tags]);
-    for (const tag of p.tags) {
+    // A tag written twice still lists the passage once.
+    for (const tag of new Set(p.tags)) {
       tagSet.add(tag);
       let list = passagesByTag.get(tag);
       if (!list) {

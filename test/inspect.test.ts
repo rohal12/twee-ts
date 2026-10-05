@@ -68,6 +68,24 @@ describe('storyInspect', () => {
     expect(map.tagsByPassage.get('Start')).toEqual([]);
   });
 
+  it('lists a passage once under a tag it carries more than once', async () => {
+    const result = await compile({
+      sources: [
+        {
+          filename: 'story.tw',
+          content:
+            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n:: Start [x y x]\n[[B]]\n:: B [x]\nThe end.',
+        },
+      ],
+      outputMode: 'twee3',
+    });
+    const map = storyInspect(result.story);
+
+    expect(map.passagesByTag.get('x')).toEqual(['Start', 'B']);
+    expect(map.passagesByTag.get('y')).toEqual(['Start']);
+    expect(map.tagsByPassage.get('Start')).toEqual(['x', 'y', 'x']);
+  });
+
   it('extracts [[wiki-style]] links', async () => {
     const result = await compile({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],
