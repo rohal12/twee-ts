@@ -41,6 +41,7 @@ interface TweeTsVitePluginOptions {
 - **Excluded files**: `compileOptions.exclude` leaves files out of the story, in dev and in the build (see [Excluding files](./configuration#excluding-files)). A change to an excluded file recompiles nothing, unless the entry uses the file.
 - **Error overlay**: compile and bundling errors appear in Vite's overlay with file and line, and the last good story keeps being served until the next successful compile.
 - **Build output**: during `vite build` the compiled HTML is emitted with the configured filename. Without `entry`, the build needs no `index.html`: the plugin gives Vite a stand-in input of its own, so an `index.html` in the project root is not built over the story (unless you set `build.rollupOptions.input` / `build.rolldownOptions.input` yourself). Errors fail the build; warnings go through Vite's logger.
+- **Build watch**: `vite build --watch` builds the story again when a source, the head file or a module changes, and when a file is added to or deleted from a source folder.
 - **Vite versions**: the plugin works with Vite 5 and newer; the `entry` option needs Vite 8.
 - **Script entry**: see below.
 
@@ -131,6 +132,8 @@ interface TweeTsRollupPluginOptions {
   compileOptions?: Partial<CompileOptions>;
 }
 ```
+
+Under `rollup --watch`, a change to a source, the head file or a module builds the story again.
 
 ### Full Example
 

@@ -11,7 +11,7 @@
  * request for the story also recompiles it first if a source, the head file or
  * a module changed without the watcher reporting it.
  */
-import { statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { build, version as viteVersion } from 'vite';
@@ -198,9 +198,42 @@ function headInputs(options: TweeTsVitePluginOptions): string[] {
   return [...(extra?.headFile ? [extra.headFile] : []), ...(extra?.modules ?? [])].map((p) => toPosix(resolve(p)));
 }
 
+/** Whether a file (forward-slash path) is a source the compile leaves out; the head file and modules never are. */
+function excludedInput(options: TweeTsVitePluginOptions): (file: string) => boolean {
+  const exclude = options.compileOptions?.exclude ?? [];
+  const notExcludable = headInputs(options);
+  return (file) => isExcluded(file, exclude) && !isInside(file, notExcludable);
+}
+
 /** Absolute forward-slash paths whose changes recompile the story: sources, head file, modules. */
 function watchedInputs(options: TweeTsVitePluginOptions): string[] {
   return [...options.sources.map((p) => toPosix(resolve(p))), ...headInputs(options)];
+}
+
+/**
+ * What `vite build --watch` watches for the story: every file under `inputs`
+ * (forward-slash paths) but those `skip` returns true for, and every folder
+ * under them. The bundler watches each path on its own, not recursively, so a
+ * folder is listed for the files added to it or deleted from it.
+ */
+function buildWatchTargets(inputs: readonly string[], skip: (file: string) => boolean): string[] {
+  const targets: string[] = [];
+  const walk = (path: string): void => {
+    let entries;
+    try {
+      if (!statSync(path).isDirectory()) {
+        if (!skip(path)) targets.push(path);
+        return;
+      }
+      entries = readdirSync(path);
+    } catch {
+      return; // Missing or unreadable: the compile reports it.
+    }
+    targets.push(path);
+    for (const entry of entries) walk(`${path}/${entry}`);
+  };
+  for (const input of inputs) walk(input);
+  return targets;
 }
 
 /**
@@ -423,6 +456,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const outputFilename = options.outputFilename ?? 'index.html';
   const cache = new Map<string, FileCacheEntry>();
   let innerBuild = false;
+  let building = false;
   let stopDev: (() => void) | undefined;
 
   if (options.entry && viteMajor < 8) {
@@ -434,7 +468,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     config(userConfig, env) {
       innerBuild = (userConfig as Record<string, unknown>)[INNER_BUILD_FLAG] === true;
-      if (innerBuild || env.command !== 'build') return undefined;
+      building = env.command === 'build';
+      if (innerBuild || !building) return undefined;
       if (options.entry) return { build: entryBuildOptions(resolve(options.entry)) };
       if (hasUserInput(userConfig)) return undefined;
       return { build: inputOnly(EMPTY_INPUT) };
@@ -450,6 +485,24 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
             "and Story Stylesheet; keep the entry's folder out of `sources`.",
         );
       }
+    },
+
+    // `vite build --watch` rebuilds for the files the build registers. The story's
+    // inputs are read in generateBundle, outside the module graph, so they are
+    // registered here; the dev server watches them itself (configureServer).
+    buildStart() {
+      if (innerBuild || !building || !this.meta.watchMode) return;
+      for (const target of buildWatchTargets(watchedInputs(options), excludedInput(options))) {
+        this.addWatchFile(target);
+      }
+    },
+
+    // The compile cache trusts modification times, which a quick save may leave
+    // unchanged (coarse file-system timestamps); forget a file that changed.
+    watchChange(id) {
+      if (innerBuild) return;
+      const changed = toPosix(resolve(id));
+      for (const key of [...cache.keys()]) if (toPosix(resolve(key)) === changed) cache.delete(key);
     },
 
     resolveId(id) {
@@ -492,10 +545,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const base = server.config.base;
       const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
       const inputs = watchedInputs(options);
-      const exclude = options.compileOptions?.exclude ?? [];
-      const notExcludable = headInputs(options);
-      // A source the compile leaves out (the head file and modules are never left out).
-      const excluded = (file: string): boolean => isExcluded(file, exclude) && !isInside(file, notExcludable);
+      const excluded = excludedInput(options);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
       const root = toPosix(server.config.root);
       server.watcher.add(inputs);
