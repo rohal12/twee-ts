@@ -29,6 +29,7 @@ const CONFIG_KEY_SET: Readonly<Record<keyof TweeTsConfig, true>> = {
   twee2Compat: true,
   testMode: true,
   noRemote: true,
+  formatFetchTimeout: true,
   tagAliases: true,
   sourceInfo: true,
   wordCountMethod: true,
@@ -153,6 +154,14 @@ export function validateConfig(data: unknown): string[] {
       } else if (!(obj[key] as unknown[]).every((v) => typeof v === 'string')) {
         errors.push(`"${key}" must be an array of strings.`);
       }
+    }
+  }
+
+  // Non-negative number fields
+  if ('formatFetchTimeout' in obj) {
+    const timeout = obj['formatFetchTimeout'];
+    if (typeof timeout !== 'number' || !(timeout >= 0)) {
+      errors.push('"formatFetchTimeout" must be a number of milliseconds, 0 or more.');
     }
   }
 

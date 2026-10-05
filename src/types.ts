@@ -47,10 +47,23 @@ export interface CompileOptions {
   testMode?: boolean;
   /** URLs to SFA-compatible index.json files for remote format lookup. */
   formatIndices?: string[];
-  /** Direct URLs to format.js files. */
+  /**
+   * Direct URLs to format.js files. Each URL's download is cached under that URL, and is
+   * looked up before the downloads shared by name and version.
+   */
   formatUrls?: string[];
   /** Disable remote format fetching. Default: false. */
   noRemote?: boolean;
+  /**
+   * Cancels the compile. Story format requests still in progress are aborted, and the compile
+   * rejects with the signal's reason. `watch()` aborts its builds, and stops watching, when it aborts.
+   */
+  signal?: AbortSignal;
+  /**
+   * Milliseconds each story format request (an index or a format.js) may take before it fails
+   * with a warning and the next source is tried. 0 turns the limit off. Default: 30000.
+   */
+  formatFetchTimeout?: number;
   /** Map alias tags to canonical special tags (e.g. { library: 'script' }). */
   tagAliases?: Record<string, string>;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
@@ -295,6 +308,14 @@ export interface SFAIndex {
   twine2: SFAIndexEntry[];
 }
 
+/** Options for the network requests that fetch story formats and their indices. */
+export interface RemoteFetchOptions {
+  /** Aborts the requests; the call then rejects with the signal's reason. */
+  readonly signal?: AbortSignal;
+  /** Milliseconds each request may take before it fails. 0 turns the limit off. Default: 30000. */
+  readonly timeout?: number;
+}
+
 // --- Incremental compilation cache ---
 
 export interface FileCacheEntry {
@@ -328,6 +349,8 @@ export interface TweeTsConfig {
   twee2Compat?: boolean;
   testMode?: boolean;
   noRemote?: boolean;
+  /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
+  formatFetchTimeout?: number;
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean;
   wordCountMethod?: WordCountMethod;

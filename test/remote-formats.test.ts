@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import * as fs from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -15,8 +25,29 @@ import {
   fetchDirectFormat,
   resolveRemoteFormat,
   resolveRemoteFormatRequest,
+  fetchIndex,
 } from '../src/remote-formats.js';
-import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
+import { compile } from '../src/compiler.js';
+import { parseFormatJSON } from '../src/formats.js';
+import type { CompileResult, SFAIndex, SFAIndexEntry } from '../src/types.js';
+
+// lstatSync and writeFileSync pass through to the real ones unless a test stands in for
+// another process that acts between two steps of a cache write.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync), writeFileSync: vi.fn(actual.writeFileSync) };
+});
+
+const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+const mockedLstatSync = vi.mocked(fs.lstatSync);
+const mockedWriteFileSync = vi.mocked(fs.writeFileSync);
+
+afterEach(() => {
+  mockedLstatSync.mockReset();
+  mockedLstatSync.mockImplementation(realFs.lstatSync);
+  mockedWriteFileSync.mockReset();
+  mockedWriteFileSync.mockImplementation(realFs.writeFileSync);
+});
 
 // Minimal format.js content for testing
 const MOCK_FORMAT_SOURCE = `window.storyFormat({"name":"MockFormat","version":"2.1.0","proofing":false,"source":"<html><body>{{STORY_DATA}}</body></html>"});`;
@@ -488,15 +519,20 @@ describe('downloaded format metadata containment', () => {
     symlinkSync(outside, join(getCacheDir(), 'Linked'), 'dir');
     stubFetch({ 'https://example.test/format.js': formatJs('Linked', '1.0.0') });
 
-    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/outside/);
+    await expect(fetchAndCacheFormat(sfaEntry('Linked', '1.0.0'), 'https://example.test/format.js')).rejects.toThrow(
+      /outside/,
+    );
     expect(existsSync(join(outside, '1.0.0', 'format.js'))).toBe(false);
   });
 
-  it('caches a well-formed direct download under name/version', async () => {
+  it('caches a direct download by its URL, apart from the downloads shared by name and version', async () => {
     stubFetch({ 'https://example.test/format.js': formatJs('Good Format', '1.2.3') });
     const info = await fetchDirectFormat('https://example.test/format.js');
-    expect(info.filename).toBe(join(getCacheDir(), 'Good Format', '1.2.3', 'format.js'));
     expect(info.id).toBe('good-format-1');
+    expect(readFileSync(info.filename, 'utf-8')).toBe(formatJs('Good Format', '1.2.3'));
+    expect(info.filename.startsWith(getCacheDir())).toBe(false);
+    expect(discoverCachedFormats().size).toBe(0);
+    expect(existsSync(join(getCacheDir(), 'Good Format'))).toBe(false);
   });
 });
 
@@ -580,5 +616,359 @@ describe('resolveRemoteFormat with a download cache and no network', () => {
   it('still reports the network error when nothing is cached', async () => {
     stubOffline();
     await expect(resolveRemoteFormat('SugarCube', '2.37.3')).rejects.toThrow('offline');
+  });
+});
+
+// --- Concurrent downloads, per-URL cache entries, cancellation ---
+
+const INLINE_STORY = [
+  { filename: 's.tw', content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHi\n' },
+];
+const SUGARCUBE_URL = `${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`;
+const FORK_URL = 'https://example.test/my-patched-sugarcube/format.js';
+
+/** A SugarCube 2.37.3 format.js whose page title tells the copies apart. */
+function taggedSugarCube(tag: string): string {
+  return `window.storyFormat(${JSON.stringify({
+    name: 'SugarCube',
+    version: '2.37.3',
+    source: `<html><head><title>${tag}</title></head><body>{{STORY_DATA}}</body></html>`,
+  })});`;
+}
+
+const OFFICIAL_ROUTES: Readonly<Record<string, string>> = {
+  [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '2.37.3')] }),
+  [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
+  [SUGARCUBE_URL]: taggedSugarCube('OFFICIAL'),
+};
+
+/** Compiles the inline story with no local formats, so only the download cache and the network can answer. */
+function compileStory(options: { formatUrls?: string[]; noRemote?: boolean; signal?: AbortSignal } = {}) {
+  return compile({ sources: INLINE_STORY, useTweegoPath: false, ...options });
+}
+
+const titleOf = (result: CompileResult): string | undefined => /<title>(.*?)<\/title>/.exec(result.output)?.[1];
+
+interface StalledRequest {
+  readonly url: string;
+  readonly signal: AbortSignal | undefined;
+  /** Answers the request with `body`. */
+  readonly answer: (body: string) => void;
+}
+
+/**
+ * Stubs `fetch` so every request waits until the test answers it, or until its signal aborts, when it
+ * rejects with the signal's reason (as the real fetch does). `next()` resolves with each request in order.
+ */
+function stubStalledFetch() {
+  const requests: StalledRequest[] = [];
+  const waiting: ((request: StalledRequest) => void)[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      (input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal ?? undefined;
+          const request: StalledRequest = {
+            url: String(input),
+            signal,
+            answer: (body) => resolve(new Response(body)),
+          };
+          if (signal?.aborted) return reject(signal.reason);
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          const waiter = waiting.shift();
+          if (waiter) waiter(request);
+          else requests.push(request);
+        }),
+    ),
+  );
+  return {
+    next(): Promise<StalledRequest> {
+      const request = requests.shift();
+      return request ? Promise.resolve(request) : new Promise((done) => waiting.push(done));
+    },
+  };
+}
+
+/** Resolves once `signal` aborts. */
+function aborted(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return Promise.reject(new Error('the request has no signal'));
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((done) => signal.addEventListener('abort', () => done(), { once: true }));
+}
+
+/** Every file under `root`, relative to it. */
+function filesUnder(root: string): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
+    .sort();
+}
+
+/** A temporary cache and home folder per test, so no format installed on the machine can answer. */
+function useTempHome(): { readonly root: () => string } {
+  const tmp = useTempCacheHome();
+  let origHome: string | undefined;
+  beforeEach(() => {
+    origHome = process.env['HOME'];
+    process.env['HOME'] = tmp.root();
+  });
+  afterEach(() => {
+    if (origHome !== undefined) process.env['HOME'] = origHome;
+    else delete process.env['HOME'];
+  });
+  return tmp;
+}
+
+describe('format cache writes racing another process', () => {
+  useTempCacheHome();
+
+  it('accepts a format folder another process creates between its check and its mkdir', async () => {
+    const raced = join(getCacheDir(), 'SugarCube');
+    mockedLstatSync.mockImplementation(((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+      const stat = realFs.lstatSync(path, options);
+      if (stat === undefined && String(path) === raced) mkdirSync(raced, { recursive: true });
+      return stat;
+    }) as typeof fs.lstatSync);
+    stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
+
+    const info = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
+    expect(readFileSync(info.filename, 'utf-8')).toBe(formatJs('SugarCube', '2.37.3'));
+  });
+
+  it('still refuses a symlink another process puts there instead', async () => {
+    const raced = join(getCacheDir(), 'SugarCube');
+    const outside = mkdtempSync(join(tmpdir(), 'twee-ts-outside-'));
+    try {
+      mockedLstatSync.mockImplementation(((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+        const stat = realFs.lstatSync(path, options);
+        if (stat === undefined && String(path) === raced) symlinkSync(outside, raced, 'dir');
+        return stat;
+      }) as typeof fs.lstatSync);
+      mkdirSync(getCacheDir(), { recursive: true });
+      stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
+
+      await expect(fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL)).rejects.toThrow(/outside/);
+      expect(filesUnder(outside)).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('never shows a reader a partial format.js while it rewrites a cache entry', async () => {
+    stubFetch({ [SUGARCUBE_URL]: taggedSugarCube('FIRST') });
+    const first = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
+
+    // Another process reads the entry while this one is part way through writing the new copy.
+    const seen: unknown[] = [];
+    mockedWriteFileSync.mockImplementationOnce((file, data) => {
+      realFs.writeFileSync(file, String(data).slice(0, 40));
+      seen.push(parseFormatJSON(readFileSync(first.filename, 'utf-8'))?.source);
+      realFs.writeFileSync(file, data);
+    });
+    vi.unstubAllGlobals();
+    stubFetch({ [SUGARCUBE_URL]: taggedSugarCube('SECOND') });
+    const second = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('FIRST');
+    expect(readFileSync(second.filename, 'utf-8')).toBe(taggedSugarCube('SECOND'));
+    expect(filesUnder(getCacheDir())).toEqual([join('SugarCube', '2.37.3', 'format.js')]);
+  });
+});
+
+describe('concurrent lookups in one process', () => {
+  useTempHome();
+
+  it('share one index request and one download', async () => {
+    const calls = stubFetch(OFFICIAL_ROUTES);
+    const [a, b] = await Promise.all([compileStory(), compileStory()]);
+    expect(titleOf(a)).toBe('OFFICIAL');
+    expect(titleOf(b)).toBe('OFFICIAL');
+    expect(calls).toEqual([OFFICIAL_INDEX, SUGARCUBE_URL]);
+  });
+
+  it('share one download of a format URL', async () => {
+    const calls = stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    const results = await Promise.all([
+      compileStory({ formatUrls: [FORK_URL] }),
+      compileStory({ formatUrls: [FORK_URL] }),
+    ]);
+    expect(results.map(titleOf)).toEqual(['FORK', 'FORK']);
+    expect(calls).toEqual([FORK_URL]);
+  });
+});
+
+describe('downloads from format URLs and the shared download cache', () => {
+  const tmp = useTempHome();
+
+  it('never give another project the copy downloaded from a format URL', async () => {
+    const calls = stubFetch({ ...OFFICIAL_ROUTES, [FORK_URL]: taggedSugarCube('FORK') });
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
+    calls.length = 0;
+
+    expect(titleOf(await compileStory())).toBe('OFFICIAL');
+    expect(calls).toContain(SUGARCUBE_URL);
+  });
+
+  it('give a project its format URL’s copy, even when the same name and version is cached', async () => {
+    const calls = stubFetch({ ...OFFICIAL_ROUTES, [FORK_URL]: taggedSugarCube('FORK') });
+    expect(titleOf(await compileStory())).toBe('OFFICIAL');
+    calls.length = 0;
+
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
+    expect(calls).toEqual([FORK_URL]);
+  });
+
+  it('reuse the cached copy of a format URL without the network, and with remote fetching off', async () => {
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    await compileStory({ formatUrls: [FORK_URL] });
+    vi.unstubAllGlobals();
+    stubOffline();
+
+    const offline = await compileStory({ formatUrls: [FORK_URL] });
+    expect(titleOf(offline)).toBe('FORK');
+    expect(offline.diagnostics).toEqual([]);
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL], noRemote: true }))).toBe('FORK');
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('keep each URL’s copy apart from every other URL’s', async () => {
+    const OTHER_URL = 'https://example.test/other-fork/format.js';
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK'), [OTHER_URL]: taggedSugarCube('OTHER') });
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
+    expect(titleOf(await compileStory({ formatUrls: [OTHER_URL] }))).toBe('OTHER');
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
+  });
+
+  it('are all removed by clearing the cache', async () => {
+    stubFetch({ ...OFFICIAL_ROUTES, [FORK_URL]: taggedSugarCube('FORK') });
+    await compileStory({ formatUrls: [FORK_URL] });
+    await compileStory();
+    expect(clearCachedFormats()).toBe(2);
+    expect(filesUnder(join(tmp.root(), 'twee-ts'))).toEqual([]);
+  });
+});
+
+describe('cancelling and timing out format downloads', () => {
+  const tmp = useTempHome();
+
+  it('stops the request and rejects with the reason when the signal aborts', async () => {
+    const network = stubStalledFetch();
+    const controller = new AbortController();
+    const pending = fetchDirectFormat(FORK_URL, { signal: controller.signal });
+    const request = await network.next();
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await aborted(request.signal);
+    expect(filesUnder(join(tmp.root(), 'twee-ts'))).toEqual([]);
+  });
+
+  it('writes nothing to the cache when the signal aborts after the download', async () => {
+    const network = stubStalledFetch();
+    const controller = new AbortController();
+    const pending = fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL, { signal: controller.signal });
+    const request = await network.next();
+    // The body arrives, and the caller gives up before it is written.
+    request.answer(taggedSugarCube('LATE'));
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(filesUnder(join(tmp.root(), 'twee-ts'))).toEqual([]);
+  });
+
+  it('tries no further source after the signal aborts', async () => {
+    const network = stubStalledFetch();
+    const controller = new AbortController();
+    const pending = resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' }, [], [FORK_URL], {
+      signal: controller.signal,
+    });
+    await network.next();
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects at once for a signal that has already aborted', async () => {
+    stubStalledFetch();
+    await expect(fetchIndex(OFFICIAL_INDEX, { signal: AbortSignal.abort() })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('keeps a shared download going for the callers that still wait on it', async () => {
+    const network = stubStalledFetch();
+    const quitter = new AbortController();
+    const first = fetchDirectFormat(FORK_URL, { signal: quitter.signal });
+    const second = fetchDirectFormat(FORK_URL, { signal: new AbortController().signal });
+    const request = await network.next();
+    quitter.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(request.signal?.aborted).toBe(false);
+    request.answer(taggedSugarCube('FORK'));
+    expect((await second).version).toBe('2.37.3');
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops a shared download once every caller has aborted', async () => {
+    const network = stubStalledFetch();
+    const a = new AbortController();
+    const b = new AbortController();
+    const first = fetchDirectFormat(FORK_URL, { signal: a.signal });
+    const second = fetchDirectFormat(FORK_URL, { signal: b.signal });
+    const request = await network.next();
+    a.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    expect(request.signal?.aborted).toBe(false);
+    b.abort();
+    await expect(second).rejects.toMatchObject({ name: 'AbortError' });
+    await aborted(request.signal);
+  });
+
+  it('fails a request that takes longer than the timeout, naming the URL', async () => {
+    stubStalledFetch();
+    await expect(fetchIndex(OFFICIAL_INDEX, { timeout: 20 })).rejects.toThrow(
+      `Failed to fetch format index from ${OFFICIAL_INDEX}: timed out after 20 ms`,
+    );
+  });
+
+  it('moves on to the next source after a request times out', async () => {
+    const network = stubStalledFetch();
+    const pending = resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' }, [], [FORK_URL], { timeout: 20 });
+    await network.next(); // the format URL, which never answers
+    const index = await network.next(); // its timeout has passed: on to the official index
+    expect(index.url).toBe(OFFICIAL_INDEX);
+    index.answer(OFFICIAL_ROUTES[OFFICIAL_INDEX] ?? '');
+    (await network.next()).answer(taggedSugarCube('OFFICIAL'));
+    expect((await pending)?.version).toBe('2.37.3');
+  });
+
+  it('rejects a compile with the reason when its signal aborts during a download', async () => {
+    const network = stubStalledFetch();
+    const controller = new AbortController();
+    const pending = compileStory({ signal: controller.signal });
+    const request = await network.next();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await aborted(request.signal);
+  });
+
+  it('rejects a compile at once for a signal that has already aborted', async () => {
+    stubStalledFetch();
+    await expect(compileStory({ signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('rejects a timeout that is not a non-negative number of milliseconds', async () => {
+    stubStalledFetch();
+    await expect(compile({ sources: INLINE_STORY, formatFetchTimeout: -1 })).rejects.toThrow(/formatFetchTimeout/);
+    await expect(compile({ sources: INLINE_STORY, formatFetchTimeout: Number.NaN })).rejects.toThrow(
+      /formatFetchTimeout/,
+    );
   });
 });

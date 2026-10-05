@@ -26,7 +26,7 @@ console.log(result.stats); // { passages, storyPassages, words, files }
 
 ### `compileToFile(options)`
 
-Compile and write the output to a file.
+Compile and write the output to a file. The file is replaced atomically (written to a temporary file in the same folder, then renamed over it), so a program that reads it meanwhile, such as a live-reload server, sees the previous build or the new one, never part of one. If the write fails, the previous file is left as it was.
 
 ```typescript
 import { compileToFile } from '@rohal12/twee-ts';
@@ -39,7 +39,7 @@ const result = await compileToFile({
 
 ### `watch(options)`
 
-Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder. Every build is written to `outFile`, including one whose `diagnostics` report errors, and then passed to `onBuild`; a build that fails with a fatal error, such as a `TweeTsError`, writes nothing and is passed to `onError`. (The CLI's watch mode instead keeps the last build without errors; see [Exit Status](./cli#exit-status).) Builds run one at a time, and each one is written and reported as it finishes, in order, so the output never goes back to an older state: changes saved while a build is running are built together in one follow-up build once it finishes. While saves keep coming, the output and the reports trail the latest save by at most about one build. After `controller.abort()`, no build starts, and one still running writes and reports nothing.
+Watch for file changes and recompile automatically. Returns an `AbortController` to stop watching. The sources, the modules and the head file are watched, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules, so the output can sit inside a source folder. Every build is written to `outFile`, including one whose `diagnostics` report errors, and then passed to `onBuild`; a build that fails with a fatal error, such as a `TweeTsError`, writes nothing and is passed to `onError`. (The CLI's watch mode instead keeps the last build without errors; see [Exit Status](./cli#exit-status).) Builds run one at a time, and each one is written and reported as it finishes, in order, so the output never goes back to an older state: changes saved while a build is running are built together in one follow-up build once it finishes. While saves keep coming, the output and the reports trail the latest save by at most about one build. After `controller.abort()`, no build starts, and one still running writes and reports nothing; story format downloads it waits on are cancelled, so the process can exit. Aborting the `signal` passed in the options does the same. Each build replaces `outFile` atomically, as `compileToFile()` does.
 
 A watched folder or file that doesn't exist yet is waited for and built once it appears, and one that is deleted, or renamed away and replaced (as `git checkout` or a generator may do), is followed to the new one at its path; the build after that reads every file again. A path that can't be watched (one the process may not read, say) is passed to `onError` as an error whose message starts with `Cannot watch`, and is tried again on the next change in the folder above it; the other paths are still watched. `onError` also receives an exception thrown by `onBuild`. An exception thrown by `onError` itself is printed to the console and doesn't stop the watch.
 
@@ -82,9 +82,21 @@ interface CompileOptions {
   formatIndices?: string[];
   formatUrls?: string[];
   noRemote?: boolean; // default: false
+  signal?: AbortSignal; // cancels the compile
+  formatFetchTimeout?: number; // ms per format request; default: 30000, 0 = no limit
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean; // default: false
 }
+```
+
+`signal` cancels a compile: story format requests still in progress are aborted, and the promise rejects with the signal's reason (an `AbortError` for `controller.abort()`). Nothing from a cancelled download is written to the format cache.
+
+`formatFetchTimeout` limits each story format request (an index or a `format.js`), in milliseconds. A request that takes longer fails with a warning in `diagnostics`, and the next source is tried. The default is 30000; `0` turns the limit off.
+
+```typescript
+const controller = new AbortController();
+const pending = compile({ sources: ['src/'], signal: controller.signal });
+controller.abort(); // pending rejects with an AbortError
 ```
 
 `SourceInput` is either a file/directory path (`string`) or an inline source (`{ filename: string; content: string | Buffer }`).
@@ -249,6 +261,12 @@ import {
 // Auto-resolve from SFA indices
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
 
+// With direct format URLs, a signal and a per-request timeout (RemoteFetchOptions)
+const fork = await resolveRemoteFormat('SugarCube', '2.37.3', [], ['https://example.com/sugarcube/format.js'], {
+  signal: AbortSignal.timeout(60_000),
+  timeout: 10_000,
+});
+
 // List cached formats (Map<id, StoryFormatInfo>)
 const cached = discoverCachedFormats();
 
@@ -258,7 +276,7 @@ for (const e of entries) {
   console.log(`${e.name} ${e.version} — ${e.sizeBytes} bytes, modified ${e.modifiedAt.toISOString()}`);
 }
 
-// Clear all cached formats (returns count removed)
+// Clear all cached formats, including downloads from direct URLs (returns count removed)
 clearCachedFormats();
 
 // Clear cached formats by name
@@ -362,6 +380,7 @@ import type {
   ItemType,
   SFAIndex,
   SFAIndexEntry,
+  RemoteFetchOptions,
   SourceLocation,
   TweeTsConfig,
   LintResult,

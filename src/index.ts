@@ -72,6 +72,7 @@ export type {
   ReadonlyPassage,
   SFAIndex,
   SFAIndexEntry,
+  RemoteFetchOptions,
   SourceLocation,
   TweeTsConfig,
   FileCacheEntry,

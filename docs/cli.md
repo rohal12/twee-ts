@@ -120,13 +120,13 @@ Manage the local cache of downloaded remote story formats.
 twee-ts cache <subcommand>
 ```
 
-| Subcommand     | Description                                             |
-| -------------- | ------------------------------------------------------- |
-| `list`         | List cached formats with name, version, size, and date. |
-| `clear`        | Delete all cached formats.                              |
-| `clear <name>` | Delete cached formats matching a name.                  |
-| `size`         | Show total cache size and format count.                 |
-| `path`         | Print the cache directory path.                         |
+| Subcommand     | Description                                               |
+| -------------- | --------------------------------------------------------- |
+| `list`         | List cached formats with name, version, size, and date.   |
+| `clear`        | Delete all cached formats, including `--format-url` ones. |
+| `clear <name>` | Delete cached formats matching a name.                    |
+| `size`         | Show total cache size and format count.                   |
+| `path`         | Print the cache directory path.                           |
 
 ```sh
 $ twee-ts cache list
@@ -169,6 +169,16 @@ Built: 12 passages, 3400 words
 error: line 12: Malformed twee source; unterminated tag block.
 Build has 1 error; output not written. Still watching for changes.
 ```
+
+A fatal error, such as a story format that is not available, is printed with the diagnostics that explain it, in one-shot and watch mode:
+
+```sh
+$ twee-ts --no-remote -f nosuch-9 -o story.html src/
+error: Story format "nosuch-9" is not available (remote fetching disabled). Found: sugarcube-2
+No story format available for HTML output.
+```
+
+The output file is replaced atomically: a build is written to a temporary file next to it and then renamed into place, so a live-reload server or browser that reads the file never sees part of a build, and a failed write leaves the previous build.
 
 The programmatic API is unaffected: `compile()`, `compileToFile()` and `watch()` still return non-fatal errors in `result.diagnostics`, and `compileToFile()` and `watch()` still write every build to their output file. Check the diagnostics yourself if you need the CLI's behaviour.
 

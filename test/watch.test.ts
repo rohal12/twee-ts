@@ -1039,3 +1039,141 @@ describe('watch with a source folder that goes away or is not there yet', () => 
     expect(builds.errors.map((e) => e.message)).toEqual([expect.stringMatching(/^Cannot watch .*story: EACCES/)]);
   });
 });
+
+describe('watch with a format download that never answers', () => {
+  const STALLED_URL = 'https://formats.invalid/stalled/format.js';
+  const source = (format: string, text: string): string =>
+    `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"${format}","format-version":"1.0.0"}\n\n:: Start\n${text}\n`;
+
+  let dir = '';
+  let story = '';
+  let outFile = '';
+  let controller: AbortController | undefined;
+  let origCacheHome: string | undefined;
+
+  /**
+   * Stubs `fetch`: STALLED_URL waits until its signal aborts and then rejects with the reason, as the
+   * real fetch does; every other URL answers 404 at once. `stalled` resolves with each STALLED_URL request's signal.
+   */
+  function stubStalledFormat() {
+    const signals: AbortSignal[] = [];
+    let notify: (signal: AbortSignal) => void = () => {};
+    const firstRequest = new Promise<AbortSignal>((done) => (notify = done));
+    const settled: Promise<void>[] = [];
+    vi.stubGlobal('fetch', (url: unknown, init?: RequestInit) => {
+      if (String(url) !== STALLED_URL) return Promise.resolve(new Response('', { status: 404 }));
+      const signal = init?.signal;
+      if (!signal) return Promise.reject(new Error('a format request without a signal'));
+      signals.push(signal);
+      notify(signal);
+      const pending = new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+      settled.push(
+        pending.then(
+          () => {},
+          () => {},
+        ),
+      );
+      return pending;
+    });
+    return { signals, firstRequest, settled: () => Promise.all(settled) };
+  }
+
+  /** Delivers a change to `filename` in the story folder and lets its debounce run out. */
+  function change(filename: string): void {
+    vi.useFakeTimers(FAKE_TIMERS);
+    emit(story, filename);
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-watch-stall-'));
+    story = join(dir, 'story');
+    outFile = join(dir, 'out.html');
+    mkdirSync(story);
+    writeFileSync(join(story, 'start.tw'), source('Remote', 'FIRST'));
+    origCacheHome = process.env['XDG_CACHE_HOME'];
+    process.env['XDG_CACHE_HOME'] = join(dir, 'cache');
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    vi.unstubAllGlobals();
+    if (origCacheHome !== undefined) process.env['XDG_CACHE_HOME'] = origCacheHome;
+    else delete process.env['XDG_CACHE_HOME'];
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('abort() cancels the download the build waits on, and nothing is reported', async () => {
+    const format = stubStalledFormat();
+    const reported: CompileResult[] = [];
+    const errors: Error[] = [];
+    controller = await watch({
+      sources: [story],
+      outFile,
+      formatUrls: [STALLED_URL],
+      formatPaths: [FORMATS],
+      useTweegoPath: false,
+      onBuild: (result) => reported.push(result),
+      onError: (error) => errors.push(error),
+    });
+    const signal = await format.firstRequest;
+    expect(signal.aborted).toBe(false);
+
+    controller.abort();
+    expect(signal.aborted).toBe(true);
+    await format.settled(); // the request has ended, so nothing keeps the process alive
+
+    expect(reported).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(existsSync(outFile)).toBe(false);
+    expect(format.signals).toHaveLength(1);
+  });
+
+  it('times the download out, so a change made meanwhile is built and delivered', async () => {
+    const format = stubStalledFormat();
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outFile,
+      formatUrls: [STALLED_URL],
+      formatPaths: [FORMATS],
+      useTweegoPath: false,
+      formatFetchTimeout: 50,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    await format.firstRequest;
+
+    // While the first build waits, the story switches to a format found locally.
+    writeFileSync(join(story, 'start.tw'), source('Test Format', 'SECOND'));
+    change('start.tw');
+
+    const delivered = await builds.next();
+    expect(delivered.story.passages.find((p) => p.name === 'Start')?.text).toBe('SECOND');
+    expect(delivered.format?.name).toBe('Test Format');
+    expect(readFileSync(outFile, 'utf-8')).toContain('SECOND');
+    expect(format.signals[0]?.aborted).toBe(true);
+  });
+
+  it('stops watching when the signal in its options aborts', async () => {
+    const format = stubStalledFormat();
+    const outer = new AbortController();
+    controller = await watch({
+      sources: [story],
+      outFile,
+      formatUrls: [STALLED_URL],
+      formatPaths: [FORMATS],
+      useTweegoPath: false,
+      signal: outer.signal,
+    });
+    const signal = await format.firstRequest;
+    outer.abort();
+    expect(controller.signal.aborted).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(fake.watchers.filter((w) => !w.closed)).toEqual([]);
+  });
+});
