@@ -363,8 +363,9 @@ export function loadSourcesCached(
   processedFiles: Set<string>,
   cache: Map<string, FileCacheEntry>,
   changedFiles?: ReadonlySet<string>,
+  buildFiles?: ReadonlySet<string>,
 ): void {
-  const currentFiles = new Set<string>();
+  const currentFiles = new Set<string>(buildFiles);
   // changedFiles may name a file in any form (absolute, `./`-prefixed or relative to the working
   // directory); it is matched to `filenames`, whatever their form, by resolved path.
   const changedPaths = changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => resolve(f)));

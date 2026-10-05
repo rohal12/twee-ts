@@ -61,6 +61,8 @@ export async function compile(options: CompileOptions): Promise<CompileResult> {
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
   const result = await compileForOutputFile(options, options.outFile);
+  // The build may have been aborted after it finished: the previous output stays.
+  options.signal?.throwIfAborted();
   writeFileAtomic(options.outFile, result.output);
   return result;
 }
@@ -288,33 +290,59 @@ async function buildOutput(
   // Clear per-compile index cache
   clearIndexCache();
 
-  // Separate file paths from inline sources
-  const filePaths: string[] = [];
-  const inlineSources: InlineSource[] = [];
+  // Group the sources in the order supplied: each run of file paths is walked (directories
+  // expanded in place) and each run of inline sources is kept together, so a later source
+  // overrides an earlier one whatever kind each is.
+  const groups: SourceGroup[] = [];
+  const outputSources: string[] = [];
   for (const source of options.sources) {
+    const last = groups[groups.length - 1];
     if (typeof source === 'string') {
-      filePaths.push(source);
+      if (last?.kind === 'paths') last.paths.push(source);
+      else groups.push({ kind: 'paths', paths: [source] });
+    } else if (last?.kind === 'inline') {
+      last.sources.push(source);
     } else {
-      inlineSources.push(source);
+      groups.push({ kind: 'inline', sources: [source] });
     }
   }
 
-  // Walk file paths to get all source filenames
-  const sourcePaths = getFilenames(filePaths, written, options.exclude);
-  diagnostics.push(...sourcePaths.diagnostics);
-  rejectOutputSources(sourcePaths.outputSources, diagnostics);
-  const sourceFilenames = sourcePaths.filenames;
+  const walked = groups.map((group) => {
+    if (group.kind === 'inline') return group;
+    const found = getFilenames(group.paths, written, options.exclude);
+    diagnostics.push(...found.diagnostics);
+    outputSources.push(...found.outputSources);
+    return { kind: 'files' as const, filenames: found.filenames };
+  });
+  rejectOutputSources(outputSources, diagnostics);
+  // Every file of the build, so that a cache purge while loading one group keeps the others' entries.
+  const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.filenames : [])));
 
   // Create story and load sources
   const story = createStory();
   const processedFiles = new Set<string>();
 
-  if (cache) {
-    loadSourcesCached(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles, cache, changedFiles);
-  } else {
-    loadSources(story, sourceFilenames, { trim, twee2Compat }, diagnostics, processedFiles);
+  for (const group of walked) {
+    if (group.kind === 'inline') {
+      loadInlineSources(story, group.sources, { trim, twee2Compat }, diagnostics);
+    } else if (cache) {
+      loadSourcesCached(
+        story,
+        group.filenames,
+        { trim, twee2Compat },
+        diagnostics,
+        processedFiles,
+        cache,
+        changedFiles,
+        buildFiles,
+      );
+    } else {
+      loadSources(story, group.filenames, { trim, twee2Compat }, diagnostics, processedFiles);
+    }
   }
-  loadInlineSources(story, inlineSources, { trim, twee2Compat }, diagnostics);
+  if (cache && buildFiles.size === 0) {
+    loadSourcesCached(story, [], { trim, twee2Compat }, diagnostics, processedFiles, cache, changedFiles);
+  }
 
   // Apply tag aliases (e.g. library → script)
   if (options.tagAliases) {
@@ -333,6 +361,8 @@ async function buildOutput(
       DEFAULT_FORMAT_ID,
     );
     format = await resolveStoryFormat(request, { ...options, noRemote }, diagnostics);
+    // The caller may have aborted while the format was being found.
+    options.signal?.throwIfAborted();
   }
 
   // Merge config from StoryData: command-line > StoryData > default.
@@ -411,8 +441,14 @@ async function buildOutput(
     files: [...processedFiles],
   };
 
+  // Nothing is delivered, or written by the caller, for a build that was aborted meanwhile.
+  options.signal?.throwIfAborted();
   return { output, story, format, diagnostics, stats };
 }
+
+/** A run of sources of one kind, in the order supplied. */
+type SourceGroup =
+  { readonly kind: 'paths'; readonly paths: string[] } | { readonly kind: 'inline'; readonly sources: InlineSource[] };
 
 /**
  * Throws for the first of `paths`, inputs named directly that are also an output:
