@@ -68,6 +68,8 @@ Exits with code 1 if errors are found (broken links, a starting passage that is 
 
 Like a build, linting leaves the output file (`-o`, or `output` in the config file) out of the sources, so an earlier build inside a source folder is not linted.
 
+Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so bracketed text in them, such as `content: "[[Decorative]]"`, is not a link.
+
 ```sh
 $ twee-ts --lint ./story/
 Format: SugarCube 2.37.3

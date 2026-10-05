@@ -32,7 +32,9 @@ export interface StoryMap {
    * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
    * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
    * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
-   * (see `sugarcube-macros.ts`). Links and calls in comments are not read.
+   * (see `sugarcube-macros.ts`). Links and calls in comments are not read. A script passage is
+   * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
+   * CSS and links to nothing.
    */
   links: Map<string, string[]>;
   /** Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage. */
@@ -78,6 +80,17 @@ function extractLinksFromText(text: string, isScript: boolean): string[] {
     found.filter((link) => link.via === via).map((link) => link.passage),
   );
   return [...new Set(ordered)];
+}
+
+/**
+ * The passages that `p` links to. A script passage is JavaScript, read for links only in its
+ * strings. A stylesheet is CSS, which the story puts in a style element and never wikifies, so it
+ * links nowhere; a passage tagged both is a script, as Twine 2 output takes it.
+ */
+function passageLinks(p: ReadonlyPassage): string[] {
+  if (hasTag(p, 'script')) return extractLinksFromText(textAsRead(p), true);
+  if (hasTag(p, 'stylesheet')) return [];
+  return extractLinksFromText(textAsRead(p), false);
 }
 
 /** Passages SugarCube runs from their raw text, never joining their lines. */
@@ -160,8 +173,7 @@ export function storyInspect(story: ReadonlyStory): StoryMap {
     }
 
     // Links
-    const targets = extractLinksFromText(textAsRead(p), hasTag(p, 'script'));
-    links.set(p.name, targets);
+    links.set(p.name, passageLinks(p));
   }
 
   // Broken links: link targets that don't exist as passages

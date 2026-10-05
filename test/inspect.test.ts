@@ -331,6 +331,26 @@ describe('storyInspect', () => {
       expect(map.links.get('Story JavaScript')).toEqual(['Room']);
       expect(map.brokenLinks).toEqual([]);
     });
+
+    it('reads no link from a stylesheet, whose text is CSS', async () => {
+      const css = 'body::before { content: "[[Decorative]]"; }\n.x::after { content: "[[Room]]"; }';
+      const result = await compile({
+        sources: [
+          {
+            filename: 'style.tw',
+            content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start\nText.\n\n:: Theme [stylesheet]\n${css}\n\n:: Room\nText.\n\n:: Both [script stylesheet]\n$.wiki('[[Room]]');`,
+          },
+          { filename: 'theme.css', content: css },
+        ],
+        outputMode: 'json',
+      });
+      const map = storyInspect(result.story);
+      expect(map.links.get('Theme')).toEqual([]);
+      expect(map.links.get('theme.css')).toEqual([]);
+      // Twine 2 output puts a passage tagged both script and stylesheet in its script.
+      expect(map.links.get('Both')).toEqual(['Room']);
+      expect(map.brokenLinks).toEqual([]);
+    });
   });
 
   describe('SugarCube macro arguments', () => {
