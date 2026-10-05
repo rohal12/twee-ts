@@ -9,7 +9,8 @@ import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatH
 import { storyAdd, storyHas, storyPrepend } from './story.js';
 import { parseTwee } from './parser.js';
 import { decompileHTML } from './html-parser.js';
-import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
+import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from './util.js';
+import type { DecodedText } from './util.js';
 import { normalizeSourceText } from './source-text.js';
 
 interface LoadOptions {
@@ -124,10 +125,13 @@ export function loadInlineSources(
       // Treat as a file path — handled externally
       continue;
     }
-    // Normalize like readUTF8() does for files, so in-memory and on-disk sources load the same.
-    const content = normalizeSourceText(
-      typeof source.content === 'string' ? source.content : source.content.toString('utf-8'),
-    );
+    // Decode and normalize like readUTF8() does for files, so in-memory and on-disk sources load the same.
+    const decoded: DecodedText =
+      typeof source.content === 'string'
+        ? { text: source.content, diagnostics: [] }
+        : decodeText(source.content, source.filename);
+    diagnostics.push(...decoded.diagnostics);
+    const content = normalizeSourceText(decoded.text);
 
     const ext = normalizedFileExt(source.filename);
     switch (ext) {
@@ -169,18 +173,20 @@ interface ParseResult {
 }
 
 function parseTweeFile(filename: string, opts: LoadOptions): ParseResult {
-  const source = readUTF8(filename);
+  const readDiagnostics: Diagnostic[] = [];
+  const source = readUTF8(filename, readDiagnostics);
   const result = parseTwee(source, {
     filename,
     trim: opts.trim ?? true,
     twee2Compat: opts.twee2Compat ?? false,
   });
-  return { passages: result.passages, diagnostics: [...result.diagnostics] };
+  return { passages: result.passages, diagnostics: [...readDiagnostics, ...result.diagnostics] };
 }
 
 function parseTaggedFile(tag: string, filename: string): ParseResult {
-  const source = readUTF8(filename);
-  return { passages: [{ name: basename(filename), tags: [tag], text: source }], diagnostics: [] };
+  const diagnostics: Diagnostic[] = [];
+  const source = readUTF8(filename, diagnostics);
+  return { passages: [{ name: basename(filename), tags: [tag], text: source }], diagnostics };
 }
 
 function parseMediaFile(tag: string, filename: string): ParseResult {
@@ -212,14 +218,15 @@ function parseFontFile(filename: string): ParseResult {
 }
 
 function parseHTMLFile(filename: string, opts: LoadOptions): ParseResult {
-  const { story, diagnostics } = decompileHTML(readUTF8(filename), { trim: opts.trim ?? true });
+  const readDiagnostics: Diagnostic[] = [];
+  const { story, diagnostics } = decompileHTML(readUTF8(filename, readDiagnostics), { trim: opts.trim ?? true });
   // Twine 2 HTML keeps the story name in an attribute, not a passage. Only passages reach the
   // outer story (and the cache), so carry the name as a StoryTitle passage, as Twine 1 HTML does.
   const passages =
     story.name !== '' && !storyHas(story, 'StoryTitle')
       ? [{ name: 'StoryTitle', tags: [], text: story.name }, ...story.passages]
       : story.passages;
-  return { passages, diagnostics: [...diagnostics] };
+  return { passages, diagnostics: [...readDiagnostics, ...diagnostics] };
 }
 
 /**
@@ -306,6 +313,7 @@ function loadTwee(story: Story, filename: string, opts: LoadOptions, diagnostics
 
 function loadTagged(story: Story, tag: string, filename: string, diagnostics: Diagnostic[]): void {
   const result = parseTaggedFile(tag, filename);
+  diagnostics.push(...result.diagnostics);
   for (const p of result.passages) {
     storyAdd(story, p, diagnostics);
   }

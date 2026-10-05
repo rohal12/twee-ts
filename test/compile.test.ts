@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join, relative } from 'node:path';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { compile, compileToFile } from '../src/compiler.js';
+import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { compile, compileIncremental, compileToFile } from '../src/compiler.js';
+import type { Diagnostic, FileCacheEntry } from '../src/types.js';
 import { decompileHTML } from '../src/html-parser.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -829,5 +831,141 @@ describe('module and head file injection', () => {
     });
 
     expect(result.output).toContain(`<script>var start="</head>";</script>${MODULE}\n${META}\n</head><body>`);
+  });
+});
+
+describe('compile with sources that are not valid UTF-8', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const html = { formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false, noRemote: true };
+  let dir: string;
+
+  /** `text` encoded as Windows-1252, for text whose characters are all in Latin-1. */
+  const windows1252 = (text: string): Buffer => Buffer.from(text, 'latin1');
+  const story = (text: string): string =>
+    `:: StoryData\n{"ifid":"${IFID}"}\n\n:: StoryTitle\nCafé\n\n:: Start\n${text}\n`;
+  const fallbackWarning = (file: string): Diagnostic => ({
+    level: 'warning',
+    message: `read ${file}: Invalid UTF-8; assuming charset is windows-1252.`,
+    file,
+  });
+  /** A source or module path as the build lists it: relative to the working directory. */
+  const asListed = (file: string): string => relative(process.cwd(), file);
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'twee-ts-encoding-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reads Windows-1252 Twee and CSS files as Windows-1252, as Tweego does, and warns for each', async () => {
+    const tw = join(dir, 'story.tw');
+    const css = join(dir, 'style.css');
+    writeFileSync(tw, windows1252(story('café')));
+    writeFileSync(css, windows1252('/* café */'));
+
+    const result = await compile({ sources: [tw, css], outputMode: 'twee3' });
+
+    expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('café');
+    expect(result.story.passages.find((p) => p.name === 'style.css')?.text).toBe('/* café */');
+    expect(result.diagnostics).toEqual([fallbackWarning(asListed(tw)), fallbackWarning(asListed(css))]);
+  });
+
+  it('reports nothing for valid UTF-8 sources', async () => {
+    const tw = join(dir, 'story.tw');
+    const css = join(dir, 'style.css');
+    writeFileSync(tw, story('café €'));
+    writeFileSync(css, '/* café € */');
+
+    const result = await compile({ sources: [tw, css], outputMode: 'twee3' });
+
+    expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('café €');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('replays the warning from the cache in an incremental build', async () => {
+    const js = join(dir, 'script.js');
+    writeFileSync(join(dir, 'story.tw'), story('Hi'));
+    writeFileSync(js, windows1252('// café'));
+    const cache = new Map<string, FileCacheEntry>();
+    const options = { sources: [dir], outputMode: 'twee3' as const };
+
+    const first = await compileIncremental(options, cache);
+    const second = await compileIncremental(options, cache);
+
+    expect(first.diagnostics).toEqual([fallbackWarning(asListed(js))]);
+    expect(second.diagnostics).toEqual([fallbackWarning(asListed(js))]);
+    expect(second.story.passages.find((p) => p.name === 'script.js')?.text).toBe('// café');
+  });
+
+  it('decodes an in-memory Buffer source the same way', async () => {
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: windows1252(story('café')) }],
+      outputMode: 'twee3',
+    });
+
+    expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('café');
+    expect(result.diagnostics).toEqual([fallbackWarning('story.tw')]);
+  });
+
+  it('decodes Windows-1252 modules and head files, and warns for each', async () => {
+    const module = join(dir, 'module.js');
+    const head = join(dir, 'head.html');
+    writeFileSync(module, windows1252('window.word = "café";'));
+    writeFileSync(head, windows1252('<meta name="x" content="café">'));
+
+    const result = await compile({
+      ...html,
+      sources: [{ filename: 'story.tw', content: story('Hi') }],
+      modules: [module],
+      headFile: head,
+    });
+
+    expect(result.output).toContain('window.word = "café";');
+    expect(result.output).toContain('<meta name="x" content="café">');
+    expect(result.diagnostics).toEqual([fallbackWarning(asListed(module)), fallbackWarning(head)]);
+  });
+
+  it('decodes a Windows-1252 Twine 2 story format and warns', async () => {
+    const formatDir = join(dir, 'formats', 'legacy-1');
+    const formatFile = join(formatDir, 'format.js');
+    mkdirSync(formatDir, { recursive: true });
+    writeFileSync(
+      formatFile,
+      windows1252(
+        'window.storyFormat({"name":"Legacy","version":"1.0.0","source":"<html><head></head><body>café {{STORY_DATA}}</body></html>"});',
+      ),
+    );
+
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: story('Hi') }],
+      formatId: 'legacy-1',
+      formatPaths: [join(dir, 'formats')],
+      useTweegoPath: false,
+      noRemote: true,
+    });
+
+    expect(result.output).toMatch(/<body>café <!-- UUID:\/\/[^>]*--><tw-storydata /);
+    expect(result.diagnostics).toEqual([fallbackWarning(formatFile)]);
+  });
+
+  it('decodes Windows-1252 Twine 1 format components and warns', async () => {
+    const formatDir = join(dir, 'formats', 'legacy-tw1');
+    const engine = join(dir, 'formats', 'engine.js');
+    mkdirSync(formatDir, { recursive: true });
+    writeFileSync(
+      join(formatDir, 'header.html'),
+      '<html><head></head><body><script>"ENGINE"</script>"STORY"</body></html>',
+    );
+    writeFileSync(engine, windows1252('var word = "café";'));
+
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: story('Hi') }],
+      formatId: 'legacy-tw1',
+      formatPaths: [join(dir, 'formats')],
+      useTweegoPath: false,
+      noRemote: true,
+    });
+
+    expect(result.output).toContain('<script>var word = "café";</script>');
+    expect(result.diagnostics).toEqual([fallbackWarning(engine)]);
   });
 });

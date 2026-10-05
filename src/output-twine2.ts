@@ -2,7 +2,14 @@
  * Twine 2 HTML and archive output.
  * Ported from storyout.go.
  */
-import type { OmittingTag, PassageOmission, ReadonlyStory, ReadonlyPassage, StoryFormatInfo } from './types.js';
+import type {
+  Diagnostic,
+  OmittingTag,
+  PassageOmission,
+  ReadonlyStory,
+  ReadonlyPassage,
+  StoryFormatInfo,
+} from './types.js';
 import {
   attrEscape,
   htmlEscape,
@@ -32,13 +39,13 @@ export function toTwine2Archive(
  * Fill the Twine 2 format template: every `{{STORY_NAME}}` gets the escaped story name and the first
  * `{{STORY_DATA}}` the story data (as Tweego does), and `head` goes before the first closing head tag. All three are
  * found in the template in one pass, so a story name, passage text or head content holding a placeholder or a
- * closing head tag stays literal.
+ * closing head tag stays literal. `options.diagnostics` receives a warning when the format file is not valid UTF-8.
  */
 export function toTwine2HTML(
   story: ReadonlyStory,
   format: StoryFormatInfo,
   startName: string,
-  options?: { readonly sourceInfo?: boolean; readonly head?: string },
+  options?: { readonly sourceInfo?: boolean; readonly head?: string; readonly diagnostics?: Diagnostic[] },
 ): string {
   const name = htmlEscape(story.name);
   const head = headSlot(options?.head ?? '');
@@ -55,7 +62,7 @@ export function toTwine2HTML(
     },
     ...(head === undefined ? [] : [head]),
   ];
-  return fillTemplate(readFormatSource(format), slots);
+  return fillTemplate(readFormatSource(format, options?.diagnostics), slots);
 }
 
 const OMITTING_TAGS: readonly OmittingTag[] = ['Twine.private', 'script', 'stylesheet'];

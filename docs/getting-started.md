@@ -86,6 +86,18 @@ twee-ts recursively walks directories, so you can organize your `.tw` files howe
 | `.aac`, `.flac`, `.mp3`, `.m4a`, `.ogg`, `.opus`, `.wav`, `.wave`, `.weba` | Embedded as base64 audio |
 | `.mp4`, `.ogv`, `.webm`                                                    | Embedded as base64 video |
 
+### Text encoding
+
+Text files (Twee, CSS, JavaScript, HTML, modules, the head file, story formats and the config file) are read as UTF-8. A leading byte order mark is removed and CRLF and CR line endings become LF. As in Tweego, a file that is not valid UTF-8 is read as Windows-1252 instead, the encoding of many older Windows files and Twine 1 exports, so its accented letters and curly quotes survive. twee-ts also prints a warning naming the file:
+
+```
+warning: read src/old.tw: Invalid UTF-8; assuming charset is windows-1252.
+```
+
+To silence it, save the file as UTF-8. Unlike Tweego, twee-ts has no `--charset` option for other encodings.
+
+In a Twee file, a byte order mark at the start of a line directly before `::` is removed too. A file made by joining Twee files (`cat a.tw b.tw > story.tw`) then keeps the passage headers of files that were saved with a byte order mark.
+
 ## Compatibility with Tweego
 
 twee-ts is a drop-in replacement for Tweego. It:

@@ -344,8 +344,8 @@ async function buildOutput(
       const head = loadHeadContent(modules.filenames, options.headFile, diagnostics);
 
       output = format.isTwine2
-        ? toTwine2HTML(story, format, startName, { sourceInfo, head })
-        : toTwine1HTML(story, format, startName, { head });
+        ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
+        : toTwine1HTML(story, format, startName, { head, diagnostics });
       break;
     }
 
