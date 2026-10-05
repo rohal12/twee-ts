@@ -67,15 +67,17 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
  * Builds as compileToFile() does for `outFile`, without writing it: the output may sit
  * inside a source folder, so its last build is left out of the sources and modules and
  * never read back. The caller decides whether the result is written. With no `outFile`
- * (output to stdout, or none), this is compile().
+ * (output to stdout, or none), this is compile(). With `cache`, files are cached as
+ * compileIncremental() caches them.
  *
- * Internal, for the CLI; not part of the public API.
+ * Internal, for the CLI and the bundler plugins; not part of the public API.
  */
 export async function compileForOutputFile(
   options: CompileOptions,
   outFile: string | undefined,
+  cache?: Map<string, FileCacheEntry>,
 ): Promise<CompileResult> {
-  return buildOutput(options, undefined, undefined, outFile);
+  return buildOutput(options, cache, undefined, outFile);
 }
 
 /**
