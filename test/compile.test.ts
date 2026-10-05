@@ -433,3 +433,99 @@ describe('compileToFile with the output inside a source folder', () => {
     expect(second.output).not.toContain('script-module-out');
   });
 });
+
+describe('Twee output records the effective StoryData', () => {
+  const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
+  const SOURCE = [
+    ':: StoryTitle',
+    'Effective',
+    '',
+    ':: StoryData',
+    JSON.stringify({ ifid: IFID, format: 'SugarCube', options: ['strict'], start: 'Start' }),
+    '',
+    ':: Start',
+    'Original',
+    '',
+    ':: Prologue',
+    'New start',
+  ].join('\n');
+
+  const TWEE_MODES = ['twee3', 'twee1'] as const;
+
+  async function roundTrip(
+    content: string,
+    outputMode: (typeof TWEE_MODES)[number],
+    overrides: { readonly startPassage?: string; readonly testMode?: boolean },
+  ) {
+    const first = await compile({ sources: [{ filename: 'story.tw', content }], outputMode, ...overrides });
+    const again = await compile({ sources: [{ filename: 'roundtrip.tw', content: first.output }], outputMode });
+    return { first, again };
+  }
+
+  for (const outputMode of TWEE_MODES) {
+    describe(outputMode, () => {
+      it('keeps a start passage override through a round trip', async () => {
+        const { first, again } = await roundTrip(SOURCE, outputMode, { startPassage: 'Prologue' });
+        expect(first.story.twine2.start).toBe('Prologue');
+        expect(first.output).toContain('"start": "Prologue"');
+        expect(again.story.twine2.start).toBe('Prologue');
+      });
+
+      it('keeps the debug option from test mode through a round trip', async () => {
+        const { first, again } = await roundTrip(SOURCE, outputMode, { testMode: true });
+        expect([...first.story.twine2.options.keys()]).toEqual(['strict', 'debug']);
+        expect([...again.story.twine2.options.keys()]).toEqual(['strict', 'debug']);
+      });
+
+      it('records overrides for a story without a StoryData passage, after StoryTitle', async () => {
+        const source = ':: StoryTitle\nNo Data\n\n:: Start\nOriginal\n\n:: Prologue\nNew start';
+        const { first, again } = await roundTrip(source, outputMode, { startPassage: 'Prologue', testMode: true });
+        expect(first.story.passages.map((p) => p.name)).toEqual(['StoryTitle', 'Start', 'Prologue']);
+        expect(first.output).toMatch(/^:: StoryTitle\nNo Data\n\n\n:: StoryData\n\{/);
+        expect(again.story.twine2.start).toBe('Prologue');
+        expect(again.story.twine2.options.has('debug')).toBe(true);
+        expect(again.story.ifid).toBe(first.story.ifid);
+      });
+
+      it('writes no StoryData passage for a story without one when nothing overrides it', async () => {
+        const source = ':: StoryTitle\nNo Data\n\n:: Start\nOriginal';
+        const result = await compile({ sources: [{ filename: 'story.tw', content: source }], outputMode });
+        expect(result.output).toBe(':: StoryTitle\nNo Data\n\n\n:: Start\nOriginal\n\n\n');
+      });
+    });
+  }
+
+  it('leaves the StoryData text unchanged when nothing overrides it', async () => {
+    const result = await compile({ sources: [{ filename: 'story.tw', content: SOURCE }], outputMode: 'twee3' });
+    expect(result.output).toContain(
+      `:: StoryData\n{\n\t"ifid": "${IFID}",\n\t"format": "SugarCube",\n\t"options": [\n\t\t"strict"\n\t],\n\t"start": "Start"\n}\n\n\n`,
+    );
+  });
+
+  it('leaves the output unchanged when the overrides match the StoryData', async () => {
+    const plain = await compile({ sources: [{ filename: 'story.tw', content: SOURCE }], outputMode: 'twee3' });
+    const overridden = await compile({
+      sources: [{ filename: 'story.tw', content: SOURCE }],
+      outputMode: 'twee3',
+      startPassage: 'Start',
+    });
+    expect(overridden.output).toBe(plain.output);
+  });
+
+  it('records the IFID generated for a StoryData passage without one', async () => {
+    const source = ':: StoryData\n{"start":"Start"}\n\n:: Start\nOriginal';
+    const result = await compile({ sources: [{ filename: 'story.tw', content: source }], outputMode: 'twee3' });
+    expect(result.diagnostics.some((d) => d.level === 'error' && d.message.includes('IFID not found'))).toBe(true);
+    expect(result.output).toContain(`"ifid": "${result.story.ifid}"`);
+  });
+
+  it('keeps a StoryData passage that cannot be parsed as written', async () => {
+    const source = ':: StoryData\n{not json\n\n:: Start\nOriginal';
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: source }],
+      outputMode: 'twee3',
+      startPassage: 'Start',
+    });
+    expect(result.output).toContain(':: StoryData\n{not json\n\n\n');
+  });
+});

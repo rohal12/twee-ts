@@ -105,7 +105,7 @@ interface StoryDataJSON {
   zoom?: number;
 }
 
-export function marshalStoryData(story: Story): string {
+export function marshalStoryData(story: ReadonlyStory): string {
   const data: StoryDataJSON = {};
   if (story.ifid) data.ifid = story.ifid;
   if (story.twine2.format) data.format = story.twine2.format;

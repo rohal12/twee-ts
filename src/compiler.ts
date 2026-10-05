@@ -243,7 +243,8 @@ async function buildOutput(
   switch (outputMode) {
     case 'twee3':
     case 'twee1':
-      output = toTwee(story, outputMode);
+      // Without a StoryData passage, add one only to record what the options changed.
+      output = toTwee(story, outputMode, { addStoryData: Boolean(options.startPassage) || testMode });
       break;
 
     case 'twine2-archive':

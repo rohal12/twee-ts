@@ -101,7 +101,7 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 | Key               | Type      | Default    | Description                                                                                    |
 | ----------------- | --------- | ---------- | ---------------------------------------------------------------------------------------------- |
 | `startPassage`    | `string`  | `"Start"`  | Name of the starting passage.                                                                  |
-| `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content.                                     |
+| `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content, in Twee and HTML sources.           |
 | `twee2Compat`     | `boolean` | `false`    | Enable Twee2 syntax compatibility mode.                                                        |
 | `testMode`        | `boolean` | `false`    | Enable test/debug mode (sets the `debug` option in story data).                                |
 | `sourceInfo`      | `boolean` | `false`    | Embed source file/line as `data-` attributes on passage elements.                              |

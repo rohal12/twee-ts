@@ -47,6 +47,7 @@ export { ItemType } from './types.js';
 export type {
   CompileOptions,
   CompileToFileOptions,
+  DecompileOptions,
   WatchOptions,
   CompileResult,
   CompileStats,

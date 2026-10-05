@@ -173,6 +173,16 @@ export type PassageOmission =
   | { readonly kind: 'tag'; readonly tag: OmittingTag }
   | { readonly kind: 'empty-story-settings' };
 
+// --- HTML decompile ---
+
+export interface DecompileOptions {
+  /**
+   * Trim whitespace at both ends of passage text (and of the Twine 2 story stylesheet and script),
+   * as the Twee lexer does. When false, the stored text is kept exactly. Default: true.
+   */
+  readonly trim?: boolean;
+}
+
 // --- Story format ---
 
 export interface StoryFormatInfo {
