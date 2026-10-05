@@ -84,19 +84,19 @@ Lint failed.
 
 ### Watch & Logging
 
-| Flag              | Description                                                        |
-| ----------------- | ------------------------------------------------------------------ |
-| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`.   |
-| `-l, --log-stats` | Print passage count, word count, and file count after compilation. |
-| `--log-files`     | Print the list of input files after compilation.                   |
+| Flag              | Description                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `-w, --watch`     | Watch for file changes and rebuild automatically. Requires `-o`. A build with errors is reported and the watcher keeps running. |
+| `-l, --log-stats` | Print passage count, word count, and file count after compilation.                                                              |
+| `--log-files`     | Print the list of input files after compilation.                                                                                |
 
 ### Config & Project
 
-| Flag                  | Description                                                          |
-| --------------------- | -------------------------------------------------------------------- |
-| `--init`              | Scaffold a new project with `twee-ts.config.json` and starter files. |
-| `-c, --config <file>` | Path to config file. Default: `twee-ts.config.json` in cwd.          |
-| `--no-config`         | Skip loading the config file.                                        |
+| Flag                  | Description                                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--init`              | Scaffold a new project with `twee-ts.config.json` and starter files. Existing files are kept, never overwritten. |
+| `-c, --config <file>` | Path to config file. Default: `twee-ts.config.json` in cwd.                                                      |
+| `--no-config`         | Skip loading the config file.                                                                                    |
 
 ### Meta
 
@@ -136,6 +136,27 @@ Cleared 1 cached format.
 $ twee-ts cache path
 /home/user/.cache/twee-ts/storyformats
 ```
+
+## Exit Status
+
+| Code | Meaning                                                                                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | Success. Warnings (for example, a duplicate passage) are printed to stderr but do not change the exit status.                        |
+| `1`  | Failure: invalid arguments, a fatal error, or a compilation that reported at least one error. `--lint` also exits 1 on broken links. |
+
+When a compilation reports errors (malformed Twee source, an invalid or missing IFID, a missing starting passage, and so on), twee-ts prints them to stderr, writes no output, and exits with status 1. The output file is left as it was, and nothing is written to stdout. This matches Tweego, which stops on these errors before writing output.
+
+```sh
+$ twee-ts -o story.html src/
+error: line 12: Malformed twee source; unterminated tag block.
+Compilation failed with 1 error; output not written.
+$ echo $?
+1
+```
+
+In watch mode (`-w`), a build with errors is reported and the watcher keeps running, so you can fix the source and save again.
+
+The programmatic API is unaffected: `compile()` and `compileToFile()` still return non-fatal errors in `result.diagnostics`, and `compileToFile()` still writes its output file. Check the diagnostics yourself if you need the CLI's behaviour.
 
 ## Examples
 
