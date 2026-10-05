@@ -90,6 +90,9 @@ pnpm run docs:dev    # local docs dev server
 pnpm run docs:build  # build docs for deployment
 ```
 
+For repeatable compiler reviews, use the [validation workflow and behavior matrix](docs/compiler-validation.md).
+It records known failures separately from the normal test suite and defines how issues are closed.
+
 ## License
 
 This is free and unencumbered software released into the public domain. See [UNLICENSE](UNLICENSE).

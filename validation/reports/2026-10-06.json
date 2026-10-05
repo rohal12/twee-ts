@@ -1,0 +1,458 @@
+{
+  "matrixRevision": 1,
+  "matrixSha256": "35a5b67b803b4c1a85430990f27773ee5ba9a7d515848a7fc0bb03a56e5e0a0a",
+  "productCommit": "d73791480a1d3e52e2281b8e184c3b4bf2b0fb30",
+  "productTrees": {
+    "src": "76bff008204b50a50c39d3fbdbf30aee6fd64d11",
+    "bin": "f0ba127934325d222c586ef2ec518a39db69201d"
+  },
+  "productWorkingTreeChanges": "",
+  "environment": {
+    "node": "v22.18.0",
+    "pnpm": "10.14.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "startedAt": "2026-10-05T17:06:36.448Z",
+  "completedAt": "2026-10-05T17:06:37.705Z",
+  "counts": {
+    "total": 59,
+    "pass": 43,
+    "fail": 16,
+    "blocked": 0,
+    "failingClasses": 6
+  },
+  "results": [
+    {
+      "id": "WRITE-01",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "new file",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "pass"
+    },
+    {
+      "id": "WRITE-02",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "existing file",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "pass"
+    },
+    {
+      "id": "WRITE-03",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "valid relative symlink",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "pass"
+    },
+    {
+      "id": "WRITE-04",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "absolute dangling symlink",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "fail",
+      "detail": "atomic write replaced the output symlink"
+    },
+    {
+      "id": "WRITE-05",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "relative dangling symlink",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "fail",
+      "detail": "atomic write replaced the output symlink"
+    },
+    {
+      "id": "WRITE-06",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "dangling symlink chain",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "fail",
+      "detail": "atomic write replaced the output symlink"
+    },
+    {
+      "id": "WRITE-07",
+      "invariant": "Atomic output preserves destination and link intent",
+      "variant": "symlink cycle",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/219",
+      "status": "pass"
+    },
+    {
+      "id": "TYPE-01",
+      "invariant": "ReadonlyPassage rejects writes at its public boundaries",
+      "variant": "tag append",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/220",
+      "status": "fail",
+      "detail": "TypeScript accepted tag append; the @ts-expect-error directive was unused"
+    },
+    {
+      "id": "TYPE-02",
+      "invariant": "ReadonlyPassage rejects writes at its public boundaries",
+      "variant": "tag index assignment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/220",
+      "status": "fail",
+      "detail": "TypeScript accepted tag index assignment; the @ts-expect-error directive was unused"
+    },
+    {
+      "id": "TYPE-03",
+      "invariant": "ReadonlyPassage rejects writes at its public boundaries",
+      "variant": "metadata property assignment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/220",
+      "status": "fail",
+      "detail": "TypeScript accepted metadata property assignment; the @ts-expect-error directive was unused"
+    },
+    {
+      "id": "TYPE-04",
+      "invariant": "ReadonlyPassage rejects writes at its public boundaries",
+      "variant": "source property assignment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/220",
+      "status": "pass"
+    },
+    {
+      "id": "TYPE-05",
+      "invariant": "ReadonlyPassage rejects writes at its public boundaries",
+      "variant": "name assignment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/220",
+      "status": "pass"
+    },
+    {
+      "id": "FORMAT-01",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "strict object",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "pass"
+    },
+    {
+      "id": "FORMAT-02",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "relaxed object",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "pass"
+    },
+    {
+      "id": "FORMAT-03",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "comment inside object",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "pass"
+    },
+    {
+      "id": "FORMAT-04",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "leading brace comment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "fail",
+      "detail": "parser: valid format wrapper was rejected\nlocal compilation: No story format available for HTML output.\ndirect download and offline compilation: Failed to parse format JSON from http://127.0.0.1:33675/format.js\n+ actual - expected\n\n+ [\n+   'parser: valid format wrapper was rejected',\n+   'local compilation: No story format available for HTML output.',\n+   'direct download and offline compilation: Failed to parse format JSON from http://127.0.0.1:33675/format.js'\n+ ]\n- []\n"
+    },
+    {
+      "id": "FORMAT-05",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "trailing brace comment",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "fail",
+      "detail": "parser: valid format wrapper was rejected\nlocal compilation: No story format available for HTML output.\ndirect download and offline compilation: Failed to parse format JSON from http://127.0.0.1:45697/format.js\n+ actual - expected\n\n+ [\n+   'parser: valid format wrapper was rejected',\n+   'local compilation: No story format available for HTML output.',\n+   'direct download and offline compilation: Failed to parse format JSON from http://127.0.0.1:45697/format.js'\n+ ]\n- []\n"
+    },
+    {
+      "id": "FORMAT-06",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "surrounding brace comments",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "fail",
+      "detail": "parser: valid format wrapper was rejected\nlocal compilation: No story format available for HTML output.\ndirect download and offline compilation: Failed to parse format JSON from http://127.0.0.1:39163/format.js\n+ actual - expected\n\n+ [\n+   'parser: valid format wrapper was rejected',\n+   'local compilation: No story format available for HTML output.',\n+   'direct download and offline compilation: Failed to parse format JSON from http://127.0.0.1:39163/format.js'\n+ ]\n- []\n"
+    },
+    {
+      "id": "FORMAT-07",
+      "invariant": "Lexically equivalent storyFormat wrappers decode identically",
+      "variant": "braces inside a value",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/221",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-01",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "local exact",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-02",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "local newer",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-03",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "local older",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-04",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "URL exact",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-05",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "URL newer",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-06",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "URL older",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "fail",
+      "detail": "No story format available for HTML output."
+    },
+    {
+      "id": "RESOLVE-07",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "index cache exact",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-08",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "index cache newer",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "RESOLVE-09",
+      "invariant": "Format selection and warnings agree across supported source kinds",
+      "variant": "index cache older",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/224",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-01",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "module: ordinary head",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-02",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "module: comment look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-03",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "module: script look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-04",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "module: attribute look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-05",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "module: quoted head attribute",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-06",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "client: ordinary head",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "pass"
+    },
+    {
+      "id": "HEAD-07",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "client: comment look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "fail",
+      "detail": "Vite client must be an actual HTML element\n\n0 !== 1\n"
+    },
+    {
+      "id": "HEAD-08",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "client: script look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "fail",
+      "detail": "Vite client must be an actual HTML element\n\n0 !== 1\n"
+    },
+    {
+      "id": "HEAD-09",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "client: attribute look-alike",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "fail",
+      "detail": "Vite client must be an actual HTML element\n\n0 !== 1\n"
+    },
+    {
+      "id": "HEAD-10",
+      "invariant": "HTML injections preserve literals and create executable elements",
+      "variant": "client: quoted head attribute",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/223",
+      "status": "fail",
+      "detail": "Vite client must be an actual HTML element\n\n0 !== 1\n"
+    },
+    {
+      "id": "VITE-01",
+      "invariant": "Development and production entry builds preserve user configuration",
+      "variant": "ordinary inline config",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/222",
+      "status": "pass"
+    },
+    {
+      "id": "VITE-02",
+      "invariant": "Development and production entry builds preserve user configuration",
+      "variant": "inline define",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/222",
+      "status": "pass"
+    },
+    {
+      "id": "VITE-03",
+      "invariant": "Development and production entry builds preserve user configuration",
+      "variant": "inline alias",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/222",
+      "status": "pass"
+    },
+    {
+      "id": "VITE-04",
+      "invariant": "Development and production entry builds preserve user configuration",
+      "variant": "inline virtual-module plugin",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/222",
+      "status": "fail",
+      "detail": "[twee-ts] Build failed with 1 error:\n\nError: [vite]: Rolldown failed to resolve import \"virtual:validation\" from \"<fixture>/entry.js\".\nThis is most likely unintended because it can break your application at runtime.\nIf you do want to externalize this module explicitly add it to\n`build.rolldownOptions.external`\n    at viteLog (file://<repo>/node_modules/.pnpm/vite@8.3.1_@types+node@26.6.3_esbuild@0.28.2_tsx@4.23.15/node_modules/vite/dist/node/chunks/node.js:34538:57)\n    at onRollupLog (file://<repo>/node_modules/.pnpm/vite@8.3.1_@types+node@26.6.3_esbuild@0.28.2_tsx@4.23.15/node_modules/vite/dist/node/chunks/node.js:34571:7)\n    at onLog (file://<repo>/node_modules/.pnpm/vite@8.3.1_@types+node@26.6.3_esbuild@0.28.2_tsx@4.23.15/node_modules/vite/dist/node/chunks/node.js:34334:4)\n    at file://<repo>/node_modules/.pnpm/rolldown@1.2.11/node_modules/rolldown/dist/shared/create-bundler-option-YGKfBl_D.mjs:48:26\n    at logger (file://<repo>/node_modules/.pnpm/rolldown@1.2.11/node_modules/rolldown/dist/shared/create-bundler-option-YGKfBl_D.mjs:39:3)"
+    },
+    {
+      "id": "VITE-05",
+      "invariant": "Development and production entry builds preserve user configuration",
+      "variant": "file config with inline define override",
+      "ticket": "https://github.com/rohal12/twee-ts/issues/222",
+      "status": "fail",
+      "detail": "development did not preserve the same user configuration as production"
+    },
+    {
+      "id": "INPUT-01",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "file and inline normalization",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-02",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "mixed source precedence",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-03",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "cold and warm cache parity",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-04",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "forced change with unchanged mtime",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-05",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "parse-option invalidation",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-06",
+      "invariant": "Source loading and caching preserve effective authored data",
+      "variant": "generated-name collision",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-01",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "HTML metadata and text round trip",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-02",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "JSON start and debug overrides",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-03",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "private passage omitted",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-04",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "private start rejected",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-05",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "effective Twee metadata round trip",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "OUTPUT-06",
+      "invariant": "Output modes preserve their documented metadata and omissions",
+      "variant": "missing IFID reported",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "CLI-01",
+      "invariant": "CLI errors preserve output and generated output never becomes input",
+      "variant": "compile error preserves previous output",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "CLI-02",
+      "invariant": "CLI errors preserve output and generated output never becomes input",
+      "variant": "output inside sources excluded on repeat build",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "ABORT-01",
+      "invariant": "Cancelled compiles reject with the caller reason and preserve output",
+      "variant": "pre-aborted compile",
+      "ticket": null,
+      "status": "pass"
+    },
+    {
+      "id": "ABORT-02",
+      "invariant": "Cancelled compiles reject with the caller reason and preserve output",
+      "variant": "abort during direct format request",
+      "ticket": null,
+      "status": "pass"
+    }
+  ]
+}
