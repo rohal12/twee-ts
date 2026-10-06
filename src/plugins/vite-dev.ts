@@ -302,7 +302,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   });
 
   const send = (req: IncomingMessage, res: ServerResponse, type: string, body: string | Uint8Array): void => {
-    // `server.headers`, as Vite sends them with the pages it serves itself (Vite 5 may leave them unset).
+    // `server.headers`, as Vite sends them with the pages it serves itself.
     for (const [name, value] of Object.entries({ ...config.server.headers })) {
       if (typeof value === 'string' || typeof value === 'number') res.setHeader(name, value);
       else if (Array.isArray(value)) res.setHeader(name, value.map(String));

@@ -227,7 +227,13 @@ describe('checkProblems', () => {
   });
 
   it('matches a required check by its name, or its name and a space', () => {
-    const named = ['lint', 'test (macos-latest, Node 24)', 'coverage', 'package / pack', 'plugin peers (Vite 5)'];
+    const named = [
+      'lint',
+      'test (macos-latest, Node 24)',
+      'coverage',
+      'package / pack',
+      'plugin peers (Vite 8, Rollup 4)',
+    ];
     const more = ['contracts (ubuntu-latest)', 'duplication (cpd)'];
     const all = [...named, ...more];
     expect(

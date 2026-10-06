@@ -16,7 +16,6 @@ import {
   buildFiles,
   cleanUp,
   COMPILE,
-  hasEntry,
   makeProject,
   runEntry,
   startServer,
@@ -152,7 +151,7 @@ describe('vite plugin dev requests: the story, against what Vite serves for a pa
   );
 });
 
-describe.skipIf(!hasEntry)('vite plugin dev requests: files the entry emits separately (D9)', () => {
+describe('vite plugin dev requests: files the entry emits separately (D9)', () => {
   it.each(BASES)('serves them under their decoded names below base %j, where the build writes them', async (base) => {
     const names = ['keep file.png', 'ünï.png', 'a+b%2.png'];
     const dir = makeProject({

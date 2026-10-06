@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The next release is 2.0.0. [Migrating to 2.0](docs/migrating-to-2.md) explains each breaking change and what to do about it.
+## [2.0.0] - 2026-10-06
+
+[Migrating to 2.0](docs/migrating-to-2.md) explains each breaking change and what to do about it.
 
 ### Breaking
 
 - **Runtime:** Node.js 24 or newer is required (`engines`) and the `vite` peer dependency is `>=8`; CI tests only the latest Node 24, Vite 8 and Rollup 4 (#250)
+- **Vite plugin:** Vite 8 or newer is required; the code paths for Vite 5, 6 and 7 (the `config` hook, the shared last-config fallback for builds without environments, the `rollupOptions` name as the plugin's own setting, and the "needs Vite 8" error for `entry`) are removed. A user config may still name `build.rollupOptions`, which Vite 8 accepts
 - **CLI:** standard output carries only the story (or a query's answer); `--log-stats`, `--log-files` and watch mode's messages go to standard error, and `--log-files` also works when the story goes to standard output. Scripts that read the statistics from standard output read standard error instead (FS-01, #247)
 - **CLI:** usage errors exit with status 2, not 1, print `error: …` (not `Error: …`) and a pointer to `--help`, and are found before anything is built: unknown options, a missing or empty value, an option given twice, conflicting options (two output modes, which used to pick the first; `--lint` with `-w`, `-l`, `--log-files` or an output mode; `-c` with `--no-config`; `--version`, `--init` or `--list-formats` with other options or sources, which used to be ignored), an invalid `--tag-alias` or `--word-count-method`, no sources, watch mode without an output file, and `cache` with build options. `cache` is a subcommand only as the first word, never after `--`; `--help` wins over every other option (FS-02, FS-08, FS-10, FS-16, FS-19, #247)
 - **CLI and API:** a missing or unreadable head file is fatal (`TweeTsError`, `INPUT_UNAVAILABLE`), as in Tweego, instead of a warning; an unreadable module is an error naming it; a source named directly whose type twee-ts doesn't load is a warning (FS-05, FS-17, #247)
@@ -89,6 +92,7 @@ The next release is 2.0.0. [Migrating to 2.0](docs/migrating-to-2.md) explains e
 
 ### Changed
 
+- CI runs on the latest Node (24), Vite (8) and Rollup (4) only, and the contract matrix on Linux; the plugin peer-version test run (`vitest.peer.config.ts`) is removed, and the "plugin peers" job type-checks a consumer config against the packed plugins
 - JavaScript (format.js files, story scripts, macro arguments) is read with acorn, which is bundled into the package; twee-ts still has no runtime dependencies and still runs no JavaScript it reads (#245)
 - HTML is parsed with parse5, which is bundled into the package in place of htmlparser2; twee-ts still has no runtime dependencies (#244)
 - In a template without a closing head tag that ends the head, the modules and head file go where the head ends (or where the browser creates the head), with a warning that names the line and column; they used to go before the body start tag, or nowhere when there was none (#244)

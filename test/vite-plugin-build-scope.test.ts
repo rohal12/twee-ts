@@ -12,10 +12,8 @@ import type { InlineConfig, Plugin } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import {
   buildFiles,
-  bundlerOptionsKey,
   cleanUp,
   COMPILE,
-  hasEntry,
   makeProject,
   runEntry,
   startServer,
@@ -23,7 +21,6 @@ import {
   textOf,
   writeFiles,
   userScript,
-  viteMajor,
 } from './helpers/plugins.js';
 
 afterEach(cleanUp);
@@ -55,9 +52,11 @@ function storyPlugin(dir: string, name: 'a' | 'b', extra: Record<string, unknown
 
 const entryOf = (dir: string, name: 'a' | 'b') => ({ entry: join(dir, `app${name.toUpperCase()}`, 'main.js') });
 
+type BundlerInput = NonNullable<NonNullable<NonNullable<InlineConfig['build']>['rolldownOptions']>['input']>;
+
 /** The input setting naming the user's own page. */
-function landingInput(dir: string, input: unknown = join(dir, 'index.html')): NonNullable<InlineConfig['build']> {
-  return { [bundlerOptionsKey]: { input } };
+function landingInput(dir: string, input: BundlerInput = join(dir, 'index.html')): NonNullable<InlineConfig['build']> {
+  return { rolldownOptions: { input } };
 }
 
 describe('vite plugin: several instances in one build (D5)', () => {
@@ -73,7 +72,7 @@ describe('vite plugin: several instances in one build (D5)', () => {
     expect(textOf(files.get('index.html'))).toContain('LANDING');
   });
 
-  it.skipIf(!hasEntry)('bundles each instance’s own entry into its own story', async () => {
+  it('bundles each instance’s own entry into its own story', async () => {
     const dir = twoStories();
     for (const withInput of [false, true]) {
       const files = await buildFiles({
@@ -89,7 +88,7 @@ describe('vite plugin: several instances in one build (D5)', () => {
     }
   });
 
-  it.skipIf(!hasEntry)('serves each instance’s story with its own entry in dev', async () => {
+  it('serves each instance’s story with its own entry in dev', async () => {
     const dir = twoStories();
     const { url } = await startServer({
       root: dir,
@@ -128,7 +127,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
     ).rejects.toThrow(/already writes a file named index\.html .*set the plugin's outputFilename to another name/s);
   });
 
-  it.skipIf(!hasEntry)('fails the same with an entry, instead of dropping the user’s page', async () => {
+  it('fails the same with an entry, instead of dropping the user’s page', async () => {
     const dir = twoStories();
     await expect(
       buildFiles({
@@ -139,7 +138,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
     ).rejects.toThrow(/already writes a file named index\.html/);
   });
 
-  it.skipIf(!hasEntry)('keeps the user’s input whatever its form, with an entry', async () => {
+  it('keeps the user’s input whatever its form, with an entry', async () => {
     const dir = twoStories();
     const page = join(dir, 'index.html');
     for (const input of [page, [page], { landing: page }]) {
@@ -156,7 +155,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
     }
   });
 
-  it.skipIf(viteMajor < 8)('keeps the top-level input of the Vite 8 releases that have one', async (context) => {
+  it('keeps the top-level input of the Vite 8 releases that have one', async (context) => {
     const dir = twoStories();
     // Not every Vite 8 release has the top-level `input` option (set without types for that
     // reason); a build without the plugin tells whether this one reads it.
@@ -169,7 +168,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
     expect(textOf(files.get('a.html'))).toContain('Story A');
   });
 
-  it.skipIf(!hasEntry)('writes the story with its entry into every output of an output array', async () => {
+  it('writes the story with its entry into every output of an output array', async () => {
     const dir = twoStories();
     await vite.build({
       configFile: false,
@@ -183,7 +182,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
     }
   });
 
-  it.skipIf(!hasEntry)('fails, naming the file, when the entry emits a file the build already writes', async () => {
+  it('fails, naming the file, when the entry emits a file the build already writes', async () => {
     const dir = makeProject({
       'a/start.tw': storyWith('Story A'),
       'appA/main.js': "import k from './keep.png?no-inline';\nout.k = k;\n",
@@ -207,7 +206,7 @@ describe('vite plugin: the user’s own inputs and outputs (D7)', () => {
   });
 });
 
-describe.skipIf(viteMajor < 6)('vite plugin: environments (D6)', () => {
+describe('vite plugin: environments (D6)', () => {
   it('builds the story in the client environment only, once', async () => {
     const dir = makeProject({
       'a/start.tw': storyWith('Story A'),
@@ -230,7 +229,7 @@ describe.skipIf(viteMajor < 6)('vite plugin: environments (D6)', () => {
       plugins: [plugin, counting],
       environments: {
         client: {},
-        ssr: { build: { outDir: join(dir, 'dist', 'server'), [bundlerOptionsKey]: { input: join(dir, 'server.js') } } },
+        ssr: { build: { outDir: join(dir, 'dist', 'server'), rolldownOptions: { input: join(dir, 'server.js') } } },
       },
       builder: {},
     });
@@ -254,7 +253,7 @@ describe.skipIf(viteMajor < 6)('vite plugin: environments (D6)', () => {
   });
 });
 
-describe.skipIf(!hasEntry)('vite plugin: an entry bundled by a build of its own', () => {
+describe('vite plugin: an entry bundled by a build of its own', () => {
   it('writes the files the entry still emits next to the story, beside the user’s own page', async () => {
     const dir = makeProject({
       'a/start.tw': storyWith('Story A'),

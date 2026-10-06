@@ -139,9 +139,8 @@ jobs:
     permissions:
       contents: read
 
-  # The bundler plugins against the latest Vite and Rollup: the plugin test files
-  # (vitest.peer.config.ts aliases `vite` and `rollup` to the versions installed here; Vitest keeps
-  # the repository's), and a consumer config type-checked against the packed plugins' types.
+  # A consumer config type-checked against the packed plugins' types, with the latest Vite and Rollup
+  # installed the way a user installs them.
   plugin-peers:
     name: plugin peers (Vite 8, Rollup 4)
     runs-on: ubuntu-latest
@@ -159,7 +158,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Install the peer versions
+      - name: Install Vite and Rollup
         env:
           VITE_VERSION: '8'
           ROLLUP_VERSION: '4'
@@ -172,16 +171,13 @@ jobs:
           rollup=$(node -p "require('./node_modules/rollup/package.json').version")
           echo "Vite $vite, Rollup $rollup" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Plugin tests against the peer versions
-        run: TWEE_TS_PEER_DIR="$RUNNER_TEMP/peer" pnpm exec vitest run --config vitest.peer.config.ts
-
       - name: Build and pack
         run: |
           pnpm run build
           npm pack --pack-destination "$RUNNER_TEMP" --loglevel=error
           mv "$RUNNER_TEMP"/rohal12-twee-ts-*.tgz "$RUNNER_TEMP/package.tgz"
 
-      - name: Type-check a consumer config against the peer versions
+      - name: Type-check a consumer config
         run: |
           cd "$RUNNER_TEMP/peer"
           npm install --no-audit --no-fund "$RUNNER_TEMP/package.tgz" typescript@7.0.2 @types/node@22

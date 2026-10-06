@@ -18,9 +18,7 @@ import {
   buildFiles,
   cleanUp,
   COMPILE,
-  hasEntry,
   makeProject,
-  peerRun,
   runEntry,
   SETTLED,
   startServer,
@@ -160,7 +158,7 @@ const CASES: readonly ConfigCase[] = [
   },
 ];
 
-describe.skipIf(!hasEntry)('vite plugin entry: the same configuration in dev and in a build (RC1, D2)', () => {
+describe('vite plugin entry: the same configuration in dev and in a build (RC1, D2)', () => {
   // The build runs in the dev server's mode, so what depends on the mode is the same.
   const asBuild = (config: InlineConfig): InlineConfig => ({ mode: 'development', ...config });
 
@@ -177,7 +175,7 @@ describe.skipIf(!hasEntry)('vite plugin entry: the same configuration in dev and
       expect(await buildResult(asBuild(inline()))).toEqual(dev);
     });
 
-    it.skipIf(peerRun)('given inline next to a config file (as CLI flags are)', { timeout: 30_000 }, async () => {
+    it('given inline next to a config file (as CLI flags are)', { timeout: 30_000 }, async () => {
       const dir = project(entry, files);
       const configFile = writeViteConfig(
         dir,
@@ -205,32 +203,28 @@ describe.skipIf(!hasEntry)('vite plugin entry: the same configuration in dev and
     expect(await buildResult(built, 'story.html')).toEqual(dev);
   });
 
-  it.skipIf(peerRun)(
-    'keeps an inline override of what the config file sets, in dev and in a build',
-    { timeout: 30_000 },
-    async () => {
-      const dir = project("import { mark } from '@lib/mark.js';\nout.d = __DEFINED__;\nout.mark = mark;\n", {
-        'file-lib/mark.js': "export const mark = 'file';\n",
-        'inline-lib/mark.js': "export const mark = 'inline';\n",
-      });
-      const configFile = writeViteConfig(
-        dir,
-        `export default { define: { __DEFINED__: '"file"' }, resolve: { alias: { '@lib': ${JSON.stringify(join(dir, 'file-lib'))} } }, plugins: [tweeTsPlugin(${JSON.stringify(pluginOptions(dir))})] };`,
-      );
-      const inline = (): InlineConfig => ({
-        root: dir,
-        configFile,
-        define: { __DEFINED__: '"inline"' },
-        resolve: { alias: { '@lib': join(dir, 'inline-lib') } },
-      });
-      const dev = await devResult(inline());
-      expect(dev).toEqual({ d: 'inline', mark: 'inline' });
-      expect(await buildResult({ ...inline(), mode: 'development' })).toEqual(dev);
-    },
-  );
+  it('keeps an inline override of what the config file sets, in dev and in a build', { timeout: 30_000 }, async () => {
+    const dir = project("import { mark } from '@lib/mark.js';\nout.d = __DEFINED__;\nout.mark = mark;\n", {
+      'file-lib/mark.js': "export const mark = 'file';\n",
+      'inline-lib/mark.js': "export const mark = 'inline';\n",
+    });
+    const configFile = writeViteConfig(
+      dir,
+      `export default { define: { __DEFINED__: '"file"' }, resolve: { alias: { '@lib': ${JSON.stringify(join(dir, 'file-lib'))} } }, plugins: [tweeTsPlugin(${JSON.stringify(pluginOptions(dir))})] };`,
+    );
+    const inline = (): InlineConfig => ({
+      root: dir,
+      configFile,
+      define: { __DEFINED__: '"inline"' },
+      resolve: { alias: { '@lib': join(dir, 'inline-lib') } },
+    });
+    const dev = await devResult(inline());
+    expect(dev).toEqual({ d: 'inline', mark: 'inline' });
+    expect(await buildResult({ ...inline(), mode: 'development' })).toEqual(dev);
+  });
 });
 
-describe.skipIf(!hasEntry)('vite plugin entry: the dev command (D3)', () => {
+describe('vite plugin entry: the dev command (D3)', () => {
   const ENTRY = 'out.cmd = __CMD__;\nout.hook = __HOOK__;\nout.marks = ["__MARK__"];\n';
 
   /** Plugins that each leave a mark only when Vite applies them, and record what their hooks see. */
@@ -252,7 +246,7 @@ describe.skipIf(!hasEntry)('vite plugin entry: the dev command (D3)', () => {
     ];
   }
 
-  it.skipIf(peerRun)(
+  it(
     "evaluates the config file, apply and the plugins' hooks for the dev command in dev, and for build in a build",
     { timeout: 30_000 },
     async () => {
@@ -294,7 +288,7 @@ describe.skipIf(!hasEntry)('vite plugin entry: the dev command (D3)', () => {
   });
 });
 
-describe.skipIf(!hasEntry)('vite plugin entry: what the entry build leaves out', () => {
+describe('vite plugin entry: what the entry build leaves out', () => {
   it('lists exactly the keys that configure servers, logging, or what is built instead of the entry', () => {
     expect(Object.keys(ENTRY_BUILD_EXCLUDED_KEYS).sort()).toEqual(
       [
@@ -354,7 +348,7 @@ function runNode(script: string, cwd: string): Promise<string> {
 /** Lines Vite prints while it bundles. */
 const PROGRESS = /transforming|modules transformed|rendering chunks|computing gzip|built in/;
 
-describe.skipIf(!hasEntry || peerRun)('vite plugin entry: quiet entry builds (D1)', () => {
+describe('vite plugin entry: quiet entry builds (D1)', () => {
   const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
   const options = (dir: string, outputFilename: string): string =>
     JSON.stringify({ ...pluginOptions(dir, outputFilename) });
@@ -391,7 +385,7 @@ describe.skipIf(!hasEntry || peerRun)('vite plugin entry: quiet entry builds (D1
   });
 });
 
-describe.skipIf(!hasEntry)('vite plugin entry: a config file with the plugin given inline', () => {
+describe('vite plugin entry: a config file with the plugin given inline', () => {
   it(
     'evaluates the config file for the dev command in dev, and for build in a build',
     { timeout: 30_000 },

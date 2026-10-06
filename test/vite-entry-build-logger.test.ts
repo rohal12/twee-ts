@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLogger, createServer, type Logger, type Plugin, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { hasEntry, watcherReady, serverUrl } from './helpers/plugins.js';
+import { watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -58,7 +58,7 @@ const options = (dir: string): Parameters<typeof tweeTsPlugin>[0] => ({
   compileOptions: COMPILE,
 });
 
-describe.skipIf(!hasEntry)('vite plugin: the logger of the dev entry build', { timeout: 30_000 }, () => {
+describe('vite plugin: the logger of the dev entry build', { timeout: 30_000 }, () => {
   it('forwards warnings (also once-only ones) and the warned state, and drops the rest', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'globalThis.ok = 1;\n' });
     const warnings: string[] = [];

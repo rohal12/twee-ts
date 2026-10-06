@@ -14,7 +14,6 @@ import { tweeTsPlugin } from '../src/plugins/vite.js';
 import {
   cleanUp,
   COMPILE,
-  hasEntry,
   runEntry,
   SETTLED,
   startBuildWatch,
@@ -181,7 +180,7 @@ function reloads(send: { mock: { calls: unknown[][] } }): number {
   return send.mock.calls.filter(([payload]) => Reflect.get(Object(payload), 'type') === 'full-reload').length;
 }
 
-describe.skipIf(!hasEntry)('vite plugin dependencies: dev (D4, #242)', { timeout: 30_000 }, () => {
+describe('vite plugin dependencies: dev (D4, #242)', { timeout: 30_000 }, () => {
   describe.each(PLACES)('$name', (place) => {
     it.each(KINDS)('$name: an edit reloads the page with the new content', async (kind) => {
       const { root, plugins, write } = project(kind, place);
@@ -226,7 +225,7 @@ describe.skipIf(!hasEntry)('vite plugin dependencies: dev (D4, #242)', { timeout
   });
 });
 
-describe.skipIf(!hasEntry)('vite plugin dependencies: build --watch (D4)', { timeout: 30_000 }, () => {
+describe('vite plugin dependencies: build --watch (D4)', { timeout: 30_000 }, () => {
   it.each([
     ['inside the user’s build', false],
     ['by a build of its own', true],
@@ -253,7 +252,7 @@ describe.skipIf(!hasEntry)('vite plugin dependencies: build --watch (D4)', { tim
   });
 });
 
-describe.skipIf(!hasEntry)('vite plugin dependencies: a dependency that goes away', () => {
+describe('vite plugin dependencies: a dependency that goes away', () => {
   it('reports the failed bundle when an imported file is deleted, with no watcher at all', async () => {
     const kind = KINDS[0];
     const place = PLACES[1];
