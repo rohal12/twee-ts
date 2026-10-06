@@ -12,7 +12,10 @@ import {
 import { decodeFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, StoryFormatInfo } from '../src/types.js';
 
-const isRoot = process.getuid?.() === 0;
+// Mode bits cannot make a file or folder unreadable to root, nor on Windows, where chmod only
+// sets or clears the read-only attribute (which does not stop reading, listing or creating files
+// in a folder). The tests that need an unreadable path cannot set one up there.
+const cannotLockFiles = process.platform === 'win32' || process.getuid?.() === 0;
 const temps: string[] = [];
 const locked: string[] = [];
 
@@ -64,7 +67,7 @@ describe('selecting among candidates', () => {
 });
 
 describe('format folders that cannot be used', () => {
-  it.skipIf(isRoot)('warns about a format.js that cannot be read', () => {
+  it.skipIf(cannotLockFiles)('warns about a format.js that cannot be read', () => {
     const root = tempDir();
     mkdirSync(join(root, 'mock-1'));
     const file = join(root, 'mock-1', 'format.js');
