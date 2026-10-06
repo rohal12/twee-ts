@@ -6,3 +6,5 @@ docs/.vitepress/cache
 test/fixtures
 .agents
 .scratch
+reports
+.stryker-tmp

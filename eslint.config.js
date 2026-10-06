@@ -29,6 +29,8 @@ export default tseslint.config(
       'test/fixtures/**',
       '.claude/**',
       '.scratch/**',
+      'reports/**',
+      '.stryker-tmp/**',
       '.agents/**',
       'tweego/**',
       'examples/**',

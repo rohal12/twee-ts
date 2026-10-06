@@ -32,6 +32,11 @@ function readPackage(pkg) {
     if (pkg.peerDependenciesMeta) delete pkg.peerDependenciesMeta.typescript;
     pkg.dependencies = { ...pkg.dependencies, typescript: TYPESCRIPT_6 };
   }
+  // Stryker (mutation testing) imports `typescript` without declaring it, to rewrite tsconfig.json in its
+  // sandbox with `parseConfigFileTextToJson`; it would otherwise find the project's TypeScript 7.
+  if (pkg.name === '@stryker-mutator/core') {
+    pkg.dependencies = { ...pkg.dependencies, typescript: TYPESCRIPT_6 };
+  }
   return pkg;
 }
 

@@ -17,3 +17,6 @@ docs/.vitepress/cache
 !.claude/skills/
 .vscode-diagnostics.json
 .vscode/
+# Mutation testing (pnpm run mutation): reports, incremental results and the sandbox
+reports/
+.stryker-tmp/

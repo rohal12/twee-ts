@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
   // The package entry points (package.json "exports" and "bin") are found from package.json;
   // the tests through the Vitest plugin, and the scripts through package.json "scripts".
-  "entry": ["docs/.vitepress/config.ts"],
+  // vitest.mutation.config.ts is named only in stryker.config.mjs.
+  "entry": ["docs/.vitepress/config.ts", "vitest.mutation.config.ts"],
   "project": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "scripts/**/*.{ts,mjs}", "*.config.ts"],
   // The tests make FIFOs with the system's mkfifo, where it exists.
   "ignoreBinaries": ["mkfifo"],
