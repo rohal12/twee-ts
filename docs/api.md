@@ -440,7 +440,7 @@ console.log(totalBytes, count);
 console.log(getCacheDir());
 ```
 
-- `resolveRemoteFormat(name, version, indices?, urls?, options?): Promise<StoryFormatInfo | undefined>` rejects with an `Error` that lists every source's failure when a source fails and none answers, and when a URL is not an absolute `http:` or `https:` URL.
+- `resolveRemoteFormat(name, version, options?: RemoteResolveOptions): Promise<StoryFormatInfo | undefined>` rejects with a `TweeTsError`: `FORMAT_UNAVAILABLE`, whose `diagnostics` list every source's failure, when a source fails and none answers, and `INVALID_OPTIONS` when a URL is not an absolute `http:` or `https:` URL or a time limit is out of range.
 - `fetchDirectFormat(url, options?): Promise<StoryFormatInfo>`.
 - `listCachedFormats(): readonly CachedFormatEntry[]`; each entry has `name`, `version`, `source` (`'index'` or `'url'`), `origin` (the index or format URL), `sizeBytes` and `modifiedAt`.
 - `clearCachedFormats(name?): number`, `getCacheSize(): { totalBytes; count }`, `getCacheDir(): string`.
@@ -565,6 +565,8 @@ import type {
   LintResult,
   OmittingTag,
   OutputMode,
+  ParseOptions,
+  ParseResult,
   Passage,
   PassageMetadata,
   PassageOmission,
@@ -572,7 +574,9 @@ import type {
   ReadonlyPassage,
   ReadonlyStory,
   RemoteFetchOptions,
+  RemoteResolveOptions,
   SFAIndex,
+  SemVer,
   SFAIndexEntry,
   SourceInput,
   SourceLocation,
@@ -582,6 +586,7 @@ import type {
   TweeTsConfig,
   TweeTsErrorCode,
   Twine1Metadata,
+  Twine2FormatJSON,
   Twine2Metadata,
   WatchOptions,
   WordCountMethod,

@@ -114,7 +114,7 @@ describe('docs/configuration.md', () => {
   it('gives each key the type and default of the config schema', () => {
     const specs = new Map(Object.entries(CONFIG_SPEC));
     const actual = rows.map((r) => {
-      const spec = specs.get(r.key);
+      const spec = specs.get(r.key)?.spec;
       return {
         key: r.key,
         type: spec === undefined ? 'not a config key' : TYPE_NAMES[spec.kind],
@@ -129,7 +129,7 @@ describe('docs/configuration.md', () => {
     const reference = new Map<string, unknown>(Object.entries(jsonObject(block?.code ?? '{}')));
     expect([...reference.keys()].sort()).toEqual([...CONFIG_KEYS].sort());
     const withDefaults = CONFIG_KEYS.flatMap((key) => {
-      const spec = CONFIG_SPEC[key];
+      const spec = CONFIG_SPEC[key].spec;
       return 'default' in spec ? [[key, spec.default] as const] : [];
     });
     expect(withDefaults.map(([key]) => [key, reference.get(key)])).toEqual(withDefaults);
