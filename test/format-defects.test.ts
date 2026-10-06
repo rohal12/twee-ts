@@ -267,7 +267,8 @@ describe('F07: diagnostics carry the URL, the cause and every failure', () => {
   it.each([
     ['an HTML page', '<!doctype html><p>hi', /Failed to read format index http:\S+: .*JSON/],
     ['a JSON value that is not an index', '[1, 2]', /Failed to read format index http:\S+: it is not a format index/],
-    ['a twine2 field that is not a list', '{"twine2": {}}', /its "twine2" field is not a list/],
+    ['a twine2 field that is not a list', '{"twine2": {}}', /\$\.twine2 must be an array, not an object/],
+    ['a repeated list', '{"twine2": [], "twine2": []}', /\$\.twine2 repeats the field "twine2"/],
   ])('names the index and the reason for %s', async (_label, body, message) => {
     const server = await startFormatServer({ '/index.json': body });
     const result = await build({ ...story('Review', '1.0.0'), formatIndices: [`${server.origin}/index.json`] });
@@ -304,7 +305,7 @@ describe('F07: diagnostics carry the URL, the cause and every failure', () => {
     const result = await build({ ...story('SugarCube', '2.37.3'), formatIndices: [`${server.origin}/index.json`] });
     const error = result.errors.join('\n');
     expect(error).toContain('SugarCube 1.0.35): another major version than 2');
-    expect(error).toContain('its version "next" is not a SemVer version');
+    expect(error).toContain('$.twine2[1].version "next" is not a SemVer version');
   });
 });
 
@@ -480,7 +481,9 @@ describe('F13: checksums match by exact file name and are validated', () => {
       '/index.json': indexJson([indexEntry('Review', '1.0.0', undefined, { checksums: { 'format.js': 12345 } })]),
     });
     const result = await build({ ...story('Review', '1.0.0'), formatIndices: [`${server.origin}/index.json`] });
-    expect(result.errors.join('\n')).toContain('its checksum for "format.js" is not a string');
+    expect(result.errors.join('\n')).toContain(
+      '$.twine2[0].checksums["format.js"] must be a string, not a number (12345)',
+    );
   });
 
   it('refuses a file whose listed checksum is not a SHA-256 digest, but not the entry for another file’s', async () => {

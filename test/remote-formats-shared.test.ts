@@ -132,7 +132,7 @@ async function fetchAndCacheFormat(
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo> {
   const index = parseFormatIndex(
-    { twine2: [listed] },
+    JSON.stringify({ twine2: [listed] }),
     'https://index.test/index.json',
     new URL('/index.json', url).href,
   );

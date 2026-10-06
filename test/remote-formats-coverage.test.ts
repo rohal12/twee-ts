@@ -310,20 +310,30 @@ function nameOf(raw: unknown): string | undefined {
 
 describe('format indices', () => {
   const parse = (json: unknown) =>
-    parseFormatIndex(json, 'https://example.test/index.json', 'https://example.test/index.json');
+    parseFormatIndex(JSON.stringify(json), 'https://example.test/index.json', 'https://example.test/index.json');
 
   it.each([
-    [null, 'it is not an object'],
-    [{ version: '1.0.0' }, 'it has no usable "name"'],
-    [{ name: '', version: '1.0.0' }, 'it has no usable "name"'],
-    [{ name: '..', version: '1.0.0' }, 'it has no usable "name"'],
-    [{ name: 'A' }, 'it has no "version"'],
-    [{ name: 'A', version: 1 }, 'it has no "version"'],
-    [{ name: 'A', version: '01.0.0' }, 'its version "01.0.0" is not a SemVer version'],
-    [{ name: 'A', version: '1.0.0', files: 'format.js' }, '"files" is not a list of file names'],
-    [{ name: 'A', version: '1.0.0', files: ['format.js', 3] }, '"files" is not a list of file names'],
-    [{ name: 'A', version: '1.0.0', checksums: ['x'] }, '"checksums" is not an object'],
-    [{ name: 'A', version: '1.0.0', checksums: { 'format.js': 5 } }, 'its checksum for "format.js" is not a string'],
+    [null, '$.twine2[0] must be an object, not null'],
+    [{ version: '1.0.0' }, '$.twine2[0] has no "name"'],
+    [{ name: '', version: '1.0.0' }, '$.twine2[0].name "" is not a usable name'],
+    [{ name: '..', version: '1.0.0' }, '$.twine2[0].name ".." is not a usable name'],
+    [{ name: 'A' }, '$.twine2[0] has no "version"'],
+    [{ name: 'A', version: 1 }, '$.twine2[0].version must be a string, not a number (1)'],
+    [{ name: 'A', version: '01.0.0' }, '$.twine2[0].version "01.0.0" is not a SemVer version'],
+    [{ name: 'A', version: '1.0.0', proofing: 'yes' }, '$.twine2[0].proofing must be a boolean, not a string ("yes")'],
+    [
+      { name: 'A', version: '1.0.0', files: 'format.js' },
+      '$.twine2[0].files must be an array, not a string ("format.js")',
+    ],
+    [
+      { name: 'A', version: '1.0.0', files: ['format.js', 3] },
+      '$.twine2[0].files[1] must be a string, not a number (3)',
+    ],
+    [{ name: 'A', version: '1.0.0', checksums: ['x'] }, '$.twine2[0].checksums must be an object, not an array'],
+    [
+      { name: 'A', version: '1.0.0', checksums: { 'format.js': 5 } },
+      '$.twine2[0].checksums["format.js"] must be a string, not a number (5)',
+    ],
   ])('skips the entry %j: %s', (raw, reason) => {
     const index = parse({ twine2: [raw] });
     expect(index.entries).toEqual([]);
@@ -354,9 +364,40 @@ describe('format indices', () => {
   it.each([
     ['null', null, 'it is not a format index'],
     ['a list', [], 'it is not a format index'],
-    ['a twine1 field that is not a list', { twine1: {} }, 'its "twine1" field is not a list'],
+    ['a twine1 field that is not a list', { twine1: {} }, '$.twine1 must be an array, not an object'],
   ])('rejects an index that is %s', (_label, json, reason) => {
     expect(() => parse(json)).toThrow(reason);
+  });
+
+  it('keeps a __proto__ file name as an ordinary checksum key, and refuses a repeated member', () => {
+    const text = `{"twine2": [
+      {"name": "A", "version": "1.0.0", "checksums": {"__proto__": "${'c'.repeat(64)}"}},
+      {"name": "B", "version": "1.0.0", "version": "2.0.0"}
+    ]}`;
+    const index = parseFormatIndex(text, 'https://example.test/index.json', 'https://example.test/index.json');
+    expect([...(index.entries[0]?.checksums ?? [])]).toEqual([['__proto__', 'c'.repeat(64)]]);
+    expect(Object.getPrototypeOf(index.entries[0]?.checksums)).toBe(Map.prototype);
+    expect(index.skipped).toEqual([
+      {
+        twine: 'twine2',
+        position: 1,
+        name: 'B',
+        reason: '$.twine2[1].version repeats the field "version"; the last one is used',
+      },
+    ]);
+  });
+
+  it('ignores members it does not use, as the Story Formats Archive lists them', () => {
+    const index = parse({
+      generated: '2026-10-06',
+      twine2: [{ name: 'A', author: 'X', description: 'D', repo: 'r', version: '1.0.0', files: ['format.js'] }],
+    });
+    expect(index.entries.map((e) => e.name)).toEqual(['A']);
+    expect(index.skipped).toEqual([]);
+  });
+
+  it('names the line and column of JSON that does not parse', () => {
+    expect(() => parseFormatIndex('{"twine2": [}', 'u', 'u')).toThrow(/^it is not JSON: .*line 1, column 13/);
   });
 
   it('fetches an index once per compile', async () => {

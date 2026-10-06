@@ -11,6 +11,18 @@ import { decodeFormatJSON, UNNAMED_FORMAT_NAME } from './format-decode.js';
 import { errorText, formatNameKey, withFormatBytes } from './formats.js';
 import { parseVersion, sameVersion } from './semver.js';
 import { decodeText } from './util.js';
+import type { DecodeIssue, Decoder, JsonPath, JsonValue } from './json-decode.js';
+import {
+  field,
+  formatJsonPath,
+  jsonArrayOf,
+  jsonBoolean,
+  jsonRecordOf,
+  jsonString,
+  JsonObject,
+  parseJSON,
+  readObject,
+} from './json-decode.js';
 import type { CacheOrigin, CacheRecord, FormatMetadata, NewRecord, TwineKind } from './format-cache.js';
 import { getCacheDir, loadEntry, readRecord, recordFormatInfo, sha256Hex, writeEntry } from './format-cache.js';
 
@@ -353,67 +365,91 @@ export interface FormatIndex {
 /** A SHA-256 digest in lower-case hex, as checksums are kept. */
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** Reads any JSON value as it is, so each list element is checked on its own. */
+const anyJson: Decoder<JsonValue> = (value) => ({ ok: true, value });
+
+/** The string `name` member of a raw entry, for describing a skipped one. */
+function rawName(raw: JsonValue): string | undefined {
+  if (!(raw instanceof JsonObject)) return undefined;
+  const member = raw.members.findLast((m) => m.key === 'name');
+  return typeof member?.value === 'string' ? member.value : undefined;
 }
 
-function isList(value: unknown): value is readonly unknown[] {
-  return Array.isArray(value);
+/** What an index entry's members gave. */
+interface EntryFields {
+  name?: string;
+  version?: string;
+  proofing?: boolean;
+  files?: readonly string[];
+  checksums?: ReadonlyMap<string, string>;
 }
 
-/** Check one index entry; a string is the reason it cannot be used. */
-function parseIndexEntry(twine: TwineKind, raw: unknown): IndexEntry | string {
-  if (!isPlainObject(raw)) return 'it is not an object';
-  const { name, version, proofing, files, checksums } = raw;
-  if (typeof name !== 'string' || name === '' || name === '.' || name === '..') return 'it has no usable "name"';
-  if (typeof version !== 'string') return 'it has no "version"';
-  if (!parseVersion(version)) return `its version ${JSON.stringify(version)} is not a SemVer version`;
-  const fileNames = isList(files) ? files.filter((f): f is string => typeof f === 'string') : undefined;
-  if (files !== undefined && (!isList(files) || fileNames?.length !== files.length)) {
-    return '"files" is not a list of file names';
-  }
-  const sums = new Map<string, string>();
-  if (checksums !== undefined) {
-    if (!isPlainObject(checksums)) return '"checksums" is not an object';
-    for (const [file, sum] of Object.entries(checksums)) {
+/**
+ * Check one index entry at `path`; a string is the reason it cannot be used. Members other than
+ * these fields (`author`, `description`, …) are not used. A member of the wrong type, or a repeated
+ * one, makes the entry unusable: an index states what a download must be, so nothing in it is guessed.
+ */
+function parseIndexEntry(twine: TwineKind, raw: JsonValue, path: JsonPath): IndexEntry | string {
+  const issues: DecodeIssue[] = [];
+  const read: EntryFields = {};
+  readObject(raw, path, issues, {
+    keys: 'exact',
+    fields: {
+      name: field(jsonString, (v) => (read.name = v)),
+      version: field(jsonString, (v) => (read.version = v)),
+      proofing: field(jsonBoolean, (v) => (read.proofing = v)),
+      files: field(jsonArrayOf(jsonString), (v) => (read.files = v)),
       // A malformed digest only matters for a file twee-ts downloads; it is refused there.
-      if (typeof sum !== 'string') return `its checksum for ${JSON.stringify(file)} is not a string`;
-      sums.set(file, sum.toLowerCase());
-    }
-  }
+      checksums: field(jsonRecordOf(jsonString), (v) => (read.checksums = v)),
+    },
+    unknown: () => undefined,
+  });
+  if (issues.length > 0) return issues.map((issue) => issue.message).join('; ');
+  const at = formatJsonPath(path);
+  const { name, version } = read;
+  if (name === undefined) return `${at} has no "name"`;
+  if (name === '' || name === '.' || name === '..') return `${at}.name ${JSON.stringify(name)} is not a usable name`;
+  if (version === undefined) return `${at} has no "version"`;
+  if (!parseVersion(version)) return `${at}.version ${JSON.stringify(version)} is not a SemVer version`;
   return {
     twine,
     name,
     version,
-    proofing: proofing === true,
-    files: fileNames,
-    checksums: sums,
+    proofing: read.proofing ?? false,
+    files: read.files,
+    checksums: new Map([...(read.checksums ?? [])].map(([file, sum]) => [file, sum.toLowerCase()] as const)),
   };
 }
 
 /**
- * Check a parsed index.json: an object whose optional `twine1` and `twine2` fields are lists of
- * entries. Each entry needs a name and a SemVer version; `files` and `checksums` are optional,
- * but when present must be a list of names and an object of SHA-256 hex digests. Entries that are
- * not usable are kept in `skipped` with the reason. Throws when the value is not an index.
+ * Check an index.json (with src/json-decode.ts): an object whose optional `twine1` and `twine2`
+ * members are lists of entries. Each entry needs a name and a SemVer version; `files` (a list of
+ * names) and `checksums` (an object of strings) are optional. Entries that are not usable are kept
+ * in `skipped` with the reason. Throws when the text is not JSON or not an index.
  */
-export function parseFormatIndex(json: unknown, url: string, responseUrl: string): FormatIndex {
-  if (!isPlainObject(json)) throw new Error('it is not a format index (an object with "twine1" and "twine2" lists)');
+export function parseFormatIndex(text: string, url: string, responseUrl: string): FormatIndex {
+  const parsed = parseJSON(text);
+  if (!parsed.ok) throw new Error(`it is not JSON: ${parsed.error.message}`);
+  const lists = new Map<TwineKind, readonly JsonValue[]>();
+  const issues: DecodeIssue[] = [];
+  const isObject = readObject(parsed.value, [], issues, {
+    keys: 'exact',
+    fields: {
+      twine1: field(jsonArrayOf(anyJson), (v) => lists.set('twine1', v)),
+      twine2: field(jsonArrayOf(anyJson), (v) => lists.set('twine2', v)),
+    },
+    unknown: () => undefined,
+  });
+  if (!isObject) throw new Error('it is not a format index (an object with "twine1" and "twine2" lists)');
+  if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join('; '));
   const entries: IndexEntry[] = [];
   const skipped: SkippedIndexEntry[] = [];
   // Twine 2 entries first, so they come first among equals.
   for (const twine of ['twine2', 'twine1'] as const) {
-    const list = json[twine];
-    if (list === undefined) continue;
-    if (!isList(list)) throw new Error(`its "${twine}" field is not a list`);
-    list.forEach((raw, position) => {
-      const entry = parseIndexEntry(twine, raw);
-      if (typeof entry !== 'string') {
-        entries.push(entry);
-        return;
-      }
-      const name = isPlainObject(raw) && typeof raw['name'] === 'string' ? raw['name'] : undefined;
-      skipped.push({ twine, position, name, reason: entry });
+    (lists.get(twine) ?? []).forEach((raw, position) => {
+      const entry = parseIndexEntry(twine, raw, [twine, position]);
+      if (typeof entry === 'string') skipped.push({ twine, position, name: rawName(raw), reason: entry });
+      else entries.push(entry);
     });
   }
   return { url, responseUrl, entries, skipped };
@@ -437,10 +473,8 @@ export async function fetchIndex(url: string, options: RemoteFetchOptions = {}):
   const cached = indexCache.get(url);
   if (cached) return cached;
   const fetched = await sharedFetch(url, 'fetch format index', options);
-  let json: unknown;
   try {
-    json = JSON.parse(decodeDownload(fetched.bytes, url));
-    const index = parseFormatIndex(json, url, fetched.url);
+    const index = parseFormatIndex(decodeDownload(fetched.bytes, url), url, fetched.url);
     indexCache.set(url, index);
     return index;
   } catch (e) {
