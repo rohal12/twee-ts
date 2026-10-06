@@ -11,34 +11,34 @@ import { startPassageDiagnostics } from './start-passage.js';
 
 export interface LintResult {
   /** Compilation diagnostics (errors and warnings). */
-  diagnostics: Diagnostic[];
+  readonly diagnostics: readonly Diagnostic[];
   /** Compilation statistics. */
-  stats: CompileStats;
+  readonly stats: CompileStats;
   /** Story format name from StoryData (e.g. "SugarCube"). */
-  formatName: string;
+  readonly formatName: string;
   /** Story format version from StoryData (e.g. "2.37.3"). */
-  formatVersion: string;
+  readonly formatVersion: string;
   /** The configured start passage name. */
-  start: string;
+  readonly start: string;
   /** Total passage count. */
-  passages: number;
+  readonly passages: number;
   /** Story passage count (excludes StoryData, StoryTitle, scripts, etc.). */
-  storyPassages: number;
+  readonly storyPassages: number;
   /** Info/special passage count. */
-  infoPassages: number;
+  readonly infoPassages: number;
   /**
    * Broken links: link targets that don't exist as passages, or that Twine 2 output leaves out
    * (script, stylesheet and `Twine.private` passages, StoryData, StoryTitle, an empty
    * StorySettings); for those, `omission` says why.
    */
-  brokenLinks: BrokenLink[];
+  readonly brokenLinks: readonly BrokenLink[];
   /** Story passages with no outgoing links. */
-  deadEnds: string[];
+  readonly deadEnds: readonly string[];
   /**
    * Story passages the player cannot reach: no chain of links leads to them from the start passage or from
    * an info passage (see `StoryMap.orphans`).
    */
-  orphans: string[];
+  readonly orphans: readonly string[];
 }
 
 /**

@@ -328,7 +328,7 @@ describe('storyInspect', () => {
       return storyInspect(result.story);
     }
 
-    async function startLinks(startText: string): Promise<string[] | undefined> {
+    async function startLinks(startText: string): Promise<readonly string[] | undefined> {
       return (await inspectStart(startText)).links.get('Start');
     }
 
@@ -498,7 +498,7 @@ describe('storyInspect', () => {
       return storyInspect(result.story);
     }
 
-    async function startLinks(startText: string): Promise<string[] | undefined> {
+    async function startLinks(startText: string): Promise<readonly string[] | undefined> {
       return (await inspectStart(startText)).links.get('Start');
     }
 

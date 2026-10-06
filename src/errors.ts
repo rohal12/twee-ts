@@ -13,7 +13,7 @@ export class TweeTsError extends Error {
 
   constructor(
     message: string,
-    public diagnostics: Diagnostic[] = [],
+    readonly diagnostics: readonly Diagnostic[] = [],
     options: { readonly code?: TweeTsErrorCode; readonly cause?: unknown } = {},
   ) {
     super(message, 'cause' in options ? { cause: options.cause } : undefined);

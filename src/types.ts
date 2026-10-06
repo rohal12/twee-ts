@@ -93,7 +93,7 @@ export interface CompileOptions {
    */
   useDefaultFormatIndices?: boolean | undefined;
   /** Map alias tags to target tags (e.g. { library: 'script' }); each passage with an alias gets the target too. */
-  tagAliases?: Record<string, string> | undefined;
+  tagAliases?: Readonly<Record<string, string>> | undefined;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
   sourceInfo?: boolean | undefined;
   /** Word counting method. Default: 'tweego'. */
@@ -135,33 +135,39 @@ export interface WatchOptions extends CompileToFileOptions {
  * by twee-ts: a build that cannot go on throws a TweeTsError instead.)
  */
 export type Diagnostic =
-  | { level: 'warning'; message: string; file?: string; line?: number }
-  | { level: 'error'; message: string; file?: string; line?: number; fatal?: boolean };
+  | { readonly level: 'warning'; readonly message: string; readonly file?: string; readonly line?: number }
+  | {
+      readonly level: 'error';
+      readonly message: string;
+      readonly file?: string;
+      readonly line?: number;
+      readonly fatal?: boolean;
+    };
 
 export interface CompileResult {
   /** The compiled output string (HTML, Twee, JSON, etc.). */
-  output: string;
+  readonly output: string;
   /** The story model, read-only. */
-  story: ReadonlyStory;
+  readonly story: ReadonlyStory;
   /** The format used for compilation (undefined for non-HTML modes). */
-  format?: StoryFormatInfo | undefined;
+  readonly format?: StoryFormatInfo | undefined;
   /** Warnings and errors. The output is built even when some are errors; check them. */
-  diagnostics: Diagnostic[];
+  readonly diagnostics: readonly Diagnostic[];
   /** Compilation statistics. */
-  stats: CompileStats;
+  readonly stats: CompileStats;
 }
 
 export interface CompileStats {
   /** Every passage. */
-  passages: number;
+  readonly passages: number;
   /** The passages that are not info passages (special names, script, stylesheet, `Twine.*` tags…). */
-  storyPassages: number;
+  readonly storyPassages: number;
   /** The word count of the story passages (see `wordCountMethod`). */
-  words: number;
+  readonly words: number;
   /** The source files loaded, in order, as paths relative to the working directory when inside it. */
-  files: string[];
+  readonly files: readonly string[];
   /** The module files and the head file the build injected (HTML output only), as Tweego's "External files". */
-  externalFiles?: string[];
+  readonly externalFiles?: readonly string[];
 }
 
 /**
@@ -431,17 +437,17 @@ export interface FileCacheEntry {
 // --- Config file ---
 
 export interface TweeTsConfig {
-  sources?: string[] | undefined;
-  exclude?: string[] | undefined;
+  sources?: readonly string[] | undefined;
+  exclude?: readonly string[] | undefined;
   output?: string | undefined;
   outputMode?: OutputMode | undefined;
   formatId?: string | undefined;
   startPassage?: string | undefined;
-  formatPaths?: string[] | undefined;
-  formatIndices?: string[] | undefined;
-  formatUrls?: string[] | undefined;
+  formatPaths?: readonly string[] | undefined;
+  formatIndices?: readonly string[] | undefined;
+  formatUrls?: readonly string[] | undefined;
   useTweegoPath?: boolean | undefined;
-  modules?: string[] | undefined;
+  modules?: readonly string[] | undefined;
   headFile?: string | undefined;
   trim?: boolean | undefined;
   twee2Compat?: boolean | undefined;
@@ -453,7 +459,7 @@ export interface TweeTsConfig {
   formatResolutionTimeout?: number | undefined;
   /** Whether the Story Formats Archive indices are asked after `formatIndices`. Default: true. */
   useDefaultFormatIndices?: boolean | undefined;
-  tagAliases?: Record<string, string> | undefined;
+  tagAliases?: Readonly<Record<string, string>> | undefined;
   sourceInfo?: boolean | undefined;
   wordCountMethod?: WordCountMethod | undefined;
 }

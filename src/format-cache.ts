@@ -461,7 +461,7 @@ export function clearCachedFormats(name?: string): number {
 }
 
 /** Get total cache size in bytes and format count. */
-export function getCacheSize(): { totalBytes: number; count: number } {
+export function getCacheSize(): { readonly totalBytes: number; readonly count: number } {
   const entries = listCachedFormats();
   return { totalBytes: entries.reduce((sum, e) => sum + e.sizeBytes, 0), count: entries.length };
 }

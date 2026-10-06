@@ -4,7 +4,10 @@
  * becomes accepted again fails the build. The probes sit in a function that is never called.
  */
 import { describe, it, expect } from 'vitest';
-import type { CompileResult, Passage, ReadonlyPassage, ReadonlyStory } from '../src/types.js';
+import type { CompileResult, Passage, ReadonlyPassage, ReadonlyStory, TweeTsConfig } from '../src/types.js';
+import type { LintResult } from '../src/lint.js';
+import type { StoryMap } from '../src/inspect.js';
+import type { TweeTsError } from '../src/errors.js';
 
 /** Takes a mutable passage, to probe what is assignable to one. */
 function takesMutablePassage(_passage: Passage): void {
@@ -40,12 +43,47 @@ function rejectedWrites(result: CompileResult, passage: ReadonlyPassage, story: 
   // @ts-expect-error a read-only passage is not a mutable Passage
   takesMutablePassage(passage);
 }
+
+/** The other outputs are read-only too (#250 API-4): diagnostics, statistics, lint results, story maps, errors. */
+function rejectedOutputWrites(
+  result: CompileResult,
+  lintResult: LintResult,
+  map: StoryMap,
+  error: TweeTsError,
+  config: TweeTsConfig,
+): void {
+  // @ts-expect-error diagnostics cannot be appended to
+  result.diagnostics.push({ level: 'warning', message: 'x' });
+  // @ts-expect-error a diagnostic's message cannot be assigned
+  if (result.diagnostics[0]) result.diagnostics[0].message = 'x';
+  // @ts-expect-error the output cannot be replaced
+  result.output = '';
+  // @ts-expect-error the statistics' file list cannot be appended to
+  result.stats.files.push('x');
+  // @ts-expect-error the statistics cannot be assigned
+  result.stats.words = 0;
+  // @ts-expect-error lint lists cannot be appended to
+  lintResult.orphans.push('x');
+  // @ts-expect-error lint diagnostics cannot be appended to
+  lintResult.diagnostics.push({ level: 'error', message: 'x' });
+  // @ts-expect-error story map lists cannot be appended to
+  map.passages.push('x');
+  // @ts-expect-error story map maps cannot be changed
+  map.links.set('x', []);
+  // @ts-expect-error an error's diagnostics cannot be appended to
+  error.diagnostics.push({ level: 'error', message: 'x' });
+  // @ts-expect-error a loaded config's lists cannot be appended to
+  config.sources?.push('x');
+  // @ts-expect-error a loaded config's tag aliases cannot be assigned
+  if (config.tagAliases) config.tagAliases['x'] = 'y';
+}
 /* eslint-enable @typescript-eslint/no-unsafe-call */
 
 describe('read-only passage types', () => {
   it('has its rejected writes checked at compile time', () => {
     // The probes run under `pnpm run typecheck`; calling them would make the writes for real.
     expect(rejectedWrites).toBeTypeOf('function');
+    expect(rejectedOutputWrites).toBeTypeOf('function');
   });
 
   it('still allows reading tags and metadata', () => {

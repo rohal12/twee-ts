@@ -299,7 +299,7 @@ export function freezePassage(p: Passage): Passage {
  * tag if not already present. Returns new passage objects where tags changed;
  * unchanged passages are returned as-is. Idempotent — safe to call multiple times.
  */
-export function applyTagAliases(passages: readonly Passage[], aliases: Record<string, string>): Passage[] {
+export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<Record<string, string>>): Passage[] {
   const entries = Object.entries(aliases);
   if (entries.length === 0) return [...passages];
   return passages.map((p) => {
