@@ -48,7 +48,7 @@ async function serve(source: string, base = '/'): Promise<string> {
         compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
       }),
     ],
-    server: { host: '127.0.0.1', port: 0, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
   });
   await server.listen();
   return (await fetch(`${serverUrl(server)}${base}`)).text();

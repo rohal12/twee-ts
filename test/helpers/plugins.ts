@@ -180,8 +180,10 @@ export async function startServer(config: InlineConfig): Promise<{ server: ViteD
 }
 
 /**
- * The loopback URL (no trailing slash) of a listening dev server. Tests let the OS pick the port (`port: 0`):
- * a port found free beforehand may be taken by another process before the server binds it.
+ * The loopback URL (no trailing slash) of a listening dev server. Tests never choose a port: they pass
+ * `port: 0` without `strictPort`, so Vite 8 lets the OS pick one, and Vite 5 to 7 (which read 0 as their
+ * default, 5173) move on to the next free one. A port found free beforehand could be taken by another
+ * process before the server binds it.
  */
 export function serverUrl(server: ViteDevServer): string {
   const address = server.httpServer?.address();

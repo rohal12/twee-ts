@@ -661,7 +661,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       logLevel: 'silent',
       plugins: plugin ? [plugin] : [],
       ...rest,
-      server: { host: '127.0.0.1', port: 0, strictPort: true, ...serverOptions },
+      server: { host: '127.0.0.1', port: 0, strictPort: false, ...serverOptions },
     });
     await server.listen();
     await watcherReady(server);

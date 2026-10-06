@@ -52,7 +52,7 @@ async function start(dir: string, options: Parameters<typeof tweeTsPlugin>[0], c
     logLevel: 'silent',
     ...(customLogger ? { customLogger } : {}),
     plugins: [tweeTsPlugin(options)],
-    server: { host: '127.0.0.1', port: 0, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
   });
   await server.listen();
   await watcherReady(server);
@@ -237,7 +237,7 @@ describe.skipIf(!hasEntry || peerRun)(
       server = await createServer({
         logLevel: 'silent',
         ...config,
-        server: { host: '127.0.0.1', port: 0, strictPort: true },
+        server: { host: '127.0.0.1', port: 0, strictPort: false },
       });
       await server.listen();
       await watcherReady(server);

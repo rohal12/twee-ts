@@ -44,7 +44,7 @@ async function serve(
     logLevel: 'silent',
     customLogger,
     plugins: plugins as Plugin[],
-    server: { host: '127.0.0.1', port: 0, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
   });
   await server.listen();
   await watcherReady(server);
