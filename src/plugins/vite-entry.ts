@@ -440,9 +440,19 @@ function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
  * which sees the final plugin list, including the plugins Vite resolves per
  * environment (`applyToEnvironment`) after `configResolved`.
  */
-function recordWatchFiles(files: Set<string>): Plugin {
+function recordWatchFiles(files: Set<string>, onLoad: ((file: string) => void) | undefined): Plugin {
   return {
     name: `${PLUGIN_NAME}:record-watch-files`,
+    // Called for each module just before its file is read, so a caller can note the file's state as the
+    // bundle is about to see it. It reads nothing itself: the module is loaded as usual.
+    load: {
+      order: 'pre',
+      handler(id) {
+        const file = fileOfId(id);
+        if (onLoad !== undefined && isAbsolute(file) && !id.startsWith('\0')) onLoad(file);
+        return null;
+      },
+    },
     // Every module of the graph, also one the bundle renders no code of (a module
     // whose constant the bundler inlined), which the chunk's module list leaves out.
     buildEnd() {
@@ -498,6 +508,7 @@ export async function bundleEntry(
   entryPath: string,
   command: ViteCommand,
   outputFilename: string,
+  onLoad?: (file: string) => void,
 ): Promise<EntryBundle> {
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
@@ -515,7 +526,7 @@ export async function bundleEntry(
     customLogger: entryBuildLogger(config.logger),
     clearScreen: false,
     publicDir: false,
-    plugins: [...plugins, entryBuildEnforcer(entryPath, command, outputFilename), recordWatchFiles(watchFiles)],
+    plugins: [...plugins, entryBuildEnforcer(entryPath, command, outputFilename), recordWatchFiles(watchFiles, onLoad)],
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).
   const [result] = [await build(inline)].flat();

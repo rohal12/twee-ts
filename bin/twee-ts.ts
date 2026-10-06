@@ -263,13 +263,15 @@ function byVersionDescending(a: string, b: string): number {
 /**
  * The cached downloads a build with these settings would consider, as resolution considers them (see
  * format-resolution.ts): the cached copy of each configured format URL, and what was downloaded from each
- * configured format index and from the Story Formats Archive, each under the name and version its source
- * lists. A download from a URL or index the project doesn't configure is never used, so it isn't listed;
- * neither is an entry whose files are damaged. `cache list` lists every download.
+ * configured format index and, unless `useDefaultFormatIndices` is off, from the Story Formats Archive, each
+ * under the name and version its source lists. A download from a URL or index the project doesn't configure
+ * is never used, so it isn't listed; neither is an entry whose files are damaged. `cache list` lists every
+ * download.
  */
 function consideredDownloads(
   formatUrls: readonly string[],
   formatIndices: readonly string[],
+  useDefaultFormatIndices: boolean,
   diagnostics: Diagnostic[],
 ): { readonly name: string; readonly version: string }[] {
   const checked = (urls: readonly string[], option: string): string[] =>
@@ -279,7 +281,10 @@ function consideredDownloads(
       diagnostics.push({ level: 'warning', message: `${option}: ${result.reason}` });
       return [];
     });
-  const indices = new Set([...checked(formatIndices, 'formatIndices'), ...DEFAULT_SFA_INDICES]);
+  const indices = new Set([
+    ...checked(formatIndices, 'formatIndices'),
+    ...(useDefaultFormatIndices ? DEFAULT_SFA_INDICES : []),
+  ]);
   const fromUrls = checked(formatUrls, 'formatUrls').flatMap((url) => cachedUrlRecord(url) ?? []);
   const fromIndices = listRecords().filter((r) => r.origin.kind === 'index' && indices.has(r.origin.index));
   return [...fromUrls, ...fromIndices]
@@ -295,7 +300,12 @@ function listFormats(config: TweeTsConfig | null): void {
   const diagnostics: Diagnostic[] = [];
   const searchDirs = getFormatSearchDirs(config?.formatPaths ?? [], config?.useTweegoPath ?? true);
   const formats = pruneFormats(discoverAllFormats(searchDirs, diagnostics));
-  const downloads = consideredDownloads(config?.formatUrls ?? [], config?.formatIndices ?? [], diagnostics);
+  const downloads = consideredDownloads(
+    config?.formatUrls ?? [],
+    config?.formatIndices ?? [],
+    config?.useDefaultFormatIndices ?? true,
+    diagnostics,
+  );
   logDiagnostics(diagnostics);
 
   out('Local story formats:');

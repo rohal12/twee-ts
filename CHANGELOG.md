@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A build writes over an output of its own, inside a source or module folder, only while the file holds exactly what was written: its content is checked as well as its size, inode and modification time, so a same-size edit in place that restores the modification time makes it the author's file (`OUTPUT_IS_INPUT`, bytes kept) (#285)
+- The Vite dev server's catch-up sees an entry file or import edited while the entry was bundled, with no watcher or a missed event: the states it compares are those from before the bundle read the files, and a file the bundle found itself and that changed during it is bundled again on the next request (#286)
+- `--list-formats` leaves out cached Story Formats Archive downloads when `useDefaultFormatIndices` is `false`, unless the same index is configured in `formatIndices`, as a build resolves formats (#287)
+
+### Fixed
+
 - An authored file of a loadable type inside a source or module folder is no longer taken for an earlier build, and overwritten, because its text quotes a build mark: an earlier build is recognised by its structure (JSON output by its creator and passages, Twine 2 HTML and archives by their `tw-storydata` element, Twine 1 HTML by its store area and version text, HTML only from a `.html` or `.htm` file), so such a file is refused (`OUTPUT_IS_INPUT`) and kept (#273)
 - `new URL('./image.png', import.meta.url)` and Vite's worker URLs in a Vite `entry` give valid URLs in the story script, in dev and in both production entry builds: `import.meta.url` stands for the story page's URL. The dev server serves the files of the entry bundle (a worker, a stylesheet) with their own media types, not `application/octet-stream` (#274)
 - Saving a verified download over a damaged content directory of the format cache writes the damaged or missing files again, so the next offline build finds the format (#275)

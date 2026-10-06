@@ -132,6 +132,25 @@ function fileStates(files: TrackedFiles): Map<string, string> {
   return states;
 }
 
+/**
+ * The states to compare later changes with, for the files a bundle was made from: each file as it was just
+ * before the bundle read it (`observed`, noted as each module loads), else as it was before the bundle began
+ * (`before`, for a file known from the last bundle), else as it is now. An edit while the bundle was made
+ * then differs from the recorded state afterwards, and the next request makes the bundle again.
+ */
+function settledStates(
+  files: TrackedFiles,
+  observed: ReadonlyMap<string, string>,
+  before: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const [key, path] of files) {
+    const state = observed.get(key) ?? before.get(key) ?? fileState(path);
+    if (state !== undefined) states.set(key, state);
+  }
+  return states;
+}
+
 /** The keys of the files added, removed or changed between two `fileStates` results. */
 function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): Set<string> {
   const changed = new Set<string>();
@@ -232,11 +251,20 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       entryStates = fileStates(entryFiles);
       watchEntryFiles(entryFiles);
     }
-    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename);
+    // The files known so far, as they are before the bundle begins, and each module as it is just before
+    // the bundle reads it: a file edited while the bundle is made then differs from what is recorded
+    // afterwards, which is what the catch-up looks for.
+    const before = fileStates(entryFiles);
+    const observed = new Map<string, string>();
+    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, (file) => {
+      const key = fileKey(file);
+      const state = fileState(canonicalPath(file));
+      if (state !== undefined && !observed.has(key)) observed.set(key, state);
+    });
     entry = next;
     entryStale = false;
     entryFiles = tracked(next.files);
-    entryStates = fileStates(entryFiles);
+    entryStates = settledStates(entryFiles, observed, before);
     watchEntryFiles(entryFiles);
   };
 

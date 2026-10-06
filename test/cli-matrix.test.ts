@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { DEFAULT_SFA_INDICES } from '../src/remote-formats.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const BIN = join(ROOT, 'bin', 'twee-ts.ts');
@@ -318,15 +319,63 @@ describe('watch mode stops on an error no edit can fix (FS-13)', () => {
 });
 
 describe('--list-formats lists the cached downloads a build would consider', () => {
+  const SFA = 'https://videlais.github.io/story-formats-archive/official/index.json';
+
+  /** Writes a cache entry in a child process, so the cache path comes from XDG_CACHE_HOME as the CLI reads it. */
+  function writeEntry(env: NodeJS.ProcessEnv, record: object): void {
+    const module = pathToFileURL(join(ROOT, 'src', 'format-cache.ts')).href;
+    const script = `import(${JSON.stringify(module)}).then((m) => m.writeEntry(${JSON.stringify(record)}, new Map([['format.js', Buffer.from('window.storyFormat({})')]])))`;
+    const r = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script], { env, encoding: 'utf-8' });
+    expect(r.stderr).toBe('');
+  }
+
+  const archiveEntry = (index: string, name: string, version: string): object => ({
+    isTwine2: true,
+    metadata: { proofing: false },
+    main: 'format.js',
+    fetchedAt: '2026-10-06T00:00:00Z',
+    origin: { kind: 'index', index, twine: 'twine2', name, version },
+    name,
+    version,
+    downloadUrl: 'https://x/f.js',
+  });
+
+  it.each([
+    ['the default indices are on', {}, ['Official', 'Unofficial']],
+    ['the default indices are off', { useDefaultFormatIndices: false }, []],
+    [
+      'the default indices are off but one is configured',
+      { useDefaultFormatIndices: false, formatIndices: [SFA] },
+      ['Official'],
+    ],
+    [
+      'the default indices are off and another index is configured',
+      { useDefaultFormatIndices: false, formatIndices: ['https://other.example/index.json'] },
+      ['Other'],
+    ],
+  ] as const)(
+    'honours that %s (#287)',
+    (_name, config, listed) => {
+      const env = { ...ENV, XDG_CACHE_HOME: join(dir, 'cache') };
+      writeEntry(env, archiveEntry(SFA, 'Official', '1.0.0'));
+      writeEntry(env, archiveEntry(DEFAULT_SFA_INDICES.find((url) => url !== SFA) ?? '', 'Unofficial', '1.0.0'));
+      writeEntry(env, archiveEntry('https://other.example/index.json', 'Other', '1.0.0'));
+      writeFileSync(join(dir, 'twee-ts.config.json'), JSON.stringify({ useTweegoPath: false, ...config }));
+      const result = cli(dir, ['--list-formats'], env);
+      expect(result.status).toBe(0);
+      const cached = ['Official', 'Unofficial', 'Other'].filter((name) => result.stdout.includes(`: ${name} 1.0.0`));
+      expect(cached).toEqual(
+        ['Official', 'Unofficial', 'Other'].filter((name) => (listed as readonly string[]).includes(name)),
+      );
+    },
+    60_000,
+  );
+
   it('leaves out downloads from format URLs and indices the project does not configure', () => {
     const cache = join(dir, 'cache');
     const env = { ...ENV, XDG_CACHE_HOME: cache };
-    // Written in a child process, so the cache path comes from XDG_CACHE_HOME as the CLI reads it.
     const write = (record: object): void => {
-      const module = pathToFileURL(join(ROOT, 'src', 'format-cache.ts')).href;
-      const script = `import(${JSON.stringify(module)}).then((m) => m.writeEntry(${JSON.stringify(record)}, new Map([['format.js', Buffer.from('window.storyFormat({})')]])))`;
-      const r = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script], { env, encoding: 'utf-8' });
-      expect(r.stderr).toBe('');
+      writeEntry(env, record);
     };
     const base = {
       isTwine2: true,
@@ -334,7 +383,7 @@ describe('--list-formats lists the cached downloads a build would consider', () 
       main: 'format.js',
       fetchedAt: '2026-10-06T00:00:00Z',
     };
-    const sfa = 'https://videlais.github.io/story-formats-archive/official/index.json';
+    const sfa = SFA;
     write({
       ...base,
       origin: { kind: 'index', index: sfa, twine: 'twine2', name: 'Alpha', version: '1.2.0' },
