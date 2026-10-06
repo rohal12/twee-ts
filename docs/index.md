@@ -4,7 +4,7 @@ layout: home
 hero:
   name: twee-ts
   text: TypeScript Twee-to-HTML Compiler
-  tagline: A complete reimplementation of Tweego. Zero runtime dependencies. Node.js 22.12+.
+  tagline: A complete reimplementation of Tweego. Zero runtime dependencies. Node.js 24+.
   actions:
     - theme: brand
       text: Get Started
@@ -20,7 +20,7 @@ features:
   - title: Drop-in Tweego Replacement
     details: Reads the same .twee, .tw, .css, .js, font, and media files. Respects TWEEGO_PATH. Equivalent output, with every intended difference listed.
   - title: Zero Runtime Dependencies
-    details: Nothing to install besides twee-ts itself; the HTML and JavaScript parsers it uses (parse5, acorn) are bundled. Runs on Node.js 22.12+.
+    details: Nothing to install besides twee-ts itself; the HTML and JavaScript parsers it uses (parse5, acorn) are bundled. Runs on Node.js 24+.
   - title: Programmatic API
     details: Use compile(), compileToFile(), and watch() directly from your TypeScript or JavaScript code.
   - title: Build Tool Plugins

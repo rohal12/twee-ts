@@ -43,7 +43,7 @@ The options are checked when the plugin is created. An unknown option (a misspel
 
 ### Vite versions
 
-The plugin works with Vite 5.0 and every later release; the `entry` option needs Vite 8 (with an older Vite, creating the plugin with `entry` throws). CI runs the plugin tests against Vite 5.0.0, 5.4, 6.0.0, 6, 7.0.0, 7, 8.0.0 and 8, and type-checks a config against each.
+The plugin works with Vite 8 and every later release (the `vite` peer dependency is `>=8`). CI runs the plugin tests against the latest Vite 8 and type-checks a config against it.
 
 ### Dev server
 

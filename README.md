@@ -11,7 +11,7 @@
 
 TypeScript reimplementation of [Tweego](https://www.motoslave.net/tweego/) — a command-line compiler for Twine/Twee interactive fiction projects.
 
-Zero runtime dependencies (the parsers it uses, parse5 and acorn, are bundled). Node.js 22.12+.
+Zero runtime dependencies (the parsers it uses, parse5 and acorn, are bundled). Node.js 24+.
 
 Upgrading from 1.x? Read **[Migrating to 2.0](https://rohal12.github.io/twee-ts/migrating-to-2)**.
 

@@ -8,16 +8,16 @@ twee-ts 2.0 makes the compiler stricter and more exact: input it used to accept 
 
 Most projects need to check four things:
 
-1. Node.js is 22.12 or newer.
+1. Node.js is 24 or newer, and Vite (if you use the plugin) is 8 or newer.
 2. Paths in a config file named with `-c` are relative to that file's folder.
 3. Scripts that read `--log-stats` output read standard error, and treat exit status 2 as a usage error.
 4. The story still builds without errors: some input that 1.x accepted, such as a StoryData passage that is not valid JSON, is now an error.
 
-## Node.js 22.12
+## Node.js 24 and Vite 8
 
-**Before:** Node.js 22.0 and later. **After:** `engines` requires Node.js 22.12 or newer, the first Node 22 release that loads ES modules through `require()` without a flag.
+**Before:** Node.js 22.0 and later, Vite 5 and later. **After:** `engines` requires Node.js 24 or newer and the `vite` peer dependency is `>=8`. CI tests the latest Node 24 and Vite 8.
 
-**Migrate:** upgrade Node.js. CI tests the latest Node 24.
+**Migrate:** upgrade Node.js, and Vite if you use the plugin.
 
 ## Command line
 
