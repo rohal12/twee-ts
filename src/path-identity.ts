@@ -187,25 +187,6 @@ function lowerPathExtension(path: string, flavour: PathFlavour): string {
   return ext === '' ? path : path.slice(0, path.length - ext.length) + ext.toLowerCase();
 }
 
-/** Node's `matchesGlob` for the flavour, which Node added in 22.5. */
-function globMatcher(flavour: PathFlavour): (path: string, pattern: string) => boolean {
-  // Read from the object, not imported by name: a named import would stop this module from loading
-  // on Node 22.0 to 22.4.
-  const { matchesGlob } = flavour;
-  if (typeof matchesGlob !== 'function') {
-    throw new Error(`Exclude globs need Node.js 22.5 or newer (found ${process.version}).`);
-  }
-  return matchesGlob;
-}
-
-/**
- * Throws when this Node.js can't match exclude globs, so a build checks it once before it starts
- * rather than failing on the first file.
- */
-export function assertGlobSupport(flavour: PathFlavour = nodePath): void {
-  globMatcher(flavour);
-}
-
 /** The real file system, as path identity queries it. */
 export const nodeIdentityFileSystem: IdentityFileSystem = {
   realpath: (path) => realpathSync.native(path),
@@ -371,7 +352,7 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
 
   function matchesExclude(identity: PathIdentity, globs: readonly string[]): boolean {
     if (globs.length === 0) return false;
-    const matchesGlob = globMatcher(flavour);
+    const { matchesGlob } = flavour;
     const realRel = flavour.relative(resolvePath(tidy(cwd()), 0).canonical, identity.canonical);
     const relative = [identity.display, ...(isInsideRelative(realRel, flavour) ? [realRel] : [])];
     const absolute = [identity.absolute, identity.canonical];

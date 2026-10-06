@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import * as nodePath from 'node:path';
 import { join, posix, win32 } from 'node:path';
 import {
-  assertGlobSupport,
   clearPathIdentityCache,
   createPathIdentifier,
   flipCase,
@@ -426,19 +425,6 @@ describe('exclude globs', () => {
     expect(lowerGlobExtension('a.d\\*')).toBeUndefined();
     expect(lowerGlobExtension('src/**')).toBeUndefined();
     expect(lowerGlobExtension('{README.md,LICENSE}')).toBeUndefined();
-  });
-
-  it('needs Node 22.5 for globs, and says so before a build starts', () => {
-    const old = { ...posix, matchesGlob: undefined } as unknown as PathFlavour;
-    expect(() => {
-      assertGlobSupport(old);
-    }).toThrow(/Node\.js 22\.5 or newer/);
-    expect(() => {
-      assertGlobSupport();
-    }).not.toThrow();
-    const ids = createPathIdentifier({ path: old, fs: fs(), cwd: () => '/proj' });
-    expect(() => ids.matchesExclude(ids.identify('src/a.tw'), ['*'])).toThrow(/22\.5/);
-    expect(ids.matchesExclude(ids.identify('src/a.tw'), [])).toBe(false);
   });
 });
 
