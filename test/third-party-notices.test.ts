@@ -231,7 +231,8 @@ describe('updateThirdPartyNotices', () => {
 });
 
 describe('the committed THIRD_PARTY_NOTICES', () => {
-  const text = readFileSync(join(__dirname, '..', NOTICES_FILE), 'utf8');
+  // A Windows checkout may turn the line endings into CRLF.
+  const text = readFileSync(join(__dirname, '..', NOTICES_FILE), 'utf8').replaceAll('\r\n', '\n');
   const config = readFileSync(join(__dirname, '..', 'tsdown.config.ts'), 'utf8');
   const listed = /const BUNDLED_PACKAGES = \[([^\]]*)\]/.exec(config)?.[1] ?? '';
   const names = [...listed.matchAll(/'([^']+)'/g)].map((m) => m[1]);
