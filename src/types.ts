@@ -436,30 +436,36 @@ export interface FileCacheEntry {
 
 // --- Config file ---
 
-export interface TweeTsConfig {
+/** The compile options a config file may set, with the same meaning (see CompileOptions). */
+type ConfigCompileOption =
+  | 'exclude'
+  | 'outputMode'
+  | 'formatId'
+  | 'startPassage'
+  | 'formatPaths'
+  | 'formatIndices'
+  | 'formatUrls'
+  | 'useTweegoPath'
+  | 'modules'
+  | 'headFile'
+  | 'trim'
+  | 'twee2Compat'
+  | 'testMode'
+  | 'noRemote'
+  | 'formatFetchTimeout'
+  | 'formatResolutionTimeout'
+  | 'useDefaultFormatIndices'
+  | 'tagAliases'
+  | 'sourceInfo'
+  | 'wordCountMethod';
+
+/**
+ * A config file (`twee-ts.config.json`): the compile options it may set, which mean what they mean in
+ * `CompileOptions`, plus `sources` (paths only) and `output`.
+ */
+export interface TweeTsConfig extends Pick<CompileOptions, ConfigCompileOption> {
+  /** Files or directories to compile. */
   sources?: readonly string[] | undefined;
-  exclude?: readonly string[] | undefined;
+  /** Output file path; "-" for standard output. */
   output?: string | undefined;
-  outputMode?: OutputMode | undefined;
-  formatId?: string | undefined;
-  startPassage?: string | undefined;
-  formatPaths?: readonly string[] | undefined;
-  formatIndices?: readonly string[] | undefined;
-  formatUrls?: readonly string[] | undefined;
-  useTweegoPath?: boolean | undefined;
-  modules?: readonly string[] | undefined;
-  headFile?: string | undefined;
-  trim?: boolean | undefined;
-  twee2Compat?: boolean | undefined;
-  testMode?: boolean | undefined;
-  noRemote?: boolean | undefined;
-  /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
-  formatFetchTimeout?: number | undefined;
-  /** Milliseconds the search for the story format may take in all. 0 turns the limit off. Default: 120000. */
-  formatResolutionTimeout?: number | undefined;
-  /** Whether the Story Formats Archive indices are asked after `formatIndices`. Default: true. */
-  useDefaultFormatIndices?: boolean | undefined;
-  tagAliases?: Readonly<Record<string, string>> | undefined;
-  sourceInfo?: boolean | undefined;
-  wordCountMethod?: WordCountMethod | undefined;
 }

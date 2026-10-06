@@ -38,7 +38,9 @@ describe('decompileHTML passage elements', () => {
       wrap('<tw-passagedata name="Start">Hi</tw-passagedata>', 'startnode="1"'),
     );
 
-    expect(diagnostics).toEqual([]);
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      'The "tw-storydata" content attribute "startnode" is 1, but no "tw-passagedata" has that "pid"; the story has no start passage.',
+    ]);
     expect(story.passages.map((p) => p.name)).toContain('Start');
     expect(story.twine2.start).toBe('');
   });

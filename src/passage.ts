@@ -176,11 +176,7 @@ export function passageToPassagedata(
   if (hasMetadataPosition(p)) {
     position = p.metadata?.position ?? '';
   } else {
-    const x = pid % 10;
-    const y = Math.floor(pid / 10);
-    const xp = x === 0 ? 10 : x;
-    const yp = x === 0 ? y : y + 1;
-    position = `${xp * 125 - 25},${yp * 125 - 25}`;
+    position = gridPosition(pid, 125, 25);
   }
 
   if (hasMetadataSize(p)) {
@@ -194,6 +190,18 @@ export function passageToPassagedata(
     attrs += ` data-source-file=${quote(attrEscape(p.source.file))} data-source-line="${p.source.line}"`;
   }
   return `${attrs}>${htmlEscape(p.text)}</tw-passagedata>`;
+}
+
+/**
+ * Where Twine lays out passage `pid` (from 1) that has no position of its own: in rows of ten, `cell` apart,
+ * the first `cell - inset` from the top left corner (Twine 2: 125 and 25; Twine 1: 140 and 130).
+ */
+function gridPosition(pid: number, cell: number, inset: number): string {
+  const x = pid % 10;
+  const y = Math.floor(pid / 10);
+  const column = x === 0 ? 10 : x;
+  const row = x === 0 ? y : y + 1;
+  return `${column * cell - inset},${row * cell - inset}`;
 }
 
 /**
@@ -211,17 +219,7 @@ export function isObfuscatable(p: Pick<ReadonlyPassage, 'name' | 'tags'>): boole
  * (`Tiddler.toHtml()`), and as its engine.js decodes it.
  */
 export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13: boolean, time: Date): string {
-  let position: string;
-
-  if (hasMetadataPosition(p)) {
-    position = p.metadata?.position ?? '';
-  } else {
-    const x = pid % 10;
-    const y = Math.floor(pid / 10);
-    const xp = x === 0 ? 10 : x;
-    const yp = x === 0 ? y : y + 1;
-    position = `${xp * 140 - 130},${yp * 140 - 130}`;
-  }
+  const position = hasMetadataPosition(p) ? (p.metadata?.position ?? '') : gridPosition(pid, 140, 130);
 
   // Twine 1's form, YYYYMMDDHHMM in UTC; every tiddler of one build has the build's time.
   const created = time.toISOString().replace(/[-:T]/g, '').slice(0, 12);
