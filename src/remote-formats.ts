@@ -43,8 +43,16 @@ export const DEFAULT_SFA_INDICES: readonly string[] = [
 /** How long one story format request (an index or a format file) may take by default, in milliseconds. */
 const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
 
+/**
+ * How long the search for one story format may take in all by default, in milliseconds: four
+ * requests at their default limit. A search asks each format URL and index in turn, so without an
+ * overall limit a few hung servers would hold a build for minutes; with it, a build that cannot
+ * reach the network ends within two minutes, answering from the download cache where it can.
+ */
+const DEFAULT_FORMAT_RESOLUTION_TIMEOUT = 120_000;
+
 /** The longest delay a timer accepts; a longer timeout means no limit. */
-const MAX_TIMER_DELAY = 2_147_483_647;
+export const MAX_TIMER_DELAY = 2_147_483_647;
 
 /** The largest response accepted for an index or a format file, in bytes (32 MiB). */
 export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
@@ -197,6 +205,14 @@ export function requestTimeout(options: RemoteFetchOptions): number {
     throw new RangeError(`A story format request timeout must be 0 or more milliseconds, not ${timeout}`);
   }
   return timeout;
+}
+
+/**
+ * The time limit for a whole format search, in milliseconds (0: none), from `value` (default
+ * {@link DEFAULT_FORMAT_RESOLUTION_TIMEOUT}), which the caller has checked to be 0 or more.
+ */
+export function resolutionTimeout(value: number | undefined): number {
+  return value ?? DEFAULT_FORMAT_RESOLUTION_TIMEOUT;
 }
 
 /** How one caller waits for `url`: under its own signal and timeout. `what` names the request in errors. */

@@ -469,7 +469,14 @@ describe('resolveRemoteFormat with a download cache and no network', () => {
 
   it('still reports the network error when nothing is cached', async () => {
     stubOffline();
-    await expect(resolveRemoteFormat('SugarCube', '2.37.3')).rejects.toThrow('offline');
+    await expect(resolveRemoteFormat('SugarCube', '2.37.3')).rejects.toMatchObject({
+      name: 'TweeTsError',
+      code: 'FORMAT_UNAVAILABLE',
+      message: expect.stringContaining('offline'),
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ level: 'warning', message: expect.stringContaining('offline') }),
+      ]),
+    });
   });
 });
 
@@ -791,7 +798,7 @@ describe('cancelling and timing out format downloads', () => {
   it('tries no further source after the signal aborts', async () => {
     const network = stubStalledFetch();
     const controller = new AbortController();
-    const pending = resolveRemoteFormat('SugarCube', '2.0.0', [], [FORK_URL], { signal: controller.signal });
+    const pending = resolveRemoteFormat('SugarCube', '2.0.0', { urls: [FORK_URL], signal: controller.signal });
     await network.next();
     controller.abort();
 
@@ -846,7 +853,7 @@ describe('cancelling and timing out format downloads', () => {
 
   it('moves on to the next source after a request times out', async () => {
     const network = stubStalledFetch();
-    const pending = resolveRemoteFormat('SugarCube', '2.0.0', [], [FORK_URL], { timeout: 20 });
+    const pending = resolveRemoteFormat('SugarCube', '2.0.0', { urls: [FORK_URL], timeout: 20 });
     await network.next(); // the format URL, which never answers
     const index = await network.next(); // its timeout has passed: on to the official index
     expect(index.url).toBe(OFFICIAL_INDEX);
@@ -877,6 +884,9 @@ describe('cancelling and timing out format downloads', () => {
     await expect(compile({ sources: INLINE_STORY, formatFetchTimeout: Number.NaN })).rejects.toThrow(
       /formatFetchTimeout/,
     );
-    await expect(resolveRemoteFormat('SugarCube', '2.0.0', [], [], { timeout: -1 })).rejects.toThrow(RangeError);
+    await expect(resolveRemoteFormat('SugarCube', '2.0.0', { timeout: -1 })).rejects.toMatchObject({
+      name: 'TweeTsError',
+      code: 'INVALID_OPTIONS',
+    });
   });
 });

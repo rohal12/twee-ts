@@ -115,6 +115,8 @@ interface CompileOptions {
   noRemote?: boolean; // default: false
   signal?: AbortSignal; // cancels the compile
   formatFetchTimeout?: number; // ms per format request; default: 30000, 0 = no limit
+  formatResolutionTimeout?: number; // ms for the whole format search; default: 120000, 0 = no limit
+  useDefaultFormatIndices?: boolean; // ask the Story Formats Archive; default: true
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean; // default: false
   wordCountMethod?: WordCountMethod; // 'tweego' (default) or 'whitespace'
@@ -123,7 +125,7 @@ interface CompileOptions {
 
 `signal` cancels a compile: story format requests still in progress are aborted, and the promise rejects with the signal's reason (an `AbortError` for `controller.abort()`). Nothing from a cancelled download is written to the format cache.
 
-`formatFetchTimeout` limits each story format request (an index or a `format.js`), in milliseconds. A request that takes longer fails with a warning in `diagnostics`, and the next source is tried. The default is 30000; `0` turns the limit off; a negative value is a `TweeTsError` (`INVALID_OPTIONS`).
+`formatFetchTimeout` limits each story format request (an index or a `format.js`), in milliseconds. A request that takes longer fails with a warning in `diagnostics`, and the next source is tried. The default is 30000; `0` turns the limit off; a negative value is a `TweeTsError` (`INVALID_OPTIONS`). `formatResolutionTimeout` limits the whole search for the format, over every request (default 120000; `0` turns it off): when it passes, the request in progress stops with a warning, and the format URLs and indices not yet asked answer from the download cache only. `useDefaultFormatIndices: false` leaves the Story Formats Archive out, so only the configured `formatUrls` and `formatIndices` are asked.
 
 ```typescript
 import { compile } from '@rohal12/twee-ts';
@@ -397,10 +399,15 @@ import {
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
 console.log(format?.filename);
 
-// With direct format URLs, a signal and a per-request timeout (RemoteFetchOptions)
-const fork = await resolveRemoteFormat('SugarCube', '2.37.3', [], ['https://example.com/sugarcube/format.js'], {
+// With direct format URLs, a signal, a per-request timeout and a limit for the whole lookup
+// (RemoteResolveOptions); failures reject with a TweeTsError (INVALID_OPTIONS or FORMAT_UNAVAILABLE)
+const fork = await resolveRemoteFormat('SugarCube', '2.37.3', {
+  urls: ['https://example.com/sugarcube/format.js'],
+  indices: [],
   signal: AbortSignal.timeout(60_000),
   timeout: 10_000,
+  resolutionTimeout: 30_000,
+  useDefaultIndices: false,
 });
 console.log(fork?.version);
 

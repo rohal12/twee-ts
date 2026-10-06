@@ -189,6 +189,15 @@ export const CONFIG_SPEC: ConfigSpec = {
     0,
     30000,
   ),
+  formatResolutionTimeout: millisecondsField(
+    'Milliseconds the search for the story format may take in all, over every request. When it passes, the format URLs and indices not yet asked are read from the download cache only. 0 turns the limit off.',
+    0,
+    120000,
+  ),
+  useDefaultFormatIndices: booleanField(
+    'Ask the Story Formats Archive indices after formatIndices. false: only the configured indices and URLs are asked.',
+    true,
+  ),
   tagAliases: tagMapField(
     'Map alias tags to canonical special tags (e.g. { "library": "script" }). Tags are non-empty and hold no whitespace.',
   ),

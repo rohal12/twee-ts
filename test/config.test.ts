@@ -328,6 +328,8 @@ describe('JSON Schema', () => {
       'testMode',
       'noRemote',
       'formatFetchTimeout',
+      'formatResolutionTimeout',
+      'useDefaultFormatIndices',
       'tagAliases',
       'sourceInfo',
     ];

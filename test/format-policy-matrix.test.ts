@@ -302,12 +302,10 @@ describe('table B: request kind × relation × source', () => {
       const world = await buildWorld([candidate]);
       const compiled = await run(request, world.options);
       clearIndexCache();
-      const remote = await resolveRemoteFormat(
-        request.name,
-        request.version,
-        world.options.formatIndices,
-        world.options.formatUrls,
-      );
+      const remote = await resolveRemoteFormat(request.name, request.version, {
+        indices: world.options.formatIndices,
+        urls: world.options.formatUrls,
+      });
       expect(remote?.version).toBe(compiled.marker === undefined ? undefined : version);
     },
   );

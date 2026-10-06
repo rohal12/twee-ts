@@ -81,6 +81,17 @@ export interface CompileOptions {
    * with a warning and the next source is tried. 0 turns the limit off. Default: 30000.
    */
   formatFetchTimeout?: number | undefined;
+  /**
+   * Milliseconds the search for the story format may take in all, over every request it makes.
+   * When the limit passes, the request in progress is stopped and the format URLs and indices not
+   * yet asked are read from the download cache only. 0 turns the limit off. Default: 120000.
+   */
+  formatResolutionTimeout?: number | undefined;
+  /**
+   * Whether the Story Formats Archive indices are asked after `formatIndices`. Set it to false so a
+   * project with its own archive never contacts the Story Formats Archive. Default: true.
+   */
+  useDefaultFormatIndices?: boolean | undefined;
   /** Map alias tags to target tags (e.g. { library: 'script' }); each passage with an alias gets the target too. */
   tagAliases?: Record<string, string> | undefined;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
@@ -158,10 +169,14 @@ export interface CompileStats {
  * - `OUTPUT_IS_INPUT`: the output would overwrite an input (a source, module, head file, config file or story
  *   format), or a source file of the output's type found in a source folder.
  * - `INPUT_UNAVAILABLE`: an input the input policy makes fatal (the head file, the config file) can't be used.
- * - `INVALID_OPTIONS`: an option is out of range, or needs a newer Node.js.
+ * - `INVALID_OPTIONS`: an option is out of range or not usable (a format URL that is not http(s), say), or
+ *   needs a newer Node.js.
+ * - `FORMAT_UNAVAILABLE`: `resolveRemoteFormat()` found the format nowhere and some source failed; the
+ *   error's diagnostics hold every failure.
  * - `BUILD_FAILED`: anything else (no story format for HTML output, say).
  */
-export type TweeTsErrorCode = 'OUTPUT_IS_INPUT' | 'INPUT_UNAVAILABLE' | 'INVALID_OPTIONS' | 'BUILD_FAILED';
+export type TweeTsErrorCode =
+  'OUTPUT_IS_INPUT' | 'INPUT_UNAVAILABLE' | 'INVALID_OPTIONS' | 'FORMAT_UNAVAILABLE' | 'BUILD_FAILED';
 
 // --- Passage ---
 
@@ -371,6 +386,22 @@ export interface RemoteFetchOptions {
   readonly timeout?: number | undefined;
 }
 
+/** Options of a lookup that may ask several sources, as `resolveRemoteFormat()` does. */
+export interface RemoteResolveOptions extends RemoteFetchOptions {
+  /** SFA-compatible index.json URLs, asked in order after `urls`. */
+  readonly indices?: readonly string[] | undefined;
+  /** Direct format.js URLs, asked first, in order. */
+  readonly urls?: readonly string[] | undefined;
+  /**
+   * Milliseconds the whole lookup may take, over every request. When it passes, the request in
+   * progress is stopped and the sources not yet asked are read from the download cache only. 0 turns
+   * the limit off. Default: 120000.
+   */
+  readonly resolutionTimeout?: number | undefined;
+  /** Whether the Story Formats Archive indices are asked after the given indices. Default: true. */
+  readonly useDefaultIndices?: boolean | undefined;
+}
+
 // --- Incremental compilation cache ---
 
 export interface FileCacheEntry {
@@ -418,6 +449,10 @@ export interface TweeTsConfig {
   noRemote?: boolean | undefined;
   /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
   formatFetchTimeout?: number | undefined;
+  /** Milliseconds the search for the story format may take in all. 0 turns the limit off. Default: 120000. */
+  formatResolutionTimeout?: number | undefined;
+  /** Whether the Story Formats Archive indices are asked after `formatIndices`. Default: true. */
+  useDefaultFormatIndices?: boolean | undefined;
   tagAliases?: Record<string, string> | undefined;
   sourceInfo?: boolean | undefined;
   wordCountMethod?: WordCountMethod | undefined;

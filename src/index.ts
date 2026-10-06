@@ -75,6 +75,7 @@ export type {
   SFAIndex,
   SFAIndexEntry,
   RemoteFetchOptions,
+  RemoteResolveOptions,
   SourceLocation,
   TweeTsConfig,
   FileCacheEntry,

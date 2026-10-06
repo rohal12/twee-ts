@@ -52,6 +52,8 @@ Every key, with its default. `sources` has none: name the sources here or on the
   "testMode": false,
   "noRemote": false,
   "formatFetchTimeout": 30000,
+  "formatResolutionTimeout": 120000,
+  "useDefaultFormatIndices": true,
   "tagAliases": {},
   "sourceInfo": false,
   "wordCountMethod": "tweego"
@@ -93,15 +95,17 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 ### Story Format
 
-| Key                  | Type       | Default         | Description                                                                                                                           |
-| -------------------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `formatId`           | `string`   | `"sugarcube-2"` | Story format ID. Without it, StoryData's `format` and `format-version` decide, and `sugarcube-2` only when StoryData names none.      |
-| `formatPaths`        | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                                                                                |
-| `formatIndices`      | `string[]` | `[]`            | `http:`/`https:` URLs of SFA-compatible `index.json` files, consulted after `formatUrls` and before the Story Formats Archive.        |
-| `formatUrls`         | `string[]` | `[]`            | `http:`/`https:` URLs of `format.js` files, consulted after local formats and before `formatIndices`.                                 |
-| `useTweegoPath`      | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.                                                                       |
-| `noRemote`           | `boolean`  | `false`         | Disable remote format fetching entirely.                                                                                              |
-| `formatFetchTimeout` | `number`   | `30000`         | Milliseconds each story format request may take before it fails with a warning and the next source is tried. `0` turns the limit off. |
+| Key                       | Type       | Default         | Description                                                                                                                                                                                                                             |
+| ------------------------- | ---------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `formatId`                | `string`   | `"sugarcube-2"` | Story format ID. Without it, StoryData's `format` and `format-version` decide, and `sugarcube-2` only when StoryData names none.                                                                                                        |
+| `formatPaths`             | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                                                                                                                                                                                  |
+| `formatIndices`           | `string[]` | `[]`            | `http:`/`https:` URLs of SFA-compatible `index.json` files, consulted after `formatUrls` and before the Story Formats Archive.                                                                                                          |
+| `formatUrls`              | `string[]` | `[]`            | `http:`/`https:` URLs of `format.js` files, consulted after local formats and before `formatIndices`.                                                                                                                                   |
+| `useTweegoPath`           | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.                                                                                                                                                                         |
+| `noRemote`                | `boolean`  | `false`         | Disable remote format fetching entirely.                                                                                                                                                                                                |
+| `formatFetchTimeout`      | `number`   | `30000`         | Milliseconds each story format request may take before it fails with a warning and the next source is tried. `0` turns the limit off.                                                                                                   |
+| `formatResolutionTimeout` | `number`   | `120000`        | Milliseconds the search for the story format may take in all. When it passes, the request in progress stops with a warning, and the format URLs and indices not yet asked answer from the download cache only. `0` turns the limit off. |
+| `useDefaultFormatIndices` | `boolean`  | `true`          | Ask the Story Formats Archive after `formatIndices`. `false` asks only the configured format URLs and indices.                                                                                                                          |
 
 ### Compilation
 

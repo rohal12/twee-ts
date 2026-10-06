@@ -331,11 +331,16 @@ function toError(e: unknown): Error {
 
 /** Throws a TweeTsError (`INVALID_OPTIONS`) for an option out of range, before anything is read. */
 function validateOptions(options: CompileOptions): void {
-  const timeout = options.formatFetchTimeout;
-  if (timeout !== undefined && !(timeout >= 0)) {
-    throw new TweeTsError(`formatFetchTimeout must be 0 or more milliseconds, not ${timeout}.`, [], {
-      code: 'INVALID_OPTIONS',
-    });
+  const timeouts = [
+    ['formatFetchTimeout', options.formatFetchTimeout],
+    ['formatResolutionTimeout', options.formatResolutionTimeout],
+  ] as const;
+  for (const [option, timeout] of timeouts) {
+    if (timeout !== undefined && !(timeout >= 0)) {
+      throw new TweeTsError(`${option} must be 0 or more milliseconds, not ${timeout}.`, [], {
+        code: 'INVALID_OPTIONS',
+      });
+    }
   }
 }
 

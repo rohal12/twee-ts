@@ -82,7 +82,7 @@ describe('F01: online, the shared cache never changes the answer', () => {
     // The default build takes the greatest SugarCube 2 the index lists, whatever is cached.
     expect((await build({ formatIndices })).format).toBe('SugarCube 2.37.3');
     clearIndexCache();
-    expect((await resolveRemoteFormat('SugarCube', '2.30.0', formatIndices))?.version).toBe('2.30.0');
+    expect((await resolveRemoteFormat('SugarCube', '2.30.0', { indices: formatIndices }))?.version).toBe('2.30.0');
   });
 });
 
@@ -206,7 +206,7 @@ describe('F05 and #238: download URLs are resolved against the index response UR
         [indexPath]: indexJson([indexEntry(name, '1.0.0')]),
         [path]: formatJs(name, '1.0.0', 'FOUND'),
       });
-      const info = await resolveRemoteFormat(name, '1.0.0', [`${server.origin}${indexPath}`]);
+      const info = await resolveRemoteFormat(name, '1.0.0', { indices: [`${server.origin}${indexPath}`] });
       expect(info?.name).toBe(name);
       expect(server.log).toEqual([indexPath, path]);
     });
@@ -221,7 +221,7 @@ describe('F05 and #238: download URLs are resolved against the index response UR
       '/new/index.json': indexJson([indexEntry('Review', '1.0.0')]),
       [`/new/${entryPath('Review', '1.0.0')}`]: formatJs('Review', '1.0.0', 'MOVED'),
     });
-    const info = await resolveRemoteFormat('Review', '1.0.0', [`${server.origin}/old/index.json#top`]);
+    const info = await resolveRemoteFormat('Review', '1.0.0', { indices: [`${server.origin}/old/index.json#top`] });
     expect(info?.name).toBe('Review');
     expect(server.log).toEqual(['/old/index.json', '/new/index.json', `/new/${entryPath('Review', '1.0.0')}`]);
   });
@@ -635,9 +635,11 @@ describe('F17: format URLs and indices are checked at the boundary', () => {
       const result = await build({ ...story('Review', '1.0.0'), [option]: [url] });
       expect(result.errors).toContainEqual(`${option}: ${JSON.stringify(url)}${reason}`);
     }
-    await expect(resolveRemoteFormat('Review', '1.0.0', [], [url])).rejects.toThrow(
-      `urls: ${JSON.stringify(url)}${reason}`,
-    );
+    await expect(resolveRemoteFormat('Review', '1.0.0', { urls: [url] })).rejects.toMatchObject({
+      name: 'TweeTsError',
+      code: 'INVALID_OPTIONS',
+      message: `urls: ${JSON.stringify(url)}${reason}`,
+    });
   });
 
   it('refuses a redirect from https to http', async () => {
