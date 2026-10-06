@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isRecord } from './util.js';
 
 const PACKAGE_NAME = '@rohal12/twee-ts';
 
@@ -16,8 +17,8 @@ export function findPackageVersion(startDir: string): string | undefined {
   let dir = startDir;
   for (;;) {
     try {
-      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')) as { name?: unknown; version?: unknown };
-      if (pkg.name === PACKAGE_NAME && typeof pkg.version === 'string') return pkg.version;
+      const pkg: unknown = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'));
+      if (isRecord(pkg) && pkg['name'] === PACKAGE_NAME && typeof pkg['version'] === 'string') return pkg['version'];
     } catch {
       // No readable package.json here; keep walking up.
     }

@@ -189,7 +189,7 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
   it('documents each rebased key in the schema as relative to the config file', () => {
     const rebased = ['sources', 'exclude', 'output', 'modules', 'headFile', 'formatPaths'] as const;
     for (const key of CONFIG_KEYS) {
-      expect(CONFIG_SPEC[key].description.includes('relative to the config file'), key).toBe(
+      expect(CONFIG_SPEC[key].spec.description.includes('relative to the config file'), key).toBe(
         new Set<string>(rebased).has(key),
       );
     }

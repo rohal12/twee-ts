@@ -7,7 +7,7 @@ import type { IFID } from './types.js';
 
 /** Generate a new IFID (UUID v4, uppercase). */
 export function generateIFID(): IFID {
-  return randomUUID().toUpperCase() as IFID;
+  return normalizeIFID(randomUUID());
 }
 
 /**
@@ -31,9 +31,24 @@ const WRAPPED_LENGTH = 45;
  * reports it as written.
  */
 export function normalizeIFID(value: string): IFID {
+  if (isStoredForm(value)) return value;
+  // Uppercasing is idempotent for every code point and the bare UUID of a valid wrapped IFID is uppercase
+  // hex, so the value passed on is in the stored form and the second call returns it.
   const upper = value.toUpperCase();
-  const bare = upper.length === WRAPPED_LENGTH && validateIFID(upper) === null ? upper.slice(7, 43) : upper;
-  return bare as IFID;
+  return normalizeIFID(isWrappedIFID(upper) ? upper.slice(7, 43) : upper);
+}
+
+/** Whether `value` is a valid IFID in its `UUID://...//` wrapper. */
+function isWrappedIFID(value: string): boolean {
+  return value.length === WRAPPED_LENGTH && validateIFID(value) === null;
+}
+
+/**
+ * Whether `value` is in the form the story model stores (see {@link normalizeIFID}): it has no lowercase
+ * letters and is not a wrapped IFID. This is the one place a string becomes an `IFID`.
+ */
+function isStoredForm(value: string): value is IFID {
+  return value === value.toUpperCase() && !isWrappedIFID(value);
 }
 
 /**

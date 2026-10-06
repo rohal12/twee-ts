@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import { createIFID, generateIFID, normalizeIFID, validateIFID } from '../src/ifid.js';
 
 const BARE = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
@@ -104,5 +105,17 @@ describe('normalizeIFID', () => {
       expect(validateIFID(normalizeIFID(input))).toBeNull();
       expect(normalizeIFID(input)).toHaveLength(36);
     }
+  });
+
+  it('is idempotent and gives the uppercase, unwrapped form for any string', () => {
+    const wrapped = fc.uuid().map((uuid) => `uuid://${uuid}//`);
+    fc.assert(
+      fc.property(fc.oneof(fc.string({ unit: 'binary' }), fc.uuid(), wrapped), (input) => {
+        const stored = normalizeIFID(input);
+        expect(normalizeIFID(stored)).toBe(stored);
+        expect(stored).toBe(stored.toUpperCase());
+        expect(stored.length === 45 && validateIFID(stored) === null).toBe(false);
+      }),
+    );
   });
 });

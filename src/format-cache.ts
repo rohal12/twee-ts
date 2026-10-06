@@ -24,6 +24,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { StoryFormatInfo } from './types.js';
 import { errorText, formatInfoFromJSON, formatNameKey, makeFormatId } from './formats.js';
+import { isRecord } from './util.js';
 
 /** Which list of an index an entry comes from. */
 export type TwineKind = 'twine1' | 'twine2';
@@ -143,16 +144,12 @@ function contentDirName(files: ReadonlyMap<string, string>): string {
 
 // --- Reading record.json ---
 
-function isRecordObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
 function parseOrigin(value: unknown): CacheOrigin | undefined {
-  if (!isRecordObject(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const kind = value['kind'];
   if (kind === 'url') {
     const url = value['url'];
@@ -166,7 +163,7 @@ function parseOrigin(value: unknown): CacheOrigin | undefined {
 }
 
 function parseFiles(value: unknown): Map<string, string> | undefined {
-  if (!isRecordObject(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const files = new Map<string, string>();
   for (const [file, hash] of Object.entries(value)) {
     if (!CACHEABLE_FILES.has(file) || typeof hash !== 'string' || !HEX64.test(hash)) return undefined;
@@ -176,7 +173,7 @@ function parseFiles(value: unknown): Map<string, string> | undefined {
 }
 
 function parseMetadata(value: unknown): FormatMetadata | undefined {
-  if (!isRecordObject(value) || typeof value['proofing'] !== 'boolean') return undefined;
+  if (!isRecord(value) || typeof value['proofing'] !== 'boolean') return undefined;
   return {
     proofing: value['proofing'],
     author: optionalString(value['author']),
@@ -189,7 +186,7 @@ function parseMetadata(value: unknown): FormatMetadata | undefined {
 
 /** A record.json's content as a record, or undefined when it is not one written for `key`. */
 function parseRecord(key: string, json: unknown): CacheRecord | undefined {
-  if (!isRecordObject(json) || json['schema'] !== RECORD_SCHEMA) return undefined;
+  if (!isRecord(json) || json['schema'] !== RECORD_SCHEMA) return undefined;
   const origin = parseOrigin(json['origin']);
   const files = parseFiles(json['files']);
   const metadata = parseMetadata(json['metadata']);

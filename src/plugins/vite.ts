@@ -38,6 +38,7 @@ import {
 } from './vite-entry.js';
 import type { BundleItem, EntryBundle } from './vite-entry.js';
 import { watchTargets } from './watch-targets.js';
+import { isRecord } from '../util.js';
 
 export type { PluginCompileOptions } from './options.js';
 
@@ -66,10 +67,6 @@ const viteMajor = Number.parseInt(viteVersion, 10);
 
 /** The plugin instances created so far, which numbers each instance's entry input. */
 let instances = 0;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The bundler options of build settings, under the name this Vite version reads. */
 function bundlerOptionsOf(build: unknown): Readonly<Record<string, unknown>> | undefined {

@@ -18,6 +18,7 @@ import type {
 } from 'vite';
 import type { InlineSource } from '../types.js';
 import { toPosix } from './paths.js';
+import { isRecord } from '../util.js';
 
 /** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
 export const PLUGIN_NAME = 'twee-ts';
@@ -82,10 +83,6 @@ const ENTRY_OUTPUT = {
   entryFileNames: ENTRY_SCRIPT_NAME,
   assetFileNames: '[name][extname]',
 } as const satisfies OutputOptions;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * The output options of the entry's bundle given the user's `output` option:
@@ -396,8 +393,7 @@ function recordingContext(context: object, files: Set<string>): object {
  * never collects wrappers. A plugin without such hooks (a built-in one, for
  * instance) is returned as it is.
  */
-function recordingPlugin(plugin: unknown, files: Set<string>): unknown {
-  if (!isRecord(plugin)) return plugin;
+function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
   const overrides = new Map<PropertyKey, unknown>();
   for (const name of WATCH_FILE_HOOKS) {
     const hook = plugin[name];
@@ -436,9 +432,12 @@ function recordWatchFiles(files: Set<string>): Plugin {
     options: {
       order: 'post',
       async handler(inputOptions) {
-        const plugins = (await flattenPlugins(inputOptions.plugins)).map((p) => recordingPlugin(p, files));
-        // The stand-ins have the type of the plugins they stand in for; the list's type has no name to give.
-        return { ...inputOptions, plugins: plugins as typeof inputOptions.plugins };
+        // Vite passes its resolved plugins, which are all plugin objects; anything else is left out, as
+        // the user's plugin list is read (see userEntryConfig()).
+        const plugins = (await flattenPlugins(inputOptions.plugins))
+          .filter(isPlugin)
+          .map((p) => recordingPlugin(p, files));
+        return { ...inputOptions, plugins };
       },
     },
   };

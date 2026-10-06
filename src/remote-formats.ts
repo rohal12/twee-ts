@@ -101,14 +101,14 @@ function indexFileUrl(indexResponseUrl: string, entry: IndexEntry, file: string)
 // --- Requests ---
 
 /** One network request with everyone in this process who waits on its result. */
-interface SharedRequest<T> {
-  readonly promise: Promise<T>;
+interface SharedRequest {
+  readonly promise: Promise<Fetched>;
   readonly controller: AbortController;
   waiters: number;
 }
 
 /** Requests in progress, by what they fetch, so concurrent compiles make each request once. */
-const sharedRequests = new Map<string, SharedRequest<unknown>>();
+const sharedRequests = new Map<string, SharedRequest>();
 
 /** How one caller waits on a shared request. */
 interface WaitOptions {
@@ -127,20 +127,19 @@ interface WaitOptions {
  * the signal `start` receives) once no caller waits on it. `start` must not depend on any one
  * caller: what differs between callers belongs after the shared result.
  */
-function shareRequest<T>(
+function shareRequest(
   key: string,
   { signal, timeout, timedOut }: WaitOptions,
-  start: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
+  start: (signal: AbortSignal) => Promise<Fetched>,
+): Promise<Fetched> {
   if (signal?.aborted) {
     const reason: unknown = signal.reason;
     return Promise.reject(reason);
   }
-  // The map holds requests of several result types; `key` names what this one fetches, so its type is T.
-  const request = (sharedRequests.get(key) as SharedRequest<T> | undefined) ?? startSharedRequest(key, start);
+  const request = sharedRequests.get(key) ?? startSharedRequest(key, start);
   request.waiters++;
 
-  return new Promise<T>((resolve, reject) => {
+  return new Promise<Fetched>((resolve, reject) => {
     let waiting = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stopWaiting = (): void => {
@@ -180,9 +179,9 @@ function shareRequest<T>(
   });
 }
 
-function startSharedRequest<T>(key: string, start: (signal: AbortSignal) => Promise<T>): SharedRequest<T> {
+function startSharedRequest(key: string, start: (signal: AbortSignal) => Promise<Fetched>): SharedRequest {
   const controller = new AbortController();
-  const request: SharedRequest<T> = { promise: start(controller.signal), controller, waiters: 0 };
+  const request: SharedRequest = { promise: start(controller.signal), controller, waiters: 0 };
   sharedRequests.set(key, request);
   const forget = (): void => {
     if (sharedRequests.get(key) === request) sharedRequests.delete(key);

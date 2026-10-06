@@ -650,7 +650,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
     default: {
       const _exhaustive: never = outputMode;
-      throw new TweeTsError(`Unhandled output mode: ${_exhaustive as string}`, diagnostics);
+      throw new TweeTsError(`Unhandled output mode: ${_exhaustive}`, diagnostics);
     }
   }
 

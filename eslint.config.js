@@ -28,6 +28,7 @@ export default tseslint.config(
       'docs/.vitepress/cache/**',
       'test/fixtures/**',
       '.claude/**',
+      '.scratch/**',
       '.agents/**',
       'tweego/**',
       'examples/**',
@@ -70,6 +71,15 @@ export default tseslint.config(
       // only-throw-error allows the same for `throw` by default.
       '@typescript-eslint/prefer-promise-reject-errors': ['error', { allowThrowingUnknown: true }],
       'no-restricted-syntax': ['error', ...PROTO_RESTRICTIONS],
+    },
+  },
+  {
+    // No type assertions in the package's code (CLAUDE.md): a value gets its type from a check (a type guard,
+    // `in`, `typeof`) or a declaration, so a wrong type is a compile error rather than a silent lie. `as const`
+    // is not an assertion of a type and stays allowed.
+    files: ['src/**/*.ts', 'bin/**/*.ts'],
+    rules: {
+      '@typescript-eslint/consistent-type-assertions': ['error', { assertionStyle: 'never' }],
     },
   },
   {

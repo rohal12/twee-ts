@@ -11,6 +11,7 @@ import { TweeTsError } from '../compiler.js';
 import { isExcluded } from '../filesystem.js';
 import { isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
+import { isRecord } from '../util.js';
 
 /**
  * The compile options a plugin passes on to the compiler. `sources` and
@@ -76,10 +77,6 @@ export interface ResolvedPluginOptions {
 
 function fail(kind: PluginKind, message: string): never {
   throw new TweeTsError(`twee-ts ${kind} plugin: ${message}`, [], { code: 'INVALID_OPTIONS' });
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
