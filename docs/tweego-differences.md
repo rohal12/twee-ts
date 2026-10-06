@@ -16,7 +16,7 @@ Go was not available when this list was made, so the comparisons come from readi
 
 ## StoryData and StorySettings
 
-**D-5. Errors do not stop the build.** A StoryData passage that is not a JSON object, or a field of the wrong type (`"format-version": 3`), stops Tweego. twee-ts reports an error for it (at the StoryData passage), leaves out what it cannot read and goes on, so all the problems are reported at once. The Twee 3 specification recommends a warning; an error is used because the story would otherwise be built with another format, start passage or IFID than the author wrote. The CLI exits with status 1.
+**D-5. Errors do not stop the build.** A StoryData passage that is not a JSON object, a field of the wrong type (`"format-version": 3`), or an IFID that is not valid stops Tweego. twee-ts reports an error for it (at the StoryData passage), leaves out what it cannot read (an invalid IFID is kept as written) and goes on, so all the problems are reported at once. The Twee 3 specification recommends a warning; an error is used because the story would otherwise be built with another format, start passage or IFID than the author wrote. The CLI then writes no output and exits with status 1; `compile()` returns the output with the errors.
 
 **D-6. Keys Tweego accepts silently are reported.** A key read regardless of its letter case (`IFID`), a repeated key (the last one is used, as in Tweego) and an unknown key (left out of the rewritten StoryData passage, as in Tweego) each give a warning.
 
@@ -34,7 +34,7 @@ Go was not available when this list was made, so the comparisons come from readi
 
 **D-11. The written Twee is checked.** Each passage is read back with the Twee reader; twee-ts warns about each passage that would read back differently and says why (a text line that starts with `::`, a name with surrounding white space or a line break, a tag with white space, and in Twee 1 the characters it cannot escape). In stylesheet and script passages, a text line that would read as a header is indented by one space. Twee 1 output warns once that it leaves out passage metadata. Tweego writes the same Twee without warnings.
 
-**D-12. StoryData is written from the story.** The StoryData passage records what the compile options changed (the start passage, test mode) and a generated IFID. Tweego writes the passage as loaded.
+**D-12. StoryData is written from the story.** The StoryData passage records what the compile options changed (the start passage, test mode) and a generated IFID. Tweego writes it as it rewrote it when loading, without the options' changes.
 
 ## Diagnostics
 

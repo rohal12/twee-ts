@@ -20,6 +20,8 @@ export default {
 
 ### Options
 
+<!-- docs-test: mirror from=@rohal12/twee-ts/vite -->
+
 ```typescript
 interface TweeTsVitePluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
@@ -35,13 +37,13 @@ interface TweeTsVitePluginOptions {
 }
 ```
 
-The options are checked when the plugin is created. An unknown option (a misspelt `outputFileName`, say), a value of the wrong type, `compileOptions.sources` or `compileOptions.formatId` (set `sources` and `format` instead), and an `outputFilename` that is not a plain relative path throw a `TweeTsError` that names the option.
+The options are checked when the plugin is created. An unknown option (a misspelt `outputFileName`, say), a value of the wrong type (`sources`, `compileOptions.exclude` and `compileOptions.modules` must be arrays of non-empty strings; `format`, `outputFilename`, `entry` and `compileOptions.headFile` non-empty strings), `compileOptions.sources` or `compileOptions.formatId` (set `sources` and `format` instead), an `outputFilename` that is not a plain relative path, and `entry` with a Vite older than 8 throw a `TweeTsError` (`INVALID_OPTIONS`) that names the option. The other compile options are checked by the compiler when the story is built.
 
 `outputFilename` is a path inside the output folder: names separated by `/`, none of them empty, `.` or `..`, and no character a file system or a URL reads differently (`\ : * ? " < > |`, `#`, `%`, control characters), no name ending in `.` or a space, and no name Windows reserves (`con`, `nul`, `com1`, …).
 
 ### Vite versions
 
-The plugin works with Vite 5.0 and every later release; the `entry` option needs Vite 8. CI runs the plugin tests against Vite 5.0.0, 5.4, 6.0.0, 6, 7.0.0, 7, 8.0.0 and 8, and type-checks a config against each.
+The plugin works with Vite 5.0 and every later release; the `entry` option needs Vite 8 (with an older Vite, creating the plugin with `entry` throws). CI runs the plugin tests against Vite 5.0.0, 5.4, 6.0.0, 6, 7.0.0, 7, 8.0.0 and 8, and type-checks a config against each.
 
 ### Dev server
 
@@ -146,9 +148,11 @@ export default {
 
 ### Options
 
+<!-- docs-test: mirror from=@rohal12/twee-ts/rollup -->
+
 ```typescript
 interface TweeTsRollupPluginOptions {
-  /** Source directories/files to compile. */
+  /** Source directories/files to compile, relative to the working directory. */
   sources: string[];
   /** Story format ID. */
   format?: string;
@@ -196,20 +200,23 @@ export default {
 
 ## Using `compileOptions`
 
-Both plugins accept a `compileOptions` object (`PluginCompileOptions`) that is passed to the compiler. It takes any [CompileOptions](./api#compile-options) field but `sources` and `formatId`, which come from the plugin's `sources` and `format`:
+Both plugins accept a `compileOptions` object (`PluginCompileOptions`, exported by both entry points) that is passed to the compiler. It takes any [CompileOptions](./api#compile-options) field but `sources` and `formatId`, which come from the plugin's `sources` and `format`:
 
 ```typescript
-compileOptions: {
+import type { PluginCompileOptions } from '@rohal12/twee-ts/vite';
+
+const compileOptions: PluginCompileOptions = {
   exclude: ['src/story/**/*.png'],
   startPassage: 'Prologue',
   tagAliases: { library: 'script' },
   modules: ['src/analytics.js'],
-  headFile: 'src/head.html',
+  headFile: 'head.html',
   trim: true,
   twee2Compat: false,
   testMode: false,
   noRemote: false,
-}
+};
+console.log(compileOptions);
 ```
 
-`exclude` never applies to `headFile` and `modules`.
+`exclude` never applies to `headFile` and `modules`. Keep the head file outside the source folders: an `.html` file in a source folder is read as a Twine story to import. `outputMode` is accepted too, and the story is then written in that mode under `outputFilename`.

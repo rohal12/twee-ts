@@ -2,7 +2,7 @@
 
 twee-ts automatically loads `twee-ts.config.json` from the current working directory. Use `-c <file>` to specify a different path, or `--no-config` to skip loading entirely.
 
-Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder that holds the config file, so `twee-ts -c proj/twee-ts.config.json` from the folder above `proj` builds `proj/src/`, not `src/`. Absolute paths, `"-"` (stdout) and an empty `headFile` are kept as they are. (Before 2.0 they were relative to the working directory.)
+Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder that holds the config file, so `twee-ts -c proj/twee-ts.config.json` from the folder above `proj` builds `proj/src/`, not `src/`. Absolute paths, `"-"` (stdout) and an empty `headFile` are kept as they are. (Before 2.0 they were relative to the working directory; see [Migrating to 2.0](./migrating-to-2#config-paths-are-relative-to-the-config-file).) Paths given on the command line stay relative to the working directory.
 
 ## JSON Schema
 
@@ -31,13 +31,13 @@ With this in place, run `npx @rohal12/twee-ts` with no arguments.
 
 ## Complete Reference
 
-Every key with its default value:
+Every key, with its default. `sources` has none: name the sources here or on the command line. `formatId` and `startPassage` apply only where StoryData names no format or start passage, so leave them out to let StoryData decide.
 
 ```json
 {
   "sources": ["src/"],
   "exclude": [],
-  "output": "story.html",
+  "output": "-",
   "outputMode": "html",
   "formatId": "sugarcube-2",
   "startPassage": "Start",
@@ -62,12 +62,12 @@ Every key with its default value:
 
 ### Sources & Output
 
-| Key          | Type       | Default  | Description                                                                           |
-| ------------ | ---------- | -------- | ------------------------------------------------------------------------------------- |
-| `sources`    | `string[]` | —        | Files or directories to compile. Directories are walked recursively.                  |
-| `exclude`    | `string[]` | `[]`     | Glob patterns for source files to leave out. See [Excluding files](#excluding-files). |
-| `output`     | `string`   | stdout   | Output file path; `"-"` for stdout. Must not be empty.                                |
-| `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.          |
+| Key          | Type       | Default  | Description                                                                                                |
+| ------------ | ---------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `sources`    | `string[]` | —        | Files or directories to compile. Directories are walked recursively. Required here or on the command line. |
+| `exclude`    | `string[]` | `[]`     | Glob patterns for source files to leave out. See [Excluding files](#excluding-files).                      |
+| `output`     | `string`   | `"-"`    | Output file path; `"-"` for stdout. Must not be empty.                                                     |
+| `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.                               |
 
 Source directories are walked as on the command line: a symbolic link to a directory inside one is not followed, and the output file is never read as a source. See the [CLI Reference](./cli).
 
@@ -95,7 +95,7 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 | Key                  | Type       | Default         | Description                                                                                                                           |
 | -------------------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `formatId`           | `string`   | `"sugarcube-2"` | Story format directory ID.                                                                                                            |
+| `formatId`           | `string`   | `"sugarcube-2"` | Story format ID. Without it, StoryData's `format` and `format-version` decide, and `sugarcube-2` only when StoryData names none.      |
 | `formatPaths`        | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                                                                                |
 | `formatIndices`      | `string[]` | `[]`            | `http:`/`https:` URLs of SFA-compatible `index.json` files, consulted after `formatUrls` and before the Story Formats Archive.        |
 | `formatUrls`         | `string[]` | `[]`            | `http:`/`https:` URLs of `format.js` files, consulted after local formats and before `formatIndices`.                                 |
@@ -105,21 +105,21 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 ### Compilation
 
-| Key               | Type      | Default    | Description                                                                                    |
-| ----------------- | --------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| `startPassage`    | `string`  | `"Start"`  | Name of the starting passage.                                                                  |
-| `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content, in Twee and HTML sources.           |
-| `twee2Compat`     | `boolean` | `false`    | Enable Twee2 syntax compatibility mode.                                                        |
-| `testMode`        | `boolean` | `false`    | Enable test/debug mode (sets the `debug` option in story data).                                |
-| `sourceInfo`      | `boolean` | `false`    | Embed source file/line as `data-` attributes on passage elements.                              |
-| `wordCountMethod` | `string`  | `"tweego"` | Word counting: `"tweego"` (chars / 5, matches Tweego) or `"whitespace"` (standard word count). |
+| Key               | Type      | Default    | Description                                                                                                                                                            |
+| ----------------- | --------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startPassage`    | `string`  | `"Start"`  | Name of the starting passage. Without it, StoryData's `start` decides, and `Start` only when StoryData names none.                                                     |
+| `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content, in Twee and HTML sources.                                                                                   |
+| `twee2Compat`     | `boolean` | `false`    | Enable Twee2 syntax compatibility mode.                                                                                                                                |
+| `testMode`        | `boolean` | `false`    | Enable test/debug mode (sets the `debug` option in story data).                                                                                                        |
+| `sourceInfo`      | `boolean` | `false`    | Embed source file/line as `data-` attributes on passage elements.                                                                                                      |
+| `wordCountMethod` | `string`  | `"tweego"` | Word counting: `"tweego"` (characters / 5 after NFKD normalization, matches Tweego) or `"whitespace"` (words between white space, after removing comments and markup). |
 
 ### Head Injection
 
-| Key        | Type       | Default | Description                                                      |
-| ---------- | ---------- | ------- | ---------------------------------------------------------------- |
-| `modules`  | `string[]` | `[]`    | JS or CSS files to inject into the HTML `<head>`.                |
-| `headFile` | `string`   | `""`    | Path to a raw HTML file whose contents are appended to `<head>`. |
+| Key        | Type       | Default | Description                                                                                                                                                        |
+| ---------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `modules`  | `string[]` | `[]`    | JS or CSS files to inject into the HTML `<head>`.                                                                                                                  |
+| `headFile` | `string`   | `""`    | Path to a raw HTML file whose contents are appended to `<head>`; `""` for none. Keep it out of the source folders, where an `.html` file is read as a Twine story. |
 
 See [Head Injection](./cli#head-injection) for where they go in a template without a closing head tag.
 
@@ -137,6 +137,7 @@ CLI flags take precedence over config file values. For example:
 
 ```json
 {
+  "sources": ["src/"],
   "formatId": "sugarcube-2",
   "startPassage": "Begin"
 }
@@ -147,7 +148,7 @@ CLI flags take precedence over config file values. For example:
 twee-ts -f harlowe-3
 ```
 
-For `tagAliases`, CLI `--tag-alias` flags are **merged** on top of config values, so you can set defaults in the config and add or override aliases per invocation.
+For `tagAliases`, CLI `--tag-alias` flags are **merged** on top of config values, so you can set defaults in the config and add or override aliases per invocation. Every other list on the command line (`--exclude`, `-m`, `--format-url`, `--format-index`) replaces the config's. See [Precedence](./cli#precedence).
 
 ## Scaffolding
 
@@ -159,23 +160,35 @@ npx @rohal12/twee-ts --init
 
 This creates:
 
-- `twee-ts.config.json` with `sources` and `output`
+- `twee-ts.config.json` with `$schema`, `sources` (`["src/"]`) and `output` (`"story.html"`)
 - `src/StoryData.tw` with a generated IFID
 - `src/Start.tw` with a starter passage
 
-Files that already exist are kept as they are and reported as skipped, so running `--init` in an existing project never replaces your story or its IFID.
+and reports:
+
+```
+Initializing new twee-ts project...
+Created:
+  twee-ts.config.json
+  src/StoryData.tw
+  src/Start.tw
+
+Run: npx @rohal12/twee-ts
+```
+
+Files that already exist are kept as they are and reported as skipped (`Skipped (already exists): src/Start.tw`), so running `--init` in an existing project never replaces your story or its IFID.
 
 ## Validation
 
-twee-ts validates the config file on load. Invalid types or unknown values produce clear error messages:
+twee-ts validates the config file on load. A value of the wrong type stops the build (exit status 1) with an error that lists every problem:
 
 ```
-Invalid config in twee-ts.config.json:
-  "sources" must be an array of strings.
+error: Invalid config in /path/to/twee-ts.config.json:
+  "sources" must be an array.
   "trim" must be a boolean.
 ```
 
-The config file is read as strict JSON. A key given twice is a warning, and the last one is used. The checks are those of the JSON Schema, which is generated from the same table twee-ts checks with, so the two agree.
+The config file is read as strict JSON; a file that is not is an error giving the line and column. A key given twice is a warning (`$.sources is given more than once; the last one is used.`), and the last one is used. The checks are those of the JSON Schema, which is generated from the same table twee-ts checks with, so the two agree.
 
 A key the config does not define is ignored, so its option keeps the default. twee-ts warns about each one and the build goes on. When the key differs from a real one only in letter case, `-` or `_`, the warning names the real key:
 

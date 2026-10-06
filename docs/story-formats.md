@@ -26,7 +26,7 @@ When two directories hold a format folder with the same name, the later one in t
 A `format.js` that cannot be read or parsed, or whose `version` is not a version, is skipped with a warning that names the folder and the reason:
 
 ```
-warning: format broken-1: Skipping format; Could not decode story format JSON chunk: Unexpected identifier "nope" at line 3, column 11 (…/broken-1/format.js)
+warning: format broken-1: Skipping format; Could not decode the story format object: Unsupported identifier "nope" at property version (line 3, column 12); only literal data is read. (…/broken-1/format.js)
 ```
 
 ### Listing Available Formats
@@ -39,15 +39,16 @@ Output:
 
 ```
 Local story formats:
-  sugarcube-2: SugarCube 2.37.3 (Twine 2)
   harlowe-3: Harlowe 3.3.9 (Twine 2)
+  sugarcube-2: SugarCube 2.37.3 (Twine 2)
+  jonah: jonah  (Twine 1)
 
 Cached remote formats:
   chapbook-2: Chapbook 2.2.0
   sugarcube-2: SugarCube 2.37.3 (also cached: 2.36.1)
 ```
 
-Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version, and only when a build would consider it: when it came from one of the configured `formatUrls` or `formatIndices`, or from the Story Formats Archive (see [The Download Cache](#the-download-cache)). `twee-ts cache list` lists every download.
+Local formats are listed after [pruning](#semver-version-pruning), by search directory and then folder name; a Twine 1 format shows its folder name and no version. The list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version, and only when a build would consider it: when it came from one of the configured `formatUrls` or `formatIndices`, or from the Story Formats Archive (see [The Download Cache](#the-download-cache)). `twee-ts cache list` lists every download.
 
 ## Format Directory Structure
 
@@ -91,9 +92,9 @@ Twine 2 runs `format.js` as a classic script, so twee-ts reads it as JavaScript 
 - A property whose value is a function, such as Harlowe's `setup`, is left out wherever it is in the object, however it is written.
 - Anything else in the object is an error that names the property and its line and column: variables (`undefined`, `NaN` and `Infinity` included), BigInts, regular expressions, computed keys, spreads, getters and setters, shorthand properties, array holes, operators and calls. So is a `__proto__` key, which in JavaScript sets the object's prototype instead of adding a property.
 
-An optional field of the wrong type, such as a numeric `name`, is ignored.
+An optional field of the wrong type, such as a numeric `name`, is ignored, with a warning naming the format file when a build uses the format.
 
-The `version` must be a [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) version such as `2.37.3` or `2.0.0-beta.1`. As in Tweego, a leading `v` is allowed, and `1.0` or `1` stand for `1.0.0`. As SemVer requires, numbers have no leading zeros (`01.2.3` and `1.0.0-01` are not versions), and the major, minor and patch numbers must be at most 9007199254740991 (2<sup>53</sup> − 1), so that they compare exactly; numeric prerelease parts may be any size. The version is kept as written.
+The `version` must be a [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) version such as `2.37.3` or `2.0.0-beta.1`. As in Tweego, a leading `v` (or `V`) is allowed, and `1.0` or `1` stand for `1.0.0`. As SemVer requires, numbers have no leading zeros (`01.2.3` and `1.0.0-01` are not versions), and the major, minor and patch numbers must be at most 9007199254740991 (2<sup>53</sup> − 1), so that they compare exactly; numeric prerelease parts may be any size. The version is kept as written.
 
 ### SemVer Version Pruning
 
@@ -105,7 +106,7 @@ Pruning does not apply to a request by ID: `--format sugarcube-2` uses the `suga
 
 ### Twine 1 Formats
 
-Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name.
+Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name and have no version, so only `--format <folder name>` (or `formatId`) selects one. A Twine 1 header that includes Twine 1's `engine.js`, `jquery.js` or `modernizr.js` reads them from the format directory that holds the format folder.
 
 ## Remote Format Fetching
 
@@ -140,13 +141,13 @@ A format URL's `format.js` names the format and version it offers. A build that 
 
 ### Format Indices
 
-A format index is an `index.json` in the layout of the [Story Formats Archive](https://videlais.github.io/story-formats-archive/): an object with a `twine2` list and a `twine1` list of entries. Each entry needs a `name` and a SemVer `version`; `files` (a list of file names) and `checksums` (an object mapping a file name to its SHA-256 as a hex string) are optional. Other members (`author`, `description`, …) are not used. An entry without this shape, or with a member of the wrong type or a repeated member, is skipped; when no format answers a request, the error lists the skipped entries with the requested name and why each was skipped. An index that is not JSON (the warning gives the line and column), not an object, or whose `twine1` or `twine2` field is not a list, fails with a warning naming its URL.
+A format index is an `index.json` in the layout of the [Story Formats Archive](https://videlais.github.io/story-formats-archive/): an object with a `twine2` list and a `twine1` list of entries. Either list may be missing. Each entry needs a `name` and a SemVer `version`; `files` (a list of file names), `checksums` (an object mapping a file name to its SHA-256 as a hex string, compared without regard to letter case) and `proofing` (a boolean) are optional. Other members (`author`, `description`, …) are not used. An entry without this shape, or with a member of the wrong type or a repeated member, is skipped; when no format answers a request, the error lists the skipped entries with the requested name and why each was skipped. An index that is not JSON (the warning gives the line and column), not an object, or whose `twine1` or `twine2` field is not a list, fails with a warning naming its URL.
 
 An entry's files are downloaded from `twine2/<name>/<version>/<file>` (or `twine1/…`), resolved against the URL the index was served from after any redirects, with each part percent-encoded. As with any relative URL, the index's own file name and query string do not carry over: for `https://example.com/archive/formats.json?rev=3`, SugarCube 2.37.3's `format.js` is `https://example.com/archive/twine2/SugarCube/2.37.3/format.js`.
 
-Each downloaded file is checked against the checksum the index lists for that exact file name; on a mismatch (or when the listed checksum is not a SHA-256 hex digest) a warning names the URL and both hashes, and the entry is not used. Checksums of files twee-ts does not download (`LICENSE`, icons) are not looked at. A file the index lists no checksum for is used, with a warning that it was not verified. A Twine 2 `format.js` must also be the format the entry names (the same name without regard to case, the same version by SemVer precedence); a `format.js` that names no format is known by the entry's name.
+Each downloaded file is checked against the checksum the index lists for that exact file name; on a mismatch a warning names the URL and both hashes, and the entry is not used. A listed checksum that is not a SHA-256 hex digest fails the download too, with a warning naming the URL and the listed value. Checksums of files twee-ts does not download (`LICENSE`, icons) are not looked at. A file the index lists no checksum for is used, with a warning that it was not verified. A Twine 2 `format.js` must also be the format the entry names (the same name without regard to case, the same version by SemVer precedence); a `format.js` that names no format is known by the entry's name.
 
-For a Twine 1 entry, `header.html` is downloaded, with `code.js` and `userlib.js` when the entry lists them. Most Twine 1 headers (Jonah, Sugarcane, Responsive) also include Twine 1's own `engine.js`, which no index provides, so such a format fails at build time with `Required format component not found: …/engine.js`. Install those formats locally, with Twine 1's files, instead. SugarCube's Twine 1 build needs nothing else.
+For a Twine 1 entry, `header.html` is downloaded, with `code.js` and `userlib.js` when the entry lists them. Most Twine 1 headers (Jonah, Sugarcane, Responsive) also include Twine 1's own `engine.js`, which no index provides, so such a format fails at build time with `Required format component not found: …/engine.js: …`. Install those formats locally instead, with Twine 1's `engine.js` (and `jquery.js` or `modernizr.js`, when the header uses them) in the format directory that holds the format folder. SugarCube's Twine 1 build needs nothing else.
 
 ### The Download Cache
 
@@ -167,7 +168,7 @@ So a patched copy of a format, served from your own URL or index, is used only b
 
 Offline (`noRemote: true`, or when a URL or index cannot be reached), each format URL answers with its cached copy, and each format index with the formats downloaded from it before, by the same rules as online. When a source cannot be reached, a warning says so and which cached copy is used.
 
-Every cached file is stored with its SHA-256 and checked when it is read; a copy that does not match is not used (online, it is downloaded again, with a warning). Files are written under a temporary name and renamed into place, so a twee-ts process never reads a half-written format, and concurrent compiles in one process download each format once. When the cache cannot be written (a read-only home directory, for example), the download is used for that build only, with a warning.
+Every cached file is stored with its SHA-256 and checked when it is read; a copy that does not match is not used (online, it is downloaded again, with a warning for a format index entry). Files are written under a temporary name and renamed into place, so a twee-ts process never reads a half-written format, and concurrent compiles in one process download each format once. When the cache cannot be written (a read-only home directory, for example), the download is used for that build only, with a warning.
 
 `twee-ts cache list`, `cache size` and `cache clear [name]` cover every download; `cache clear <name>` matches the format name without regard to case. The cache directories of twee-ts 1.x (`storyformats/<name>/<version>/` and `storyformat-urls/`) are not read; `twee-ts cache clear` removes them.
 
@@ -216,7 +217,7 @@ This is the whole policy, and it is the same for every source.
 | id     | ID               | its name and major version give the ID                   |
 | older  | name and version | the requested major version, below the requested version |
 
-A candidate with another name, another major version, or no SemVer version does not answer.
+A candidate with another name does not answer; nor does one of another major version when the request gives a version, or one without a SemVer version unless the request is an ID naming its folder.
 
 **Choosing.** Among the candidates that answer in any tier but `older`, the one from the earliest source wins: local folders, then each format URL in order, then each format index in order. Within one source, the better tier wins (an exact version beats a newer one), then the greater version, then a name in the request's exact letter case, then (local folders) the higher-ranked search directory. Only when no source has such a candidate is an `older` one used, chosen in the same order, with a warning:
 
@@ -228,10 +229,11 @@ As the earliest source wins, sources are consulted one at a time, and later ones
 
 **Local folders, as in Tweego.** For a name request, only the greatest version of each name and major version among the local folders is a candidate ([SemVer Version Pruning](#semver-version-pruning)), so `StoryData` SugarCube 2.36.1 uses a local 2.37.3 even when a local 2.36.1 exists. For an ID request, every folder is a candidate, so a pinned folder is used as it is.
 
-**A missing or unparseable `format-version`** takes the greatest version of any major version, with Tweego's warning:
+**A missing or unparseable `format-version`** takes the greatest version of any major version, with a warning (Tweego's, for an unparseable one):
 
 ```
 warning: format "SugarCube": Auto-selecting greatest version; Could not parse version "2.x".
+warning: format "SugarCube": Auto-selecting greatest version; StoryData gives no format-version.
 ```
 
 **An ID that matches formats with different names** (`Sugar Cube` and `sugar-cube` both give `sugar-cube-2`) takes the best by the rules above, with a warning naming them.
@@ -240,29 +242,31 @@ warning: format "SugarCube": Auto-selecting greatest version; Could not parse ve
 
 ## Special Passages
 
-twee-ts recognizes the following special passage names. These passages carry metadata or structural content and are excluded from the regular passage list and word count.
+twee-ts recognizes the following special passage names. They are **info passages**: not counted as story passages or in the word count, and never listed by lint as dead ends or orphans. twee-ts itself reads only `StoryTitle`, `StoryData` and `StorySettings` (and warns about `StoryIncludes`); the others are the passages story formats such as SugarCube give a meaning, and twee-ts writes them as usual.
 
-| Passage          | Purpose                                                 |
-| ---------------- | ------------------------------------------------------- |
-| `StoryTitle`     | Story name (required for Twine 1)                       |
-| `StoryData`      | JSON metadata: IFID, format, format version, tag colors |
-| `StoryAuthor`    | Author name                                             |
-| `StoryInit`      | SugarCube initialization code                           |
-| `StoryMenu`      | SugarCube sidebar menu items                            |
-| `StorySubtitle`  | Story subtitle                                          |
-| `StoryBanner`    | SugarCube story banner                                  |
-| `StoryCaption`   | SugarCube sidebar caption                               |
-| `StoryInterface` | SugarCube custom UI template                            |
-| `StoryShare`     | SugarCube sharing links                                 |
-| `StorySettings`  | Twine 1 settings (see below)                            |
-| `StoryIncludes`  | Additional source files to include                      |
-| `PassageReady`   | SugarCube: runs before each passage                     |
-| `PassageDone`    | SugarCube: runs after each passage                      |
-| `PassageHeader`  | Prepended to every passage                              |
-| `PassageFooter`  | Appended to every passage                               |
-| `MenuOptions`    | Menu option passages                                    |
-| `MenuShare`      | Menu sharing passages                                   |
-| `MenuStory`      | Menu story passages                                     |
+Twine 2 output leaves out `StoryTitle`, `StoryData` and a `StorySettings` passage with no settings, and writes the others as `<tw-passagedata>` elements; Twine 1 output writes all of them as tiddlers; JSON output leaves out `StoryTitle` and `StoryData`.
+
+| Passage          | Purpose                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `StoryTitle`     | Story name (required for Twine 1)                                                           |
+| `StoryData`      | JSON metadata: IFID, format, format version, start passage, options, tags, tag colors, zoom |
+| `StoryAuthor`    | Author name                                                                                 |
+| `StoryInit`      | SugarCube initialization code                                                               |
+| `StoryMenu`      | SugarCube sidebar menu items                                                                |
+| `StorySubtitle`  | Story subtitle                                                                              |
+| `StoryBanner`    | SugarCube story banner                                                                      |
+| `StoryCaption`   | SugarCube sidebar caption                                                                   |
+| `StoryInterface` | SugarCube custom UI template                                                                |
+| `StoryShare`     | SugarCube sharing links                                                                     |
+| `StorySettings`  | Twine 1 settings (see below)                                                                |
+| `StoryIncludes`  | Tweego's include list: ignored, with a warning                                              |
+| `PassageReady`   | SugarCube: runs before each passage                                                         |
+| `PassageDone`    | SugarCube: runs after each passage                                                          |
+| `PassageHeader`  | SugarCube: rendered before each passage                                                     |
+| `PassageFooter`  | SugarCube: rendered after each passage                                                      |
+| `MenuOptions`    | Menu option passages                                                                        |
+| `MenuShare`      | Menu sharing passages                                                                       |
+| `MenuStory`      | Menu story passages                                                                         |
 
 When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage, naming the file and line of each. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value. A last `StoryData` that is not valid JSON still replaces the earlier ones: the story then has none of their metadata, and an error says so. The same holds for `StoryTitle` and `StorySettings`: the story's title, its Twine 1 settings and its legacy IFID always come from the last passage of each name alone.
 
@@ -295,21 +299,24 @@ blankcss:off
 | `exitprompt` | `on`/`off` | Prompt before navigating away                                                                    |
 | `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)                                                         |
 
-The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
+twee-ts acts on three of these when it writes Twine 1 output: `jquery:on` and `modernizr:on` insert `jquery.js` and `modernizr.js` from the format directory, and `obfuscate:rot13` encodes the tiddlers (see [Twine 1 Archive](./output-modes#twine-1-archive): a `StorySettings` passage tagged `Twine.private` turns obfuscation off, with a warning, and a passage whose name or tag ROT13 turns into `StorySettings` or `Twine.image` is an error). The others are passed to the Twine 1 story format.
+
+The `ifid` and `zoom` settings are obsolete, and twee-ts warns about them; put both in `StoryData`. `zoom` is ignored. A valid `ifid` is kept as the legacy IFID, and when no `StoryData` IFID is available it becomes the story's IFID, with the warning `Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.` Neither counts as a setting, so a `StorySettings` passage with only these is empty.
 
 Keys and values are lower-cased and trimmed, and a repeated key takes its last value. When the sources hold more than one `StorySettings` passage, the last one decides all the settings: one it leaves out, such as `obfuscate:rot13`, is off, even if an earlier passage set it.
 
 ## Special Tags
 
-| Tag          | Effect                                                |
-| ------------ | ----------------------------------------------------- |
-| `script`     | Passage content is combined into the JavaScript block |
-| `stylesheet` | Passage content is combined into the CSS block        |
-| `annotation` | Passage is excluded from compiled output              |
-| `widget`     | Passage is treated as a SugarCube widget definition   |
-| `Twine.*`    | Any tag starting with `Twine.` marks an info passage  |
+| Tag             | Effect                                                                                         |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| `script`        | Combined into the story's script element (Twine 2 HTML and archive) or the JSON `script` field |
+| `stylesheet`    | Combined into the story's style element (Twine 2 HTML and archive) or the JSON `style` field   |
+| `Twine.private` | Left out of Twine 2 and Twine 1 output (HTML and archive) and JSON; Twee output keeps it       |
+| `annotation`    | An info passage, written as usual                                                              |
+| `widget`        | An info passage, written as usual; SugarCube reads it as widget definitions                    |
+| `Twine.*`       | Any tag starting with `Twine.` makes an info passage                                           |
 
-Passages with special tags are classified as **info passages** and do not appear as regular `<tw-passagedata>` elements.
+Passages with these tags are **info passages**: they are not counted as story passages or in the word count. Twine 2 output leaves out only `script`, `stylesheet` and `Twine.private` passages; `annotation`, `widget` and other `Twine.*` passages (such as media passages, tagged `Twine.image`) are written as `<tw-passagedata>` elements. Twine 1 output writes script and stylesheet passages as tiddlers, which Twine 1 story formats read by their tags.
 
 You can extend this system with custom tag names using [Tag Aliases](./tag-aliases).
 

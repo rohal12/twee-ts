@@ -18,15 +18,15 @@ hero:
 
 features:
   - title: Drop-in Tweego Replacement
-    details: Reads the same .twee, .tw, .css, .js, font, and media files. Respects TWEEGO_PATH. Same output.
+    details: Reads the same .twee, .tw, .css, .js, font, and media files. Respects TWEEGO_PATH. Equivalent output, with every intended difference listed.
   - title: Zero Runtime Dependencies
-    details: Pure TypeScript with no external packages. Runs on Node.js 22.12+ out of the box.
+    details: Nothing to install besides twee-ts itself; the HTML and JavaScript parsers it uses (parse5, acorn) are bundled. Runs on Node.js 22.12+.
   - title: Programmatic API
     details: Use compile(), compileToFile(), and watch() directly from your TypeScript or JavaScript code.
   - title: Build Tool Plugins
-    details: First-class Vite and Rollup plugins with hot reload support for .tw files.
+    details: Vite and Rollup plugins that build the story; Vite's dev server reloads it when a source changes.
   - title: Remote Format Fetching
-    details: Story formats are automatically downloaded from the Story Formats Archive when not found locally.
+    details: Story formats not found locally are downloaded from your format URLs and indices or the Story Formats Archive, checked and cached.
   - title: Tag Aliases
     details: Map custom tag names like "library" or "theme" to built-in special tags like "script" and "stylesheet".
 ---
@@ -53,4 +53,5 @@ const result = await compile({
   sources: ['src/'],
   tagAliases: { library: 'script' },
 });
+console.log(result.diagnostics);
 ```

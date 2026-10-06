@@ -11,7 +11,9 @@
 
 TypeScript reimplementation of [Tweego](https://www.motoslave.net/tweego/) — a command-line compiler for Twine/Twee interactive fiction projects.
 
-Zero runtime dependencies. Node.js 22.12+.
+Zero runtime dependencies (the parsers it uses, parse5 and acorn, are bundled). Node.js 22.12+.
+
+Upgrading from 1.x? Read **[Migrating to 2.0](https://rohal12.github.io/twee-ts/migrating-to-2)**.
 
 **[Documentation](https://rohal12.github.io/twee-ts/)**
 
@@ -51,6 +53,7 @@ const result = await compile({
   sources: ['src/'],
   tagAliases: { library: 'script' },
 });
+console.log(result.diagnostics);
 ```
 
 ## Build Plugins
@@ -71,9 +74,12 @@ Also available: `@rohal12/twee-ts/rollup`. In both plugins, compile errors fail 
 Full docs at **[rohal12.github.io/twee-ts](https://rohal12.github.io/twee-ts/)**:
 
 - [Getting Started](https://rohal12.github.io/twee-ts/getting-started)
+- [Differences from Tweego](https://rohal12.github.io/twee-ts/tweego-differences)
+- [Migrating to 2.0](https://rohal12.github.io/twee-ts/migrating-to-2)
 - [CLI Reference](https://rohal12.github.io/twee-ts/cli)
 - [Configuration](https://rohal12.github.io/twee-ts/configuration)
 - [Tag Aliases](https://rohal12.github.io/twee-ts/tag-aliases)
+- [Output Modes](https://rohal12.github.io/twee-ts/output-modes)
 - [Programmatic API](https://rohal12.github.io/twee-ts/api)
 - [Vite & Rollup Plugins](https://rohal12.github.io/twee-ts/plugins)
 - [Story Formats](https://rohal12.github.io/twee-ts/story-formats)
@@ -83,8 +89,9 @@ Full docs at **[rohal12.github.io/twee-ts](https://rohal12.github.io/twee-ts/)**
 
 ```sh
 pnpm install
-pnpm test            # run tests
+pnpm test            # run tests (including every example in these docs)
 pnpm run typecheck   # type-check
+pnpm run lint        # ESLint
 pnpm run build       # bundle
 pnpm run docs:dev    # local docs dev server
 pnpm run docs:build  # build docs for deployment

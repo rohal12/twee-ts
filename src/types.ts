@@ -20,6 +20,19 @@ export type SourceInput = string | InlineSource;
 
 // --- Compile options ---
 
+/**
+ * The options of `compile()` and the functions built on it. Only `sources` is required; an optional
+ * property set to `undefined` means the same as leaving it out.
+ *
+ * - `formatId` and `startPassage` win over StoryData's `format`/`format-version` and `start`; without
+ *   either, the default is 'sugarcube-2' and 'Start'.
+ * - `formatUrls` and `formatIndices` take absolute `http:`/`https:` URLs. The local formats are
+ *   consulted first, then each format URL (requested again, conditionally, on every online build),
+ *   then each index, then the Story Formats Archive. A download is cached for the URL or index it
+ *   came from, and `noRemote` builds still use those cached downloads.
+ * - A missing or unreadable `headFile` is a TweeTsError (`INPUT_UNAVAILABLE`); a negative
+ *   `formatFetchTimeout` one with `INVALID_OPTIONS`.
+ */
 export interface CompileOptions {
   /**
    * Files, directories, or inline sources to compile. Directories are walked
@@ -29,37 +42,34 @@ export interface CompileOptions {
   sources: readonly SourceInput[];
   /**
    * Glob patterns for files to leave out of `sources`, matched against each file's
-   * path relative to the working directory (as `stats.files` lists it). Modules are not affected.
+   * path relative to the working directory (as `stats.files` lists it). Not the modules or head file.
    */
   exclude?: readonly string[] | undefined;
   /** Output mode. Default: 'html'. */
   outputMode?: OutputMode | undefined;
-  /** Story format directory ID (e.g. 'sugarcube-2'). */
+  /** Story format ID (e.g. 'sugarcube-2'). Default: StoryData's format, else 'sugarcube-2'. */
   formatId?: string | undefined;
-  /** Name of the starting passage. Default: 'Start'. */
+  /** Name of the starting passage. Default: StoryData's `start`, else 'Start'. */
   startPassage?: string | undefined;
   /** Extra directories to search for story formats. */
   formatPaths?: readonly string[] | undefined;
   /** Also search TWEEGO_PATH env for formats. Default: true. */
   useTweegoPath?: boolean | undefined;
-  /** Module files to inject into <head>. */
+  /** Module files (JS, CSS or fonts) to inject into the head of HTML output. */
   modules?: readonly string[] | undefined;
-  /** Raw HTML file to append to <head>. */
+  /** Raw HTML file to append to the head of HTML output. */
   headFile?: string | undefined;
-  /** Trim passage whitespace. Default: true. */
+  /** Trim white space at both ends of passage text, in Twee and HTML sources. Default: true. */
   trim?: boolean | undefined;
-  /** Twee2 compatibility mode. Default: false. */
+  /** Twee2 compatibility mode (`.tw2` and `.twee2` files always use it). Default: false. */
   twee2Compat?: boolean | undefined;
-  /** Enable debug/test mode option. Default: false. */
+  /** Add the `debug` option to the story's options. Default: false. */
   testMode?: boolean | undefined;
-  /** URLs to SFA-compatible index.json files for remote format lookup. */
+  /** URLs of SFA-compatible index.json files, consulted after `formatUrls`. */
   formatIndices?: readonly string[] | undefined;
-  /**
-   * Direct URLs to format.js files. Each URL's download is cached under that URL, and is
-   * looked up before the downloads shared by name and version.
-   */
+  /** URLs of format.js files, consulted after the local formats and before `formatIndices`. */
   formatUrls?: readonly string[] | undefined;
-  /** Disable remote format fetching. Default: false. */
+  /** Download no story formats (cached downloads are still used). Default: false. */
   noRemote?: boolean | undefined;
   /**
    * Cancels the compile. Story format requests still in progress are aborted, and the compile
@@ -71,7 +81,7 @@ export interface CompileOptions {
    * with a warning and the next source is tried. 0 turns the limit off. Default: 30000.
    */
   formatFetchTimeout?: number | undefined;
-  /** Map alias tags to canonical special tags (e.g. { library: 'script' }). */
+  /** Map alias tags to target tags (e.g. { library: 'script' }); each passage with an alias gets the target too. */
   tagAliases?: Record<string, string> | undefined;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
   sourceInfo?: boolean | undefined;
@@ -109,6 +119,10 @@ export interface WatchOptions extends CompileToFileOptions {
 
 // --- Compile result ---
 
+/**
+ * A warning or an error a build reports. `file` and `line` say where, when known. (`fatal` is not set
+ * by twee-ts: a build that cannot go on throws a TweeTsError instead.)
+ */
 export type Diagnostic =
   | { level: 'warning'; message: string; file?: string; line?: number }
   | { level: 'error'; message: string; file?: string; line?: number; fatal?: boolean };
@@ -116,19 +130,22 @@ export type Diagnostic =
 export interface CompileResult {
   /** The compiled output string (HTML, Twee, JSON, etc.). */
   output: string;
-  /** The parsed story model (read-only after compilation). */
+  /** The story model, read-only. */
   story: ReadonlyStory;
   /** The format used for compilation (undefined for non-HTML modes). */
   format?: StoryFormatInfo | undefined;
-  /** Collected diagnostics. */
+  /** Warnings and errors. The output is built even when some are errors; check them. */
   diagnostics: Diagnostic[];
   /** Compilation statistics. */
   stats: CompileStats;
 }
 
 export interface CompileStats {
+  /** Every passage. */
   passages: number;
+  /** The passages that are not info passages (special names, script, stylesheet, `Twine.*` tags…). */
   storyPassages: number;
+  /** The word count of the story passages (see `wordCountMethod`). */
   words: number;
   /** The source files loaded, in order, as paths relative to the working directory when inside it. */
   files: string[];
