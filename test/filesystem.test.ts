@@ -416,7 +416,9 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
   it('reports a change under the path source discovery gives the file', async () => {
     const builds = watchBuilds([start]);
     expect(await builds.next()).toBeUndefined(); // the initial full build
-    const changed = await builds.firstChange((n) => writeFileSync(start, `:: Start\nTwo ${n}\n`));
+    const changed = await builds.firstChange((n) => {
+      writeFileSync(start, `:: Start\nTwo ${n}\n`);
+    });
     expect(changed).toEqual(new Set(getFilenames([start]).filenames));
   });
 
@@ -448,7 +450,11 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     writeFileSync(head, '<meta name="a">');
     const builds = watchBuilds([story, head]);
     await builds.next();
-    const changed = [...((await builds.firstChange((n) => writeFileSync(head, `<meta name="b${n}">`))) ?? [])];
+    const changed = [
+      ...((await builds.firstChange((n) => {
+        writeFileSync(head, `<meta name="b${n}">`);
+      })) ?? []),
+    ];
     expect(changed).toContain(relative(process.cwd(), head));
     // macOS FSEvents may still deliver the setup's own write of start.tw (made just before the
     // watch began) with this change; nothing else may be reported.

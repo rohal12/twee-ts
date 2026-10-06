@@ -1075,15 +1075,25 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, undefined, undefined, { plugins: [watching, plugin(dir)] });
     expect(userScript(await page(url))).toContain('link-one');
     writeFileSync(extra, 'link-two');
-    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('link-two'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toContain('link-two');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
     writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Linked change.'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('Linked change.'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('Linked change.');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('sees the watch files of a plugin that applyToEnvironment returns', async () => {

@@ -53,8 +53,13 @@ async function stopRunningClis(): Promise<void> {
     [...running].map(
       (child) =>
         new Promise<void>((done) => {
-          if (child.exitCode !== null || child.signalCode !== null) return done();
-          child.once('exit', () => done());
+          if (child.exitCode !== null || child.signalCode !== null) {
+            done();
+            return;
+          }
+          child.once('exit', () => {
+            done();
+          });
           child.kill();
         }),
     ),
