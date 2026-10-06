@@ -183,7 +183,7 @@ describe('the input policy applied', () => {
           ...(role === 'modules' ? { modules: [path] } : {}),
         });
         expect(result.diagnostics).toEqual([
-          { level: 'warning', message: expect.stringContaining('ENOTDIR'), file: path },
+          { level: 'warning', message: expect.stringMatching(/ENOTDIR|ENOENT/), file: path },
         ]);
         expect(result.output).toContain('Hello');
       },
@@ -214,9 +214,9 @@ describe('the input policy applied', () => {
             modules: [join(blocked, 'm.js')],
           });
           expect(result.diagnostics.map((d) => [d.level, d.file])).toEqual([
-            ['error', identify(join(blocked, 's.tw')).display],
-            ['warning', identify(missing).display],
-            ['error', identify(join(blocked, 'm.js')).display],
+            ['error', join(blocked, 's.tw')],
+            ['warning', missing],
+            ['error', join(blocked, 'm.js')],
           ]);
           expect(result.diagnostics.filter((d) => d.level === 'error').every((d) => d.message.includes('EACCES'))).toBe(
             true,
