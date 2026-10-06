@@ -24,7 +24,7 @@ import { getFilenames, isExcluded, outputPaths, realPathOf, walkedEntry } from '
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { findHeadStartEnd } from '../modules.js';
-import { createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
+import { createOutputRecord, fileIdentity, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 
 export interface TweeTsVitePluginOptions {
@@ -176,8 +176,21 @@ function headInputs(options: TweeTsVitePluginOptions): string[] {
  */
 function excludedByGlob(options: TweeTsVitePluginOptions): (file: string) => boolean {
   const exclude = options.compileOptions?.exclude ?? [];
-  const notExcludable = headInputs(options);
-  return (file) => isExcluded(file, exclude) && !isInside(file, notExcludable);
+  const notExcludable = headInputs(options).map(fileIdentity);
+  const sources = options.sources.map((source) => toPosix(resolve(source)));
+  return (file) => {
+    if (exclude.length === 0) return false;
+    const identity = fileIdentity(file);
+    if (isInside(identity, notExcludable)) return false;
+    // Globs apply to the paths source discovery reads, including an authored
+    // directory alias. Watchers may report the same file by its physical path.
+    const real = toPosix(realPathOf(file));
+    const authored = sources.flatMap((source) => {
+      const root = fileIdentity(source);
+      return isInside(identity, [root]) ? [source + real.slice(root.length)] : [];
+    });
+    return (authored.length > 0 ? authored : [file]).every((path) => isExcluded(path, exclude));
+  };
 }
 
 /**
@@ -253,14 +266,14 @@ function buildWatchTargets(inputs: readonly string[], skip: (file: string) => bo
       entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
       if (entry === undefined || outputs.isFile(entry.real)) return;
       if (!entry.stat.isDirectory()) {
-        if (!skip(path)) targets.push(path);
+        if (!skip(path)) targets.push(fileIdentity(path));
         return;
       }
       names = readdirSync(path);
     } catch {
       return; // Missing or unreadable: the compile reports it.
     }
-    if (!outputs.holds(entry.real)) targets.push(path);
+    if (!outputs.holds(entry.real)) targets.push(fileIdentity(path));
     for (const name of names) walk(`${path}/${name}`, join(entry.real, name), false);
   };
   for (const input of inputs) walk(input, realPathOf(input), true);
@@ -279,8 +292,8 @@ function inputFiles(
 ): Map<string, string> {
   const files = new Map<string, string>();
   for (const filename of getFilenames(inputs, outputs).filenames) {
-    const file = toPosix(resolve(filename));
-    if (skip(file)) continue;
+    if (skip(toPosix(resolve(filename)))) continue;
+    const file = fileIdentity(filename);
     try {
       const stat = statSync(filename);
       files.set(file, `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
@@ -374,7 +387,7 @@ const WATCH_FILE_HOOKS = [
 
 /** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
 function fileOfId(id: string): string {
-  return toPosix(id.replace(/[?#].*$/s, ''));
+  return fileIdentity(id.replace(/[?#].*$/s, ''));
 }
 
 /** A plugin context whose `addWatchFile` also records the file in `files`. */
@@ -561,8 +574,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // unchanged (coarse file-system timestamps); forget a file that changed.
     watchChange(id) {
       if (innerBuild) return;
-      const changed = toPosix(resolve(id));
-      for (const key of [...cache.keys()]) if (toPosix(resolve(key)) === changed) cache.delete(key);
+      const changed = fileIdentity(id);
+      for (const key of [...cache.keys()]) if (fileIdentity(key) === changed) cache.delete(key);
     },
 
     resolveId(id) {
@@ -610,6 +623,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const base = server.config.base;
       const servePaths = outputFilename === 'index.html' ? [base, `${base}index.html`] : [`${base}${outputFilename}`];
       const inputs = watchedInputs(options);
+      const inputIdentities = inputs.map(fileIdentity);
       // What a build writes, which `vite build` may have left inside a source folder:
       // the story, chunks and assets, and the copies of the public files.
       let outputs = allOutputs(server.config);
@@ -621,7 +635,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const excludedGlob = excludedByGlob(options);
       const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
-      const root = toPosix(server.config.root);
+      const root = fileIdentity(server.config.root);
       server.watcher.add(inputs);
 
       let html = '';
@@ -666,11 +680,14 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         compiledInputs = inputFiles(inputs, excludedGlob, outputs);
         // The compile cache trusts modification times, which a quick save may leave
         // unchanged (coarse file-system timestamps); forget the files that changed.
-        for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
+        for (const key of [...cache.keys()]) if (changed.has(fileIdentity(key))) cache.delete(key);
         try {
           if (entryPath && (entryStale || [...changed].some(touchesEntry))) {
             entryStale = true;
             entry = await bundleEntryForDev(server.config, entryPath);
+            // The entry is built outside the server's module graph; its plugin
+            // dependencies may be outside the root Vite already watches.
+            server.watcher.add([...entry.files]);
             entryStale = false;
           }
           const result = await compileForOutputFile(buildCompileOptions(options, entry), outputs, cache);
@@ -699,11 +716,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
       server.watcher.on('all', (event, file) => {
         if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
-        const changed = toPosix(resolve(file));
+        const changed = fileIdentity(file);
         // Loading the config for the entry build writes and deletes one of these;
         // reacting to it would bundle again, and again.
         if (isViteConfigTemp(changed)) return;
-        if ((!isInside(changed, inputs) || excluded(changed)) && !touchesEntry(changed)) return;
+        if ((!isInside(changed, inputIdentities) || excluded(changed)) && !touchesEntry(changed)) return;
         pending.add(changed);
         clearTimeout(timer);
         timer = setTimeout(() => {

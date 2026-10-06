@@ -18,7 +18,9 @@ import {
 } from '../src/remote-formats.js';
 import type { SFAIndex, SFAIndexEntry } from '../src/types.js';
 
-const isRoot = process.getuid?.() === 0;
+// Windows chmod does not enforce POSIX read/write permissions, and root bypasses
+// them. These real permission-denial cases run on non-root POSIX runners.
+const cannotDenyAccessWithChmod = process.platform === 'win32' || process.getuid?.() === 0;
 
 function formatJs(name: string, version: string): string {
   return `window.storyFormat(${JSON.stringify({ name, version, proofing: false, source: '<html>{{STORY_DATA}}</html>' })});`;
@@ -172,7 +174,7 @@ describe('downloading a format into the cache', () => {
     await expect(fetchAndCacheFormat(entry('Mock', '1.0.0'), downloadUrl)).rejects.toThrow('is a symlink');
   });
 
-  it.skipIf(isRoot)('reports a cache directory that cannot be created', async () => {
+  it.skipIf(cannotDenyAccessWithChmod)('reports a cache directory that cannot be created', async () => {
     stubFetch({ [downloadUrl]: formatJs('Mock', '1.0.0') });
     mkdirSync(getCacheDir(), { recursive: true });
     lock(getCacheDir(), 0o555);
@@ -233,7 +235,7 @@ describe('an unreadable or damaged cache', () => {
     expect(listCachedFormats()).toEqual([]);
   });
 
-  it.skipIf(isRoot)('skips a format directory that cannot be listed', () => {
+  it.skipIf(cannotDenyAccessWithChmod)('skips a format directory that cannot be listed', () => {
     writeCached('Good', '1.0.0', formatJs('Good', '1.0.0'));
     writeCached('Locked', '1.0.0', formatJs('Locked', '1.0.0'));
     lock(cachePath('Locked'));
@@ -247,7 +249,7 @@ describe('clearing the cache by name', () => {
     expect(clearCachedFormats('Mock')).toBe(0);
   });
 
-  it.skipIf(isRoot)('removes nothing from a directory that cannot be listed', () => {
+  it.skipIf(cannotDenyAccessWithChmod)('removes nothing from a directory that cannot be listed', () => {
     writeCached('Locked', '1.0.0', formatJs('Locked', '1.0.0'));
     lock(cachePath('Locked'));
     expect(clearCachedFormats('Locked')).toBe(0);

@@ -10,8 +10,8 @@ import { compile, compileIncremental } from '../src/compiler.js';
 /** The temp folders the current test made; each is removed after it. */
 const tmpDirs: string[] = [];
 
-function makeTmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-incremental-'));
+function makeTmpDir(base = tmpdir()): string {
+  const dir = mkdtempSync(join(base, 'twee-ts-incremental-'));
   tmpDirs.push(dir);
   return dir;
 }
@@ -557,7 +557,12 @@ describe('incremental cache and explicitly changed files', () => {
     ];
 
     it.each(forms)('reparses a file named by $form', async ({ path }) => {
-      const dir = makeTmpDir();
+      // A Windows temp folder may be on C: while cwd is on D:. path.relative
+      // then returns an absolute path, which cannot take a ./ prefix. Keep the
+      // fixture on cwd's drive so each relative-path form is actually relative.
+      const base = join(process.cwd(), 'node_modules', '.cache');
+      mkdirSync(base, { recursive: true });
+      const dir = makeTmpDir(base);
       const file = writeFile(dir, 'story.tw', source('ORIGINAL_CONTENT'));
       setMtime(file, STAMP_MS);
       const cache = new Map<string, FileCacheEntry>();

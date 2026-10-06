@@ -22,9 +22,9 @@ const shared = {
   // Keep .js/.d.ts for ESM and .cjs/.d.cts for CJS (tsdown defaults to .mjs/.d.mts),
   // so the file names in the package.json exports map stay valid.
   fixedExtension: false,
-  // twee-ts has no runtime dependencies: htmlparser2 and its own dependencies are
+  // twee-ts has no runtime dependencies: the HTML parsers and their dependencies are
   // bundled on purpose, and bundling anything else from node_modules fails the build.
-  deps: { onlyBundle: ['htmlparser2', 'domhandler', 'domelementtype', 'entities'] },
+  deps: { onlyBundle: ['htmlparser2', 'domhandler', 'domelementtype', 'entities', 'parse5'] },
 } satisfies UserConfig;
 
 // tsconfig.json asks for declaration maps, but they would point at src/, which is not published.

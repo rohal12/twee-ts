@@ -5,7 +5,7 @@
  * graph, and a failing story or an unreadable folder is easier to set up by hand.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
@@ -143,7 +143,10 @@ describe('vite plugin hooks: build --watch targets', () => {
   it('registers a source file, and skips a source that does not exist', () => {
     const dir = makeProject({ 'one.tw': STORY });
     const hooks = hooksOf({ sources: [join(dir, 'one.tw'), join(dir, 'missing')], compileOptions: COMPILE });
-    expect(watchTargets(hooks, resolvedConfig(dir))).toEqual([join(dir, 'one.tw').replace(/\\/g, '/')]);
+    const physical = realpathSync(join(dir, 'one.tw')).replace(/\\/g, '/');
+    expect(watchTargets(hooks, resolvedConfig(dir))).toEqual([
+      process.platform === 'win32' ? physical.toLowerCase() : physical,
+    ]);
   });
 
   it.skipIf(process.platform === 'win32')('skips a link to a file the build writes', () => {

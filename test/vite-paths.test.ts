@@ -1,10 +1,45 @@
-import { describe, it, expect } from 'vitest';
-import { isInside, isViteConfigTemp, outputLocations, toPosix } from '../src/plugins/paths.js';
+import { afterEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileIdentity, isInside, isViteConfigTemp, outputLocations, toPosix } from '../src/plugins/paths.js';
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('vite plugin path helpers', () => {
   it('turns Windows separators into forward slashes', () => {
     expect(toPosix('C:\\game\\src\\app\\index.ts')).toBe('C:/game/src/app/index.ts');
     expect(toPosix('/game/src/app/index.ts')).toBe('/game/src/app/index.ts');
+  });
+
+  it('compares directory aliases and missing descendants by the physical filesystem path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-vite-identity-'));
+    dirs.push(dir);
+    const physical = join(dir, 'physical');
+    const alias = join(dir, 'alias');
+    mkdirSync(physical);
+    symlinkSync(physical, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const expected = realpathSync(physical).replace(/\\/g, '/');
+    expect(fileIdentity(join(alias, 'missing/file.tw'))).toBe(
+      `${process.platform === 'win32' ? expected.toLowerCase() : expected}/missing/file.tw`,
+    );
+  });
+
+  it('preserves case-sensitive identities while unifying Windows path case and separators', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-vite-case-'));
+    dirs.push(dir);
+    const upper = join(dir, 'MixedCase.tw');
+    writeFileSync(upper, 'upper');
+    if (process.platform === 'win32') {
+      expect(fileIdentity(upper.toUpperCase().replace(/\\/g, '/'))).toBe(fileIdentity(upper));
+    } else {
+      const lower = join(dir, 'mixedcase.tw');
+      writeFileSync(lower, 'lower');
+      expect(fileIdentity(lower)).not.toBe(fileIdentity(upper));
+    }
   });
 
   it('tells whether a file is inside one of the given folders', () => {

@@ -298,6 +298,21 @@ describe('StoryBuilder name index after direct changes to story.passages', () =>
     builder.add(mkPassage('A', 'A again'), diag);
     expect(contents(builder)).toEqual(['Z=a', 'B=b', 'A=A again']);
   });
+
+  it('replaces the last duplicate after a direct rename onto an existing name', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages[1]!.name = 'A';
+    builder.add(mkPassage('A', 'replacement'), diag);
+    expect(contents(builder)).toEqual(['A=a', 'A=replacement']);
+  });
+
+  it('replaces the last duplicate after an equal-length element replacement', () => {
+    const { builder, diag } = built('A', 'B');
+    builder.story.passages[1] = mkPassage('A', 'later');
+    expect(builder.has('A')).toBe(true);
+    builder.add(mkPassage('A', 'replacement'), diag);
+    expect(contents(builder)).toEqual(['A=a', 'A=replacement']);
+  });
 });
 
 describe('storyHas and storyAdd after direct changes to story.passages', () => {

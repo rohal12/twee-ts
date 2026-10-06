@@ -72,10 +72,9 @@ export function hasAnyMetadata(p: ReadonlyPassage): boolean {
 }
 
 export function marshalMetadata(meta: PassageMetadata): string {
-  const obj: Record<string, string> = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (typeof value === 'string' && value) obj[key] = value;
-  }
+  const obj = Object.fromEntries(
+    Object.entries(meta).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== ''),
+  );
   return JSON.stringify(obj);
 }
 
@@ -85,11 +84,9 @@ export function unmarshalMetadata(json: string): PassageMetadata {
     return {};
   }
   const parsed = raw as Record<string, unknown>;
-  const meta: PassageMetadata = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (typeof value === 'string') meta[key] = value;
-  }
-  return meta;
+  return Object.fromEntries(
+    Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
 }
 
 /** Convert passage to Twee source. */

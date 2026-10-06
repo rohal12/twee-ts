@@ -132,7 +132,7 @@ async function main(): Promise<void> {
         console.error(`Error: Invalid --tag-alias "${pair}". Expected format: alias=target`);
         process.exit(1);
       }
-      tagAliases[pair.slice(0, eq)] = pair.slice(eq + 1);
+      tagAliases = { ...tagAliases, [pair.slice(0, eq)]: pair.slice(eq + 1) };
     }
   }
 

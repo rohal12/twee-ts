@@ -1,11 +1,12 @@
 /**
  * Path helpers for the bundler plugins. Vite reports module ids with forward
  * slashes on every platform, while node:path gives backslashes on Windows, so
- * the Vite plugin compares paths in forward-slash form only. Paths a build
- * writes are compared by real path instead (see filesystem.ts).
+ * filesystem comparisons also resolve aliases and Windows case differences.
+ * Paths a build writes are compared by real path (see filesystem.ts).
  */
 import { dirname, resolve } from 'node:path';
 import type { BuildOutputs } from '../filesystem.js';
+import { realPathOf } from '../filesystem.js';
 
 /** The output settings that say where a bundle is written, as Rollup and Vite pass them to generateBundle. */
 export interface OutputLocation {
@@ -82,6 +83,13 @@ export function createOutputRecord(storyFileName: string): OutputRecord {
 /** The path with Windows separators turned into forward slashes. */
 export function toPosix(path: string): string {
   return path.replace(/\\/g, '/');
+}
+
+/** A filesystem identity shared by authored paths, bundler module IDs and watcher events. */
+export function fileIdentity(path: string): string {
+  const real = toPosix(realPathOf(path));
+  // Windows watcher and bundler APIs need not preserve drive or filename case.
+  return process.platform === 'win32' ? real.toLowerCase() : real;
 }
 
 /** Whether `file` is one of `dirs` or inside one of them. All paths in forward-slash form. */

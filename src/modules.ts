@@ -3,6 +3,8 @@
  * Ported from module.go + io.go:modifyHead(). The renderers inject through `placeHead()` while filling the
  * format template, so the closing head tag is looked for in the template only, never in inserted story data.
  */
+import { Parser } from 'parse5';
+import type { DefaultTreeAdapterMap, Token } from 'parse5';
 import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
 import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
@@ -142,92 +144,58 @@ interface HeadTags {
   readonly bodyStart: number | undefined;
 }
 
-/** Elements whose content is text, so a tag written there is not a tag. */
-const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style', 'textarea', 'title']);
-
-const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
-const isLetter = (c: string | undefined): boolean => c !== undefined && /^[A-Za-z]$/.test(c);
-
 /**
- * Find the first closing head tag and body start tag that HTML would read as tags: not those in a comment, in
- * the text of a script, style, textarea or title element, or in a quoted attribute value. A small scanner, not
- * a full HTML tokenizer; it needs no more than the tags and where they end.
+ * Find explicit head/body boundaries outside text, comments, attributes, inert templates and foreign CDATA.
+ * Browser scripting is enabled, as required by story engines and the Vite client. Offsets address the original
+ * text; parsing never serializes or repairs the template. Explicit HTML tokens remain usable in separate
+ * header/footer fragments even when document tree construction would ignore them.
  */
 export function scanHeadTags(html: string): HeadTags {
   const { closingHead, bodyStart } = scanTags(html);
   return { closingHead, bodyStart };
 }
 
-/**
- * The offset just after the first real head start tag, where content goes to come first in the head; found like
- * the tags of `scanHeadTags()`, so not one in a comment, a script or an attribute value. `undefined` without one.
- */
+/** The offset after the first explicit HTML head opener outside inert template content. */
 export function findHeadStartEnd(html: string): number | undefined {
   return scanTags(html).headStartEnd;
 }
 
+/**
+ * parse5 owns tokenizer states and tree context. These exported callbacks are marked internal by parse5;
+ * its bundled version is pinned, and fragment/template/foreign-content regression tests guard this adapter.
+ * Observe HTML dispatch rather than every token: foreign tags and inert template content cannot capture
+ * injection. Keeping explicit tokens (rather than only DOM node locations) preserves fragment placement.
+ */
+class HeadBoundaryParser extends Parser<DefaultTreeAdapterMap> {
+  closingHead: number | undefined;
+  bodyStart: number | undefined;
+  headStartEnd: number | undefined;
+
+  override _startTagOutsideForeignContent(token: Token.TagToken): void {
+    if (this.openElements.tmplCount === 0 && token.location !== null) {
+      if (token.tagName === 'head' && this.headStartEnd === undefined) this.headStartEnd = token.location.endOffset;
+      if (token.tagName === 'body' && this.bodyStart === undefined) this.bodyStart = token.location.startOffset;
+    }
+    super._startTagOutsideForeignContent(token);
+  }
+
+  override _endTagOutsideForeignContent(token: Token.TagToken): void {
+    if (
+      !this.currentNotInHTML &&
+      this.openElements.tmplCount === 0 &&
+      token.tagName === 'head' &&
+      this.closingHead === undefined
+    ) {
+      this.closingHead = token.location?.startOffset;
+    }
+    super._endTagOutsideForeignContent(token);
+  }
+}
+
 function scanTags(html: string): HeadTags & { readonly headStartEnd: number | undefined } {
-  let closingHead: number | undefined;
-  let bodyStart: number | undefined;
-  let headStartEnd: number | undefined;
-  let i = 0;
-
-  while (i < html.length) {
-    const lt = html.indexOf('<', i);
-    if (lt === -1) break;
-    const next = html[lt + 1];
-    if (html.startsWith('<!--', lt)) {
-      const end = html.indexOf('-->', lt + 4);
-      i = end === -1 ? html.length : end + 3;
-    } else if (next === '!' || next === '?') {
-      // A doctype, CDATA section or processing instruction ends at the first `>`.
-      const end = html.indexOf('>', lt);
-      i = end === -1 ? html.length : end + 1;
-    } else if (next === '/' && isLetter(html[lt + 2])) {
-      const { name, end } = readTag(html, lt + 2);
-      if (name === 'head' && closingHead === undefined) closingHead = lt;
-      i = end;
-    } else if (isLetter(next)) {
-      const { name, end } = readTag(html, lt + 1);
-      if (name === 'body' && bodyStart === undefined) bodyStart = lt;
-      if (name === 'head' && headStartEnd === undefined) headStartEnd = end;
-      i = RAW_TEXT_ELEMENTS.has(name) ? rawTextEnd(html, name, end) : end;
-    } else {
-      i = lt + 1;
-    }
-    if (closingHead !== undefined && bodyStart !== undefined) break;
-  }
-
-  return { closingHead, bodyStart, headStartEnd };
-}
-
-/** Read a tag whose name starts at `from`: its lowercase name, and the offset after its `>` (or the end). */
-function readTag(html: string, from: number): { name: string; end: number } {
-  let i = from;
-  while (i < html.length && !isSpace(html[i]) && html[i] !== '/' && html[i] !== '>') i++;
-  const name = html.slice(from, i).toLowerCase();
-  // Attributes: a value after `=` may be quoted, and may then hold a `>`.
-  while (i < html.length && html[i] !== '>') {
-    if (html[i] !== '=') {
-      i++;
-      continue;
-    }
-    i++;
-    while (isSpace(html[i])) i++;
-    const quote = html[i];
-    if (quote === '"' || quote === "'") {
-      const close = html.indexOf(quote, i + 1);
-      i = close === -1 ? html.length : close + 1;
-    }
-  }
-  return { name, end: Math.min(i + 1, html.length) };
-}
-
-/** The offset of the end tag that closes a raw text element, given where its text starts (or the end). */
-function rawTextEnd(html: string, name: string, from: number): number {
-  const close = new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`, 'gi');
-  close.lastIndex = from;
-  return close.exec(html)?.index ?? html.length;
+  const parser = new HeadBoundaryParser({ sourceCodeLocationInfo: true, scriptingEnabled: true });
+  parser.tokenizer.write(html, true);
+  return { closingHead: parser.closingHead, bodyStart: parser.bodyStart, headStartEnd: parser.headStartEnd };
 }
 
 /**

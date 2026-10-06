@@ -469,9 +469,9 @@ export class StoryBuilder {
 
   /** Add a passage, handling special passages (StoryData, StoryTitle, etc.). */
   add(passage: Passage, diagnostics: Diagnostic[]): void {
-    // A found name is checked at its position, so it is current. Only a new name (or a generated
-    // one, which looks up other names) needs every position checked first.
-    if (generatedNames.has(passage) || !storyHas(this.story, passage.name)) storyVerifyIndex(this.story);
+    // A valid cached hit can still hide a later passage renamed onto the same name.
+    // Direct builder mutations require checking every position before choosing the replacement.
+    storyVerifyIndex(this.story);
     storyAdd(this.story, passage, diagnostics);
   }
 

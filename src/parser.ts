@@ -2,7 +2,8 @@
  * Parse lexer items into Passage[].
  * Ported from storyload.go:loadTwee().
  */
-import type { Passage, PassageMetadata, Diagnostic } from './types.js';
+import type { Passage, Diagnostic } from './types.js';
+import { unmarshalMetadata } from './passage.js';
 import { ItemType } from './types.js';
 import { tweeLexer } from './lexer.js';
 import { tweeUnescape } from './escape.js';
@@ -116,14 +117,7 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
         try {
           // The lexer only emits a metadata item that starts with `{` and ends with its closing `}`,
           // so a successful parse is always an object.
-          const parsed = JSON.parse(item.val) as Record<string, unknown>;
-          const meta: PassageMetadata = {};
-          for (const [key, value] of Object.entries(parsed)) {
-            if (typeof value === 'string') {
-              meta[key] = value;
-            }
-          }
-          current.metadata = meta;
+          current.metadata = unmarshalMetadata(item.val);
         } catch (e) {
           diagnostics.push({
             level: 'warning',

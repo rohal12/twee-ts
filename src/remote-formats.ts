@@ -9,7 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import type {
   FormatRequest,
@@ -62,6 +62,58 @@ function isSafeSegment(segment: string): boolean {
   return segment !== '' && segment !== '.' && segment !== '..' && !/[/\\\0]/.test(segment);
 }
 
+/**
+ * Ordinary portable names keep their legacy directory. The reserved prefix
+ * distinguishes encoded names, and UTF-16LE preserves every JavaScript string
+ * (including lone surrogates) without UTF-8 replacement-character collisions.
+ */
+function isPortableDirectoryName(name: string): boolean {
+  const deviceName = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i.test(name.split('.')[0]!.trimEnd());
+  return !/[<>:"|?*\x00-\x1f]|[. ]$/.test(name) && !deviceName;
+}
+
+function cacheDirectoryName(name: string): string {
+  return !name.startsWith('~') && isPortableDirectoryName(name)
+    ? name
+    : '~' + createHash('sha256').update(Buffer.from(name, 'utf16le')).digest('hex');
+}
+
+interface CacheIdentity {
+  readonly name: string;
+  readonly version: string;
+}
+
+/**
+ * Read an encoded entry's logical identity, validating its directory binding.
+ * Prefix-named caches written before encoding was introduced have no sidecar
+ * and retain their old physical name. A present malformed sidecar is not trusted.
+ */
+function cacheIdentity(directoryName: string, version: string): CacheIdentity | undefined {
+  if (!isSafeSegment(directoryName) || !isSafeSegment(version)) return undefined;
+  if (!directoryName.startsWith('~')) return { name: directoryName, version };
+  const sidecar = join(getCacheDir(), directoryName, version, 'identity.json');
+  try {
+    const stat = lstatSync(sidecar, { throwIfNoEntry: false });
+    if (stat === undefined) return { name: directoryName, version };
+    if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
+    const identity: unknown = JSON.parse(readUTF8(sidecar));
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) return undefined;
+    const { name, version: logicalVersion } = identity as Record<string, unknown>;
+    if (
+      typeof name !== 'string' ||
+      !isSafeSegment(name) ||
+      logicalVersion !== version ||
+      !parseSemver(version) ||
+      cacheDirectoryName(name) !== directoryName ||
+      name === directoryName
+    )
+      return undefined;
+    return { name, version };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whether absolute path `target` lies strictly inside absolute path `root`. */
 function isInside(root: string, target: string): boolean {
   const rel = relative(root, target);
@@ -77,7 +129,7 @@ function cachedFormatDir(name: string, version: string): string {
     throw new Error(`Refusing to cache story format "${name}" with an unsafe version: ${JSON.stringify(version)}`);
   }
   const root = resolve(getCacheDir());
-  const dir = resolve(root, name, version);
+  const dir = resolve(root, cacheDirectoryName(name), version);
   if (!isInside(root, dir)) {
     throw new Error(`Refusing to cache a story format outside the cache directory ${root}: ${dir}`);
   }
@@ -112,7 +164,7 @@ function ensurePlainDirectory(dir: string): void {
  * Write a downloaded format.js to `<root>/<...segments>/format.js`, replacing any earlier copy
  * atomically, and return its path. Every directory below `root` must be a plain one.
  */
-function writeCacheEntry(root: string, segments: readonly string[], text: string): string {
+function writeCacheEntry(root: string, segments: readonly string[], text: string, filename = 'format.js'): string {
   mkdirSync(root, { recursive: true });
   const dir = segments.reduce((parent, segment) => {
     const child = join(parent, segment);
@@ -120,7 +172,7 @@ function writeCacheEntry(root: string, segments: readonly string[], text: string
     return child;
   }, root);
 
-  const formatPath = join(dir, 'format.js');
+  const formatPath = join(dir, filename);
   if (lstatSync(formatPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
     throw new Error(`Refusing to write a story format outside the cache directory: ${formatPath} is a symlink`);
   }
@@ -399,7 +451,15 @@ export async function fetchAndCacheFormat(
 
   // This caller gave up meanwhile: leave the cache as it was.
   options.signal?.throwIfAborted();
-  const formatPath = writeCacheEntry(resolve(getCacheDir()), [entry.name, entry.version], text);
+  const root = resolve(getCacheDir());
+  const directoryName = cacheDirectoryName(entry.name);
+  const segments = [directoryName, entry.version];
+  if (directoryName !== entry.name) {
+    // Publish the identity first, so a discoverable format.js always has the
+    // logical name supplied by the index, even when the format itself is nameless.
+    writeCacheEntry(root, segments, JSON.stringify({ name: entry.name, version: entry.version }), 'identity.json');
+  }
+  const formatPath = writeCacheEntry(root, segments, text);
   return cachedFormatInfo(id, formatPath, {
     ...data,
     name: data.name === UNNAMED_FORMAT_NAME ? entry.name : data.name,
@@ -593,9 +653,12 @@ export function findCachedFormat(
 }
 
 /** Check if a format is already in the local cache. */
-function getCachedFormat(name: string, version: string): StoryFormatInfo | undefined {
+function getCachedFormat(name: string, version: string, directory?: string): StoryFormatInfo | undefined {
   if (!isSafeSegment(name) || !isSafeSegment(version)) return undefined;
-  const formatPath = join(getCacheDir(), name, version, 'format.js');
+  const nameDir = directory ?? join(getCacheDir(), cacheDirectoryName(name));
+  const identity = cacheIdentity(basename(nameDir), version);
+  if (identity?.name !== name || identity.version !== version) return undefined;
+  const formatPath = join(nameDir, version, 'format.js');
   try {
     if (!existsSync(formatPath)) return undefined;
     const source = readUTF8(formatPath);
@@ -642,7 +705,9 @@ export function discoverCachedFormats(): Map<string, StoryFormatInfo> {
     }
 
     for (const version of versions) {
-      const info = getCachedFormat(name, version);
+      const identity = cacheIdentity(name, version);
+      if (identity === undefined) continue;
+      const info = getCachedFormat(identity.name, identity.version, nameDir);
       if (info) {
         formats.set(`${info.id}-${version}`, info);
       }
@@ -694,12 +759,14 @@ export function listCachedFormats(): readonly CachedFormatEntry[] {
     }
 
     for (const version of versions) {
+      const identity = cacheIdentity(name, version);
+      if (identity === undefined) continue;
       const formatPath = join(nameDir, version, 'format.js');
       try {
         const stat = statSync(formatPath);
         entries.push({
-          name,
-          version,
+          name: identity.name,
+          version: identity.version,
           sizeBytes: stat.size,
           modifiedAt: stat.mtime,
         });
@@ -738,7 +805,14 @@ export function clearCachedFormats(name?: string): number {
   if (!existsSync(cacheDir)) return 0;
 
   const root = resolve(cacheDir);
-  const nameDir = resolve(root, name);
+  const encodedDir = resolve(root, cacheDirectoryName(name));
+  // Legacy caches may have a raw prefix-named directory. Only fall back when
+  // no mapped entry exists; an existing symlink must never trigger a fallback.
+  const legacy = lstatSync(encodedDir, { throwIfNoEntry: false }) === undefined;
+  // These names could never have been raw Windows cache directories. Looking
+  // them up may instead alias a portable directory after Win32 normalization.
+  if (legacy && process.platform === 'win32' && (!name.startsWith('~') || !isPortableDirectoryName(name))) return 0;
+  const nameDir = legacy ? resolve(root, name) : encodedDir;
   if (!isInside(root, nameDir)) {
     throw new Error(`Refusing to clear ${JSON.stringify(name)}: it is not a cached format name.`);
   }
@@ -751,6 +825,9 @@ export function clearCachedFormats(name?: string): number {
   } catch {
     return 0;
   }
+  // A raw prefix name can also be another format's encoded directory. Only
+  // legacy entries identifying themselves by that raw name may be cleared.
+  if (legacy && versions.some((version) => cacheIdentity(name, version)?.name !== name)) return 0;
   const count = versions.length;
   rmSync(nameDir, { recursive: true, force: true });
   return count;

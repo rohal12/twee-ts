@@ -9,7 +9,8 @@
         "test/compile.test.ts",
         "test/incremental.test.ts",
         "test/compiler-order-abort.test.ts",
-        "test/readonly-types.test.ts"
+        "test/readonly-types.test.ts",
+        "test/compiler-review-regressions.test.ts"
       ],
       "interactions": [
         "sources \u00d7 modes \u00d7 trim \u00d7 tag aliases",
@@ -41,7 +42,8 @@
         "test/story.test.ts",
         "test/start-passage.test.ts",
         "test/ifid.test.ts",
-        "test/compiler-review-regressions.test.ts"
+        "test/compiler-review-regressions.test.ts",
+        "test/passage.test.ts"
       ],
       "interactions": [
         "duplicate metadata replacement",
@@ -93,7 +95,8 @@
         "test/format-resolution.test.ts",
         "test/remote-formats.test.ts",
         "test/remote-formats-shared.test.ts",
-        "test/compiler-review-regressions.test.ts"
+        "test/compiler-review-regressions.test.ts",
+        "test/remote-cache-portability.test.ts"
       ],
       "interactions": [
         "named/nameless \u00d7 cold/offline",
@@ -172,7 +175,7 @@
       "id": "cli",
       "contract": "Every CLI command/option, exit statuses, logging, watch and cache management",
       "paths": ["bin/twee-ts.ts"],
-      "tests": ["test/cli.test.ts", "test/inspect-duplicates.test.ts"],
+      "tests": ["test/cli.test.ts", "test/inspect-duplicates.test.ts", "test/cli-string-keys.test.ts"],
       "interactions": [
         "invalid options preserve output",
         "stdin, config and positional precedence",
@@ -188,7 +191,8 @@
         "test/vite-plugin-v7.test.ts",
         "test/vite-plugin-dev-gaps.test.ts",
         "test/vite-entry-build-logger.test.ts",
-        "test/vite-paths.test.ts"
+        "test/vite-paths.test.ts",
+        "test/vite-real-paths.test.ts"
       ],
       "interactions": [
         "define/alias/plugins and inline config",
@@ -228,7 +232,7 @@
     "macos-node22",
     "macos-node24"
   ],
-  "additionalRequiredChecks": ["vite-5", "vite-6", "vite-7", "vite-8", "browser", "tweego-differential"],
+  "additionalRequiredChecks": ["vite-5", "vite-6", "vite-7", "vite-8", "browser", "tweego-differential", "coverage"],
   "limits": [
     "Finite generated corpus and independent sweeps cannot prove absence of all defects.",
     "Story format game logic is external; browser smoke verifies compiler-produced HTML.",

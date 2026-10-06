@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
 import { getFormatSearchDirs } from '../src/formats.js';
@@ -518,12 +518,31 @@ describe('format directory precedence (#163)', () => {
   it('searches home, the working directory, TWEEGO_PATH, then formatPaths', () => {
     mkdirSync(join(home, 'storyformats'), { recursive: true });
     mkdirSync(join(cwd, 'storyformats'), { recursive: true });
-    expect(getFormatSearchDirs([projectFormats])).toEqual([
-      join(home, 'storyformats'),
-      join(cwd, 'storyformats'),
-      tweegoPath,
-      projectFormats,
+    mkdirSync(tweegoPath, { recursive: true });
+    mkdirSync(projectFormats, { recursive: true });
+    // On case-insensitive filesystems storyFormats and storyformats name the
+    // same directory. Compare distinct physical directories in search order.
+    const directories = getFormatSearchDirs([projectFormats]).map((dir) => realpathSync(dir));
+    // Only collapse adjacent aliases. A directory repeated later would change
+    // its priority and must still be detected by this order assertion.
+    expect(directories.filter((dir, index) => dir !== directories[index - 1])).toEqual([
+      realpathSync(join(home, 'storyformats')),
+      realpathSync(join(cwd, 'storyformats')),
+      realpathSync(tweegoPath),
+      realpathSync(projectFormats),
     ]);
+  });
+
+  it('splits TWEEGO_PATH with the platform delimiter and lets its later entry win', async () => {
+    const first = join(cacheRoot, 'first-global-formats');
+    const second = join(cacheRoot, 'second-global-formats');
+    writeFormat(first, 'fixture-1', 'Fixture', '1.0.0', 'FIRST');
+    writeFormat(second, 'fixture-1', 'Fixture', '1.0.0', 'SECOND');
+    process.env['TWEEGO_PATH'] = [first, second].join(delimiter);
+
+    // In particular, ':' inside a Windows drive letter is not a delimiter.
+    expect(getFormatSearchDirs([]).slice(-2)).toEqual([first, second]);
+    expect(await build([])).toBe('SECOND');
   });
 
   it('lets formatPaths outrank TWEEGO_PATH for the same folder name', async () => {

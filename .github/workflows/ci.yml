@@ -100,7 +100,7 @@ jobs:
 
       # Fails the job when a metric drops below the thresholds in vitest.config.ts.
       - name: Run tests with coverage
-        run: pnpm test:coverage
+        run: node validation/run-check.mjs --id coverage --environment linux-node22 --report validation/reports/coverage.json -- node node_modules/vitest/vitest.mjs run --coverage
 
       - name: Coverage summary
         if: always()
@@ -117,5 +117,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: coverage
-          path: coverage
+          path: |
+            coverage
+            validation/reports/coverage.json
           if-no-files-found: ignore

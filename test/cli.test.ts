@@ -41,15 +41,27 @@ interface RunningCli {
   readonly child: ChildProcessWithoutNullStreams;
   readonly stdout: () => string;
   readonly stderr: () => string;
+  readonly stop: () => Promise<void>;
 }
 
 function startCli(cwd: string, args: readonly string[]): RunningCli {
   const child = spawn(process.execPath, [...NODE_ARGS, ...args], { cwd });
+  // Killing is asynchronous. Wait for its streams and cwd handles to close before
+  // removing the fixture, especially on Windows where an open cwd cannot be deleted.
+  const closed = new Promise<void>((done) => child.once('close', () => done()));
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
   child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-  return { child, stdout: () => stdout, stderr: () => stderr };
+  return {
+    child,
+    stdout: () => stdout,
+    stderr: () => stderr,
+    stop: async () => {
+      child.kill();
+      await closed;
+    },
+  };
 }
 
 /** Polls `condition` until it holds; fails, naming `what`, if it hasn't after `timeoutMs`. */
@@ -72,7 +84,8 @@ const WARNING_STORY = `${VALID_STORY}\n:: Start\nHello again.\n`;
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'twee-ts-cli-'));
+  // Node resolves cwd to its physical path; macOS's temp directory has a /var alias.
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-cli-')));
 });
 
 afterEach(() => {
@@ -265,7 +278,7 @@ describe('CLI exit status', () => {
       expect(cli.child.exitCode).toBeNull();
       expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('<tw-storydata');
     } finally {
-      cli.child.kill();
+      await cli.stop();
     }
   }, 30_000);
 
@@ -285,7 +298,7 @@ describe('CLI exit status', () => {
       expect(cli.child.exitCode).toBeNull();
       expect(readFileSync(out, 'utf-8')).toContain('ARRIVED_CONTENT');
     } finally {
-      cli.child.kill();
+      await cli.stop();
     }
   }, 30_000);
 
@@ -313,7 +326,7 @@ describe('CLI exit status', () => {
         expect(cli.child.exitCode).toBeNull();
         expect(readFileSync(out, 'utf-8')).toContain('UNLOCKED_CONTENT');
       } finally {
-        cli.child.kill();
+        await cli.stop();
         chmodSync(join(dir, 'locked'), 0o755);
       }
     },
@@ -345,7 +358,7 @@ describe('CLI exit status', () => {
       expect(recovered).not.toContain('KNOWN_GOOD');
       expect(cli.child.exitCode).toBeNull();
     } finally {
-      cli.child.kill();
+      await cli.stop();
     }
   }, 60_000);
 
@@ -366,7 +379,7 @@ describe('CLI exit status', () => {
       expect(cli.stdout()).toContain('\nStatistics:\n  Passages: 4\n  Words: 4\n  Files: 1\n');
       expect(cli.child.exitCode).toBeNull();
     } finally {
-      cli.child.kill();
+      await cli.stop();
     }
   }, 60_000);
 });
@@ -502,7 +515,7 @@ describe('CLI with a story format that is not available', () => {
       expect(cli.stderr().indexOf('nosuch-9')).toBeLessThan(cli.stderr().indexOf('Build error:'));
       expect(cli.child.exitCode).toBeNull();
     } finally {
-      cli.child.kill();
+      await cli.stop();
     }
   }, 30_000);
 });

@@ -9,9 +9,9 @@ export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex'
 export const inventoryBytes = () => readFileSync(resolve(REPO, 'validation/contract-inventory.json'));
 
 /** Bind compiler, dependencies, test harness, support claims and automation; exclude evidence. */
-export function fingerprint() {
+export function fingerprint(repo = REPO) {
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
-    cwd: REPO,
+    cwd: repo,
     encoding: 'utf8',
   })
     .split('\0')
@@ -19,19 +19,23 @@ export function fingerprint() {
   const payload = [...new Set(files)]
     .filter(
       (path) =>
-        /^(?:src\/|bin\/|schemas\/|test\/|specs\/|scripts\/|\.github\/|validation\/|docs\/(?!compiler-validation\.md$|superpowers\/).*\.md$)/.test(
-          path,
-        ) || /^(?:package\.json|pnpm-lock\.yaml|.*\.config\.ts|AGENTS\.md)$/.test(path),
+        !path.startsWith('validation/reports/') &&
+        path !== 'validation/release-evidence.json' &&
+        !path.startsWith('docs/superpowers/') &&
+        path !== 'CHANGELOG.md',
     )
-    .filter((path) => !path.startsWith('validation/reports/') && path !== 'validation/release-evidence.json')
     .sort();
+  // Git's clean filters canonicalize line endings just as the committed blob does.
+  // One batch avoids spawning a Git process per file, especially on Windows.
+  const objects = execFileSync('git', ['hash-object', '--stdin-paths'], {
+    cwd: repo,
+    encoding: 'utf8',
+    input: payload.map((path) => JSON.stringify(path)).join('\n') + '\n',
+  })
+    .trim()
+    .split('\n');
   const hash = createHash('sha256');
-  for (const path of payload)
-    hash
-      .update(path)
-      .update('\0')
-      .update(readFileSync(resolve(REPO, path)))
-      .update('\0');
+  for (let i = 0; i < payload.length; i++) hash.update(payload[i]).update('\0').update(objects[i]).update('\0');
   return hash.digest('hex');
 }
 export function validateInventory(inventory) {

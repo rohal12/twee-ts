@@ -523,7 +523,8 @@ describe(
 
     it('watches neither the story it writes nor a folder that holds it, and rebuilds for an edit', async () => {
       const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT'), 'story/parts/more.tw': ':: More\nMore\n' });
-      const story = toPosix(join(dir, 'story'));
+      const physicalStory = toPosix(realpathSync(join(dir, 'story')));
+      const story = process.platform === 'win32' ? physicalStory.toLowerCase() : physicalStory;
       const preview = join(dir, 'story', 'preview');
       const out = join(preview, 'index.html');
       const files: string[] = [];

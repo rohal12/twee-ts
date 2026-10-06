@@ -17,13 +17,14 @@ before tests. New source files that have no area fail the release gate.
 1. Freeze a product and validation revision. `node validation/release-gate.mjs
 --fingerprint` prints its SHA-256 and inventory hash. The fingerprint includes
    sources, CLI, schemas, dependencies, tests, validation scripts, CI, agent
-   instructions and API/support documentation. Evidence/report-only commits do
+   instructions and API/support documentation, including root JSON settings. Git's clean filters normalize equivalent LF/CRLF checkouts. Evidence/report-only commits do
    not change the audited product. Record the actual Git commit too.
 2. Run `pnpm validate:collect` on Linux, macOS and Windows with Node 22 and 24.
    It captures typecheck, unit tests, build, fixed contracts, 288 deterministic
    cross-feature cases, isolated packed installation, and gate tests. Actual
    runtime/platform determine each evidence label. A changed fingerprint during
    a command invalidates that result.
+   CI also records a Linux coverage run against the existing coverage floors.
 3. Run installed-plugin build/dev/edit tests against Vite 5.0.0, 6.0.0, 7.0.0
    and 8.3.1. CI provisions these versions separately. Entry bundling remains
    Vite 8+ and has additional regression tests. This is representative version

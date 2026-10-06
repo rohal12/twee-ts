@@ -1,7 +1,7 @@
 {
   "name": "@rohal12/twee-ts",
   "version": "1.2.0",
-  "description": "TypeScript Twee-to-HTML compiler \u2014 a complete reimplementation of Tweego",
+  "description": "TypeScript Twee-to-HTML compiler — a complete reimplementation of Tweego",
   "type": "module",
   "license": "Unlicense",
   "publishConfig": {
@@ -61,7 +61,7 @@
     "validate:contracts": "node validation/compiler-contracts.mjs",
     "validate:extended": "node validation/extended-contracts.mjs",
     "validate:package": "node validation/package-contracts.mjs",
-    "validate:gate-tests": "node --test validation/review-state.test.mjs",
+    "validate:gate-tests": "node --test validation/review-state.test.mjs validation/fingerprint.test.mjs",
     "validate:collect": "node validation/collect-checks.mjs",
     "validate:release": "node validation/release-gate.mjs"
   },
@@ -73,6 +73,7 @@
     "@types/node": "^26.6.2",
     "@vitest/coverage-v8": "^5.0.2",
     "htmlparser2": "^12.0.0",
+    "parse5": "8.0.0",
     "prettier": "^3.9.9",
     "rollup": "^4.64.0",
     "tsdown": "^0.23.0",

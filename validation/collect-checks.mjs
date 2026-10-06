@@ -13,7 +13,7 @@ const checks = [
   ['typecheck', ['node_modules/typescript/bin/tsc', '--noEmit']],
   ['unit', ['node_modules/vitest/vitest.mjs', 'run']],
   ['build', ['node_modules/tsdown/dist/run.mjs']],
-  ['gate-tests', ['--test', 'validation/review-state.test.mjs']],
+  ['gate-tests', ['--test', 'validation/review-state.test.mjs', 'validation/fingerprint.test.mjs']],
   ['contracts', ['validation/compiler-contracts.mjs', '--report', `${output}/contracts-result.json`]],
   ['extended', ['validation/extended-contracts.mjs']],
   ['package', ['validation/package-contracts.mjs']],

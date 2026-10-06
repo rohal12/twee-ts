@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compile, compileIncremental } from '../src/compiler.js';
+import { compile, compileIncremental, compileToFile } from '../src/compiler.js';
 import { parseFormatJSON } from '../src/formats.js';
 import { createStory, storyAdd } from '../src/story.js';
+import { parseTwee } from '../src/parser.js';
+import { decompileHTML } from '../src/html-parser.js';
 import {
   clearIndexCache,
   fetchAndCacheFormat,
@@ -82,6 +84,35 @@ describe('replacing StorySettings (#236)', () => {
   });
 });
 
+describe('settings omission and Twine 1 obfuscation', () => {
+  it.each(['Twine.private', 'hidden'])(
+    'keeps visible story data readable when settings are omitted by %s',
+    async (tag) => {
+      const result = await compile({
+        sources: [
+          {
+            filename: 'private-settings.tw',
+            content: `:: StoryData\n{"ifid":"${IFID}"}\n:: StorySettings [${tag}]\nobfuscate:rot13\n:: Start\nHello`,
+          },
+        ],
+        tagAliases: { hidden: 'Twine.private' },
+        outputMode: 'twine1-archive',
+      });
+      expect(result.output).not.toContain('tiddler="StorySettings"');
+      expect(decompileHTML(result.output).story.passages.find((p) => p.name === 'Start')?.text).toBe('Hello');
+    },
+  );
+});
+
+it('preserves string metadata keys across parse and Twee output, including object property names', async () => {
+  const text = ':: Start {"__proto__":"custom value","constructor":"kept","position":"1,2"}\nHello';
+  const parsed = parseTwee(text);
+  expect(Object.hasOwn(parsed.passages[0]!.metadata!, '__proto__')).toBe(true);
+  const result = await compile({ sources: [{ filename: 'metadata.tw', content: text }], outputMode: 'twee3' });
+  const roundTrip = parseTwee(result.output);
+  expect(roundTrip.passages.find((p) => p.name === 'Start')?.metadata?.['__proto__']).toBe('custom value');
+});
+
 describe('format wrapper line terminators (#221)', () => {
   it.each(['\n', '\r', '\r\n', '\u2028', '\u2029'])('ends leading and inner comments at %j', (end) => {
     const source = `// license {${end}window.storyFormat(// wrapper${end}{name:'Review',version:'1.0.0',// field${end}source:'<html>{{STORY_DATA}}</html>'});`;
@@ -152,4 +183,25 @@ describe('index download URLs (#238)', () => {
     expect(result?.name).toBe(name);
     expect(requests[1]).toBe(expectedPath);
   });
+});
+
+describe('named output dependencies are protected in every output mode', () => {
+  it.each(['json', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive'] as const)(
+    'preserves a named module/head output for %s',
+    async (mode) => {
+      const outFile = join(root, 'dependency.txt');
+      for (const dependency of [{ modules: [outFile] }, { headFile: outFile }]) {
+        writeFileSync(outFile, 'PRESERVE THIS INPUT');
+        await expect(
+          compileToFile({
+            sources: [{ filename: 'source.tw', content: `:: StoryData\n{"ifid":"${IFID}"}\n:: Start\nHello` }],
+            outputMode: mode,
+            outFile,
+            ...dependency,
+          }),
+        ).rejects.toThrow(/Output file cannot be an input source/);
+        expect(readFileSync(outFile, 'utf8')).toBe('PRESERVE THIS INPUT');
+      }
+    },
+  );
 });

@@ -118,7 +118,11 @@ export function twine1PassageOmission(p: ReadonlyPassage): PassageOmission | und
 }
 
 function getTwine1PassageChunk(story: ReadonlyStory): { data: string; count: number } {
-  const obfuscateRot13 = story.twine1.settings.get('obfuscate') === 'rot13';
+  const settingsPassage = story.passages.find((passage) => passage.name === 'StorySettings');
+  // The engine learns ROT13 from the emitted settings tiddler. An omitted one cannot enable decoding.
+  const obfuscateRot13 =
+    story.twine1.settings.get('obfuscate') === 'rot13' &&
+    (settingsPassage === undefined || twine1PassageOmission(settingsPassage) === undefined);
   let data = '';
   let count = 0;
 

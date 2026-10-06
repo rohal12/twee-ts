@@ -12,7 +12,9 @@ import {
 } from '../src/formats.js';
 import type { Diagnostic, StoryFormatInfo } from '../src/types.js';
 
-const isRoot = process.getuid?.() === 0;
+// chmod cannot deny reads on Windows; root also bypasses these permission bits.
+// The real permission-denial case remains exercised on non-root POSIX runners.
+const cannotDenyAccessWithChmod = process.platform === 'win32' || process.getuid?.() === 0;
 const temps: string[] = [];
 const locked: string[] = [];
 
@@ -64,7 +66,7 @@ describe('selecting among candidates', () => {
 });
 
 describe('format folders that cannot be used', () => {
-  it.skipIf(isRoot)('warns about a format.js that cannot be read', () => {
+  it.skipIf(cannotDenyAccessWithChmod)('warns about a format.js that cannot be read', () => {
     const root = tempDir();
     mkdirSync(join(root, 'mock-1'));
     const file = join(root, 'mock-1', 'format.js');

@@ -67,25 +67,26 @@ All options for `compile()`. Only `sources` is required.
 
 ```typescript
 interface CompileOptions {
-  sources: SourceInput[];
-  exclude?: string[]; // globs for source files to leave out
+  sources: readonly SourceInput[];
+  exclude?: readonly string[]; // globs for source files to leave out
   outputMode?: OutputMode; // default: 'html'
   formatId?: string; // default: 'sugarcube-2'
   startPassage?: string; // default: 'Start'
-  formatPaths?: string[];
+  formatPaths?: readonly string[];
   useTweegoPath?: boolean; // default: true
-  modules?: string[];
+  modules?: readonly string[];
   headFile?: string;
   trim?: boolean; // default: true
   twee2Compat?: boolean; // default: false
   testMode?: boolean; // default: false
-  formatIndices?: string[];
-  formatUrls?: string[];
+  formatIndices?: readonly string[];
+  formatUrls?: readonly string[];
   noRemote?: boolean; // default: false
   signal?: AbortSignal; // cancels the compile
   formatFetchTimeout?: number; // ms per format request; default: 30000, 0 = no limit
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean; // default: false
+  wordCountMethod?: 'tweego' | 'whitespace'; // default: 'tweego'
 }
 ```
 
@@ -147,7 +148,7 @@ const result = await compile({
 ```typescript
 interface CompileResult {
   output: string; // compiled HTML, Twee, or JSON string
-  story: Story; // parsed story model
+  story: ReadonlyStory; // parsed story model, read-only in TypeScript
   format?: StoryFormatInfo; // format used (undefined for non-HTML modes)
   diagnostics: Diagnostic[];
   stats: CompileStats;
@@ -193,12 +194,15 @@ try {
 
 ### `applyTagAliases(passages, aliases)`
 
-Apply tag aliases to a passage array. Used internally by `compile()`, but available for direct use:
+Return a passage array with tag aliases applied. The original passages and their tags are unchanged. A passage whose tags change is copied with a new tag array; unchanged passages may be shared with the input. Used internally by `compile()`, but available for direct use:
 
 ```typescript
-import { applyTagAliases } from '@rohal12/twee-ts';
+import { applyTagAliases, type Passage } from '@rohal12/twee-ts';
 
-applyTagAliases(passages, { library: 'script', theme: 'stylesheet' });
+const passages: Passage[] = [{ name: 'Utils', tags: ['library'], text: 'window.x = 1;' }];
+const resolved = applyTagAliases(passages, { library: 'script', theme: 'stylesheet' });
+console.log(resolved[0]?.tags); // ['library', 'script']
+console.log(passages[0]?.tags); // ['library']
 ```
 
 ### Lexer & Parser
@@ -207,7 +211,7 @@ applyTagAliases(passages, { library: 'script', theme: 'stylesheet' });
 import { TweeLexer, tweeLexer, parseTwee } from '@rohal12/twee-ts';
 
 // Low-level lexer (generator)
-const lexer = tweeLexer(':: Start\nHello!', 'story.tw');
+const lexer = tweeLexer(':: Start\nHello!');
 for (const item of lexer) {
   console.log(item.type, item.val);
 }
@@ -297,8 +301,11 @@ const cacheDir = getCacheDir();
 import { generateIFID, validateIFID } from '@rohal12/twee-ts';
 
 const ifid = generateIFID(); // "A1B2C3D4-..."
-validateIFID(ifid); // true
+validateIFID(ifid); // null: valid
+validateIFID('not-an-ifid'); // error message string: invalid
 ```
+
+`validateIFID()` returns `null` for a valid IFID and a string explaining the error for an invalid one.
 
 ### Config
 
@@ -372,6 +379,7 @@ import type {
   CompileStats,
   Diagnostic,
   Story,
+  ReadonlyStory,
   Passage,
   PassageMetadata,
   StoryFormatInfo,

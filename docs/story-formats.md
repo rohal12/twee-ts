@@ -167,29 +167,29 @@ The compiled HTML's `<tw-storydata>` element records the format and version it w
 
 ## Special Passages
 
-twee-ts recognizes the following special passage names. These passages carry metadata or structural content and are excluded from the regular passage list and word count.
+twee-ts recognizes the following special passage names. These passages carry metadata or structural content and count as info passages, so they are excluded from story-passage and word counts. Most still appear in the output for the story format to interpret. Twine 2 output omits `StoryTitle`, `StoryData` and an empty `StorySettings` from its `<tw-passagedata>` elements.
 
-| Passage          | Purpose                                                 |
-| ---------------- | ------------------------------------------------------- |
-| `StoryTitle`     | Story name (required for Twine 1)                       |
-| `StoryData`      | JSON metadata: IFID, format, format version, tag colors |
-| `StoryAuthor`    | Author name                                             |
-| `StoryInit`      | SugarCube initialization code                           |
-| `StoryMenu`      | SugarCube sidebar menu items                            |
-| `StorySubtitle`  | Story subtitle                                          |
-| `StoryBanner`    | SugarCube story banner                                  |
-| `StoryCaption`   | SugarCube sidebar caption                               |
-| `StoryInterface` | SugarCube custom UI template                            |
-| `StoryShare`     | SugarCube sharing links                                 |
-| `StorySettings`  | Twine 1 settings (see below)                            |
-| `StoryIncludes`  | Additional source files to include                      |
-| `PassageReady`   | SugarCube: runs before each passage                     |
-| `PassageDone`    | SugarCube: runs after each passage                      |
-| `PassageHeader`  | Prepended to every passage                              |
-| `PassageFooter`  | Appended to every passage                               |
-| `MenuOptions`    | Menu option passages                                    |
-| `MenuShare`      | Menu sharing passages                                   |
-| `MenuStory`      | Menu story passages                                     |
+| Passage          | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `StoryTitle`     | Story name (required for Twine 1)                          |
+| `StoryData`      | JSON metadata: IFID, format, format version, tag colors    |
+| `StoryAuthor`    | Author name                                                |
+| `StoryInit`      | SugarCube initialization code                              |
+| `StoryMenu`      | SugarCube sidebar menu items                               |
+| `StorySubtitle`  | Story subtitle                                             |
+| `StoryBanner`    | SugarCube story banner                                     |
+| `StoryCaption`   | SugarCube sidebar caption                                  |
+| `StoryInterface` | SugarCube custom UI template                               |
+| `StoryShare`     | SugarCube sharing links                                    |
+| `StorySettings`  | Twine 1 settings (see below)                               |
+| `StoryIncludes`  | Ignored with a warning; specify files in `sources` instead |
+| `PassageReady`   | SugarCube: runs before each passage                        |
+| `PassageDone`    | SugarCube: runs after each passage                         |
+| `PassageHeader`  | Prepended to every passage                                 |
+| `PassageFooter`  | Appended to every passage                                  |
+| `MenuOptions`    | Menu option passages                                       |
+| `MenuShare`      | Menu sharing passages                                      |
+| `MenuStory`      | Menu story passages                                        |
 
 When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value.
 
@@ -220,19 +220,22 @@ blankcss:off
 | `exitprompt` | `on`/`off` | Prompt before navigating away                                                                    |
 | `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)                                                         |
 
-The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
+The `ifid` and `zoom` settings are obsolete; use the `StoryData` passage for these values. `zoom` is ignored. A valid legacy `ifid` is reused, with a warning, when the story has no IFID in `StoryData`.
 
 ## Special Tags
 
-| Tag          | Effect                                                |
-| ------------ | ----------------------------------------------------- |
-| `script`     | Passage content is combined into the JavaScript block |
-| `stylesheet` | Passage content is combined into the CSS block        |
-| `annotation` | Passage is excluded from compiled output              |
-| `widget`     | Passage is treated as a SugarCube widget definition   |
-| `Twine.*`    | Any tag starting with `Twine.` marks an info passage  |
+The output effects below describe Twine 2 HTML and archive output:
 
-Passages with special tags are classified as **info passages** and do not appear as regular `<tw-passagedata>` elements.
+| Tag             | Effect                                                            |
+| --------------- | ----------------------------------------------------------------- |
+| `script`        | Passage content is combined into the JavaScript block             |
+| `stylesheet`    | Passage content is combined into the CSS block                    |
+| `annotation`    | Kept as passage data; excluded from story-passage and word counts |
+| `widget`        | Kept as passage data; SugarCube interprets the tag at runtime     |
+| `Twine.private` | Passage is omitted from story passage data                        |
+| `Twine.*`       | Any tag starting with `Twine.` marks an info passage              |
+
+These passages are classified as **info passages** and excluded from story-passage and word counts. Classification does not itself remove them from output. In Twine 2 HTML and archive output, `script` and `stylesheet` passages are combined into the `<script id="twine-user-script">` and `<style id="twine-user-stylesheet">` blocks, while `Twine.private` passages are omitted. `annotation`, `widget` and other `Twine.*` tags remain on ordinary `<tw-passagedata>` elements unless another omission rule applies. Twee output retains these passages and their tags.
 
 You can extend this system with custom tag names using [Tag Aliases](./tag-aliases).
 

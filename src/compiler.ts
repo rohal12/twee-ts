@@ -277,6 +277,13 @@ async function buildOutput(
 ): Promise<CompileResult> {
   const written = toBuildOutputs(outputs);
   const diagnostics: Diagnostic[] = [];
+  const outputLocations = outputPaths(written);
+  rejectOutputSources(
+    [...(options.modules ?? []), ...(options.headFile === undefined ? [] : [options.headFile])].filter((path) =>
+      outputLocations.isFile(realPathOf(path)),
+    ),
+    diagnostics,
+  );
   const outputMode: OutputMode = options.outputMode ?? 'html';
   const trim = options.trim ?? true;
   const twee2Compat = options.twee2Compat ?? false;

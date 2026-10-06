@@ -31,20 +31,20 @@
 **Files:** src/{story,formats,remote-formats,filesystem}.ts; test/compiler-review-regressions.test.ts; test/watch-symlinks.test.ts.
 **Interfaces:** Existing public compiler, format and watcher APIs; no new production exports.
 
-- [ ] Add real-behavior regressions and sibling cases; run targeted Vitest checks and observe the five known failures.
-- [ ] Correct metadata replacement, wrapper trivia, indexed cache identity, URL derivation, and symlink target observation.
-- [ ] Run targeted tests, typecheck, full suite; commit fixes and tests.
+- [x] Add real-behavior regressions and sibling cases; run targeted Vitest checks and observe the five known failures.
+- [x] Correct metadata replacement, wrapper trivia, indexed cache identity, URL derivation, and symlink target observation.
+- [x] Run targeted tests, typecheck, full suite; commit fixes and tests.
 
 ### Task 2: Install evidence and release gate
 
 **Files:** validation/{contract-inventory.json,review-state.mjs,release-gate.mjs,extended-contracts.mjs}; test/review-state.test.ts; docs/compiler-validation.md; AGENTS.md; package.json; .github/workflows/{ci,release}.yml.
 **Interfaces:** Gate takes evidence JSON containing fingerprint, inventory hash, checks and ordered reviews; exits nonzero for missing, stale, incomplete or failed evidence.
 
-- [ ] Write gate tests rejecting missing evidence, changed revision, absent support coverage, repeated reviewers/methods, known failures and findings after clean reviews; observe RED.
-- [ ] Implement runtime evidence validation and deterministic product/validation fingerprint.
-- [ ] Add supported-contract inventory mapped to existing tests and explicit gaps; generated interactions and installed tarball checks supplement the old fixed matrix.
-- [ ] Wire integration validation into CI across supported environments and make release require complete review evidence.
-- [ ] Run tests and contract scripts; commit implementation.
+- [x] Write gate tests rejecting missing evidence, changed revision, absent support coverage, repeated reviewers/methods, known failures and findings after clean reviews; observe RED.
+- [x] Implement runtime evidence validation and deterministic product/validation fingerprint.
+- [x] Add supported-contract inventory mapped to existing tests and explicit gaps; generated interactions and installed tarball checks supplement the old fixed matrix.
+- [x] Wire integration validation into CI across supported environments and make release require complete review evidence.
+- [x] Run tests and contract scripts; commit implementation.
 
 ### Task 3: Freeze, review, and report honestly
 
@@ -56,3 +56,9 @@
 - [ ] Reproduce any findings, group by invariant, fix with RED→GREEN and restart reviews after product changes.
 - [ ] Record evidence and unresolved environmental gaps. Verify the gate accepts complete synthetic evidence and rejects incomplete actual evidence; never manufacture missing CI/browser/platform results.
 - [ ] Report local results, tickets addressed, and remaining release requirements.
+
+Resume notes: the first open cohort was interrupted and found uncovered defects.
+Its clean streak is zero. Fixes expand owning invariants, add native-platform evidence,
+use a pinned standards-based HTML parser, validate arbitrary string keys and
+non-HTML output protection, and execute the public documentation examples.
+Source/validation changes require a new frozen revision and fresh independent sweeps.
