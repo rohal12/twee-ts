@@ -4,7 +4,15 @@
   // the tests through the Vitest plugin, and the scripts through package.json "scripts".
   // vitest.mutation.config.ts is named only in stryker.config.mjs.
   "entry": ["docs/.vitepress/config.ts", "vitest.mutation.config.ts"],
-  "project": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "scripts/**/*.{ts,mjs}", "*.config.ts"],
+  "project": [
+    "src/**/*.ts",
+    "bin/**/*.ts",
+    "test/**/*.ts",
+    "specs/**/*.ts",
+    "scripts/**/*.{ts,mjs}",
+    "validation/**/*.ts",
+    "*.config.ts",
+  ],
   // The tests make FIFOs with the system's mkfifo, where it exists.
   "ignoreBinaries": ["mkfifo"],
   "ignoreDependencies": [

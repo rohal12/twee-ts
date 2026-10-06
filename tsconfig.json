@@ -26,8 +26,22 @@
     "noPropertyAccessFromIndexSignature": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    // The contract cases (validation/contracts) import the package by name, as users do: its types
+    // come from the sources here, and vitest.contracts.config.ts runs them against the build.
+    "paths": {
+      "@rohal12/twee-ts": ["./src/index.ts"],
+      "@rohal12/twee-ts/vite": ["./src/plugins/vite.ts"]
+    }
   },
-  "include": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "scripts/**/*.ts", "*.config.ts"],
+  "include": [
+    "src/**/*.ts",
+    "bin/**/*.ts",
+    "test/**/*.ts",
+    "specs/**/*.ts",
+    "scripts/**/*.ts",
+    "validation/**/*.ts",
+    "*.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }
