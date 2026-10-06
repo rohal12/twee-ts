@@ -106,6 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `watch()` ignores a hard link of the output that is made after the watch starts or after the output is replaced, instead of rebuilding for it again and again; the output's inodes are read when a path is checked, not once at the start (#268)
+- The Vite dev server watches the configured `entry` before its first bundle, so correcting an entry that failed to bundle (inside the root or not, with the file watcher off or on) brings the story back (#269)
+- The Vite dev server's catch-up before serving the story also compares change times, so an in-place edit that restores the modification time is served, for story sources and the entry alike (#270)
+- Passage `position` and `size` that HTML cannot carry (U+0000, a lone surrogate) are an output error in the modes that write them (Twine 2: both; Twine 1: `position`), instead of silently becoming U+FFFD (#271)
+- `StoryDisplayTitle` and passages tagged `init` are info passages, as SugarCube treats them: they are no story passages, orphans or dead ends, and the links in `StoryDisplayTitle` count as reachable (#272)
 - `format.js` files are parsed as JavaScript, so a regular expression literal holding a quote or `/*`, an HTML-like comment (`<!--`, `-->`), or an identifier that ends in `storyFormat` (`éstoryFormat`) before the call no longer hides the format or picks the wrong object, in local discovery, downloads and the download cache alike (#245)
 - A line comment ended by CR, U+2028 or U+2029 before the `storyFormat()` call no longer hides the format (#221)
 - A function-valued property such as Harlowe's `setup` is left out wherever it is in the format object and however it is written (`setup() {}`, `setup: () => {}`), and the properties after it, such as `proofing`, are kept (#245)
