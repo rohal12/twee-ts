@@ -66,6 +66,21 @@ describe('acorn syntax errors', () => {
     expect(!read.ok && read.error.message).toBe('Invalid regular expression: /(/: Unterminated group');
   });
 
+  it('report a stack overflow that acorn lets through as not enough stack space', () => {
+    // Where the stack runs out depends on the platform: on macOS with Node 22 a deeply nested
+    // template literal overflowed outside acorn's own guard.
+    const read = trySyntax(() => {
+      throw new RangeError('Maximum call stack size exceeded');
+    });
+    expect(read).toEqual({ ok: false, error: expect.any(JsSyntaxError) });
+    expect(!read.ok && [read.error.message, read.error.pos]).toEqual(['Not enough stack space to parse input', 0]);
+    expect(() =>
+      trySyntax(() => {
+        throw new RangeError('Invalid array length');
+      }),
+    ).toThrow(RangeError);
+  });
+
   it('let any other error through', () => {
     expect(() =>
       trySyntax(() => {

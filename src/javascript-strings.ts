@@ -120,7 +120,8 @@ function joinAt(exact: readonly SourceToken[], runs: readonly TokenRun[], at: nu
   for (const run of runs) {
     const after = run.tokens.filter((token) => token.start >= at);
     if (head !== undefined && run.start < at) {
-      head.push(...after);
+      // One at a time: spreading a long run as arguments (`push(...after)`) overflows the stack.
+      for (const token of after) head.push(token);
     } else if (after.length > 0) {
       if (head !== undefined) joined.push(head);
       head = undefined;

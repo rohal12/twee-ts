@@ -291,6 +291,12 @@ describe('javaScriptStrings on source that does not parse', () => {
     expect(javaScriptStrings(brokenBefore('tag`\\unicode`; "kept"'))).toEqual(['kept']);
   });
 
+  it('reads a long run of tokens after a syntax error without running out of stack', () => {
+    // Joining the runs once spread the tokens as arguments, which overflowed on macOS.
+    const source = `x y ${'"a",'.repeat(300_000)}`;
+    expect(javaScriptStrings(source)).toHaveLength(300_000);
+  });
+
   it('keeps a template literal open across TwineScript in its substitution', () => {
     expect(javaScriptStrings('x = `${$x is 1} "<<goto \'A\'>>"`;')).toEqual([`${SUBSTITUTION} "<<goto 'A'>>"`]);
   });
