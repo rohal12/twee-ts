@@ -1,0 +1,9 @@
+{
+  "path": ["src", "bin"],
+  "format": ["typescript"],
+  "minTokens": 50,
+  "minLines": 5,
+  "mode": "mild",
+  "absolute": true,
+  "gitignore": true
+}

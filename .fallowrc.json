@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": ["**/*", "!src/**/*.ts", "!bin/**/*.ts"],
+  "duplicates": {
+    "mode": "semantic",
+    "minTokens": 50,
+    "minLines": 5
+  }
+}

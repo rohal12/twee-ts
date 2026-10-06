@@ -118,6 +118,8 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
+- `pnpm run duplication` — measure code duplication in `src/` and `bin/` with jscpd, PMD CPD and fallow against `duplication-budget.json`; CPD needs Java and `PMD_BIN` set to PMD's `bin/pmd` (version and SHA-256 in `.github/workflows/duplication.yml`)
+- `pnpm run duplication fallow --base origin/main` — one tool, also failing when the tree adds duplication compared with a git ref
 
 ## Releasing
 
@@ -179,3 +181,11 @@ When reviewing PRs, check for:
 7. **No runtime deps** — this is a zero-dependency package; dev dependencies only
 8. **Backwards compatibility** — public API changes in `src/types.ts` and `src/index.ts` must be intentional
 9. **Formatting** — code passes `pnpm run format:check`
+
+### Code duplication
+
+The `Duplication` workflow measures `src/` and `bin/` with jscpd (exact copies), PMD CPD (exact copies, grouped)
+and fallow (semantic: renamed identifiers, changed literals). A PR fails when a tool's share exceeds
+`duplication-budget.json`, or when it adds duplicated lines and raises the share compared with its base. Remove a new
+clone rather than raising the budget; when a PR removes duplication, lower the budget to the new values so the gain is
+kept.

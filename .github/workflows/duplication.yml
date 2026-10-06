@@ -1,0 +1,74 @@
+name: Duplication
+
+# Measures code duplication in src/ and bin/ with three tools that see
+# different things (see scripts/duplication.ts). Each job fails when its
+# measurement exceeds duplication-budget.json, and on a pull request also when
+# the change adds duplicated lines and raises the share compared with the base
+# commit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duplication-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  duplication:
+    name: duplication (${{ matrix.tool }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [jscpd, cpd, fallow]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit is measured from a git worktree
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # PMD runs on the Java that the runner image ships. The archive is pinned
+      # by SHA-256; its GPG signature was verified against the PMD Release
+      # Signing Key (2EFA 55D0 785C 31F9 56F2 F87E A0B5 CA1A 4E08 6838) when the
+      # hash was recorded.
+      - name: Install PMD
+        if: matrix.tool == 'cpd'
+        env:
+          PMD_VERSION: 7.28.0
+          PMD_SHA256: f974ba571f7bc01c73fffe11bade25fbc1f438698f9e9c00e416e8d65e9fbac2
+        run: |
+          java -version
+          zip="$RUNNER_TEMP/pmd.zip"
+          curl -sSfL -o "$zip" \
+            "https://github.com/pmd/pmd/releases/download/pmd_releases/${PMD_VERSION}/pmd-dist-${PMD_VERSION}-bin.zip"
+          echo "${PMD_SHA256}  ${zip}" | sha256sum --check -
+          unzip -q "$zip" -d "$RUNNER_TEMP"
+          echo "PMD_BIN=$RUNNER_TEMP/pmd-bin-${PMD_VERSION}/bin/pmd" >> "$GITHUB_ENV"
+
+      - name: Measure duplication
+        env:
+          TOOL: ${{ matrix.tool }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            pnpm run duplication "$TOOL" --base "$BASE_SHA"
+          else
+            pnpm run duplication "$TOOL"
+          fi
