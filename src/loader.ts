@@ -9,7 +9,7 @@ import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatH
 import { storyAdd, storyHas, storyPrepend, withGeneratedName } from './story.js';
 import { parseTwee } from './parser.js';
 import { decompileHTMLForImport } from './html-parser.js';
-import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from './util.js';
+import { readUTF8, readBase64, fileStem, decodeText } from './util.js';
 import type { DecodedText } from './util.js';
 import { normalizeSourceText } from './source-text.js';
 import { cssStringEscape } from './escape.js';
@@ -206,7 +206,7 @@ function parseTaggedFile(tag: string, filename: string): ParseResult {
 
 function parseMediaFile(tag: string, filename: string): ParseResult {
   const source = readBase64(filename);
-  const name = baseNameWithoutExt(filename);
+  const name = fileStem(filename);
   const passage = { name, tags: [tag], text: `data:${mediaTypeFromFilename(filename)};base64,${source}` };
   return {
     passages: [withGeneratedName(passage, { kind: 'media', base: name, file: filename })],
@@ -217,7 +217,7 @@ function parseMediaFile(tag: string, filename: string): ParseResult {
 function parseFontFile(filename: string): ParseResult {
   const source = readBase64(filename);
   const name = basename(filename);
-  const family = baseNameWithoutExt(filename);
+  const family = fileStem(filename);
   const ext = normalizedFileExt(filename);
   const mediaType = mediaTypeFromExt(ext);
   const hint = fontFormatHint(ext);

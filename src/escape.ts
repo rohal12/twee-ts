@@ -50,12 +50,6 @@ export function tiddlerUnescape(s: string): string {
   return s.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\s/g, '\\');
 }
 
-/** Escape characters that are special in Twee passage names/tags. */
-export function tweeEscape(s: string): string {
-  if (s.length === 0) return s;
-  return s.replace(/[\\[\]{}]/g, (ch) => '\\' + ch);
-}
-
 const JS_STRING_ESCAPES: Readonly<Record<string, string>> = {
   '\\': '\\\\',
   '"': '\\"',
@@ -171,21 +165,4 @@ export function rot13(s: string): string {
     const base = ch <= 'Z' ? 65 : 97;
     return String.fromCharCode(((ch.charCodeAt(0) - base + 13) % 26) + base);
   });
-}
-
-/** Unescape backslash-escaped Twee characters. */
-export function tweeUnescape(s: string): string {
-  if (s.length === 0) return s;
-  let result = '';
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\') {
-      i++;
-      if (i >= s.length) {
-        result += '\\';
-        break;
-      }
-    }
-    result += s.charAt(i);
-  }
-  return result;
 }

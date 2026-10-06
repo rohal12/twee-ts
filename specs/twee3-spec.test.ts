@@ -1274,9 +1274,11 @@ describe('Special Passages — StoryData', () => {
   //  emit a warning, discard the metadata, and continue processing the file."
   // ---------------------------------------------------------------------------
   describe('StoryData JSON error handling', () => {
-    it('RECOMMENDED: emits warning on StoryData decode error', async () => {
+    it('reports a StoryData decode error, as an error (an intended difference from the RECOMMENDED warning)', async () => {
       // Spec: "It is recommended that the outcome of a decoding error should be to:
       // emit a warning, discard the metadata, and continue processing the file."
+      // twee-ts discards the metadata and continues, but reports an error rather than a warning, as Tweego
+      // stops there (see docs/tweego-differences.md).
       const source = [
         ':: StoryData',
         'not valid json at all',
@@ -1288,11 +1290,9 @@ describe('Special Passages — StoryData', () => {
         'Hello',
       ].join('\n');
       const result = await compileInline(source);
-      // Should emit a WARNING (not error) about StoryData decode failure
-      const warnings = result.diagnostics.filter(
-        (d) => d.level === 'warning' && d.message.toLowerCase().includes('storydata'),
-      );
-      expect(warnings.length).toBeGreaterThan(0);
+      const reported = result.diagnostics.filter((d) => d.message.toLowerCase().includes('storydata'));
+      expect(reported.map((d) => d.level)).toEqual(['error']);
+      expect(reported[0]?.message).toMatch(/^Cannot unmarshal "StoryData" compiler special passage; /);
     });
 
     it('RECOMMENDED: continues processing the file after StoryData decode error', async () => {
@@ -3033,8 +3033,8 @@ describe('Passage Metadata Decode Error — Warning Not Error', () => {
 //  emit a warning, discard the metadata, and continue processing the file."
 // ---------------------------------------------------------------------------
 
-describe('StoryData Decode Error — Warning Not Error', () => {
-  it('RECOMMENDED: StoryData decode error produces WARNING, not ERROR', async () => {
+describe('StoryData Decode Error — an error that discards the metadata', () => {
+  it('reports the decode error as a non-fatal error, discards the metadata and goes on (Tweego parity)', async () => {
     const source = [
       ':: StoryData',
       'completely invalid json',
@@ -3046,15 +3046,12 @@ describe('StoryData Decode Error — Warning Not Error', () => {
       'Hello',
     ].join('\n');
     const result = await compileInline(source);
-    // Spec says "emit a warning" — check that the StoryData decode issue is a warning
-    const storyDataDiags = result.diagnostics.filter(
-      (d) => d.message.toLowerCase().includes('storydata') || d.message.toLowerCase().includes('unmarshal'),
-    );
-    for (const diag of storyDataDiags) {
-      // Each StoryData-related diagnostic should be a warning, not an error
-      expect(diag.level).toBe('warning');
-    }
-    expect(storyDataDiags.length).toBeGreaterThan(0);
+    const storyDataDiags = result.diagnostics.filter((d) => d.message.includes('Cannot unmarshal "StoryData"'));
+    expect(storyDataDiags).toHaveLength(1);
+    expect(storyDataDiags[0]).toMatchObject({ level: 'error', file: 'spec-test.tw', line: 1 });
+    expect(storyDataDiags[0]).not.toHaveProperty('fatal');
+    expect(result.story.twine2.format).toBe('');
+    expect(result.story.passages.map((p) => p.name)).toContain('Start');
   });
 });
 

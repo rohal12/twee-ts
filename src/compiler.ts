@@ -22,7 +22,7 @@ import { getFilenames, isExcluded, outputPaths, realPathOf, toBuildOutputs, watc
 import type { BuildOutputs } from './filesystem.js';
 import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
-import { applyTagAliases, hasTag } from './passage.js';
+import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
 import { generateIFID } from './ifid.js';
 import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
@@ -511,15 +511,9 @@ function storyToJSON(story: Story): string {
         tags: p.tags,
         text: p.text,
       };
-      if (p.metadata) {
-        const meta: Record<string, string> = {};
-        for (const [key, value] of Object.entries(p.metadata)) {
-          if (typeof value === 'string') meta[key] = value;
-        }
-        if (Object.keys(meta).length > 0) {
-          entry.metadata = meta;
-        }
-      }
+      // Own properties, so a key such as `__proto__` is kept.
+      const metadata = metadataForOutput(p.metadata);
+      if (metadata !== undefined) entry.metadata = metadata;
       storyPassages.push(entry);
     }
   }

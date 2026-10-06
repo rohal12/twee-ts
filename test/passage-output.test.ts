@@ -1,33 +1,76 @@
 import { describe, it, expect } from 'vitest';
 import {
   countWords,
-  marshalMetadata,
+  decodePassageMetadata,
+  metadataForOutput,
   passageToPassagedata,
   passageToTiddler,
   passageToTwee,
-  unmarshalMetadata,
 } from '../src/passage.js';
 import type { Passage, WordCountMethod } from '../src/types.js';
 
 const mk = (over: Partial<Passage> = {}): Passage => ({ name: 'A', tags: [], text: 'body', ...over });
 
-describe('unmarshalMetadata', () => {
-  it('keeps string values and drops the rest', () => {
-    expect(unmarshalMetadata('{"position":"1,2","size":3,"x":null}')).toEqual({ position: '1,2' });
+describe('decodePassageMetadata', () => {
+  it('keeps string values, reads null as empty and reports the values it leaves out', () => {
+    expect(decodePassageMetadata('{"position":"1,2","size":null,"x":3,"y":"z"}')).toEqual({
+      ok: true,
+      metadata: { position: '1,2', size: '', y: 'z' },
+      issues: [{ kind: 'type', path: ['x'], message: '$.x must be a string, not a number (3)' }],
+    });
   });
 
-  it('returns no metadata for JSON that is not an object', () => {
-    expect(unmarshalMetadata('[1,2]')).toEqual({});
-    expect(unmarshalMetadata('null')).toEqual({});
-    expect(unmarshalMetadata('"text"')).toEqual({});
+  it('rejects the whole block when position or size has the wrong type, as Tweego does', () => {
+    expect(decodePassageMetadata('{"position":[1,2],"size":"3,4"}')).toEqual({
+      ok: false,
+      reason: '$.position must be a string, not an array',
+    });
   });
 
-  it('throws on invalid JSON', () => {
-    expect(() => unmarshalMetadata('{nope')).toThrow();
+  it('rejects JSON that is not an object', () => {
+    for (const json of ['[1,2]', 'null', '"text"']) {
+      expect(decodePassageMetadata(json)).toEqual({ ok: false, reason: 'expected a JSON object' });
+    }
   });
 
-  it('round-trips with marshalMetadata, which drops empty values', () => {
-    expect(unmarshalMetadata(marshalMetadata({ position: '5,5', size: '' }))).toEqual({ position: '5,5' });
+  it('rejects invalid JSON with the position of the error', () => {
+    expect(decodePassageMetadata('{nope')).toEqual({
+      ok: false,
+      reason: 'unexpected character "n"; expected a string key or "}" at line 1, column 2',
+    });
+  });
+
+  it('reads position and size keys regardless of letter case, the last one winning, as Go does', () => {
+    const decoded = decodePassageMetadata('{"POSITION":"1,1","Position":"2,2","Size":"3,3"}');
+    expect(decoded).toEqual({
+      ok: true,
+      metadata: { position: '2,2', size: '3,3' },
+      issues: [
+        expect.objectContaining({ kind: 'case-variant-key', path: ['POSITION'] }),
+        expect.objectContaining({ kind: 'case-variant-key', path: ['Position'] }),
+        expect.objectContaining({ kind: 'duplicate-key', path: ['Position'] }),
+        expect.objectContaining({ kind: 'case-variant-key', path: ['Size'] }),
+      ],
+    });
+  });
+
+  it('keeps __proto__ and constructor as own keys (#241)', () => {
+    const decoded = decodePassageMetadata('{"__proto__":"kept","constructor":"control","position":"1,1"}');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(Object.getPrototypeOf(decoded.metadata)).toBe(Object.prototype);
+    expect(Object.keys(decoded.metadata)).toEqual(['__proto__', 'constructor', 'position']);
+    expect(Object.getOwnPropertyDescriptor(decoded.metadata, '__proto__')?.value).toBe('kept');
+    expect(JSON.stringify(metadataForOutput(decoded.metadata))).toBe(
+      '{"__proto__":"kept","constructor":"control","position":"1,1"}',
+    );
+  });
+
+  it('round-trips with metadataForOutput, which leaves out empty values', () => {
+    const written = JSON.stringify(metadataForOutput({ position: '5,5', size: '' }));
+    expect(decodePassageMetadata(written)).toEqual({ ok: true, metadata: { position: '5,5' }, issues: [] });
+    expect(metadataForOutput({ size: '' })).toBeUndefined();
+    expect(metadataForOutput(undefined)).toBeUndefined();
   });
 });
 

@@ -46,7 +46,13 @@ export interface StoryMap {
   brokenLinks: BrokenLink[];
   /** Story passages with no outgoing links (potential dead ends). */
   deadEnds: string[];
-  /** Story passages that no other passage links to (excluding the start passage). */
+  /**
+   * Story passages that the player cannot reach: no chain of links leads to them from the start passage or
+   * from an info passage (such as StoryInit, PassageHeader, or a `script` or `widget` passage, which the story
+   * format runs or shows without a link). A passage that links only to itself, or a group that links only
+   * among itself, is an orphan. Only the links `links` lists count, so a passage that is shown only through a
+   * macro such as `<<include>>` is listed too.
+   */
   orphans: string[];
   /** The configured start passage name, if any. */
   start: string;
@@ -164,6 +170,20 @@ function joinLines(text: string): string {
   return text.slice(start, end).replace(/\n+/g, ' ');
 }
 
+/** The passage names that `roots` and the passages their links lead to, link after link, reach. Linear. */
+function reachable(roots: readonly string[], links: ReadonlyMap<string, readonly string[]>): ReadonlySet<string> {
+  const reached = new Set(roots);
+  const pending = [...reached];
+  for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
+    for (const target of links.get(name) ?? []) {
+      if (reached.has(target)) continue;
+      reached.add(target);
+      pending.push(target);
+    }
+  }
+  return reached;
+}
+
 /**
  * Inspect a story and return its full structural map.
  *
@@ -249,20 +269,10 @@ export function storyInspect(story: ReadonlyStory, options: InspectOptions = {})
     }
   }
 
-  // Orphans: story passages nobody links to (excluding start)
+  // Orphans: story passages that no chain of links reaches from the start or from an info passage
   const start = story.twine2.start || 'Start';
-  const linkedTo = new Set<string>();
-  for (const targets of links.values()) {
-    for (const t of targets) {
-      linkedTo.add(t);
-    }
-  }
-  const orphans: string[] = [];
-  for (const name of storyPassages) {
-    if (name !== start && !linkedTo.has(name)) {
-      orphans.push(name);
-    }
-  }
+  const reached = reachable([start, ...infoPassages], links);
+  const orphans = storyPassages.filter((name) => !reached.has(name));
 
   return {
     passages,

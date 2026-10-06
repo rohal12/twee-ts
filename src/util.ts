@@ -90,7 +90,15 @@ export function readBase64(filename: string): string {
   return readFileSync(filename).toString('base64');
 }
 
-/** Get the filename without extension, a dotfile keeps its whole name. */
-export function baseNameWithoutExt(filename: string): string {
-  return parsePath(filename).name;
+/**
+ * The base name of a file up to its first dot, as Tweego names media passages and font families
+ * (`strings.Split(filepath.Base(filename), ".")[0]`): `bg.night.png` gives `bg`. A name that starts with dots
+ * keeps them and ends at the next dot (`.hidden.png` gives `.hidden`), where Tweego would give an empty name.
+ */
+export function fileStem(filename: string): string {
+  const base = parsePath(filename).base;
+  let leadingDots = 0;
+  while (base[leadingDots] === '.') leadingDots++;
+  const dot = base.indexOf('.', leadingDots);
+  return dot === -1 ? base : base.slice(0, dot);
 }

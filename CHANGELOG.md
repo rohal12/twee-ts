@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - Node.js 22.12 or newer is required (`engines`), the first Node 22 release that loads ES modules through `require()` without a flag; CI now tests 22.12.0 as well as the latest Node 22 and 24 (#250)
+- `StoryBuilder` changes its story only through its methods: `builder.story` is gone, and the passages it hands out are frozen copies. Read the story with `build()`, which now returns a frozen snapshot that later changes do not reach, and replace direct changes to `builder.story.passages` with `add()`, the new `remove()` and `rename()` methods (see [StoryBuilder](docs/api.md#storybuilder)) (#171)
+- A StoryData passage that is not valid JSON is an error, not a warning, and a StoryData field of the wrong type (`"format-version": 3`, `"options": "debug"`, `"start": ["A"]`) is an error where it used to be dropped silently; Tweego stops on both. Fix the StoryData passage the error names (JS-9, #246)
+- A later StoryData, StorySettings or StoryTitle passage decides its part of the story alone: a malformed StoryData leaves the story without the earlier one's IFID, format and start, and a StorySettings passage without `obfuscate:rot13` or `ifid` turns ROT13 off and drops the legacy IFID an earlier one set (#236, #246)
+- Media passages and font families are named after the file up to its first dot, as in Tweego: `bg.night.png` is the passage `bg`, `My.Font.woff2` the family `My`. Rename files whose inner dots should be kept (#246)
+- Passage metadata whose `position` or `size` is not a string is discarded with a warning, as in Tweego, where it used to keep the other keys; `Position` and other case variants are read as `position` and `size` (#246)
+- A passage name that ends in a lone backslash loses it, as in Tweego, with a warning; write `\\` for a backslash (#246)
+- Names, tags and the text of passages, StoryTitle and StorySettings are trimmed and split at Go's white space, as in Tweego: U+0085 is white space, U+FEFF is not (#246)
+- `storyInspect()` and lint list as orphans the story passages that no chain of links reaches from the start passage or an info passage, so a passage that links only to itself, or a group that links only among itself, is listed (#246)
+- With `trim: false`, a passage whose content is only white space is empty (trailing blank lines are dropped) (#246)
 
 ### Added
 
@@ -17,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CommonJS builds of `@rohal12/twee-ts/vite` and `@rohal12/twee-ts/rollup`; `require()` of either no longer fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` (#250)
 - `@rohal12/twee-ts/package.json` and `@rohal12/twee-ts/schemas/*.json` are exported, so `require.resolve()` and `import.meta.resolve()` find them (#250)
 - `THIRD_PARTY_NOTICES` and `UNLICENSE` ship in the package. The notices reproduce Tweego's BSD licence and the licence of every package bundled into `dist/`; the build regenerates them from what it bundled (#250)
+- `StoryBuilder.remove()`, `rename()`, `get()` and `passages` (#171)
+- [Differences from Tweego](docs/tweego-differences.md) lists every intended difference, each with a test (#246)
+- StoryData keys match regardless of letter case, as in Tweego (`IFID`, `Format-Version`), with a warning; unknown and repeated keys are warned about (#246)
 
 ### Fixed
 
@@ -27,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Vite plugin compares and watches its sources, head file, modules and the entry's dependencies by real path, so `vite build --watch` rebuilds and the dev server sees changes on macOS (`/var` is `/private/var`), on Windows (8.3 short names such as `RUNNER~1`) and in projects reached through a symbolic link (#250)
 - On case-insensitive file systems (macOS, Windows), a story format folder that both `storyformats` and `storyFormats` reach is searched once, at the rank of its first name, so format precedence matches Linux (#250)
 - Builds from a git checkout (tests, git dependencies, `pnpm link`) report the version `0.0.0-development` in `--version` and `creator-version` instead of the stale `1.2.0`; published packages report the released version (#250)
+- Twee output checks each passage by reading it back with the Twee parser, so a text line that starts with a byte order mark and `::` is reported (and indented in stylesheets and scripts) like one that starts with `::`, and a carriage return or a metadata key that reads back as another is reported; Twee 1 output warns that it leaves out metadata (#246)
+- A passage metadata key such as `__proto__` or `constructor` is kept in the model, in JSON output and in Twee output (#241)
+- `StoryBuilder` lookups always agree with its passages (#171)
+- Duplicate passage warnings and StoryData, StorySettings and StoryIncludes diagnostics carry the file and line of the passage, and a duplicate warning names the passage it replaces (#246)
+- The `tweego` word count matches Tweego: empty comments (`/**/`) are removed and a letter with its accents counts once (#246)
+- Twee2 conversion (`--twee2-compat`, `.tw2` files) gives Tweego's result when a line holds U+2028 or U+2029 (#246)
+- An unterminated tag block after an escaped line end is reported on the header's line (#246)
+- Parsing with `trim: false`, the word counts and Twee2 conversion take linear time on adversarial input (#246)
+- JSON output leaves out passage metadata entries with an empty value, as Twee output does (#246)
 
 ### Changed
 

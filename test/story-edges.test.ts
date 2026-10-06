@@ -3,8 +3,7 @@ import {
   createStory,
   storyAdd,
   storyGet,
-  storyIndex,
-  unmarshalStoryData,
+  decodeStoryData,
   unmarshalStorySettings,
   StoryBuilder,
 } from '../src/story.js';
@@ -12,28 +11,26 @@ import type { Diagnostic, Passage } from '../src/types.js';
 
 const mk = (name: string, text = ''): Passage => ({ name, tags: [], text });
 
-describe('storyGet and storyIndex', () => {
-  it('find a passage by name and report a missing one', () => {
+describe('storyGet', () => {
+  it('finds a passage by name and reports a missing one', () => {
     const story = createStory();
     storyAdd(story, mk('A', 'a'), []);
     storyAdd(story, mk('B', 'b'), []);
     expect(storyGet(story, 'B')?.text).toBe('b');
-    expect(storyIndex(story, 'B')).toBe(1);
     expect(storyGet(story, 'Missing')).toBeUndefined();
-    expect(storyIndex(story, 'Missing')).toBe(-1);
   });
 });
 
-describe('unmarshalStoryData with JSON that is not an object', () => {
-  it.each(['[1,2]', 'null', '"text"', '42'])('rejects %s and leaves the story alone', (json) => {
-    const story = createStory();
-    story.twine2.format = 'Kept';
-    expect(unmarshalStoryData(story, json)).toContain('expected a JSON object');
-    expect(story.twine2.format).toBe('Kept');
+describe('decodeStoryData with JSON that is not an object', () => {
+  it.each(['[1,2]', 'null', '"text"', '42'])('rejects %s', (json) => {
+    expect(decodeStoryData(json)).toEqual({ ok: false, reason: 'expected a JSON object' });
   });
 
-  it('reports invalid JSON', () => {
-    expect(unmarshalStoryData(createStory(), '{nope')).toContain('Cannot unmarshal "StoryData"');
+  it('reports invalid JSON with its position', () => {
+    expect(decodeStoryData('{nope')).toEqual({
+      ok: false,
+      reason: 'unexpected character "n"; expected a string key or "}" at line 1, column 2',
+    });
   });
 });
 
@@ -53,7 +50,8 @@ describe('StoryBuilder.build', () => {
     const builder = new StoryBuilder();
     builder.add(mk('A', 'a'), []);
     const story = builder.build();
-    expect(story).toBe(builder.story);
+    expect(story).toEqual(builder.build());
+    expect(story).not.toBe(builder.build());
     expect(story.passages.map((p) => p.name)).toEqual(['A']);
   });
 });
