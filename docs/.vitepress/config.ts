@@ -53,6 +53,10 @@ export default defineConfig({
           { text: 'Packaging Formats', link: '/story-format-packages' },
         ],
       },
+      {
+        text: 'Development',
+        items: [{ text: 'Compiler Validation', link: '/compiler-validation' }],
+      },
     ],
 
     socialLinks: [{ icon: 'github', link: 'https://github.com/rohal12/twee-ts' }],

@@ -65,6 +65,9 @@ src/
     diagnostics.ts, paths.ts, watch-targets.ts  Shared plugin helpers
 bin/twee-ts.ts         CLI entry point
 scripts/               Package check, duplication measurement, licence notices, ESLint restrictions
+validation/contracts/  The compiler contract matrix, run against dist/ (vitest.contracts.config.ts)
+validation/release/    The release gate: review areas, evidence record checks (gate.ts), the command
+validation/evidence/   Committed evidence records and review reports, one folder per release
 test/                  *.test.ts (unit, property, differential); helpers/; fixtures/
                        docs-snippets.test.ts and docs-reference.test.ts keep the docs executable and in sync
 specs/                 Specification conformance tests (Twee 3, Twine HTML/archive/JSON, story formats)
@@ -147,6 +150,9 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run knip` — unused files, exports and dependencies (`knip.jsonc`); exports of the package entry points count as used
 - `pnpm run build` — production build (ESM + CJS via tsdown); also regenerates `THIRD_PARTY_NOTICES`
 - `pnpm run check:package` — build, pack, and check the tarball as consumers use it (`scripts/check-package.mjs`)
+- `pnpm run mutation` — mutation testing of the core modules with StrykerJS (`stryker.config.mjs`, a few minutes); `pnpm run mutation:summary` compares the scores with `mutation-baseline.json` (`--update` rewrites it). Informational: never a gate
+- `pnpm run test:contracts` — build, then run the compiler contract matrix (`validation/contracts/`) against `dist/`
+- `pnpm run release:gate` — the release gate; `--always` checks the evidence for HEAD, `--fingerprint [commit]` and `--checks <commit>` print what a record needs (docs/compiler-validation.md)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
@@ -167,7 +173,12 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
 1. **Create a release branch** named `release/X.Y.Z`
 2. **Rebase onto latest main** before committing — ensures clean history
-3. **Run all checks**: `pnpm run format && pnpm run typecheck && pnpm test && pnpm run build`
+3. **Run all checks**: `pnpm run format && pnpm run typecheck && pnpm test && pnpm run build`, then **record the
+   validation evidence**. The release workflow's gate refuses to publish without a committed record for the exact
+   revision: the required CI checks passed on the frozen commit, and three independent full review sweeps of it (one
+   per method, every review area) left no P1/P2 finding open. Follow "How to prepare a release" in
+   [docs/compiler-validation.md](docs/compiler-validation.md), check with
+   `GITHUB_TOKEN=$(gh auth token) pnpm run release:gate --always`, and merge the PR while it is up to date with `main`.
 4. **Update `CHANGELOG.md`** with a new version section using [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
 
    ```markdown
@@ -185,7 +196,7 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
    The reverse matters too: the action treats `release-npm` **anywhere** in the merge commit message as a release request, including inside its own name `release-npm-action`. In any PR that should not release, don't write that string in the title or body, or in commit messages; call it "the release action". A Dependabot PR that bumps the action always contains it, so merging one releases any `fix:`/`feat:` commits already waiting on `main`. When there is nothing to release, the run passes (`FAIL_ON_SKIP: 'false'`).
 
-7. **After merge**, the release workflow runs the format check, typecheck and tests, builds and checks the tarball on every platform, then publishes that tarball. Verify: `npm view @rohal12/twee-ts version`
+7. **After merge**, the release workflow runs the format check, typecheck and tests, builds and checks the tarball on every platform, runs the release gate, then publishes that tarball. Verify: `npm view @rohal12/twee-ts version`
 
 ### SemVer rules
 
@@ -205,6 +216,11 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 | `chore:` | Tooling, CI, dependencies  |
 
 ## PR review guidelines
+
+Whole-compiler review sweeps follow [docs/compiler-validation.md](docs/compiler-validation.md): cover every review
+area in `validation/release/areas.ts`, run the contract matrix (`pnpm run test:contracts`), and add a new variant of
+an existing defect class to its group and its owning issue. A failing contract case is a product defect: fix it,
+never its expectation.
 
 When reviewing PRs, check for:
 

@@ -95,7 +95,11 @@ pnpm run lint        # ESLint
 pnpm run build       # bundle
 pnpm run docs:dev    # local docs dev server
 pnpm run docs:build  # build docs for deployment
+pnpm run test:contracts  # build, then run the compiler contract matrix against it
 ```
+
+Releases need recorded validation evidence: see
+[Compiler Validation and Releases](https://rohal12.github.io/twee-ts/compiler-validation).
 
 ## License
 
