@@ -295,22 +295,27 @@ export function freezePassage(p: Passage): Passage {
 }
 
 /**
- * Apply tag aliases: for each passage carrying an alias tag, add the canonical
- * tag if not already present. Returns new passage objects where tags changed;
- * unchanged passages are returned as-is. Idempotent — safe to call multiple times.
+ * Apply tag aliases: for each passage carrying an alias tag, add the canonical tag if not already present. A
+ * canonical tag that is itself an alias is followed (`{ a: 'b', b: 'c' }` adds `b` and `c` to a passage tagged
+ * `a`), until no mapping adds anything, so cycles and self-mappings end too. Authored tags keep their place, added
+ * tags follow in the order they were reached, and nothing is duplicated. Returns new passage objects where tags
+ * changed; unchanged passages are returned as-is. Idempotent: the result carries every tag the mappings reach, so
+ * applying the same aliases again adds nothing.
  */
 export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<Record<string, string>>): Passage[] {
   const entries = Object.entries(aliases);
   if (entries.length === 0) return [...passages];
   return passages.map((p) => {
-    const original = p.tags;
-    const added: string[] = [];
-    for (const [alias, canonical] of entries) {
-      if (original.includes(alias) && !original.includes(canonical) && !added.includes(canonical)) {
-        added.push(canonical);
+    const tags = new Set(p.tags);
+    const authored = tags.size;
+    for (let grew = true; grew;) {
+      const before = tags.size;
+      for (const [alias, canonical] of entries) {
+        if (tags.has(alias)) tags.add(canonical);
       }
+      grew = tags.size > before;
     }
-    return added.length > 0 ? derivePassage(p, { tags: [...original, ...added] }) : p;
+    return tags.size > authored ? derivePassage(p, { tags: [...tags] }) : p;
   });
 }
 

@@ -161,6 +161,73 @@ describe('the input policy applied', () => {
     });
   });
 
+  describe('a named path that cannot be looked up (#281)', () => {
+    const blockedPaths = (): { readonly blocked: string; readonly plain: string } => {
+      const blocked = join(dir, 'blocked');
+      mkdirSync(blocked);
+      writeFileSync(join(blocked, 's.tw'), ':: Blocked\nx\n');
+      writeFileSync(join(blocked, 'm.js'), 'globalThis.flag=1;');
+      const plain = join(dir, 'plain');
+      writeFileSync(plain, 'a regular file');
+      return { blocked, plain };
+    };
+
+    it.each(['sources', 'modules'] as const)(
+      'a path beneath a regular file is a missing %s warning, and the build goes on',
+      async (role) => {
+        const { plain } = blockedPaths();
+        const path = join(plain, 'missing.tw');
+        const result = await compile({
+          ...options,
+          sources: [story, ...(role === 'sources' ? [path] : [])],
+          ...(role === 'modules' ? { modules: [path] } : {}),
+        });
+        expect(result.diagnostics).toEqual([
+          { level: 'warning', message: expect.stringMatching(/ENOTDIR|ENOENT/), file: path },
+        ]);
+        expect(result.output).toContain('Hello');
+      },
+    );
+
+    it.each(['sources', 'modules'] as const)('a dangling link is a %s warning naming the link', async (role) => {
+      const link = join(dir, 'dangling.tw');
+      symlinkSync(join(dir, 'nowhere.tw'), link);
+      const result = await compile({
+        ...options,
+        sources: [story, ...(role === 'sources' ? [link] : [])],
+        ...(role === 'modules' ? { modules: [link] } : {}),
+      });
+      expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+      expect(result.diagnostics[0]?.message).toContain('nowhere.tw');
+    });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      'an inaccessible parent folder is an unreadable error for each named role; every failure is collected',
+      async () => {
+        const { blocked, plain } = blockedPaths();
+        const missing = join(plain, 'missing.tw');
+        chmodSync(blocked, 0o000);
+        try {
+          const result = await compile({
+            ...options,
+            sources: [story, join(blocked, 's.tw'), missing],
+            modules: [join(blocked, 'm.js')],
+          });
+          expect(result.diagnostics.map((d) => [d.level, d.file])).toEqual([
+            ['error', join(blocked, 's.tw')],
+            ['warning', missing],
+            ['error', join(blocked, 'm.js')],
+          ]);
+          expect(result.diagnostics.filter((d) => d.level === 'error').every((d) => d.message.includes('EACCES'))).toBe(
+            true,
+          );
+        } finally {
+          chmodSync(blocked, 0o700);
+        }
+      },
+    );
+  });
+
   describe('modules', () => {
     it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
       'an unreadable module is an error naming it, not a bare exception (FS-05)',

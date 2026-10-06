@@ -135,7 +135,7 @@ Or in the config file:
 }
 ```
 
-Only absolute `http:` and `https:` URLs are accepted, without a user name or password; anything else is an error. To use a format file from disk, put its `format.js` in a folder (named like a format ID, e.g. `my-format-1/format.js`) and list the folder's parent in `formatPaths`: `file:` URLs are not supported. A fragment (`#…`) is ignored. A redirect must stay on `http:` or `https:`, and never go from `https:` to `http:`.
+Only absolute `http:` and `https:` URLs are accepted, without a user name or password; anything else is an error. To use a format file from disk, put its `format.js` in a folder (named like a format ID, e.g. `my-format-1/format.js`) and list the folder's parent in `formatPaths`: `file:` URLs are not supported. A fragment (`#…`) is ignored. Each redirect is checked before it is followed: it must stay on `http:` or `https:`, and once a download has used `https:` no later hop may use `http:` (the `http:` endpoint is never contacted). A chain is cut off after 20 redirects.
 
 A format URL's `format.js` names the format and version it offers. A build that reaches a format URL downloads it every time; when a copy is cached, the request is conditional (`If-None-Match` / `If-Modified-Since`), so an unchanged file is not downloaded again.
 

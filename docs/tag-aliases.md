@@ -15,6 +15,8 @@ Passage tags after:   ['library', 'script']
 
 Every check for a special tag (`script`, `stylesheet`, `Twine.private`, …) then matches the passage.
 
+A target that is itself an alias is followed: with `{ "library": "script", "script": "Twine.private" }` a passage tagged `library` gets `script` and `Twine.private` at once. Cycles and self-mappings end once no mapping adds a tag. The first application therefore gives the final tags, so compiling to Twee and recompiling with the same aliases changes nothing.
+
 The operation is **idempotent** — running it multiple times has the same effect as running it once. If the canonical tag is already present, it won't be duplicated.
 
 ## Usage

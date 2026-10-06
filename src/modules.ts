@@ -8,12 +8,13 @@ import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
 import { readUTF8, readBase64, fileStem } from './util.js';
 import { cssStringEscape, scriptContentEscape, styleContentEscape } from './escape.js';
-import { codeEscapeDiagnostics } from './html-output-check.js';
+import { codeEscapeDiagnostics, unrepresentableTextDiagnostic } from './html-output-check.js';
 import { fillFormatTemplate } from './template.js';
 
 /**
  * Load modules and return HTML tags to inject at the end of the head. `diagnostics` receives a warning for each
- * module that is not valid UTF-8 (it is read as Windows-1252), and for code that escaping it for its element
+ * module that is not valid UTF-8 (it is read as Windows-1252), an error for text HTML cannot carry (U+0000, lone
+ * surrogates), and a warning for code that escaping it for its element
  * changes (see `codeEscapeDiagnostics()`).
  */
 export function loadModules(filenames: string[], diagnostics?: Diagnostic[]): string {
@@ -53,6 +54,8 @@ export function loadModules(filenames: string[], diagnostics?: Diagnostic[]): st
 function loadModuleTagged(tag: 'script' | 'style', filename: string, diagnostics?: Diagnostic[]): string | null {
   const source = readUTF8(filename, diagnostics).trim();
   if (source.length === 0) return null;
+  const unrepresentable = unrepresentableTextDiagnostic(`The module "${filename}"`, source);
+  if (unrepresentable !== undefined) diagnostics?.push(unrepresentable);
   diagnostics?.push(
     ...codeEscapeDiagnostics(tag, { text: source, parts: [{ label: `module "${filename}"`, start: 0 }] }),
   );
