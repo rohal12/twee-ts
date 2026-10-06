@@ -2,10 +2,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { createLogger, createServer, type Logger, type Plugin, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { hasEntry, watcherReady } from './helpers/plugins.js';
+import { hasEntry, watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -32,25 +31,12 @@ function makeProject(files: Record<string, string>): string {
   return dir;
 }
 
-async function freePort(): Promise<number> {
-  return new Promise((done) => {
-    const probe = createNetServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => {
-        done(port);
-      });
-    });
-  });
-}
-
 async function serve(
   dir: string,
   plugins: unknown[],
   customLogger: Logger,
   extra: { base?: string } = {},
 ): Promise<string> {
-  const port = await freePort();
   server = await createServer({
     configFile: false,
     root: dir,
@@ -58,11 +44,11 @@ async function serve(
     logLevel: 'silent',
     customLogger,
     plugins: plugins as Plugin[],
-    server: { host: '127.0.0.1', port, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: true },
   });
   await server.listen();
   await watcherReady(server);
-  return `http://127.0.0.1:${port}/`;
+  return `${serverUrl(server)}/`;
 }
 
 const options = (dir: string): Parameters<typeof tweeTsPlugin>[0] => ({

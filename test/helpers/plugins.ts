@@ -176,11 +176,19 @@ export async function startServer(config: InlineConfig): Promise<{ server: ViteD
   servers.push(server);
   await server.listen();
   await watcherReady(server);
+  return { server, url: serverUrl(server) };
+}
+
+/**
+ * The loopback URL (no trailing slash) of a listening dev server. Tests let the OS pick the port (`port: 0`):
+ * a port found free beforehand may be taken by another process before the server binds it.
+ */
+export function serverUrl(server: ViteDevServer): string {
   const address = server.httpServer?.address();
   if (address === null || address === undefined || typeof address === 'string') {
     throw new Error('the dev server has no TCP address');
   }
-  return { server, url: `http://127.0.0.1:${(address satisfies AddressInfo).port}` };
+  return `http://127.0.0.1:${(address satisfies AddressInfo).port}`;
 }
 
 /** The files a build writes, held in memory: file name to content. */

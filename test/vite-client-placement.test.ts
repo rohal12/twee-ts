@@ -7,12 +7,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer as createNetServer } from 'node:net';
-import type { AddressInfo } from 'node:net';
 import { createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { attr, elements, parentTag, parseDocument } from './helpers/html.js';
+import { serverUrl } from './helpers/plugins.js';
 
 const STORY = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHello.\n';
 
@@ -24,19 +23,6 @@ afterEach(async () => {
   server = undefined;
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
-
-async function freePort(): Promise<number> {
-  return new Promise((done) => {
-    const probe = createNetServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      const port = address !== null && typeof address === 'object' ? (address satisfies AddressInfo).port : 0;
-      probe.close(() => {
-        done(port);
-      });
-    });
-  });
-}
 
 /** Serve a story with a format whose source is `source`, at `base`; returns the served page. */
 async function serve(source: string, base = '/'): Promise<string> {
@@ -50,7 +36,6 @@ async function serve(source: string, base = '/'): Promise<string> {
     mkdirSync(dirname(join(dir, name)), { recursive: true });
     writeFileSync(join(dir, name), content);
   }
-  const port = await freePort();
   server = await createServer({
     configFile: false,
     root: dir,
@@ -63,10 +48,10 @@ async function serve(source: string, base = '/'): Promise<string> {
         compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
       }),
     ],
-    server: { host: '127.0.0.1', port, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: true },
   });
   await server.listen();
-  return (await fetch(`http://127.0.0.1:${port}${base}`)).text();
+  return (await fetch(`${serverUrl(server)}${base}`)).text();
 }
 
 function clients(html: string, src = '/@vite/client') {
