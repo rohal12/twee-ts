@@ -1,8 +1,9 @@
 /**
  * How the build plugins turn compile results into bundler errors and warnings.
  */
-import type { CompileResult, Diagnostic } from '../types.js';
-import { TweeTsError } from '../compiler.js';
+import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry } from '../types.js';
+import { compileForOutputFile, TweeTsError } from '../compiler.js';
+import type { BuildOutputs } from '../filesystem.js';
 
 /** An error carrying the file and line the bundler reports (and Vite shows in its overlay). */
 export interface LocatedError extends Error {
@@ -37,4 +38,28 @@ export function fatalError(e: unknown): LocatedError {
     return new Error([...errors, e.message].join('\n'));
   }
   return e instanceof Error ? e : new Error(String(e));
+}
+
+/** A compiled story: its HTML, and its warnings as the plugins report them. */
+export interface CompiledStory {
+  readonly output: string;
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Compiles the story for a plugin, leaving out what a build writes (`outputs`).
+ * Throws a LocatedError when the compile fails or reports errors.
+ */
+export async function compileStory(
+  options: CompileOptions,
+  outputs: BuildOutputs,
+  cache?: Map<string, FileCacheEntry>,
+): Promise<CompiledStory> {
+  let result: CompileResult;
+  try {
+    result = await compileForOutputFile(options, outputs, cache);
+  } catch (e) {
+    throw fatalError(e);
+  }
+  return { output: result.output, warnings: splitDiagnostics(result).map(formatDiagnostic) };
 }

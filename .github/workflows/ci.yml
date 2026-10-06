@@ -128,3 +128,103 @@ jobs:
     uses: ./.github/workflows/package.yml
     permissions:
       contents: read
+
+  # The bundler plugins against every Vite and Rollup the peer range allows: the plugin test files
+  # (vitest.peer.config.ts aliases `vite` and `rollup` to the versions installed here; Vitest keeps
+  # the repository's), and a consumer config type-checked against the packed plugins' types.
+  plugin-peers:
+    name: plugin peers (Vite ${{ matrix.vite }}, Rollup ${{ matrix.rollup }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { vite: 5.0.0, rollup: 4.0.0 }
+          - { vite: '5.4', rollup: '4' }
+          - { vite: 6.0.0, rollup: '4' }
+          - { vite: '6', rollup: '4' }
+          - { vite: 7.0.0, rollup: '4' }
+          - { vite: '7', rollup: '4' }
+          - { vite: 8.0.0, rollup: '4' }
+          - { vite: '8', rollup: '4' }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install the peer versions
+        env:
+          VITE_VERSION: ${{ matrix.vite }}
+          ROLLUP_VERSION: ${{ matrix.rollup }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/peer"
+          cd "$RUNNER_TEMP/peer"
+          echo '{ "private": true, "type": "module" }' > package.json
+          npm install --no-audit --no-fund "vite@$VITE_VERSION" "rollup@$ROLLUP_VERSION"
+          vite=$(node -p "require('./node_modules/vite/package.json').version")
+          rollup=$(node -p "require('./node_modules/rollup/package.json').version")
+          echo "Vite $vite, Rollup $rollup" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Plugin tests against the peer versions
+        run: TWEE_TS_PEER_DIR="$RUNNER_TEMP/peer" pnpm exec vitest run --config vitest.peer.config.ts
+
+      - name: Build and pack
+        run: |
+          pnpm run build
+          npm pack --pack-destination "$RUNNER_TEMP" --loglevel=error
+          mv "$RUNNER_TEMP"/rohal12-twee-ts-*.tgz "$RUNNER_TEMP/package.tgz"
+
+      - name: Type-check a consumer config against the peer versions
+        run: |
+          cd "$RUNNER_TEMP/peer"
+          npm install --no-audit --no-fund "$RUNNER_TEMP/package.tgz" typescript@7.0.2 @types/node@22
+          cat > consumer.ts <<'EOF'
+          import { defineConfig } from 'vite';
+          import type { Plugin as VitePlugin } from 'vite';
+          import { defineConfig as defineRollupConfig } from 'rollup';
+          import type { Plugin as RollupPlugin } from 'rollup';
+          import { tweeTsPlugin } from '@rohal12/twee-ts/vite';
+          import type { PluginCompileOptions, TweeTsVitePluginOptions } from '@rohal12/twee-ts/vite';
+          import { tweeTsPlugin as tweeTsRollupPlugin } from '@rohal12/twee-ts/rollup';
+
+          const compileOptions: PluginCompileOptions = { startPassage: 'Prologue', exclude: ['**/*.png'] };
+          const options: TweeTsVitePluginOptions = { sources: ['src/story'], format: 'sugarcube-2', compileOptions };
+          export const vitePlugin: VitePlugin = tweeTsPlugin(options);
+          export default defineConfig(({ mode }) => ({
+            plugins: [tweeTsPlugin({ ...options, compileOptions: { testMode: mode === 'development' } })],
+          }));
+          export const rollupPlugin: RollupPlugin = tweeTsRollupPlugin({ sources: ['src/story'] });
+          export const rollupConfig = defineRollupConfig({
+            input: 'src/main.js',
+            plugins: [tweeTsRollupPlugin({ sources: ['src/story'] })],
+          });
+          // @ts-expect-error compileOptions.formatId is the plugin's format option
+          tweeTsPlugin({ sources: ['src/story'], compileOptions: { formatId: 'harlowe-3' } });
+          // @ts-expect-error compileOptions.sources is the plugin's sources option
+          tweeTsRollupPlugin({ sources: ['src/story'], compileOptions: { sources: ['other'] } });
+          EOF
+          cat > tsconfig.json <<'EOF'
+          {
+            "compilerOptions": {
+              "target": "ES2022",
+              "module": "nodenext",
+              "moduleResolution": "nodenext",
+              "strict": true,
+              "exactOptionalPropertyTypes": true,
+              "skipLibCheck": true,
+              "noEmit": true,
+              "types": ["node"]
+            },
+            "files": ["consumer.ts"]
+          }
+          EOF
+          npx tsc -p tsconfig.json
