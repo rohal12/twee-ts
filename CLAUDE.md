@@ -117,7 +117,8 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run typecheck` — strict type checking (`exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch` and the other flags in `tsconfig.json`)
 - `pnpm run lint` — ESLint with typescript-eslint `strictTypeChecked` + `stylisticTypeChecked` and the Vitest rules (`eslint.config.js`; typescript-eslint runs on TypeScript 6, see `.pnpmfile.cjs`)
 - `pnpm run knip` — unused files, exports and dependencies (`knip.jsonc`); exports of the package entry points count as used
-- `pnpm run build` — production build (ESM + CJS via tsdown)
+- `pnpm run build` — production build (ESM + CJS via tsdown); also regenerates `THIRD_PARTY_NOTICES`
+- `pnpm run check:package` — build, pack, and check the tarball as consumers use it (`scripts/check-package.mjs`)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
@@ -129,6 +130,8 @@ Follow type-first development: define data models and function signatures before
 Releases use `tobua/release-npm-action@v5` (`.github/workflows/release.yml`), which runs on every push to `main` but publishes only when the head commit's message contains the annotation `release-npm` (see step 6). It then runs semantic-release: the version bump comes from the Conventional Commit types since the last tag (`feat:` → minor, `fix:` → patch), and it publishes to npm and creates a git tag and a GitHub release. Nothing is committed back, so `package.json` in git keeps its old version; `src/version.ts` reads the published version at runtime. The `CHANGELOG.md` section is for readers; it does not decide the version.
 
 It publishes through npm trusted publishing (OIDC): there is no npm token, the workflow needs `id-token: write`, and the release job must run on Node 24 or later, because OIDC publishing needs npm 11.5.1+. semantic-release pushes the git tag before `npm publish`, so if a publish fails, the tag stays and the next release takes the following version.
+
+`package.json` in git always holds the version `0.0.0-development`, so local builds, tests, git dependencies and `pnpm link` report that marker instead of a stale release number. The release workflow installs, tests and builds in jobs without write permissions; the package job (`.github/workflows/package.yml`, shared with CI) packs and checks the tarball on Linux, macOS and Windows. The release job alone gets `contents: write` and `id-token: write`: it installs nothing, unpacks that checked tarball, and the release action versions and publishes that folder (`FOLDER`) with npm lifecycle scripts turned off. semantic-release writes the release version into the published `package.json`, which `src/version.ts` reads at runtime.
 
 ### How to release
 
@@ -152,7 +155,7 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
    The reverse matters too: the action treats `release-npm` **anywhere** in the merge commit message as a release request, including inside its own name `release-npm-action`. In any PR that should not release, don't write that string in the title or body, or in commit messages; call it "the release action". A Dependabot PR that bumps the action always contains it, so merging one releases any `fix:`/`feat:` commits already waiting on `main`. When there is nothing to release, the run passes (`FAIL_ON_SKIP: 'false'`).
 
-7. **After merge**, the release workflow runs typecheck + tests + build, then publishes. Verify: `npm view @rohal12/twee-ts version`
+7. **After merge**, the release workflow runs the format check, typecheck and tests, builds and checks the tarball on every platform, then publishes that tarball. Verify: `npm view @rohal12/twee-ts version`
 
 ### SemVer rules
 
