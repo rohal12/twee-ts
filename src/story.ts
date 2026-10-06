@@ -20,7 +20,8 @@ import type {
   Twine2Metadata,
 } from './types.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
-import { isStoryPassage, countWords } from './passage.js';
+import { isStoryPassage, countWords, derivePassage, generatedNameOf, withGeneratedName } from './passage.js';
+import type { GeneratedName } from './passage.js';
 import { trimTweeSpace } from './twee-syntax.js';
 import type { DecodeIssue, DecodeIssueKind, TextDecodeResult } from './json-decode.js';
 import {
@@ -104,30 +105,6 @@ const SPECIAL_PASSAGE_NAMES: ReadonlySet<string> = new Set([
   'StoryTitle',
 ]);
 
-/**
- * Where a passage name that the compiler made up came from. Generated names yield to every other
- * name in the story: see `storyAdd()`.
- * - `code`: a stylesheet or script (a `.css`, `.js` or font file, or an imported Twine 2 story's
- *   stylesheet or script). Output finds these by tag, so a new name is not reported.
- * - `media`: an image, audio, video or text track file. Stories refer to these by passage name,
- *   so a new name is reported.
- */
-export type GeneratedName =
-  | { readonly kind: 'code'; readonly base: string }
-  | { readonly kind: 'media'; readonly base: string; readonly file: string };
-
-/** Passages whose names were generated, kept by identity so that cached passages keep the mark. */
-const generatedNames = new WeakMap<Passage, GeneratedName>();
-
-/**
- * Mark a passage's name as generated (from a file name, or for imported story code) and return
- * the passage. `origin.base` is the name that free names are numbered from: `base`, `base 2`, ….
- */
-export function withGeneratedName(p: Passage, origin: GeneratedName): Passage {
-  generatedNames.set(p, origin);
-  return p;
-}
-
 /** The first of `base`, `base 2`, `base 3`, … that `isFree` accepts. */
 export function freeName(base: string, isFree: (name: string) => boolean): string {
   if (isFree(base)) return base;
@@ -171,7 +148,7 @@ function addGenerated(story: Story, p: Passage, origin: GeneratedName, diagnosti
   }
   const name = freeName(origin.base, (n) => isFreeForGenerated(story, n));
   reportRename(origin, p.name, name, diagnostics);
-  push(story, withGeneratedName({ ...p, name }, origin));
+  push(story, withGeneratedName(derivePassage(p, { name }), origin));
 }
 
 /**
@@ -181,11 +158,11 @@ function addGenerated(story: Story, p: Passage, origin: GeneratedName, diagnosti
 function moveGeneratedAside(story: Story, name: string, diagnostics: Diagnostic[]): void {
   const i = position(story, name);
   const existing = i === -1 ? undefined : story.passages[i];
-  const origin = existing === undefined ? undefined : generatedNames.get(existing);
+  const origin = existing === undefined ? undefined : generatedNameOf(existing);
   if (existing === undefined || origin === undefined) return;
   const free = freeName(origin.base, (n) => isFreeForGenerated(story, n));
   reportRename(origin, name, free, diagnostics);
-  replaceAt(story, i, withGeneratedName({ ...existing, name: free }, origin));
+  replaceAt(story, i, withGeneratedName(derivePassage(existing, { name: free }), origin));
 }
 
 // --- Story ---
@@ -489,7 +466,7 @@ function readSpecialPassage(story: Story, p: Passage, diagnostics: Diagnostic[])
       if (ifidError !== null) {
         diagnostics.push({ level: 'error', message: `Cannot validate IFID; ${ifidError}.`, ...at(p.source) });
       }
-      return { ...p, text: marshalStoryData(story) };
+      return derivePassage(p, { text: marshalStoryData(story) });
     }
 
     case 'StorySettings': {
@@ -503,7 +480,7 @@ function readSpecialPassage(story: Story, p: Passage, diagnostics: Diagnostic[])
     case 'StoryTitle': {
       const name = trimTweeSpace(p.text);
       story.name = name;
-      return { ...p, text: name };
+      return derivePassage(p, { text: name });
     }
 
     default:
@@ -590,7 +567,7 @@ export function storyPrepend(story: Story, p: Passage, diagnostics: Diagnostic[]
  * name holds takes it over, and the generated one moves to the first free name in its place.
  */
 export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const origin = generatedNames.get(p);
+  const origin = generatedNameOf(p);
   if (origin !== undefined) {
     addGenerated(story, p, origin, diagnostics);
     return;
@@ -618,7 +595,7 @@ function storyRename(story: Story, from: string, to: string, diagnostics: Diagno
   const p = storyGet(story, from);
   if (p === undefined) return false;
   if (from === to) return true;
-  const renamed: Passage = { ...p, name: to };
+  const renamed = derivePassage(p, { name: to });
   const existing = storyGet(story, to);
   if (existing !== undefined) {
     diagnostics.push(duplicateWarning(existing, renamed));
@@ -668,7 +645,7 @@ function frozenPassage(p: ReadonlyPassage): ReadonlyPassage {
 }
 
 /** A frozen copy of the story: later changes to it do not reach the copy, and the copy cannot be changed. */
-function snapshot(story: Story): ReadonlyStory {
+export function snapshot(story: Story): ReadonlyStory {
   return Object.freeze({
     name: story.name,
     ifid: story.ifid,

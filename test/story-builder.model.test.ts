@@ -4,15 +4,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import {
-  StoryBuilder,
-  createStory,
-  deriveStoryMetadata,
-  storyAdd,
-  storyGet,
-  storyHas,
-  withGeneratedName,
-} from '../src/story.js';
+import { StoryBuilder, createStory, deriveStoryMetadata, storyAdd, storyGet, storyHas } from '../src/story.js';
+import { withGeneratedName } from '../src/passage.js';
 import type { Diagnostic, Story } from '../src/types.js';
 
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';

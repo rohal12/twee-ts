@@ -236,6 +236,65 @@ export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego
 }
 
 /**
+ * Where a passage name that the compiler made up came from. Generated names yield to every other
+ * name in the story: see `storyAdd()`.
+ * - `code`: a stylesheet or script (a `.css`, `.js` or font file, or an imported Twine 2 story's
+ *   stylesheet or script). Output finds these by tag, so a new name is not reported.
+ * - `media`: an image, audio, video or text track file. Stories refer to these by passage name,
+ *   so a new name is reported.
+ */
+export type GeneratedName =
+  | { readonly kind: 'code'; readonly base: string }
+  | { readonly kind: 'media'; readonly base: string; readonly file: string };
+
+/**
+ * Passages whose names were generated, kept by identity so that cached passages keep the mark. A changed
+ * copy of a passage is made with {@link derivePassage}, which carries the mark over.
+ */
+const generatedNames = new WeakMap<Passage, GeneratedName>();
+
+/**
+ * Mark a passage's name as generated (from a file name, or for imported story code) and return
+ * the passage. `origin.base` is the name that free names are numbered from: `base`, `base 2`, ….
+ */
+export function withGeneratedName(p: Passage, origin: GeneratedName): Passage {
+  generatedNames.set(p, origin);
+  return p;
+}
+
+/** Where the passage's name came from, when the compiler generated it. */
+export function generatedNameOf(p: Passage): GeneratedName | undefined {
+  return generatedNames.get(p);
+}
+
+/**
+ * A copy of `p` with `changes` applied: the one way to make a changed copy of a passage while a story is
+ * built. What is known about the passage beyond its fields carries over: a generated name stays generated
+ * while the name is unchanged. A copy under a new name has an authored name, unless the caller marks it
+ * again (as `storyAdd()` does when it moves a generated name aside).
+ */
+export function derivePassage(
+  p: Passage,
+  changes: Readonly<Partial<Pick<Passage, 'name' | 'tags' | 'text'>>>,
+): Passage {
+  const copy: Passage = { ...p, ...changes };
+  const origin = generatedNames.get(p);
+  if (origin !== undefined && copy.name === p.name) generatedNames.set(copy, origin);
+  return copy;
+}
+
+/**
+ * Freeze `p` and everything it holds (tags, metadata, source), in place, and return it. A frozen passage
+ * keeps its identity, so what is known about it by identity (a generated name) stays known.
+ */
+export function freezePassage(p: Passage): Passage {
+  Object.freeze(p.tags);
+  if (p.metadata !== undefined) Object.freeze(p.metadata);
+  if (p.source !== undefined) Object.freeze(p.source);
+  return Object.freeze(p);
+}
+
+/**
  * Apply tag aliases: for each passage carrying an alias tag, add the canonical
  * tag if not already present. Returns new passage objects where tags changed;
  * unchanged passages are returned as-is. Idempotent — safe to call multiple times.
@@ -251,7 +310,7 @@ export function applyTagAliases(passages: readonly Passage[], aliases: Record<st
         added.push(canonical);
       }
     }
-    return added.length > 0 ? { ...p, tags: [...original, ...added] } : p;
+    return added.length > 0 ? derivePassage(p, { tags: [...original, ...added] }) : p;
   });
 }
 

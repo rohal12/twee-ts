@@ -13,10 +13,10 @@
  * HTML cannot carry (see `html-output-check.ts`), which compiling reports.
  */
 import type { Passage, PassageMetadata, Diagnostic, DecompileOptions, Story } from './types.js';
-import { createStory, storyAdd, storyPrepend, marshalStoryData, withGeneratedName, freeName } from './story.js';
+import { createStory, storyAdd, storyPrepend, marshalStoryData, freeName } from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
-import { isObfuscatable } from './passage.js';
+import { isObfuscatable, withGeneratedName } from './passage.js';
 import { attributeOf, childElements, findStoreArea, findStoryData, parseHtml, textContent } from './html-structure.js';
 import type { HtmlElement } from './html-structure.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';

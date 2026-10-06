@@ -9,7 +9,8 @@ import type { DiscoveredFile } from './filesystem.js';
 import { identify } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
-import { storyAdd, storyHas, storyPrepend, withGeneratedName } from './story.js';
+import { storyAdd, storyHas, storyPrepend } from './story.js';
+import { freezePassage, withGeneratedName } from './passage.js';
 import { parseTwee } from './parser.js';
 import { decompileHTMLForImport } from './html-parser.js';
 import { readUTF8, readBase64, fileStem, decodeText } from './util.js';
@@ -323,7 +324,8 @@ function addParsed(
   result: { readonly passages: readonly Passage[]; readonly diagnostics: readonly Diagnostic[] },
   diagnostics: Diagnostic[],
 ): void {
-  diagnostics.push(...result.diagnostics);
+  // Copies: the caller gets diagnostics it may change, and the cache keeps its own (#246 S-4).
+  diagnostics.push(...result.diagnostics.map((d): Diagnostic => ({ ...d })));
   for (const p of result.passages) {
     storyAdd(story, p, diagnostics);
   }
@@ -420,12 +422,14 @@ export function loadSourcesCached(
         continue;
       }
 
+      // Frozen, so that nothing a build hands out, nor a later step of this build, can change what the
+      // next build replays (#246 S-4). The passages keep their identity, and with it a generated name.
       cache.set(filename, {
         mtimeMs,
         signature,
         parseOptionsKey: optionsKey,
-        passages: result.passages,
-        diagnostics: result.diagnostics,
+        passages: Object.freeze(result.passages.map(freezePassage)),
+        diagnostics: Object.freeze(result.diagnostics.map((d) => Object.freeze(d))),
       });
 
       addParsed(story, result, diagnostics);

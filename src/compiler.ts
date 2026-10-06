@@ -19,7 +19,7 @@ import type {
   FileCacheEntry,
   TweeTsErrorCode,
 } from './types.js';
-import { createStory, storyHas, getStoryStats } from './story.js';
+import { createStory, storyHas, getStoryStats, snapshot } from './story.js';
 import {
   getFilenames,
   isExcluded,
@@ -663,7 +663,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   // Nothing is delivered, or written by the caller, for a build that was aborted meanwhile.
   options.signal?.throwIfAborted();
-  return { output: output, story, format, diagnostics, stats };
+  // The story handed out is a frozen copy: it shares no object with the incremental cache (#246 S-4).
+  return { output: output, story: snapshot(story), format, diagnostics, stats };
 }
 
 /** How a build runs, beyond its options: what buildOutput() is called with by each entry point. */

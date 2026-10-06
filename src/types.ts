@@ -388,7 +388,12 @@ export interface FileCacheEntry {
    * twee-ts to set.
    */
   readonly signature?: string;
+  /**
+   * The file's passages, frozen with everything they hold, so that no build and no caller can change what a
+   * later build replays. `CompileResult.story` holds copies of them, never these objects.
+   */
   readonly passages: readonly Passage[];
+  /** The diagnostics of reading the file, frozen; each build reports copies of them. */
   readonly diagnostics: readonly Diagnostic[];
 }
 
