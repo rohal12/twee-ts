@@ -5,7 +5,19 @@
  * writes are compared by real path instead (see filesystem.ts).
  */
 import { dirname, resolve } from 'node:path';
+import { realPathOf } from '../filesystem.js';
 import type { BuildOutputs } from '../filesystem.js';
+
+/**
+ * The form the Vite plugin compares input files by: the real path (see
+ * realPathOf) with forward slashes. Watchers and bundlers spell one file
+ * differently: macOS FSEvents reports /private/var/… for a file under /var/…,
+ * Vite resolves module ids through symbolic links, and Windows keeps a short
+ * 8.3 folder name (C:\Users\RUNNER~1) where another tool gives the long one.
+ */
+export function canonicalPath(path: string): string {
+  return toPosix(realPathOf(path));
+}
 
 /** The output settings that say where a bundle is written, as Rollup and Vite pass them to generateBundle. */
 export interface OutputLocation {
