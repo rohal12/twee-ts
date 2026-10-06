@@ -13,12 +13,13 @@
  * A symbolic link (even a dangling one, or a chain of them) is followed to the file it finally points to,
  * which is then written as above; the link stays. A replaced file keeps its permissions.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   accessSync,
   chmodSync,
   constants as fsConstants,
   lstatSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -45,13 +46,27 @@ export function writeFileAtomic(path: string, data: string, platform: NodeJS.Pla
     throw writeError(path, e);
   }
   const signature = signatureOf(path);
-  if (signature !== undefined) ownOutputs.set(identify(path).key, signature);
+  if (signature !== undefined)
+    ownOutputs.set(identify(path).key, { signature, hash: sha256(Buffer.from(data, 'utf-8')) });
 }
 
-/** The files this process wrote, by identity key, with what identified each one right after the write. */
-const ownOutputs = new Map<string, string>();
+/** What identifies a file this process wrote: its stat signature right after the write, and a hash of what was written. */
+interface WrittenOutput {
+  readonly signature: string;
+  readonly hash: string;
+}
 
-/** What identifies a regular file's contents: size, inode and modification time. */
+/** The files this process wrote, by identity key. */
+const ownOutputs = new Map<string, WrittenOutput>();
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * What identifies a regular file's state: size, inode and modification time. An edit in place that keeps all
+ * of them (a copy that preserves timestamps) is not seen by this, so {@link isOwnOutput} also checks the content.
+ */
 function signatureOf(path: string): string | undefined {
   const stat = statSync(path, { throwIfNoEntry: false, bigint: true });
   return stat?.isFile() === true ? `${stat.size}:${stat.dev}:${stat.ino}:${stat.mtimeNs}` : undefined;
@@ -59,11 +74,19 @@ function signatureOf(path: string): string | undefined {
 
 /**
  * Whether the file at `path` is one this process wrote and nothing has changed since: an earlier build of
- * a running watch, which may be written over.
+ * a running watch, which may be written over. Its size, inode and modification time must be as they were
+ * after the write, and it must hold exactly the bytes that were written: a same-size edit that restores the
+ * modification time still changes the content, and the file is then the author's.
  */
 export function isOwnOutput(path: string): boolean {
   const signature = signatureOf(path);
-  return signature !== undefined && ownOutputs.get(identify(path).key) === signature;
+  const written = ownOutputs.get(identify(path).key);
+  if (signature === undefined || written?.signature !== signature) return false;
+  try {
+    return sha256(readFileSync(path)) === written.hash;
+  } catch {
+    return false;
+  }
 }
 
 /** How a target is written. */
