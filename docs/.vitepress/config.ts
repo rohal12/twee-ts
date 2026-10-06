@@ -27,6 +27,7 @@ export default defineConfig({
           { text: 'What is twee-ts?', link: '/' },
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'Differences from Tweego', link: '/tweego-differences' },
+          { text: 'Migrating to 2.0', link: '/migrating-to-2' },
         ],
       },
       {

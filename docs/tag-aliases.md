@@ -1,10 +1,10 @@
 # Tag Aliases
 
-Tag aliases let you map custom tag names to Twine's built-in special tags (`script`, `stylesheet`, `annotation`, `widget`). This is useful when you want more descriptive or project-specific tag names in your source while keeping full compatibility with Twine's special-tag behavior.
+Tag aliases let you map custom tag names to the tags twee-ts and story formats treat specially (`script`, `stylesheet`, `Twine.private`, `widget`, `annotation`). This is useful when you want more descriptive or project-specific tag names in your source while keeping full compatibility with Twine's special-tag behavior.
 
 ## How It Works
 
-After loading all passages but before output generation, twee-ts **adds** the canonical tag to any passage that carries an alias tag. The original alias tag is preserved — it still appears in `<tw-passagedata>` tag attributes and in decompiled Twee output.
+After loading all passages but before output generation, twee-ts **adds** the target tag to any passage that carries an alias tag. The alias tag is kept: Twee and JSON output write it, and so does a `<tw-passagedata>` element's `tags` attribute. (Script and stylesheet passages are not written as `<tw-passagedata>` elements, so their tags, aliases included, are not in Twine 2 HTML.)
 
 For example, with `{ "library": "script" }`:
 
@@ -13,7 +13,7 @@ Passage tags before:  ['library']
 Passage tags after:   ['library', 'script']
 ```
 
-All existing special-tag checks (which look for `script`, `stylesheet`, etc.) now match. No changes are needed in the output modules.
+Every check for a special tag (`script`, `stylesheet`, `Twine.private`, …) then matches the passage.
 
 The operation is **idempotent** — running it multiple times has the same effect as running it once. If the canonical tag is already present, it won't be duplicated.
 
@@ -28,7 +28,7 @@ The operation is **idempotent** — running it multiple times has the same effec
   "tagAliases": {
     "library": "script",
     "theme": "stylesheet",
-    "dev-note": "annotation"
+    "dev-note": "Twine.private"
   }
 }
 ```
@@ -57,7 +57,7 @@ const result = await compile({
 });
 ```
 
-You can also use the lower-level `applyTagAliases` function directly:
+You can also use the lower-level `applyTagAliases` function directly. It returns a new array and leaves the passages passed in unchanged:
 
 ```typescript
 import { applyTagAliases } from '@rohal12/twee-ts';
@@ -65,8 +65,9 @@ import type { Passage } from '@rohal12/twee-ts';
 
 const passages: Passage[] = [{ name: 'Utils', tags: ['library'], text: 'window.x = 1;' }];
 
-applyTagAliases(passages, { library: 'script' });
-// passages[0].tags is now ['library', 'script']
+const aliased = applyTagAliases(passages, { library: 'script' });
+console.log(aliased[0]?.tags); // ['library', 'script']
+console.log(passages[0]?.tags); // ['library'], unchanged
 ```
 
 ## Example
@@ -90,7 +91,10 @@ window.utils = { greet: () => "hi" };
 body { background: #1a1a1a; color: #eee; }
 
 :: Design Notes [dev-note]
-This passage is excluded from the compiled output.
+A private note: Twine 2 HTML, Twine 1 HTML and JSON output leave it out.
+
+:: Changelog [changes]
+Kept in the output, but not counted as a story passage.
 ```
 
 With this config:
@@ -100,40 +104,46 @@ With this config:
   "tagAliases": {
     "library": "script",
     "theme": "stylesheet",
-    "dev-note": "annotation"
+    "dev-note": "Twine.private",
+    "changes": "annotation"
   }
 }
 ```
 
-The result:
+The result in Twine 2 HTML:
 
-| Passage      | Original Tags | Resolved Tags            | Effect                                                           |
-| ------------ | ------------- | ------------------------ | ---------------------------------------------------------------- |
-| Utils        | `library`     | `library`, `script`      | Content goes into the `<style id="twine-user-script">` block     |
-| Dark Theme   | `theme`       | `theme`, `stylesheet`    | Content goes into the `<style id="twine-user-stylesheet">` block |
-| Design Notes | `dev-note`    | `dev-note`, `annotation` | Excluded from compiled output entirely                           |
-| Start        | _(none)_      | _(none)_                 | Normal story passage, unaffected                                 |
+| Passage      | Original Tags | Resolved Tags               | Effect                                                                                                         |
+| ------------ | ------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Utils        | `library`     | `library`, `script`         | Content goes into the `<script id="twine-user-script" type="text/twine-javascript">` element                   |
+| Dark Theme   | `theme`       | `theme`, `stylesheet`       | Content goes into the `<style id="twine-user-stylesheet" type="text/twine-css">` element                       |
+| Design Notes | `dev-note`    | `dev-note`, `Twine.private` | Left out of the output                                                                                         |
+| Changelog    | `changes`     | `changes`, `annotation`     | A `<tw-passagedata>` element with `tags="changes annotation"`; an info passage, not counted as a story passage |
+| Start        | _(none)_      | _(none)_                    | Normal story passage, unaffected                                                                               |
 
-All three aliased passages are classified as **info passages** and won't appear as `<tw-passagedata>` elements. Their original tags are preserved, so decompiling back to Twee produces `[library]`, `[theme]`, and `[dev-note]` as written.
+All four aliased passages are **info passages**: they are not counted as story passages or in the word count, and lint never lists them as dead ends or orphans. Only Changelog is written as a `<tw-passagedata>` element. Decompiling the HTML gives Utils and Dark Theme back as part of one `Story JavaScript` passage (tagged `script`) and one `Story Stylesheet` passage (tagged `stylesheet`), without their names or alias tags, and Design Notes not at all. Twee output (`-d`) keeps every passage with the tags as written.
 
 ## Common Aliases
 
-| Alias      | Target       | Purpose                                    |
-| ---------- | ------------ | ------------------------------------------ |
-| `library`  | `script`     | Mark JavaScript utility passages           |
-| `theme`    | `stylesheet` | Mark CSS theme passages                    |
-| `dev-note` | `annotation` | Development notes excluded from output     |
-| `macro`    | `widget`     | SugarCube widget/macro definition passages |
+| Alias      | Target          | Purpose                                    |
+| ---------- | --------------- | ------------------------------------------ |
+| `library`  | `script`        | Mark JavaScript utility passages           |
+| `theme`    | `stylesheet`    | Mark CSS theme passages                    |
+| `dev-note` | `Twine.private` | Development notes left out of the output   |
+| `macro`    | `widget`        | SugarCube widget/macro definition passages |
 
 ## Special Tags Reference
 
-These are the built-in special tags that can be used as alias targets:
+These are the tags twee-ts treats specially, and so the useful alias targets:
 
-| Tag          | Effect                                                             |
-| ------------ | ------------------------------------------------------------------ |
-| `script`     | Passage content is combined into the `twine-user-script` block     |
-| `stylesheet` | Passage content is combined into the `twine-user-stylesheet` block |
-| `annotation` | Passage is excluded from compiled output                           |
-| `widget`     | Passage is treated as a widget definition (SugarCube)              |
+| Tag             | Effect                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| `script`        | Content is combined into the story's script element (Twine 2) or the JSON `script` field |
+| `stylesheet`    | Content is combined into the story's style element (Twine 2) or the JSON `style` field   |
+| `Twine.private` | Left out of Twine 2 HTML, Twine 1 HTML, archives and JSON                                |
+| `widget`        | An info passage, written as usual; SugarCube reads it as widget definitions              |
+| `annotation`    | An info passage, written as usual                                                        |
+| `Twine.*`       | Any tag that starts with `Twine.` makes an info passage                                  |
 
-Any of these can be used as the target (right-hand side) of a tag alias. The alias (left-hand side) can be any string that is a valid Twee tag.
+Script and stylesheet passages are info passages too. Twine 1 output writes script and stylesheet passages as ordinary tiddlers, which Twine 1 story formats read by their tags.
+
+Both sides of an alias can be any tag name: non-empty and without white space. An alias whose target twee-ts doesn't treat specially just adds that tag.

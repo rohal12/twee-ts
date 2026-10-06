@@ -8,49 +8,77 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack
 
-- Node.js 22.12+, zero runtime dependencies
-- TypeScript 7 (native compiler) with strict mode (`noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`)
+- Node.js 22.12+, zero runtime dependencies: parse5 (HTML) and acorn (JavaScript) are bundled into `dist/`, and `THIRD_PARTY_NOTICES` covers them
+- TypeScript 7 (native compiler) with strict mode (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noUnusedLocals`, `noUnusedParameters` and the rest of `tsconfig.json`)
 - pnpm package manager
-- tsdown for bundling (ESM + CJS dual output)
-- Vitest for testing
-- Prettier for formatting
+- tsdown for bundling (ESM + CJS dual output, one build graph)
+- Vitest for testing, fast-check for property-based tests
+- ESLint (typescript-eslint strict), knip, Prettier
 - VitePress for documentation
 
 ## Architecture
 
 ### Compilation pipeline
 
-`.twee` files → **lexer** (generator/yield state machine) → **parser** (tokens → Passage[]) → **StoryBuilder** (assembles Story model) → **output renderer** (Twine 2 HTML, Twine 1 HTML, or Twee source)
+Sources → **loader** (by extension; Twee, Twine HTML, CSS, JS, media, fonts) → **lexer** (generator state machine) → **parser** (items → Passage[]) → **StoryBuilder** (the story model, derived from its passages) → **format resolution** (local folders, format URLs, format indices) → **output renderer** (Twine 2 / Twine 1 HTML or archive, Twee 3 / Twee 1, JSON) → **output check** and atomic write.
 
-The **compiler** (`compile()`, `compileToFile()`, `watch()`) orchestrates this pipeline end-to-end. The **loader** handles file I/O for all input types (twee, css, js, media, fonts).
+The **compiler** (`compile()`, `compileToFile()`, `watch()`, `compileIncremental()`) runs the pipeline. Every path comparison goes through **path-identity**; every input failure is decided by **input-policy**.
 
-### Key source layout
+### Source layout
 
 ```
 src/
-  types.ts        — All public interfaces (single source of truth for types)
-  index.ts        — Public API surface (re-exports from implementation modules)
-  lexer.ts        — State-machine generator (function* + yield), ports Go's goroutine+channel pattern
-  parser.ts       — Consumes lexer items → Passage[]
-  story.ts        — StoryBuilder: assembles Story model, StoryData JSON marshal/unmarshal
-  compiler.ts     — Main orchestrator: compile(), compileToFile(), watch()
-  output-twine2.ts, output-twine1.ts, output-twee.ts — Output renderers
-  formats.ts      — Story format discovery with SemVer matching
-  remote-formats.ts — Remote format fetching from Story Format Archive
-  loader.ts       — File loading (twee, css, js, media, fonts)
-  html-parser.ts  — Decompile Twine HTML back to Story model
-  inspect.ts      — Story inspection (passage map, broken links)
-  lint.ts         — Linter for story validation
-  config.ts       — Config file loading and validation
-  plugins/        — Vite and Rollup plugins
-bin/
-  twee-ts.ts      — CLI entry point
-test/
-  *.test.ts       — Unit tests (one per src module)
-  fixtures/       — Test fixtures including minimal story formats
-specs/
-  *.test.ts       — Specification conformance tests (Twee3, Twine HTML output, etc.)
+  index.ts             Public API surface (re-exports only)
+  types.ts             Public interfaces (single source of truth for types)
+  compiler.ts          compile(), compileToFile(), watch(), compileIncremental(); TweeTsError
+  cli-request.ts       CLI argv → typed request (parseCliArgs), merged with the config (resolveBuild)
+  config.ts            Config loading; CONFIG_SPEC is the one table behind validation and the JSON schema
+  loader.ts            Loads each input type; media-types.ts maps extensions
+  filesystem.ts        Source walk, exclude globs, output overlap checks, watch mode
+  path-identity.ts     Canonical path identity (real path, case folding per volume, Windows forms)
+  input-policy.ts      One table: what each input role does when it can't be used
+  atomic-write.ts      Writes output and cache files by what is at the target path
+  source-text.ts, util.ts  Text decoding (UTF-8/16, Windows-1252 fallback) and normalisation
+  twee-syntax.ts       Shared Twee rules: Go whitespace, escaping, header lines
+  lexer.ts, parser.ts  Twee → passages; twee2-compat.ts converts Twee2 headers
+  story.ts             StoryBuilder and StoryData/StorySettings/StoryTitle decoding
+  passage.ts, passage-omission.ts, start-passage.ts  Passage helpers, which passages an output leaves out
+  json-decode.ts       Strict JSON parser and typed decoders (duplicates kept, own-property safe)
+  formats.ts           Local format discovery and the one selection policy
+  format-resolution.ts Gathers candidates from every source, selects, obtains
+  format-decode.ts     Reads format.js with acorn, never evaluating it
+  remote-formats.ts    Format URLs and indices: requests, limits, checksums
+  format-cache.ts      The download cache, keyed by provenance
+  semver.ts            SemVer 2.0.0 with Tweego's extensions
+  js-syntax.ts, js-chars.ts, javascript-strings.ts  The one way to read JavaScript (acorn) and its character classes
+  html-structure.ts    Every location in HTML, from a parse5 parse (never by matching markup)
+  html-parser.ts       Decompiles Twine 2 / Twine 1 HTML
+  template.ts, escape.ts, code-context.ts, modules.ts  Format template filling, per-context escaping, head injection
+  html-output-check.ts Text HTML cannot carry; code the escapers change
+  output-twine2.ts, output-twine1.ts, output-twee.ts, twine1-obfuscation.ts  Renderers
+  inspect.ts, lint.ts, link-markup.ts, sugarcube-macros.ts  Link graph, lint, SugarCube link/macro reading
+  ifid.ts, word-count.ts, version.ts
+  plugins/
+    options.ts         Options both plugins share, checked once (PluginCompileOptions)
+    vite.ts, vite-dev.ts, vite-entry.ts  Vite plugin, dev server, `entry` bundling
+    rollup.ts          Rollup plugin
+    diagnostics.ts, paths.ts, watch-targets.ts  Shared plugin helpers
+bin/twee-ts.ts         CLI entry point
+scripts/               Package check, duplication measurement, licence notices, ESLint restrictions
+test/                  *.test.ts (unit, property, differential); helpers/; fixtures/
+                       docs-snippets.test.ts and docs-reference.test.ts keep the docs executable and in sync
+specs/                 Specification conformance tests (Twee 3, Twine HTML/archive/JSON, story formats)
 ```
+
+## Hardening rules
+
+- **Spec-exact parsers only.** Read HTML with parse5 (`html-structure.ts`), JavaScript with acorn (`js-syntax.ts`), JSON with `json-decode.ts`, versions with `semver.ts`. No ad-hoc scanners; state the supported subset where full support isn't intended and reject the rest with a diagnostic, never silently produce another value.
+- **No literal HTML matching.** Never search markup text for tags, doctypes or the store area (ESLint enforces it outside `html-structure.ts`).
+- **Own-property-safe objects.** Objects built from untrusted keys use `Map`, `Object.create(null)` or `Object.fromEntries`/`defineProperty`; `__proto__` must survive as an ordinary key (ESLint bans `__proto__` literals).
+- **Fix the defect class, not the case.** Enumerate the input dimension (spec states, grammar productions, file types, option sources, platforms) and cover it with table-driven, property-based (fast-check) or differential tests against an oracle; every reported defect gets a regression test that failed first.
+- **Duplication budget.** `duplication-budget.json` may only go down; remove a new clone rather than raise it.
+- **Docs are tested.** Every code block in README.md and docs/ is type-checked and run (see `test/docs-snippets.test.ts`); CLI flags, config keys and exported names are compared with the code. Update docs with behaviour.
+- **Required checks** before pushing: `pnpm run format`, `typecheck`, `lint`, `knip`, `pnpm test`, `pnpm test:coverage` (thresholds never lowered, no `v8 ignore`), `pnpm run build`, `pnpm run duplication jscpd` and `pnpm run duplication fallow`. Incompatible behaviour changes carry a `BREAKING CHANGE:` footer and a CHANGELOG `[Unreleased]` entry.
 
 ## Code style
 
@@ -122,6 +150,8 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
+- `pnpm run docs:build` — build the docs site (fails on dead links)
+- `pnpm test test/docs-snippets.test.ts test/docs-reference.test.ts` — run the documentation's examples and reference checks
 - `pnpm run duplication` — measure code duplication in `src/` and `bin/` with jscpd, PMD CPD and fallow against `duplication-budget.json`; CPD needs Java and `PMD_BIN` set to PMD's `bin/pmd` (version and SHA-256 in `.github/workflows/duplication.yml`)
 - `pnpm run duplication fallow --base origin/main` — one tool, also failing when the tree adds duplication compared with a git ref
 

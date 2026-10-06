@@ -6,7 +6,7 @@
 // Primary API
 export { compile, compileIncremental, compileToFile, watch, TweeTsError } from './compiler.js';
 
-// Story inspection (for unit testing)
+// Story inspection, and the story model builder
 export { storyInspect } from './inspect.js';
 export { StoryBuilder } from './story.js';
 

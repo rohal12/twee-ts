@@ -80,8 +80,8 @@ const OUTPUT_MODE_FLAGS: Readonly<Record<string, OutputMode>> = {
 
 const WORD_COUNT_METHODS: readonly WordCountMethod[] = ['tweego', 'whitespace'];
 
-/** Every option, as node:util's parseArgs takes them. */
-const OPTIONS = {
+/** Every option, as node:util's parseArgs takes them. docs/cli.md documents each one (test/docs-reference.test.ts). */
+export const OPTIONS = {
   output: { type: 'string', short: 'o' },
   format: { type: 'string', short: 'f' },
   start: { type: 'string', short: 's' },

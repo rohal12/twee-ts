@@ -32,6 +32,8 @@ my-format-1/
 
 #### `package.json`
 
+<!-- docs-test: package=@twine-formats/my-format-1 file=package.json -->
+
 ```json
 {
   "name": "@twine-formats/my-format-1",
@@ -47,11 +49,14 @@ The `"twine-story-format"` keyword helps people find format packages on npm; twe
 
 Your existing Twine 2 format.js file, unchanged:
 
+<!-- docs-test: format-js package=@twine-formats/my-format-1 file=format.js -->
+
+<!-- prettier-ignore -->
 ```javascript
 window.storyFormat({
-  name: 'My Format',
-  version: '1.0.0',
-  source: '<html>...{{STORY_NAME}}...{{STORY_DATA}}...</html>',
+  "name": "My Format",
+  "version": "1.0.0",
+  "source": "<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>"
 });
 ```
 
@@ -90,6 +95,8 @@ twee-ts does not search `node_modules` by itself, and `compile()` has no option 
 
 Tools other than twee-ts may want the format's fields from JavaScript. A thin wrapper can export them; twee-ts does not use it:
 
+<!-- docs-test: package=@twine-formats/my-format-1 file=index.js -->
+
 ```javascript
 // index.js
 import { readFileSync } from 'node:fs';
@@ -106,7 +113,7 @@ export const source = json.source;
 export const proofing = json.proofing ?? false;
 ```
 
-This simple parse needs a `format.js` whose object is strict JSON; twee-ts itself also reads the JavaScript object literal syntax some formats use (see [Format Metadata](./story-formats#format-metadata)). Add `"type": "module"`, `"exports": { ".": "./index.js" }` and `index.js` to `files` in `package.json` when you ship it.
+This simple parse needs a `format.js` whose object is strict JSON with no `{` before it (in a comment, say), as in the example above; twee-ts itself also reads the JavaScript object literal syntax some formats use (see [Format Metadata](./story-formats#format-metadata)). Add `"type": "module"`, `"exports": { ".": "./index.js" }` and `index.js` to `files` in `package.json` when you ship it.
 
 ---
 
@@ -117,7 +124,7 @@ This level adds TypeScript types for your format's runtime JavaScript API. Story
 #### Additional files
 
 ```
-my-format/
+my-format-1/
 ├── package.json
 ├── index.js
 ├── format.js
@@ -128,9 +135,11 @@ my-format/
 
 #### `package.json` (updated)
 
+<!-- docs-test: package=@twine-formats/my-format-1 file=package.json -->
+
 ```json
 {
-  "name": "@twine-formats/my-format",
+  "name": "@twine-formats/my-format-1",
   "version": "1.0.0",
   "type": "module",
   "exports": {
@@ -148,9 +157,13 @@ The types need an entry point to hang on, so this level ships the [optional ESM 
 
 #### `types/index.d.ts`
 
-Declares the format metadata exports and any API types:
+Declares the format metadata exports and any API types. Its first line loads `globals.d.ts`, which nothing else would load:
+
+<!-- docs-test: package=@twine-formats/my-format-1 file=types/index.d.ts -->
 
 ```typescript
+/// <reference path="./globals.d.ts" />
+
 // Format metadata (exported by the optional wrapper)
 export declare const name: string;
 export declare const version: string;
@@ -184,6 +197,8 @@ export interface MacroDefinition {
 
 Declares the global variables that exist at runtime when a story is played. Story scripts reference these directly (e.g. `Config.passages.start`), so TypeScript needs to know about them:
 
+<!-- docs-test: package=@twine-formats/my-format-1 file=types/globals.d.ts -->
+
 ```typescript
 import type { FormatConfig, MacroDefinition } from './index.js';
 
@@ -206,17 +221,21 @@ The `export {}` at the end is required — it ensures the file is treated as a m
 
 #### Usage by story authors
 
-Story authors add your package to their tsconfig.json `types` array to activate the global declarations:
+Story authors add your package to their tsconfig.json `types` array, which loads `types/index.d.ts` and, through its reference, the global declarations:
+
+<!-- docs-test: not-config — a tsconfig.json -->
 
 ```json
 {
   "compilerOptions": {
-    "types": ["@twine-formats/my-format"]
+    "types": ["@twine-formats/my-format-1"]
   }
 }
 ```
 
 Now their story scripts get full type support:
+
+<!-- docs-test: no-run — a story script, which runs in the browser inside the story -->
 
 ```typescript
 // story-script.ts
@@ -232,10 +251,10 @@ Macro.add('greet', {
 Story authors can also import types explicitly when needed:
 
 ```typescript
-import type { MacroContext } from '@twine-formats/my-format';
+import type { MacroContext } from '@twine-formats/my-format-1';
 
-function myHelper(ctx: MacroContext): void {
-  // ...
+export function myHelper(ctx: MacroContext): void {
+  ctx.output.append(`Hello from ${ctx.name}!`);
 }
 ```
 
@@ -248,7 +267,7 @@ This level includes your format's pre-bundle source code in the package, so stor
 #### Additional files
 
 ```
-my-format/
+my-format-1/
 ├── package.json
 ├── index.js
 ├── format.js
@@ -267,17 +286,21 @@ my-format/
 
 Add `src` to the `files` array:
 
+<!-- docs-test: not-config — an excerpt of the package.json above -->
+
 ```json
 {
   "files": ["index.js", "format.js", "types", "src"]
 }
 ```
 
-That's all. The source is now included in the published package and accessible at `node_modules/@twine-formats/my-format/src/`.
+That's all. The source is now included in the published package and accessible at `node_modules/@twine-formats/my-format-1/src/`.
 
 #### Linking types to source
 
 To let editors navigate from a type declaration to the implementing source, add `@see` tags to your type declarations:
+
+<!-- docs-test: skip — an excerpt of types/index.d.ts above, with a tag added -->
 
 ```typescript
 // types/index.d.ts
@@ -299,16 +322,19 @@ Or use declaration maps (`"declarationMap": true` in tsconfig) if your types are
 
 twee-ts reads only the package's `format.js`, from the folder the package is installed in, exactly as it reads any [local story format](./story-formats#format-metadata):
 
-| Field      | Required | Description                                                                       |
-| ---------- | -------- | --------------------------------------------------------------------------------- |
-| `name`     | no       | Format name (e.g. `"SugarCube"`); a format without one is `Untitled Story Format` |
-| `version`  | yes      | SemVer version (e.g. `"2.37.3"`)                                                  |
-| `source`   | yes      | HTML template containing `{{STORY_NAME}}` and `{{STORY_DATA}}` placeholders       |
-| `proofing` | no       | Whether this is a proofing format. Default: `false`                               |
+| Field                                              | Required | Description                                                                                |
+| -------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| `name`                                             | no       | Format name (e.g. `"SugarCube"`); a format without one is `Untitled Story Format`          |
+| `version`                                          | yes      | SemVer version (e.g. `"2.37.3"`); a format without a valid one is skipped with a warning   |
+| `source`                                           | yes      | HTML template containing `{{STORY_NAME}}` and `{{STORY_DATA}}` placeholders                |
+| `proofing`                                         | no       | Whether this is a proofing format. Default: `false`                                        |
+| `author`, `description`, `image`, `url`, `license` | no       | Strings, reported in `StoryFormatInfo`; a value of another type is ignored, with a warning |
 
-These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md). A Twine 1 format package holds a `header.html` instead, as a Twine 1 format folder does.
+These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md).
 
-Each `{{STORY_NAME}}` gets the story name escaped for where it is, as the HTML parser reads the template: HTML-escaped in text and attribute values (as Twine 2 does), percent-encoded in a URL attribute such as `href`, and in a JavaScript string or template literal HTML-escaped (so SugarCube's `Util.unescape()` gets the name back) with `\`, line breaks, U+2028 and U+2029 escaped for JavaScript. A JSON data block or a CSS string gets JSON or CSS escaping. Where no escaping keeps the value (JavaScript code outside a literal, raw text, inside a tag), the name is HTML-escaped as Twine 2 writes it, with a warning. `{{STORY_DATA}}` is replaced at its first occurrence where the browser reads the story data as elements of the page (not in a comment, a script or the title).
+A Twine 1 format package holds a `header.html` instead, as a Twine 1 format folder does. A Twine 1 header that includes Twine 1's `engine.js`, `jquery.js` or `modernizr.js` reads them from the folder above the format folder, which for a package is the scope folder (`node_modules/@twine-formats/`), where npm puts nothing. Only Twine 1 formats that need nothing outside their own folder, such as SugarCube's Twine 1 build, work as packages.
+
+Each `{{STORY_NAME}}` gets the story name escaped for where it is, as the HTML parser reads the template: HTML-escaped in text and attribute values (as Twine 2 does), percent-encoded in a URL attribute such as `href`, and in a JavaScript string or template literal HTML-escaped (so SugarCube's `Util.unescape()` gets the name back) with `\`, line breaks, U+2028 and U+2029 (and, in a template literal, `` ` `` and `$`) escaped for JavaScript. A string in a JSON data block or a CSS string gets JSON or CSS escaping. Where no escaping keeps the value (JavaScript code outside a literal, raw text, inside a tag), the name is HTML-escaped as Twine 2 writes it, with a warning. `{{STORY_DATA}}` is replaced at its first occurrence where the browser reads the story data as elements of the page (not in a comment, a script or the title); when there is no such occurrence, the first one is replaced, with an error.
 
 ## Naming Convention
 
@@ -341,8 +367,11 @@ A complete, minimal package for SugarCube 2.37.3:
 mkdir sugarcube-2 && cd sugarcube-2
 ```
 
+Its `package.json`:
+
+<!-- docs-test: package=@twine-formats/sugarcube-2 file=package.json -->
+
 ```json
-// package.json
 {
   "name": "@twine-formats/sugarcube-2",
   "version": "2.37.3",

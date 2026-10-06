@@ -10,7 +10,9 @@ twee-ts -o story.html src/
 
 Compiles a playable HTML file by inserting story data into a story format's HTML template. This is the primary output mode — it produces a single `.html` file that can be opened in any browser.
 
-Requires a story format. twee-ts defaults to `sugarcube-2` and will attempt to download it automatically if not found locally.
+Requires a story format: the one `-f`/`formatId` names, else the one StoryData's `format` and `format-version` name, else `sugarcube-2`. It is looked for in the local format directories, then the format URLs and format indices and the Story Formats Archive, unless `--no-remote` is given; see [Story Formats](./story-formats).
+
+Twine 2 HTML (and the Twine 2 archive) writes every passage as a `<tw-passagedata>` element except StoryTitle, StoryData, an empty StorySettings, and passages tagged `script`, `stylesheet` or `Twine.private`: the script and stylesheet passages go into the story's script and style elements, and the others are left out.
 
 ## Twee 3
 
@@ -22,7 +24,7 @@ Decompiles to [Twee 3 notation](https://github.com/iftechfoundation/twine-specs/
 
 Does not require a story format.
 
-The `StoryData` passage is written from the compiled story, so it records what `-s`/`startPassage` and `-t`/`testMode` (the `debug` option) changed, and compiling the Twee output again gives the same start passage and options. With no overrides, it is the `StoryData` passage as loaded, normalized to tab-indented JSON, plus the IFID twee-ts reports generating when the passage has none. A story without a `StoryData` passage gets one, after `StoryTitle`, only when `-s` or `-t` is given. A `StoryData` passage that is not valid JSON is written as it is.
+The `StoryData` passage is written from the compiled story, so it records what `-s`/`startPassage` and `-t`/`testMode` (the `debug` option) changed, and compiling the Twee output again gives the same start passage and options. With no overrides, it is the `StoryData` passage as loaded, normalized to tab-indented JSON, plus the IFID twee-ts reports generating when the passage has none. A story without a `StoryData` passage gets one, after `StoryTitle`, only when `-s` or `-t` is given. A `StoryData` passage that is not valid JSON is written as it is. (A missing IFID and invalid StoryData are errors, so the CLI writes no output for them; `compile()` returns the output with the errors.)
 
 Twee has no way to escape passage text, and its parser trims passage names and splits tags at whitespace, so some stories, typically ones decompiled from HTML, cannot be written as Twee that compiles back to the same story. twee-ts reads what it writes for each passage back with its Twee parser, writes the passage anyway, and reports a warning naming the passage and saying what changes, for example:
 
@@ -72,6 +74,8 @@ twee-ts --json -o story.json src/
 
 Outputs the story model as JSON per the [Twine 2 JSON Output Specification](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md). Useful for tooling, analysis, or custom processing:
 
+<!-- docs-test: json-output -->
+
 ```json
 {
   "name": "My Story",
@@ -79,9 +83,8 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
   "format": "SugarCube",
   "format-version": "2.37.3",
   "start": "Start",
-  "tag-colors": {},
   "creator": "Twee-ts",
-  "creator-version": "1.4.0",
+  "creator-version": "2.0.0",
   "style": "",
   "script": "",
   "passages": [
@@ -94,7 +97,7 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 }
 ```
 
-`start` is present when `StoryData` sets it or when `-s`/`startPassage` overrides it, and omitted otherwise.
+`ifid`, `format`, `format-version` and `start` are present when they are set, `tag-colors` when StoryData gives tag colors, and `zoom` when it is not 1. `start` is set by StoryData or by `-s`/`startPassage`. JSON output uses no story format: `format` and `format-version` are StoryData's, and `-f` does not change them. `creator-version` is the twee-ts version.
 
 `StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present; as in Twee output, an entry with an empty value is left out, and every key, `__proto__` included, is kept.
 
@@ -108,4 +111,4 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 
 Valid values: `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.
 
-CLI flags override the config value. If both `-d` and `--json` are specified, the first applicable flag wins.
+CLI flags override the config value. Two output mode flags (`-d --json`, say) are a usage error (exit status 2).

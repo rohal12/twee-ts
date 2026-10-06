@@ -50,6 +50,17 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(result.output).toContain('"name"');
   });
 
+  it('D-5: reports StoryData that is not JSON, and an invalid IFID, as errors and goes on', async () => {
+    const notJson = await build({ 'a.tw': ':: StoryData\n{"ifid": nope}\n:: Start\nx' });
+    expect(notJson.diagnostics.every((d) => d.level === 'error')).toBe(true);
+    expect(notJson.diagnostics.length).toBeGreaterThan(0);
+    expect(notJson.output).toContain('"Start"');
+    const badIfid = await build({ 'a.tw': ':: StoryData\n{"ifid":"BAD"}\n:: Start\nx' });
+    expect(badIfid.diagnostics.map((d) => d.level)).toEqual(['error']);
+    expect(badIfid.story.ifid).toBe('BAD');
+    expect(badIfid.output).toContain('"Start"');
+  });
+
   it('D-6: warns about keys Tweego accepts silently', async () => {
     const result = await build({ 'a.tw': `:: StoryData\n{"Ifid":"${IFID}","ifid":"${IFID}","x":1}\n:: Start\nx` });
     expect(result.diagnostics.map((d) => d.message)).toEqual([
