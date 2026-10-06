@@ -322,3 +322,18 @@ describe('formatLintReport', () => {
     expect(report).toContain('Orphans');
   });
 });
+
+describe('lint: SugarCube info passages', () => {
+  const STORY =
+    ':: StoryTitle\nTest\n\n:: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n\n:: Start\nWelcome\n\n' +
+    ':: StoryDisplayTitle\n[[About]]\n\n:: Boot [init]\n<<set $booted = true>>\n\n:: About\n[[Start]]';
+
+  it('counts StoryDisplayTitle and init-tagged passages as info, and follows the title’s links', async () => {
+    const result = await lint({ sources: [{ filename: 'story.tw', content: STORY }] });
+    expect(result.orphans).toEqual([]);
+    expect(result.deadEnds).toEqual(['Start']);
+    expect(result.storyPassages).toBe(2);
+    expect(result.infoPassages).toBe(4);
+    expect(result.diagnostics).toEqual([]);
+  });
+});
