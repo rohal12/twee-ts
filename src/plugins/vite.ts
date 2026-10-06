@@ -21,9 +21,10 @@ import type { CompiledStory } from './diagnostics.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
 import type { BuildOutputs } from '../filesystem.js';
 import { findHeadStartEnd } from '../modules.js';
+import { isSameOrInside } from '../path-identity.js';
 import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
-import { canonicalPath, createOutputRecord, isInside, outputLocations, toPosix } from './paths.js';
+import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 import { setUpDevStory } from './vite-dev.js';
 import {
@@ -156,7 +157,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const resolved = resolvePluginOptions('vite', options);
   const { outputFilename, entry: entryPath } = resolved;
   if (entryPath !== undefined && viteMajor < 8) {
-    throw new TweeTsError(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`);
+    throw new TweeTsError(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`, [], {
+      code: 'INVALID_OPTIONS',
+    });
   }
   instances += 1;
   // The name of this instance's entry input, when it bundles the entry inside the user's build.
@@ -231,7 +234,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     configResolved(config) {
       lastConfig = config;
       if (entryPath === undefined) return;
-      if (isInside(toPosix(entryPath), resolved.inputs)) {
+      if (resolved.inputs.some((input) => isSameOrInside(entryPath, input))) {
         config.logger.warn(
           `[twee-ts] The entry ${toPosix(entryPath)} is inside the story sources (${resolved.sources.join(', ')}). ` +
             'twee-ts also loads the .js and .css files it finds in source folders, unbundled, as Story JavaScript ' +
@@ -270,8 +273,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // The compile cache trusts modification times, which a quick save may leave
     // unchanged (coarse file-system timestamps); forget a file that changed.
     watchChange(id) {
-      const changed = canonicalPath(id);
-      for (const key of [...cache.keys()]) if (canonicalPath(key) === changed) cache.delete(key);
+      const changed = fileKey(id);
+      for (const key of [...cache.keys()]) if (fileKey(key) === changed) cache.delete(key);
     },
 
     resolveId(id) {

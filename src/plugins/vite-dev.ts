@@ -6,7 +6,6 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { statSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry } from '../types.js';
@@ -15,7 +14,7 @@ import type { BuildOutputs } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
-import { canonicalPath, isInside, isViteConfigTemp, toPosix } from './paths.js';
+import { canonicalPath, fileKey, isViteConfigTemp, keyWithin } from './paths.js';
 import { bundleEntry, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
 
@@ -91,34 +90,33 @@ function fileState(file: string): string | undefined {
   }
 }
 
-/** The state of each of `files`, for telling later which changed (see filesChanged). */
-function fileStates(files: Iterable<string>): Map<string, string> {
+/**
+ * Files by their identity key (see fileKey), each with the path it is read and
+ * watched at (its canonical path).
+ */
+type TrackedFiles = ReadonlyMap<string, string>;
+
+/** `paths` as TrackedFiles. */
+function tracked(paths: Iterable<string>): TrackedFiles {
+  return new Map([...paths].map((path) => [fileKey(path), canonicalPath(path)]));
+}
+
+/** The state of each of `files`, by key, for telling later which changed (see filesChanged). */
+function fileStates(files: TrackedFiles): Map<string, string> {
   const states = new Map<string, string>();
-  for (const file of files) {
-    const state = fileState(file);
-    if (state !== undefined) states.set(file, state);
+  for (const [key, path] of files) {
+    const state = fileState(path);
+    if (state !== undefined) states.set(key, state);
   }
   return states;
 }
 
-/** The files added, removed or changed between two `fileStates` results. */
+/** The keys of the files added, removed or changed between two `fileStates` results. */
 function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): Set<string> {
   const changed = new Set<string>();
   for (const [file, state] of after) if (before.get(file) !== state) changed.add(file);
   for (const file of before.keys()) if (!after.has(file)) changed.add(file);
   return changed;
-}
-
-/**
- * The identity a file is matched by: its canonical path (see canonicalPath),
- * which a watcher event, a module id and a path a plugin added share however
- * each spells the file. `exclude` globs still match the path as reported.
- */
-const fileKey = canonicalPath;
-
-/** A path as given, absolute and with forward slashes, which `exclude` globs match. */
-function reportedPath(path: string): string {
-  return toPosix(resolve(path));
 }
 
 /**
@@ -135,15 +133,14 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const paths = storyPaths(options.outputFilename);
   const { inputs, excluded: excludedGlob } = options;
   const entryPath = options.entry;
+  // Files and folders are compared by identity key (see paths.ts); the inputs are watched as given.
   const root = fileKey(config.root);
-  // Watched as given; compared by identity.
   const inputKeys = inputs.map(fileKey);
 
   // What a build writes, which `vite build` may have left inside a source folder:
   // the story, chunks and assets, and the copies of the public files.
   let outputs = dev.outputs(config);
   let output = outputPaths(outputs);
-  // `file` as reported (see reportedPath).
   const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
   server.watcher.add([...inputs]);
 
@@ -151,11 +148,12 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
   let entryStale = true; // bundle again on the next rebuild
-  // The files the entry was last bundled from, kept while a later bundle fails, so
-  // that fixing one of them (inside the root or not) bundles it again.
-  let entryFiles = new Map<string, string>();
-  // Files outside the root the watcher was asked to add for the entry; Vite watches the root itself.
-  const watchedForEntry = new Set<string>();
+  // The files the entry was last bundled from, and their states then, kept while a
+  // later bundle fails, so that fixing one of them (inside the root or not) bundles it again.
+  let entryFiles: TrackedFiles = new Map();
+  let entryStates = new Map<string, string>();
+  // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
+  const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
   let pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -179,29 +177,26 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   };
 
   const storyInputFiles = (): Map<string, string> =>
-    fileStates(
-      getFilenames(inputs, outputs)
-        .filenames.filter((file) => !excludedGlob(reportedPath(file)))
-        .map(fileKey),
-    );
+    fileStates(tracked(getFilenames(inputs, outputs).filenames.filter((file) => !excludedGlob(file))));
 
   // Whether a change to `file` may change the entry's bundle: after a good bundle,
   // one of the files it was built from (its modules and the files its plugins
   // watch, such as CSS @imports and url() targets); while there is none, or the
   // last one failed, also anything in the project, so that creating a missing
   // import brings it back.
-  const touchesEntry = (file: string): boolean =>
-    entryPath !== undefined && (entryFiles.has(file) || (entryStale && isInside(file, [root])));
+  const touchesEntry = (key: string): boolean =>
+    entryPath !== undefined && (entryFiles.has(key) || (entryStale && keyWithin(key, [root])));
 
   // Watches the entry's files outside the root, and stops watching those it no longer uses.
-  const watchEntryFiles = (files: ReadonlySet<string>): void => {
-    const outside = [...files].filter((file) => !isInside(file, [root]) && !isInside(file, inputKeys));
-    const added = outside.filter((file) => !watchedForEntry.has(file));
-    const dropped = [...watchedForEntry].filter((file) => !files.has(file));
-    for (const file of dropped) watchedForEntry.delete(file);
-    for (const file of added) watchedForEntry.add(file);
-    if (dropped.length > 0) server.watcher.unwatch(dropped);
-    if (added.length > 0) server.watcher.add(added);
+  const watchEntryFiles = (files: TrackedFiles): void => {
+    const added = [...files].filter(
+      ([key]) => !keyWithin(key, [root]) && !keyWithin(key, inputKeys) && !watchedForEntry.has(key),
+    );
+    const dropped = [...watchedForEntry].filter(([key]) => !files.has(key));
+    for (const [key] of dropped) watchedForEntry.delete(key);
+    for (const [key, path] of added) watchedForEntry.set(key, path);
+    if (dropped.length > 0) server.watcher.unwatch(dropped.map(([, path]) => path));
+    if (added.length > 0) server.watcher.add(added.map(([, path]) => path));
   };
 
   const bundle = async (): Promise<void> => {
@@ -210,9 +205,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     const next = await bundleEntry(config, entryPath, 'serve');
     entry = next;
     entryStale = false;
-    const files = new Set([...next.files].map(fileKey));
-    entryFiles = fileStates(files);
-    watchEntryFiles(files);
+    entryFiles = tracked(next.files);
+    entryStates = fileStates(entryFiles);
+    watchEntryFiles(entryFiles);
   };
 
   // `initial`: the compile at server start. No page is open yet, and Vite would
@@ -256,12 +251,11 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
 
   server.watcher.on('all', (event, path) => {
     if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
-    const reported = reportedPath(path);
     // Loading the config for the entry build writes and deletes one of these;
     // reacting to it would bundle again, and again.
-    if (isViteConfigTemp(reported)) return;
+    if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
-    if ((!isInside(changed, inputKeys) || excluded(reported)) && !touchesEntry(changed)) return;
+    if ((!keyWithin(changed, inputKeys) || excluded(path)) && !touchesEntry(changed)) return;
     pending.add(changed);
     clearTimeout(timer);
     timer = setTimeout(() => {
@@ -283,7 +277,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     catchingUp ??= (async () => {
       await queue;
       const changed = filesChanged(compiledInputs, storyInputFiles());
-      for (const file of filesChanged(entryFiles, fileStates(entryFiles.keys()))) changed.add(file);
+      for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
       if (changed.size === 0) return;
       // Changes the watcher did report, still waiting out the debounce, go into the same compile.
       for (const file of pending) changed.add(file);

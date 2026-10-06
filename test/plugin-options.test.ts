@@ -62,6 +62,7 @@ describe.each(PLUGINS)('%s plugin options', (kind, create) => {
     ['an empty headFile', { sources: ['s'], compileOptions: { headFile: '' } }, /`compileOptions.headFile`/],
   ])('refuses %s with a TweeTsError naming the option', (_case, options, message) => {
     expect(() => create(options)).toThrow(TweeTsError);
+    expect(() => create(options)).toThrow(expect.objectContaining({ code: 'INVALID_OPTIONS' }));
     expect(() => create(options)).toThrow(message);
     expect(() => create(options)).toThrow(`twee-ts ${kind} plugin:`);
   });

@@ -126,7 +126,7 @@ The entry is bundled with your whole Vite configuration, in dev as in a build, s
 - **Quiet**: the entry build prints no progress lines; its warnings go to the server's or build's logger, and a failed bundle is reported once, in the overlay or as the build's error.
 - **Where it is bundled**: in a build, when the config names no input of its own, the entry is bundled inside the build itself. Otherwise, and always in dev, with a build of its own; plugin objects passed inline are then shared with that build.
 
-Once a bundle has succeeded, a change to a file it was built from bundles it again: its modules (also one the bundler inlined, also outside the Vite root, as a shared package of a monorepo or a workspace link is) and the files its plugins watch (CSS `@import`s, `url()` targets, a plugin's `addWatchFile`), matched by real path. While it is failing, any change in the project does as well, so creating a missing import brings the story back.
+Once a bundle has succeeded, a change to a file it was built from bundles it again: its modules (also one the bundler inlined, also outside the Vite root, as a shared package of a monorepo or a workspace link is) and the files its plugins watch (CSS `@import`s, `url()` targets, a plugin's `addWatchFile`), matched by file identity: a path through a link, and on a case-insensitive volume one in another letter case, names the same file. While it is failing, any change in the project does as well, so creating a missing import brings the story back.
 
 ## Rollup Plugin
 

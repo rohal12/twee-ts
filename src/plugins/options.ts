@@ -9,7 +9,8 @@ import { resolve } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
 import { TweeTsError } from '../compiler.js';
 import { isExcluded } from '../filesystem.js';
-import { isInside, toPosix } from './paths.js';
+import { isSameOrInside } from '../path-identity.js';
+import { toPosix } from './paths.js';
 
 /**
  * The compile options a plugin passes on to the compiler. `sources` and
@@ -74,7 +75,7 @@ export interface ResolvedPluginOptions {
 }
 
 function fail(kind: PluginKind, message: string): never {
-  throw new TweeTsError(`twee-ts ${kind} plugin: ${message}`);
+  throw new TweeTsError(`twee-ts ${kind} plugin: ${message}`, [], { code: 'INVALID_OPTIONS' });
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -187,7 +188,7 @@ export function resolvePluginOptions(
     entry: entry === undefined ? undefined : resolve(entry),
     inputs: [...sources.map(absolute), ...notExcludable],
     // `exclude` never applies to the head file and the modules.
-    excluded: (file) => isExcluded(file, exclude) && !isInside(file, notExcludable),
+    excluded: (file) => isExcluded(file, exclude) && !notExcludable.some((path) => isSameOrInside(file, path)),
     compile: (inline = []) => ({ ...compileOptions, sources: [...sources, ...inline], formatId: format }),
   };
 }

@@ -1,22 +1,29 @@
 /**
- * Path helpers for the bundler plugins. Vite reports module ids with forward
- * slashes on every platform, while node:path gives backslashes on Windows, so
- * the Vite plugin compares paths in forward-slash form only. Paths a build
- * writes are compared by real path instead (see filesystem.ts).
- */
-import { dirname, resolve } from 'node:path';
-import { realPathOf } from '../filesystem.js';
-import type { BuildOutputs } from '../filesystem.js';
-
-/**
- * The form the Vite plugin compares input files by: the real path (see
- * realPathOf) with forward slashes. Watchers and bundlers spell one file
+ * Path helpers for the bundler plugins. Watchers and bundlers spell one file
  * differently: macOS FSEvents reports /private/var/… for a file under /var/…,
- * Vite resolves module ids through symbolic links, and Windows keeps a short
- * 8.3 folder name (C:\Users\RUNNER~1) where another tool gives the long one.
+ * Vite resolves module ids through symbolic links, Windows keeps a short 8.3
+ * folder name (C:\Users\RUNNER~1) where another tool gives the long one, and
+ * a case-insensitive volume takes any letter case. So the plugins compare
+ * files by their identity key (see path-identity.ts), and spell a path they
+ * hand a watcher by its canonical (real) path.
  */
+import { dirname, resolve, sep } from 'node:path';
+import type { BuildOutputs } from '../filesystem.js';
+import { identify, isKeyInside } from '../path-identity.js';
+
+/** The real path of `path`, with forward slashes: how the Vite plugin spells a path it hands a watcher. */
 export function canonicalPath(path: string): string {
-  return toPosix(realPathOf(path));
+  return toPosix(identify(path).canonical);
+}
+
+/** The key a file is compared by: two paths name the same file exactly when their keys are equal. */
+export function fileKey(path: string): string {
+  return identify(path).key;
+}
+
+/** Whether the file with key `key` is one of the folders (or files) with keys `within`, or inside one. */
+export function keyWithin(key: string, within: readonly string[]): boolean {
+  return within.some((outer) => isKeyInside(key, outer, sep));
 }
 
 /** The output settings that say where a bundle is written, as Rollup and Vite pass them to generateBundle. */
@@ -94,11 +101,6 @@ export function createOutputRecord(storyFileName: string): OutputRecord {
 /** The path with Windows separators turned into forward slashes. */
 export function toPosix(path: string): string {
   return path.replace(/\\/g, '/');
-}
-
-/** Whether `file` is one of `dirs` or inside one of them. All paths in forward-slash form. */
-export function isInside(file: string, dirs: readonly string[]): boolean {
-  return dirs.some((dir) => file === dir || file.startsWith(dir.endsWith('/') ? dir : `${dir}/`));
 }
 
 /**
