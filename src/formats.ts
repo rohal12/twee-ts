@@ -39,8 +39,8 @@ function skipTrivia(text: string, i: number): number {
     if (ch !== undefined && /\s/.test(ch)) {
       pos++;
     } else if (text.startsWith('//', pos)) {
-      const newline = text.indexOf('\n', pos);
-      pos = newline === -1 ? text.length : newline + 1;
+      pos += 2;
+      while (pos < text.length && !/[\n\r\u2028\u2029]/.test(text[pos]!)) pos++;
     } else if (text.startsWith('/*', pos)) {
       const close = text.indexOf('*/', pos + 2);
       pos = close === -1 ? text.length : close + 2;

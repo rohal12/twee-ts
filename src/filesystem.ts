@@ -7,6 +7,7 @@ import {
   constants as fsConstants,
   lstatSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   statSync,
   watch as fsWatch,
@@ -277,10 +278,32 @@ interface RootState {
   readonly anchor: { readonly path: string; readonly id: string } | undefined;
   /** The path itself: a folder is watched recursively; a file is watched through `anchor`. */
   readonly self: PathKind;
+  /** A named symlink also needs the target's parent watched for edits and atomic saves. */
+  readonly target: { readonly path: string; readonly anchor: RootState['anchor'] } | undefined;
 }
 
 function rootState(abs: string): RootState {
-  return { anchor: nearestFolderAbove(abs), self: pathKind(abs) };
+  let target: RootState['target'];
+  try {
+    // Resolve links even while the target is missing, so its recreation stays observable.
+    let path = abs;
+    const seen = new Set<string>();
+    while (lstatSync(path).isSymbolicLink()) {
+      if (seen.has(path)) throw new Error('Symlink cycle');
+      seen.add(path);
+      path = resolve(dirname(path), readlinkSync(path));
+      try {
+        lstatSync(path);
+      } catch {
+        break;
+      }
+    }
+    const real = realPathOf(path);
+    if (real !== abs && pathKind(real).kind !== 'dir') target = { path: real, anchor: nearestFolderAbove(real) };
+  } catch {
+    // Its own anchor observes a missing path's creation or a link's retargeting.
+  }
+  return { anchor: nearestFolderAbove(abs), self: pathKind(abs), target };
 }
 
 function nearestFolderAbove(abs: string): RootState['anchor'] {
@@ -294,7 +317,13 @@ function nearestFolderAbove(abs: string): RootState['anchor'] {
 /** Whether two states need the same watches: the same anchor folder, and the same watched folder if any. */
 function sameWatches(a: RootState, b: RootState): boolean {
   const selfId = (s: RootState): string | undefined => (s.self.kind === 'dir' ? s.self.id : undefined);
-  return a.anchor?.path === b.anchor?.path && a.anchor?.id === b.anchor?.id && selfId(a) === selfId(b);
+  return (
+    a.anchor?.path === b.anchor?.path &&
+    a.anchor?.id === b.anchor?.id &&
+    selfId(a) === selfId(b) &&
+    a.target?.path === b.target?.path &&
+    a.target?.anchor?.id === b.target?.anchor?.id
+  );
 }
 
 /** One watched path (a source, module or head file), as given and as an absolute path. */
@@ -403,7 +432,7 @@ export function watchFilesystem(
     for (const w of root.watchers) w.close();
     root.watchers = [];
     root.failed = false;
-    const { anchor, self } = root.state;
+    const { anchor, self, target } = root.state;
     if (anchor) {
       startWatch(root, anchor.path, false, (filename) => {
         // A file is watched through its folder, not on its own: the OS reports only the file's
@@ -412,7 +441,12 @@ export function watchFilesystem(
         const before = root.state.self.kind;
         recheck(root, true);
         const isFile = before === 'file' || isNamedFile(root.abs);
-        if (isFile && filename !== '' && resolve(anchor.path, filename) === root.abs) fileChanged(root.abs, true);
+        const changedPath = filename === '' ? undefined : resolve(anchor.path, filename);
+        if (
+          changedPath !== undefined &&
+          ((isFile && changedPath === root.abs) || changedPath === root.state.target?.path)
+        )
+          fileChanged(root.abs, true);
       });
     }
     if (self.kind === 'dir') {
@@ -423,6 +457,13 @@ export function watchFilesystem(
           const abs = resolve(root.abs, filename);
           fileChanged(abs, isNamedFile(abs));
         }
+      });
+    }
+    if (target?.anchor && target.anchor.path !== anchor?.path) {
+      const targetAnchor = target.anchor;
+      startWatch(root, targetAnchor.path, false, (filename) => {
+        recheck(root, true);
+        if (filename === '' || resolve(targetAnchor.path, filename) === target.path) fileChanged(root.abs, true);
       });
     }
     if (!root.failed) root.lastReport = undefined;

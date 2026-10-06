@@ -332,8 +332,11 @@ export async function verifySHA256(content: Uint8Array<ArrayBuffer>, expectedHex
 
 /** Derive the download URL for a format.js from the index URL and entry. */
 function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry, formatType: 'twine1' | 'twine2'): string {
-  const base = indexUrl.replace(/\/index\.json$/, '');
-  return `${base}/${formatType}/${entry.name}/${entry.version}/format.js`;
+  const url = new URL(indexUrl);
+  const base = url.pathname.replace(/\/index\.json$/, '').replace(/\/$/, '');
+  url.pathname = `${base}/${formatType}/${encodeURIComponent(entry.name)}/${encodeURIComponent(entry.version)}/format.js`;
+  url.hash = '';
+  return url.href;
 }
 
 /** The StoryFormatInfo of a Twine 2 format.js cached at `filename`. */
@@ -397,7 +400,10 @@ export async function fetchAndCacheFormat(
   // This caller gave up meanwhile: leave the cache as it was.
   options.signal?.throwIfAborted();
   const formatPath = writeCacheEntry(resolve(getCacheDir()), [entry.name, entry.version], text);
-  return cachedFormatInfo(id, formatPath, data);
+  return cachedFormatInfo(id, formatPath, {
+    ...data,
+    name: data.name === UNNAMED_FORMAT_NAME ? entry.name : data.name,
+  });
 }
 
 /**
@@ -596,7 +602,7 @@ function getCachedFormat(name: string, version: string): StoryFormatInfo | undef
     const id = makeFormatId(name, version);
     const data = parseFormatJSON(source, id);
     if (!data) return undefined;
-    return cachedFormatInfo(id, formatPath, data);
+    return cachedFormatInfo(id, formatPath, { ...data, name: data.name === UNNAMED_FORMAT_NAME ? name : data.name });
   } catch {
     return undefined;
   }

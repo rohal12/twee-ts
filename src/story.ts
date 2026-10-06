@@ -315,6 +315,9 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
 // --- StorySettings (legacy) ---
 
 export function unmarshalStorySettings(story: Story, text: string, diagnostics: Diagnostic[]): void {
+  // The latest special passage replaces the earlier passage, including metadata it omits.
+  story.twine1.settings.clear();
+  story.legacyIFID = '' as IFID;
   const obsolete: string[] = [];
 
   for (const rawLine of text.split('\n')) {
