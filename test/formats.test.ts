@@ -62,13 +62,11 @@ describe('parseFormatJSON with a Harlowe setup function', () => {
   const HARLOWE_DIR = join(__dirname, 'fixtures', 'storyformats-harlowe');
   const source = readFileSync(join(HARLOWE_DIR, 'harlowe-3', 'format.js'), 'utf-8');
 
-  it('parses the same bytes regardless of the format ID it is given', () => {
-    for (const id of ['harlowe-3', 'direct-url', 'anything']) {
-      const data = parseFormatJSON(source, id);
-      expect(data?.name).toBe('Harlowe');
-      expect(data?.version).toBe('3.3.9');
-      expect(data?.source).toContain('{{STORY_DATA}}');
-    }
+  it('parses the format with its setup function left out', () => {
+    const data = parseFormatJSON(source);
+    expect(data?.name).toBe('Harlowe');
+    expect(data?.version).toBe('3.3.9');
+    expect(data?.source).toContain('{{STORY_DATA}}');
   });
 
   it('discovers the format from a local directory', () => {
@@ -77,7 +75,7 @@ describe('parseFormatJSON with a Harlowe setup function', () => {
   });
 
   it('still rejects source that is not a format', () => {
-    expect(parseFormatJSON('window.storyFormat({"name":"X", "setup": function(){}});', 'harlowe-3')).toBeNull();
+    expect(parseFormatJSON('window.storyFormat({"name":"X", "setup": function(){}});')).toBeNull();
   });
 });
 

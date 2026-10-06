@@ -40,6 +40,7 @@ interface BuildFlags {
   readonly twee2Compat?: true;
   readonly testMode?: true;
   readonly noRemote?: true;
+  readonly useDefaultFormatIndices?: false;
   readonly sourceInfo?: true;
 }
 
@@ -108,6 +109,7 @@ export const OPTIONS = {
   'format-index': { type: 'string', multiple: true },
   'format-url': { type: 'string', multiple: true },
   'no-remote': { type: 'boolean' },
+  'no-default-format-indices': { type: 'boolean' },
   'tag-alias': { type: 'string', multiple: true },
   exclude: { type: 'string', multiple: true },
   'source-info': { type: 'boolean' },
@@ -298,6 +300,7 @@ function parseRequest(argv: readonly string[]): CliRequest {
     ...(has('twee2-compat') ? { twee2Compat: true } : {}),
     ...(has('test') ? { testMode: true } : {}),
     ...(has('no-remote') ? { noRemote: true } : {}),
+    ...(has('no-default-format-indices') ? { useDefaultFormatIndices: false } : {}),
     ...(has('source-info') ? { sourceInfo: true } : {}),
   };
 
@@ -333,6 +336,8 @@ export interface ResolvedBuild {
     readonly formatUrls?: readonly string[] | undefined;
     readonly noRemote: boolean;
     readonly formatFetchTimeout?: number | undefined;
+    readonly formatResolutionTimeout?: number | undefined;
+    readonly useDefaultFormatIndices: boolean;
     readonly tagAliases?: Readonly<Record<string, string>> | undefined;
     readonly sourceInfo: boolean;
     readonly wordCountMethod?: WordCountMethod | undefined;
@@ -374,6 +379,8 @@ export function resolveBuild(request: BuildRequest, config: TweeTsConfig | null)
       formatUrls: flags.formatUrls ?? config?.formatUrls,
       noRemote: flags.noRemote ?? config?.noRemote ?? false,
       formatFetchTimeout: config?.formatFetchTimeout,
+      formatResolutionTimeout: config?.formatResolutionTimeout,
+      useDefaultFormatIndices: flags.useDefaultFormatIndices ?? config?.useDefaultFormatIndices ?? true,
       tagAliases:
         aliasEntries.length > 0 || config?.tagAliases !== undefined ? Object.fromEntries(aliasEntries) : undefined,
       sourceInfo: flags.sourceInfo ?? config?.sourceInfo ?? false,
@@ -423,6 +430,8 @@ Options:
   --source-info             Emit source file/line as data- attributes on passages
   --word-count-method <m>   Word counting method: tweego (default), whitespace
   --no-remote               Disable remote format fetching
+  --no-default-format-indices
+                            Don't ask the Story Formats Archive indices
   -c, --config <file>       Config file path (default: ${configFilename})
   --no-config               Skip config file loading
   -h, --help                Show this help

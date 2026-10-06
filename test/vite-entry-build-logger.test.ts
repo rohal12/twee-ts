@@ -2,10 +2,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { createLogger, createServer, type Logger, type Plugin, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { hasEntry, watcherReady } from './helpers/plugins.js';
+import { hasEntry, watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -32,25 +31,12 @@ function makeProject(files: Record<string, string>): string {
   return dir;
 }
 
-async function freePort(): Promise<number> {
-  return new Promise((done) => {
-    const probe = createNetServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => {
-        done(port);
-      });
-    });
-  });
-}
-
 async function serve(
   dir: string,
   plugins: unknown[],
   customLogger: Logger,
   extra: { base?: string } = {},
 ): Promise<string> {
-  const port = await freePort();
   server = await createServer({
     configFile: false,
     root: dir,
@@ -58,11 +44,11 @@ async function serve(
     logLevel: 'silent',
     customLogger,
     plugins: plugins as Plugin[],
-    server: { host: '127.0.0.1', port, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
   });
   await server.listen();
   await watcherReady(server);
-  return `http://127.0.0.1:${port}/`;
+  return `${serverUrl(server)}/`;
 }
 
 const options = (dir: string): Parameters<typeof tweeTsPlugin>[0] => ({
@@ -144,6 +130,14 @@ describe('vite plugin: dev server requests and connections', { timeout: 30_000 }
     const dir = makeProject({ 'story/start.tw': STORY });
     const url = await serve(dir, [tweeTsPlugin(plain(dir))], createLogger('silent'));
     const send = vi.spyOn(server!.ws, 'send');
+    // Connection listeners run in the order they were added, the plugin's (added when the server was
+    // configured) before this one: once this one has run, the plugin has sent whatever it sends to a new
+    // page (#250 TEST-2: no fixed wait).
+    const handled = new Promise<void>((done) => {
+      server!.ws.on('connection', () => {
+        done();
+      });
+    });
     const socket = new WebSocket(url.replace('http', 'ws'), 'vite-hmr');
     try {
       await new Promise<void>((done, fail) => {
@@ -154,7 +148,7 @@ describe('vite plugin: dev server requests and connections', { timeout: 30_000 }
           fail(new Error('websocket failed'));
         });
       });
-      await new Promise((r) => setTimeout(r, 100));
+      await handled;
       expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
     } finally {
       socket.close();

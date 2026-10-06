@@ -155,6 +155,7 @@ becomes
 - **Text HTML cannot carry is an error** (so the CLI writes no file): U+0000 and lone surrogates in a passage name, tag or text or in the story name, and a tag that is empty or holds white space (it reads back as other tags). **Migrate:** remove those characters.
 - **`{{STORY_NAME}}` is escaped for its place in the template**, as the HTML parser reads it: in a JavaScript string or template literal also for JavaScript, in a URL attribute percent-encoded, in a JSON data block or a CSS string with JSON or CSS escaping; a place no escaping fits gets a warning. **Migrate:** a format that undid the HTML escaping in a URL, JSON or CSS can drop that workaround.
 - **Modules and the head file** go before the closing head tag the browser sees. In a template without one, they go where the head ends, with a warning (they used to go before the body start tag, or nowhere). `{{STORY_DATA}}` and the Twine 1 `"STORY"` are replaced at their first occurrence where the browser reads the data as elements; a look-alike in a comment, script or title before it is left alone.
+- **Decompiling keeps the `tw-storydata` attributes:** a `tw-passagedata` named StoryData, or named StoryTitle without holding the story name, is kept under the next free name (`StoryData 2`) with a warning, where it used to replace the IFID, format and start passage (or the name) the attributes give. `startnode`, `pid` and `zoom` are read whole: `2abc` is a warning, not `2`. **Migrate:** rename such a passage in Twine 2 to keep its name; fix the attributes a warning names.
 - **Twine 1 obfuscation** follows the StorySettings passage the output carries: when it is tagged `Twine.private` (or an alias of it), the tiddlers are written unencoded, with a warning. Under `obfuscate:rot13`, a passage whose name ROT13 turns into `StorySettings`, or whose tag it turns into `Twine.image`, is an error. **Migrate:** untag StorySettings to obfuscate; rename the passage or tag.
 
 ## API
@@ -210,11 +211,23 @@ try {
 
 ### `TweeTsError.code`
 
-**After:** `TweeTsError` has a `code` (`OUTPUT_IS_INPUT`, `INPUT_UNAVAILABLE`, `INVALID_OPTIONS`, `BUILD_FAILED`; the type `TweeTsErrorCode`), and errors loading a config file are `TweeTsError`s. **Migrate:** branch on `err.code` instead of matching messages. See [Error Handling](./api#error-handling).
+**After:** `TweeTsError` has a `code` (`OUTPUT_IS_INPUT`, `INPUT_UNAVAILABLE`, `INVALID_OPTIONS`, `FORMAT_UNAVAILABLE`, `BUILD_FAILED`; the type `TweeTsErrorCode`), and errors loading a config file are `TweeTsError`s. So are a missing Twine 1 format component, a story format that no longer decodes when its template is read, and every error of `resolveRemoteFormat()`, which threw `RangeError` and `Error` before. A path `watch()` cannot watch reaches `onError` as the exported `WatchPathError`, with the path as `path`. **Migrate:** branch on `err.code` (or `instanceof WatchPathError`) instead of matching messages or error classes. See [Error Handling](./api#error-handling).
+
+### `resolveRemoteFormat()` takes one options object
+
+**Before:** `resolveRemoteFormat(name, version, indices, urls, options)`. **After:** `resolveRemoteFormat(name, version, { indices, urls, signal, timeout, resolutionTimeout, useDefaultIndices })`. **Migrate:** move the third and fourth arguments into the options object: `resolveRemoteFormat(n, v, { ...options, indices, urls })`.
+
+### SemVer functions
+
+**Before:** `parseSemver()` returned `[major, minor, patch]` and dropped the prerelease, so `semverCompare()` ranked `2.0.0-beta.1` equal to `2.0.0`. **After:** both are gone; `parseVersion()` and `compareVersions()`, the functions format selection uses, are exported. `parseFormatJSON()` takes one argument (it ignored the second). **Migrate:** `semverCompare(parseSemver(a), parseSemver(b))` becomes `compareVersions(parseVersion(a), parseVersion(b))`, after checking that neither `parseVersion()` result is `null`.
+
+### Results are read-only and frozen
+
+**Before:** `CompileResult.story` was typed read-only but was the compiler's own object, whose passages were also the ones `compileIncremental()` kept in the caller's cache; the other results were typed mutable. **After:** `CompileResult.story` is a frozen copy, the passages and diagnostics in a `FileCacheEntry` are frozen, and the result types are read-only: `CompileResult` with its `diagnostics` and `stats`, `Diagnostic`, `LintResult`, `StoryMap`, `BrokenLink`, `getCacheSize()`'s result and `TweeTsError.diagnostics`. `TweeTsConfig`'s lists and `tagAliases` are read-only too. **Migrate:** copy before changing (`[...result.diagnostics]`, `{ ...passage, tags: [...passage.tags, 'x'] }`).
 
 ### `fetchAndCacheFormat()` is removed
 
-**Before:** `fetchAndCacheFormat(entry, downloadUrl, options)` downloaded an index entry into a cache shared by every project. **After:** it is gone, since a download is now cached for where it came from. **Migrate:** list the index in `formatIndices` (config or `compile()`), or call `resolveRemoteFormat(name, version, [indexUrl])`.
+**Before:** `fetchAndCacheFormat(entry, downloadUrl, options)` downloaded an index entry into a cache shared by every project. **After:** it is gone, since a download is now cached for where it came from. **Migrate:** list the index in `formatIndices` (config or `compile()`), or call `resolveRemoteFormat(name, version, { indices: [indexUrl] })`.
 
 ### The format cache functions
 

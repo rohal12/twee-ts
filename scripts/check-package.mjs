@@ -266,6 +266,29 @@ main.compile({ sources: [{ filename: 'a.tw', content: ${JSON.stringify(story)} }
     });
   }
 
+  // A `{@link name}` in the shipped declarations must name something they declare: a link to a module-private
+  // function is a dead link in every consumer's editor (#250 DOC-5).
+  check('declarations: every {@link} names something the shipped types declare', () => {
+    const declarationFiles = (dir) =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+        d.isDirectory() ? declarationFiles(join(dir, d.name)) : /\.d\.c?ts$/.test(d.name) ? [join(dir, d.name)] : [],
+      );
+    const text = declarationFiles(dist)
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n');
+    const declared = new Set(
+      [
+        ...text.matchAll(/\b(?:function|class|interface|type|const|let|enum|namespace)\s+([A-Za-z_$][\w$]*)/g),
+        ...text.matchAll(/\bas\s+([A-Za-z_$][\w$]*)\s*[,}]/g),
+        ...text.matchAll(/^\s+(?:readonly\s+)?([A-Za-z_$][\w$]*)\??[:(]/gm),
+      ].map((m) => m[1]),
+    );
+    const broken = [...new Set([...text.matchAll(/\{@link\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))].filter(
+      (name) => !declared.has(name),
+    );
+    if (broken.length > 0) throw new Error(`links to undeclared names: ${broken.join(', ')}`);
+  });
+
   // ---- CLI through the bin link ---------------------------------------------------------------
   write('story/a.tw', story);
   check('cli: npx twee-ts --version', () => {

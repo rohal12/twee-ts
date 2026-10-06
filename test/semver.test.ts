@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { compareVersions, parseVersion, sameVersion } from '../src/semver.js';
-import { parseSemver } from '../src/formats.js';
 
 /** Parse a version the test knows is valid. */
 function v(text: string) {
@@ -86,14 +85,5 @@ describe('sameVersion', () => {
     expect(sameVersion('v2.0', '2.0.0+build')).toBe(true);
     expect(sameVersion('2.0.0-beta.1', '2.0.0')).toBe(false);
     expect(sameVersion('2.0.0', 'latest')).toBe(false);
-  });
-});
-
-describe('parseSemver (public tuple form)', () => {
-  it('uses the same parser', () => {
-    expect(parseSemver('v1.0.0')).toEqual([1, 0, 0]);
-    expect(parseSemver('1.0')).toEqual([1, 0, 0]);
-    expect(parseSemver('2.0.0-beta.1')).toEqual([2, 0, 0]);
-    expect(parseSemver('not-a-version')).toBeNull();
   });
 });

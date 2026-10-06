@@ -20,6 +20,7 @@
  */
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from './javascript-strings.js';
 import type { ScriptMode } from './javascript-strings.js';
+import { scriptsJQueryRuns } from './html-structure.js';
 import { LINE_TERMINATORS, isLineTerminator } from './js-chars.js';
 import { readSquareBracketedMarkup } from './link-markup.js';
 
@@ -595,8 +596,9 @@ function linkDestination(link: string): string {
 
 /**
  * The passage that link markup from `start` in `text` names, and where the markup ends, or
- * `undefined` where SugarCube rejects the markup. Image markup names none here, nor does markup
- * with a template literal's `${…}` in it, whose passage is known only in play.
+ * `undefined` where SugarCube rejects the markup. Image markup names the passage of its link
+ * component (`[img[pic.png][Room]]`), which SugarCube goes to on a click, and none without one.
+ * Markup with a template literal's `${…}` in it names none: its passage is known only in play.
  */
 function linkMarkupAt(
   text: string,
@@ -607,8 +609,7 @@ function linkMarkupAt(
   if (markup === undefined) {
     return undefined;
   }
-  const passage =
-    markup.type === 'link' && !text.slice(start, markup.end).includes(SUBSTITUTION) ? markup.link : undefined;
+  const passage = text.slice(start, markup.end).includes(SUBSTITUTION) ? undefined : markup.link;
   return {
     link: passage === undefined ? undefined : { via: 'markup', passage: linkDestination(passage) },
     end: markup.end,
@@ -677,6 +678,7 @@ function innerPassageLink(
 // it comes first, as in SugarCube: `//*` is italics.
 const REGION_OPEN_RE = /\[\[[^[]|\[[<>]?[Ii][Mm][Gg]\[|\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]/g;
 const HAS_SCRIPT_OPEN_RE = /<[Ss][Cc][Rr][Ii][Pp][Tt]/;
+const HAS_IMAGE_OPEN_RE = /\[[<>]?[Ii][Mm][Gg]\[/;
 type RegionKind = 'markup' | '//' | CommentKind | 'script';
 
 function regionKind(opener: string): RegionKind {
@@ -879,11 +881,15 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * `<<` the walk reaches, and link or image markup read at each `[[` or `[img[`; markup SugarCube
  * rejects is read on from just after its opener, and so is markup after a limit on how much
  * markup a reading may scan, which only input built to take quadratic time reaches (see
- * `readSquareBracketedMarkup`). Image markup names no passage here. Of the wikifier's other
+ * `readSquareBracketedMarkup`). Image markup names the passage of its link component. Of the wikifier's other
  * parsers, only those whose text holds no link or call are told apart: comments (`/* … *` + `/`,
  * `/% … %/`, `<!-- … -->`), whose links and calls never run, and `<script>` elements and
  * `<<script>>` bodies, which are JavaScript: only the links and calls in their strings are read
- * (see `findJavaScriptPassageLinks`). Everything else, verbatim text included, is read as markup.
+ * (see `findJavaScriptPassageLinks`). A `<script>` element is read as jQuery and the browser run
+ * it when SugarCube inserts it (see `scriptsJQueryRuns`): a classic script as sloppy-mode code, a
+ * `type="module"` script as module code, and one that does not run (a template or JSON `type`, a
+ * `src`, a classic script marked `nomodule`) not at all. Everything else, verbatim text included,
+ * is read as markup.
  *
  * Where this differs from SugarCube:
  * - a link whose passage SugarCube evaluates, because no passage has its name, is taken by its
@@ -905,6 +911,8 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * - a `<<script>>` body's end is found as `parseBody` finds it, except that parseBody rejects a
  *   closing tag with arguments, and resumes inside the arguments of a tag whose name starts with
  *   `/` or `end`;
+ * - a `<script>` element is taken to run when the passage is shown, as a classic script in a
+ *   browser that supports modules;
  * - the lines of a `<<nobr>>` body, and of every passage when a story sets
  *   `Config.passages.nobr`, are not joined before they are read (see `storyInspect` for passages
  *   tagged `nobr`).
@@ -916,7 +924,7 @@ export function findPassageLinks(text: string): PassageLink[] {
 function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
   if (
     context.depth > MAX_STRING_DEPTH ||
-    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text))
+    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
   ) {
     return [];
   }
@@ -964,8 +972,10 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
           // SugarCube reads the opener and nothing more; the content is markup.
           return element.openerEnd;
         }
-        // The browser runs a `<script>` element as a classic, sloppy-mode script.
-        append(links, javaScriptPassageLinks(text.slice(element.openerEnd, element.close), context, 'sloppy'));
+        append(
+          links,
+          scriptElementPassageLinks(text.slice(start, element.close + 9), element.openerEnd - start, context),
+        );
         return element.close + 9;
       }
       default: {
@@ -1035,14 +1045,31 @@ export function findJavaScriptPassageLinks(source: string): PassageLink[] {
  * `\x3c`, `\u003c`, `\u{…}` or, in sloppy mode, the octal `\74` or `\074`; two can be next to
  * each other with only line continuations between, and the first is `<` or `\<` (then the source
  * holds `<<` or `<\`) or one of the others. A value holding `[[`, likewise: the source holds `[[`,
- * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. Or a
- * value holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the
- * outer string encodes.
+ * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. A value
+ * holding image markup (`[img[`, `[<img[`, `[>img[`): the source holds a `[` (or one of its
+ * escapes, above) followed by an `i`, by `<` or `>` and an `i`, or by an escape. Or a value
+ * holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the outer
+ * string encodes.
  */
 const MAY_HOLD_LINK_RE = new RegExp(
-  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133`,
+  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133|\[[<>]?[i\\]`,
   'i',
 );
+
+/**
+ * The passages named in the strings of the scripts that run when SugarCube inserts `markup`, the
+ * `<script>` markup its `verbatimScriptTag` parser matched, whose opener ends at `contentStart`
+ * (see `scriptsJQueryRuns`): a classic
+ * script is sloppy-mode code, a module script module code. A script that does not run, such as a
+ * template (`type="text/template"`), JSON or one with a `src`, names no passage.
+ */
+function scriptElementPassageLinks(markup: string, contentStart: number, context: ReadContext): PassageLink[] {
+  // The code of every script in it lies after the opener.
+  if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_LINK_RE.test(markup.slice(contentStart))) return [];
+  return scriptsJQueryRuns(markup).flatMap((script) =>
+    javaScriptPassageLinks(script.code, context, script.kind === 'module' ? 'module' : 'sloppy'),
+  );
+}
 
 /** The passages named in the strings of JavaScript `source`, evaluated in the given mode. */
 function javaScriptPassageLinks(source: string, context: ReadContext, mode: ScriptMode): PassageLink[] {

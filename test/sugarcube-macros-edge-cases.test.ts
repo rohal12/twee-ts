@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  findJavaScriptPassageLinks,
   findMacroTags,
   findPassageLinks,
   parseMacroArgs,
@@ -53,9 +54,19 @@ describe('parseMacroArgs on link markup that does not close', () => {
 });
 
 describe('links in the arguments of a tag', () => {
-  it('names no passage for image markup as an argument', () => {
+  it('names the passage image markup as an argument links to, and none for one without a link', () => {
     expect(findPassageLinks('<<button [img[pic.png]]>>')).toEqual([]);
-    expect(findPassageLinks('<<button [img[pic.png][Room]]>>')).toEqual([]);
+    expect(findPassageLinks('<<button [img[pic.png][Room]]>>').map((l) => l.passage)).toEqual(['Room']);
+  });
+
+  it.each([
+    String.raw`$.wiki('[img[pic.png][Room]]')`,
+    String.raw`$.wiki('[<IMG[pic.png][Room]]')`,
+    String.raw`$.wiki('[\x69mg[pic.png][Room]]')`,
+    String.raw`$.wiki('\x5bimg[pic.png][Room]]')`,
+    String.raw`$.wiki('[>\u0069mg[pic.png][Room]]')`,
+  ])('reads the link of image markup a script string holds: %s', (source) => {
+    expect(findJavaScriptPassageLinks(source).map((l) => l.passage)).toEqual(['Room']);
   });
 
   it('splits a closing bracket after link markup off as a word', () => {

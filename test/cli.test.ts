@@ -444,7 +444,7 @@ describe('CLI output inside a source folder', () => {
 
     writeFileSync(join(dir, source), EDITED);
     const r = runCli(dir, ['--lint']);
-    expect(r.stdout).toContain(', 1 files');
+    expect(r.stdout).toContain(', 1 file\n');
     expect(r.stdout).not.toContain('warning');
     // The link to the deleted passage is broken; the earlier output must not stand in for it.
     expect(r.stdout).toContain('Broken links (1):');

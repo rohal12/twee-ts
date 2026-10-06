@@ -180,25 +180,79 @@ const tokenizerStatement = fc.oneof(
 );
 
 /**
- * Statements acorn's tokenizer reads wrongly on its own, without a parse: a block statement after
- * a class declaration (it takes the block for an object), and `await` before a regular expression
- * (it takes `await` for a name). Only source that does not parse up to them is read that way.
+ * Statements acorn's tokenizer reads wrongly on its own, and the tolerant tokenizer reads exactly: a
+ * block statement after a statement that ends in a block (acorn takes the block for an object
+ * literal), and `await` before a regular expression (acorn takes `await` for a name).
  */
-const TOKENIZER_LIMITS: Readonly<Record<string, readonly [string, readonly string[]]>> = {
-  'a block after a class declaration': ['class A {}\n{}\n/"/.test(s); x = "a"', ['/.test(s); x = ']],
-  'await before a regular expression': ['async function f() { await /"/.test(s); x = "a"; }', ['/.test(s); x = ']],
+const TOKENIZER_FIXES: Readonly<Record<string, string>> = {
+  'a block after a class declaration': 'class A {}\n{}\n/"/.test(s); x = "a"',
+  'a block after an if statement': 'if (a) {}\n{}\n/"/.test(s); x = "a"',
+  'a block after a block': '{}\n{}\n/"/.test(s); x = "a"',
+  'await before a regular expression': 'async function f() { await /"/.test(s); x = "a"; }',
+  'await before a regular expression at the top level': 'await /"/.test(s); x = "a"',
 };
 
+/** Statements that end in a block, with what follows them. */
+const BLOCK_ENDED_STATEMENTS = [
+  'if (a) {}',
+  'if (a) {} else {}',
+  'if (a) {} else if (b) {}',
+  'for (;;) {}',
+  'for (const k in o) {}',
+  'for (const k of o) {}',
+  'while (a) {}',
+  'try {} catch {}',
+  'try {} catch (e) {}',
+  'try {} finally {}',
+  'switch (a) {}',
+  'switch (a) { case 1: {} }',
+  'function f() {}',
+  'function* g() {}',
+  'async function h() {}',
+  'class A {}',
+  'class A extends B { m() {} }',
+  'x = class {}',
+  'x = () => {}',
+  'x = function () {}',
+  'x = {}',
+  'lbl: {}',
+  '{}',
+  '{ {} }',
+  'with (o) {}',
+];
+
+/** A statement that ends in a block, then a block statement or a label, then a tricky regular expression. */
+const blockAfterStatement = fc
+  .tuple(
+    fc.constantFrom(...BLOCK_ENDED_STATEMENTS),
+    fc.constantFrom('{}', '{ x; }', 'l2: {}', ''),
+    fc.constantFrom(...TRICKY_REGEXES),
+    stringLiteral,
+  )
+  .map(([head, block, regex, string]) => `${head}\n${block}\n${regex}.test(${string});`);
+
+/** `await` before a tricky regular expression, in an async function, an async arrow or at the top level. */
+const awaitBeforeRegex = fc
+  .tuple(fc.constantFrom(...TRICKY_REGEXES), stringLiteral)
+  .chain(([regex, string]) =>
+    fc.constantFrom(
+      `async function f() { await ${regex}.test(${string}); }`,
+      `f = async () => { await ${regex}.test(${string}); };`,
+      `x = { async m() { if (a) {} await ${regex}.test(${string}); } };`,
+      `await ${regex}.test(${string});`,
+      `x = await ${regex}; y = ${string};`,
+    ),
+  );
+
 const statement = fc.oneof(
-  { weight: 9, arbitrary: tokenizerStatement },
-  { weight: 1, arbitrary: fc.constantFrom(...Object.values(TOKENIZER_LIMITS).map(([source]) => source)) },
+  { weight: 6, arbitrary: tokenizerStatement },
+  { weight: 2, arbitrary: blockAfterStatement },
+  { weight: 1, arbitrary: awaitBeforeRegex },
+  { weight: 1, arbitrary: fc.constantFrom(...Object.values(TOKENIZER_FIXES)) },
   stringLiteral.map((string) => `class A { #x = 1; m() { return this.#x / 2 / ${string}.length; } }`),
 );
 
 const program = fc.array(statement, { minLength: 1, maxLength: 6 }).map((statements) => statements.join('\n'));
-const tokenizerProgram = fc
-  .array(tokenizerStatement, { minLength: 1, maxLength: 6 })
-  .map((statements) => statements.join('\n'));
 
 describe('javaScriptStrings compared with a full parse (property-based)', () => {
   it('reads every generated program exactly as the parse does', () => {
@@ -223,9 +277,9 @@ describe('javaScriptStrings compared with a full parse (property-based)', () => 
     );
   });
 
-  it('reads code after a syntax error with the tokenizer as the parse does, within its stated limits', () => {
+  it('reads code after a syntax error with the tokenizer as the parse does', () => {
     fc.assert(
-      fc.property(tokenizerProgram, (source) => {
+      fc.property(program, (source) => {
         const expected = astStrings(source);
         fc.pre(expected !== undefined);
         expect(javaScriptStrings(brokenBefore(source)), source).toEqual(expected);
@@ -234,10 +288,15 @@ describe('javaScriptStrings compared with a full parse (property-based)', () => 
     );
   });
 
-  it.each(Object.entries(TOKENIZER_LIMITS))("states the tokenizer's limit: %s", (_label, [source, misread]) => {
+  it.each(Object.entries(TOKENIZER_FIXES))('reads %s exactly, also with the tokenizer', (_label, source) => {
     expect(javaScriptStrings(source)).toEqual(['a']);
     expect(javaScriptStrings(brokenAfter(source))).toEqual(['a']);
-    expect(javaScriptStrings(brokenBefore(source))).toEqual(misread);
+    expect(javaScriptStrings(brokenBefore(source))).toEqual(['a']);
+  });
+
+  it('reads `await` written as a property name before a division as the parse does', () => {
+    const source = 'x = o.await / 2 / "a".length;';
+    expect(javaScriptStrings(brokenBefore(source))).toEqual(['a']);
   });
 
   it('reads sloppy-mode strings with legacy octal escapes in sloppy mode only', () => {

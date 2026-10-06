@@ -14,15 +14,17 @@ import { htmlCommentSanitize, rot13 } from './escape.js';
 import { unrepresentableTextDiagnostics } from './html-output-check.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { VERSION } from './version.js';
+import { TweeTsError } from './errors.js';
+import { buildTime } from './build-time.js';
 
 const CREATOR_NAME = 'twee-ts';
 
 export function toTwine1Archive(
   story: ReadonlyStory,
   _startName: string,
-  options?: { readonly diagnostics?: Diagnostic[] },
+  options?: { readonly diagnostics?: Diagnostic[]; readonly time?: Date },
 ): string {
-  const { data, count, diagnostics } = getTwine1PassageChunk(story);
+  const { data, count, diagnostics } = getTwine1PassageChunk(story, options?.time ?? buildTime());
   options?.diagnostics?.push(...diagnostics);
   return twine1ArchiveStoreArea(count, data);
 }
@@ -39,13 +41,14 @@ export function toTwine1HTML(
   story: ReadonlyStory,
   format: StoryFormatInfo,
   startName: string,
-  options?: { readonly head?: string; readonly diagnostics?: Diagnostic[] },
+  options?: { readonly head?: string; readonly diagnostics?: Diagnostic[]; readonly time?: Date },
 ): string {
+  const time = options?.time ?? buildTime();
   const formatDir = dirname(format.filename);
   const parentDir = dirname(formatDir);
   const diagnostics = options?.diagnostics;
   let template = readFormatSource(format, diagnostics);
-  const chunk = getTwine1PassageChunk(story);
+  const chunk = getTwine1PassageChunk(story, time);
   const { data, count } = chunk;
   diagnostics?.push(...chunk.diagnostics);
 
@@ -81,7 +84,7 @@ export function toTwine1HTML(
         occurrences: 'first',
         value: { kind: 'text', text: `Compiled with ${CREATOR_NAME}, ${VERSION}` },
       },
-      { token: '"TIME"', occurrences: 'first', value: { kind: 'text', text: `Built on ${new Date().toUTCString()}` } },
+      { token: '"TIME"', occurrences: 'first', value: { kind: 'text', text: `Built on ${time.toUTCString()}` } },
       { token: '"START_AT"', occurrences: 'first', value: { kind: 'quoted', text: displayStart } },
       { token: '"STORY_SIZE"', occurrences: 'first', value: { kind: 'quoted', text: String(count) } },
       ...storyData,
@@ -120,7 +123,10 @@ export function twine1PassageOmission(p: ReadonlyPassage): PassageOmission | und
  * nothing is obfuscated, with a warning. Obfuscation that would turn a name into `StorySettings` or a tag into
  * `Twine.image` is an error: the engine reads such a tiddler as the settings, or as an image it doesn't decode.
  */
-function getTwine1PassageChunk(story: ReadonlyStory): {
+function getTwine1PassageChunk(
+  story: ReadonlyStory,
+  time: Date,
+): {
   data: string;
   count: number;
   hasText: boolean;
@@ -138,7 +144,7 @@ function getTwine1PassageChunk(story: ReadonlyStory): {
     });
   }
   if (obfuscateRot13) diagnostics.push(...obfuscationCollisions(written));
-  const data = written.map((p, i) => passageToTiddler(p, i + 1, obfuscateRot13)).join('');
+  const data = written.map((p, i) => passageToTiddler(p, i + 1, obfuscateRot13, time)).join('');
   const hasText = written.some((p) => /[^\t\n\f\r ]/.test(p.text));
   return { data, count: written.length, hasText, diagnostics };
 }
@@ -171,8 +177,10 @@ function tryReplaceComponent(
     return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) {
-      throw new Error(
+      throw new TweeTsError(
         `Required format component not found: ${componentPath}: ${e instanceof Error ? e.message : String(e)}`,
+        [],
+        { code: 'FORMAT_UNAVAILABLE', cause: e },
       );
     }
     return template;

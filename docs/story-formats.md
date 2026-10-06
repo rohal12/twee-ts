@@ -112,7 +112,7 @@ Twine 1 format directories (containing `header.html` instead of `format.js`) use
 
 When no local format answers, twee-ts downloads the format from the project's format URLs or format indices, and finally from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/).
 
-Each request (an index or a format file) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` key of the [config file](./configuration#story-format), or the option of the same name in the [API](./api#compile-options), changes the limit. A response larger than 32 MiB is refused, also with a warning. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
+Each request (an index or a format file) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` key of the [config file](./configuration#story-format), or the option of the same name in the [API](./api#compile-options), changes the limit. The whole search may take 120 seconds (`formatResolutionTimeout`; `0` turns it off): when that passes, the request in progress stops with a warning, and the format URLs and indices not yet asked answer from what was downloaded from them before. With `useDefaultFormatIndices: false` (or `--no-default-format-indices`), the Story Formats Archive is not asked, so a project with its own archive never contacts it. A response larger than 32 MiB is refused, also with a warning. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
 
 ### Custom Remote Sources
 

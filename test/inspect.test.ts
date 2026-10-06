@@ -328,7 +328,7 @@ describe('storyInspect', () => {
       return storyInspect(result.story);
     }
 
-    async function startLinks(startText: string): Promise<string[] | undefined> {
+    async function startLinks(startText: string): Promise<readonly string[] | undefined> {
       return (await inspectStart(startText)).links.get('Start');
     }
 
@@ -392,8 +392,12 @@ describe('storyInspect', () => {
       expect(await startLinks('[[a [[Room]]')).toEqual(['Room']);
     });
 
-    it('reads no link from image markup', async () => {
-      expect(await startLinks('[img[pic.png][Room]] [img[Title|pic.png]]')).toEqual([]);
+    it('reads the link component of image markup, which SugarCube follows on a click (#245)', async () => {
+      expect(await startLinks('[img[pic.png][Room]] [img[Title|pic.png]]')).toEqual(['Room']);
+      expect(await startLinks('[>img[Title|pic.png][Hall][$x to 1]] [<img[pic.png<-Title][~Attic]]')).toEqual([
+        'Hall',
+        'Attic',
+      ]);
     });
 
     it('reads link markup in a macro argument', async () => {
@@ -498,7 +502,7 @@ describe('storyInspect', () => {
       return storyInspect(result.story);
     }
 
-    async function startLinks(startText: string): Promise<string[] | undefined> {
+    async function startLinks(startText: string): Promise<readonly string[] | undefined> {
       return (await inspectStart(startText)).links.get('Start');
     }
 

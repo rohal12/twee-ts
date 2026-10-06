@@ -176,11 +176,7 @@ export function passageToPassagedata(
   if (hasMetadataPosition(p)) {
     position = p.metadata?.position ?? '';
   } else {
-    const x = pid % 10;
-    const y = Math.floor(pid / 10);
-    const xp = x === 0 ? 10 : x;
-    const yp = x === 0 ? y : y + 1;
-    position = `${xp * 125 - 25},${yp * 125 - 25}`;
+    position = gridPosition(pid, 125, 25);
   }
 
   if (hasMetadataSize(p)) {
@@ -197,6 +193,18 @@ export function passageToPassagedata(
 }
 
 /**
+ * Where Twine lays out passage `pid` (from 1) that has no position of its own: in rows of ten, `cell` apart,
+ * the first `cell - inset` from the top left corner (Twine 2: 125 and 25; Twine 1: 140 and 130).
+ */
+function gridPosition(pid: number, cell: number, inset: number): string {
+  const x = pid % 10;
+  const y = Math.floor(pid / 10);
+  const column = x === 0 ? 10 : x;
+  const row = x === 0 ? y : y + 1;
+  return `${column * cell - inset},${row * cell - inset}`;
+}
+
+/**
  * Whether Twine 1 `obfuscate:rot13` encodes a tiddler: every one but `StorySettings` and those tagged `Twine.image`
  * (Twine 1.4 `Tiddler.isObfuscateable()`). Its engine tests the stored name and tags, which these tiddlers keep
  * unencoded, so the decompiler tests them the same way.
@@ -210,20 +218,11 @@ export function isObfuscatable(p: Pick<ReadonlyPassage, 'name' | 'tags'>): boole
  * `isObfuscatable()`) has its name, each tag and its text ROT13-encoded, as Twine 1.4 writes it
  * (`Tiddler.toHtml()`), and as its engine.js decodes it.
  */
-export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13 = false): string {
-  let position: string;
+export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13: boolean, time: Date): string {
+  const position = hasMetadataPosition(p) ? (p.metadata?.position ?? '') : gridPosition(pid, 140, 130);
 
-  if (hasMetadataPosition(p)) {
-    position = p.metadata?.position ?? '';
-  } else {
-    const x = pid % 10;
-    const y = Math.floor(pid / 10);
-    const xp = x === 0 ? 10 : x;
-    const yp = x === 0 ? y : y + 1;
-    position = `${xp * 140 - 130},${yp * 140 - 130}`;
-  }
-
-  const created = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+  // Twine 1's form, YYYYMMDDHHMM in UTC; every tiddler of one build has the build's time.
+  const created = time.toISOString().replace(/[-:T]/g, '').slice(0, 12);
   const encode = obfuscateRot13 && isObfuscatable(p) ? rot13 : (s: string) => s;
   const name = attrEscape(encode(p.name));
   const tags = attrEscape(p.tags.map(encode).join(' '));
@@ -236,11 +235,70 @@ export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego
 }
 
 /**
+ * Where a passage name that the compiler made up came from. Generated names yield to every other
+ * name in the story: see `storyAdd()`.
+ * - `code`: a stylesheet or script (a `.css`, `.js` or font file, or an imported Twine 2 story's
+ *   stylesheet or script). Output finds these by tag, so a new name is not reported.
+ * - `media`: an image, audio, video or text track file. Stories refer to these by passage name,
+ *   so a new name is reported.
+ */
+export type GeneratedName =
+  | { readonly kind: 'code'; readonly base: string }
+  | { readonly kind: 'media'; readonly base: string; readonly file: string };
+
+/**
+ * Passages whose names were generated, kept by identity so that cached passages keep the mark. A changed
+ * copy of a passage is made with {@link derivePassage}, which carries the mark over.
+ */
+const generatedNames = new WeakMap<Passage, GeneratedName>();
+
+/**
+ * Mark a passage's name as generated (from a file name, or for imported story code) and return
+ * the passage. `origin.base` is the name that free names are numbered from: `base`, `base 2`, ….
+ */
+export function withGeneratedName(p: Passage, origin: GeneratedName): Passage {
+  generatedNames.set(p, origin);
+  return p;
+}
+
+/** Where the passage's name came from, when the compiler generated it. */
+export function generatedNameOf(p: Passage): GeneratedName | undefined {
+  return generatedNames.get(p);
+}
+
+/**
+ * A copy of `p` with `changes` applied: the one way to make a changed copy of a passage while a story is
+ * built. What is known about the passage beyond its fields carries over: a generated name stays generated
+ * while the name is unchanged. A copy under a new name has an authored name, unless the caller marks it
+ * again (as `storyAdd()` does when it moves a generated name aside).
+ */
+export function derivePassage(
+  p: Passage,
+  changes: Readonly<Partial<Pick<Passage, 'name' | 'tags' | 'text'>>>,
+): Passage {
+  const copy: Passage = { ...p, ...changes };
+  const origin = generatedNames.get(p);
+  if (origin !== undefined && copy.name === p.name) generatedNames.set(copy, origin);
+  return copy;
+}
+
+/**
+ * Freeze `p` and everything it holds (tags, metadata, source), in place, and return it. A frozen passage
+ * keeps its identity, so what is known about it by identity (a generated name) stays known.
+ */
+export function freezePassage(p: Passage): Passage {
+  Object.freeze(p.tags);
+  if (p.metadata !== undefined) Object.freeze(p.metadata);
+  if (p.source !== undefined) Object.freeze(p.source);
+  return Object.freeze(p);
+}
+
+/**
  * Apply tag aliases: for each passage carrying an alias tag, add the canonical
  * tag if not already present. Returns new passage objects where tags changed;
  * unchanged passages are returned as-is. Idempotent — safe to call multiple times.
  */
-export function applyTagAliases(passages: readonly Passage[], aliases: Record<string, string>): Passage[] {
+export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<Record<string, string>>): Passage[] {
   const entries = Object.entries(aliases);
   if (entries.length === 0) return [...passages];
   return passages.map((p) => {
@@ -251,7 +309,7 @@ export function applyTagAliases(passages: readonly Passage[], aliases: Record<st
         added.push(canonical);
       }
     }
-    return added.length > 0 ? { ...p, tags: [...original, ...added] } : p;
+    return added.length > 0 ? derivePassage(p, { tags: [...original, ...added] }) : p;
   });
 }
 

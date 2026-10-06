@@ -232,7 +232,7 @@ describe('T-09: media passage and font family names end at the first dot, as in 
 });
 
 describe('T-12: orphans are the passages no chain of links reaches', () => {
-  const inspect = (source: string): string[] => {
+  const inspect = (source: string): readonly string[] => {
     const builder = new StoryBuilder();
     for (const p of parseTwee(source).passages) builder.add(p, []);
     return storyInspect(builder.build()).orphans;

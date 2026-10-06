@@ -15,7 +15,7 @@ import { relative, resolve } from 'node:path';
 import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
-import { TweeTsError } from '../compiler.js';
+import { TweeTsError } from '../errors.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
@@ -38,6 +38,7 @@ import {
 } from './vite-entry.js';
 import type { BundleItem, EntryBundle } from './vite-entry.js';
 import { watchTargets } from './watch-targets.js';
+import { isRecord } from '../util.js';
 
 export type { PluginCompileOptions } from './options.js';
 
@@ -66,10 +67,6 @@ const viteMajor = Number.parseInt(viteVersion, 10);
 
 /** The plugin instances created so far, which numbers each instance's entry input. */
 let instances = 0;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The bundler options of build settings, under the name this Vite version reads. */
 function bundlerOptionsOf(build: unknown): Readonly<Record<string, unknown>> | undefined {

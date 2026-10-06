@@ -5,4 +5,6 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 test/fixtures
 .agents
-.github
+.scratch
+reports
+.stryker-tmp

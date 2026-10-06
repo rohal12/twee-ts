@@ -94,13 +94,17 @@
     "duplication": "tsx scripts/duplication.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "mutation": "stryker run",
+    "mutation:summary": "tsx scripts/mutation-summary.ts"
   },
   "packageManager": "pnpm@10.14.0",
   "engines": {
     "node": ">=22.12"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "^26.6.2",
     "@vitest/coverage-v8": "^5.0.2",
     "@vitest/eslint-plugin": "^1.6.27",
@@ -132,6 +136,9 @@
   "pnpm": {
     "overrides": {
       "vitepress>vite": "^6.4.2"
+    },
+    "patchedDependencies": {
+      "@stryker-mutator/vitest-runner@10.0.0": "patches/@stryker-mutator__vitest-runner@10.0.0.patch"
     }
   }
 }

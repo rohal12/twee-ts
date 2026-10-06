@@ -102,7 +102,8 @@ describe('passageToPassagedata: layout positions', () => {
 });
 
 describe('passageToTiddler: layout positions', () => {
-  const position = (p: Passage, pid: number) => /twine-position="([^"]*)"/.exec(passageToTiddler(p, pid))?.[1];
+  const position = (p: Passage, pid: number) =>
+    /twine-position="([^"]*)"/.exec(passageToTiddler(p, pid, false, new Date(0)))?.[1];
 
   it('lays tiddlers out in rows of ten', () => {
     expect(position(mk(), 1)).toBe('10,10');

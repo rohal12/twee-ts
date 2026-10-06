@@ -13,7 +13,6 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import {
   build,
@@ -26,7 +25,14 @@ import {
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { toPosix } from '../src/plugins/paths.js';
-import { buildWatchSeesFolders, bundlerOptionsKey, hasEntry, peerRun, watcherReady } from './helpers/plugins.js';
+import {
+  buildWatchSeesFolders,
+  bundlerOptionsKey,
+  hasEntry,
+  peerRun,
+  watcherReady,
+  serverUrl,
+} from './helpers/plugins.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -634,18 +640,6 @@ function reloadsSent(send: { mock: { calls: unknown[][] } }): number {
   return send.mock.calls.filter(([payload]) => (payload as { type?: string }).type === 'full-reload').length;
 }
 
-async function freePort(): Promise<number> {
-  return new Promise((done) => {
-    const probe = createNetServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => {
-        done(port);
-      });
-    });
-  });
-}
-
 describe('vite plugin: dev server', { timeout: 30_000 }, () => {
   let server: ViteDevServer | undefined;
 
@@ -660,7 +654,6 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     configFile?: string,
     extra: InlineConfig = {},
   ): Promise<string> {
-    const port = await freePort();
     const { server: serverOptions, ...rest } = extra;
     server = await createServer({
       configFile: configFile ?? false,
@@ -668,11 +661,11 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       logLevel: 'silent',
       plugins: plugin ? [plugin] : [],
       ...rest,
-      server: { host: '127.0.0.1', port, strictPort: true, ...serverOptions },
+      server: { host: '127.0.0.1', port: 0, strictPort: false, ...serverOptions },
     });
     await server.listen();
     await watcherReady(server);
-    return `http://127.0.0.1:${port}/`;
+    return `${serverUrl(server)}/`;
   }
 
   async function page(url: string): Promise<string> {

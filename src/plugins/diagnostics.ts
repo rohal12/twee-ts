@@ -2,7 +2,8 @@
  * How the build plugins turn compile results into bundler errors and warnings.
  */
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry } from '../types.js';
-import { compileForOutputFile, TweeTsError } from '../compiler.js';
+import { compileForOutputFile } from '../compiler.js';
+import { TweeTsError } from '../errors.js';
 import type { BuildOutputs } from '../filesystem.js';
 
 /** An error carrying the file and line the bundler reports (and Vite shows in its overlay). */

@@ -14,6 +14,7 @@ import { decodeFormatJSON } from './format-decode.js';
 import { compareVersions, parseVersion } from './semver.js';
 import { normalizeSourceText } from './source-text.js';
 import { decodeText, readUTF8 } from './util.js';
+import { TweeTsError } from './errors.js';
 
 /** The message of a caught error, or the text of a thrown value that is not an Error. */
 export function errorText(e: unknown): string {
@@ -219,8 +220,8 @@ export function pruneFormats(formats: ReadonlyMap<string, StoryFormatInfo>): Map
 
 /**
  * Discover all story formats in the given search directories, pruned by SemVer: within each
- * (name, major) group only the highest version survives. See {@link discoverAllFormats} for the
- * directory ranking and {@link pruneFormats} for pruning.
+ * (name, major) group only the highest version survives. A later search directory outranks an earlier one,
+ * and a format in it replaces one of the same name and version from an earlier directory.
  */
 export function discoverFormats(searchDirs: readonly string[]): Map<string, StoryFormatInfo> {
   return pruneFormats(discoverAllFormats(searchDirs));
@@ -268,25 +269,6 @@ export function getFormatSearchDirs(extraPaths: readonly string[] = [], useTweeg
   dirs.push(...extraPaths);
 
   return dirs;
-}
-
-/**
- * Parse a version string into [major, minor, patch]. Accepts what {@link parseVersion} accepts
- * (`v1.2.3`, `1.2`, `2.0.0-beta.1`); the prerelease and build metadata are dropped.
- */
-export function parseSemver(v: string): [number, number, number] | null {
-  const parsed = parseVersion(v);
-  return parsed ? [parsed.major, parsed.minor, parsed.patch] : null;
-}
-
-/** Compare [major, minor, patch] tuples. Use {@link compareVersions} to take prereleases into account. */
-export function semverCompare(a: [number, number, number], b: [number, number, number]): number {
-  const [aMajor, aMinor, aPatch] = a;
-  const [bMajor, bMinor, bPatch] = b;
-  if (aMajor !== bMajor) return aMajor - bMajor;
-  if (aMinor !== bMinor) return aMinor - bMinor;
-  if (aPatch !== bPatch) return aPatch - bPatch;
-  return 0;
 }
 
 /**
@@ -539,7 +521,12 @@ export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnost
   }
   if (!format.isTwine2) return source;
   const decoded = decodeFormatJSON(source);
-  if (!decoded.ok) throw new Error(`Cannot parse format ${format.id} JSON: ${decoded.reason}`);
+  if (!decoded.ok) {
+    // Discovery decoded the same file, so it changed since; a download is decoded from the bytes it checked.
+    throw new TweeTsError(`Cannot parse format ${format.id} JSON: ${decoded.reason}`, [], {
+      code: 'FORMAT_UNAVAILABLE',
+    });
+  }
   // What decoding left out of the format a build uses (a skipped function, a field of the wrong
   // type), once per build, naming where the format came from.
   const from = downloaded ? `downloaded from ${downloaded.from}` : format.filename;

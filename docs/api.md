@@ -71,7 +71,7 @@ controller.abort();
 - **Every build is written** to `outFile`, including one whose `diagnostics` report errors, and then passed to `onBuild`; a build that fails with a fatal error writes nothing and is passed to `onError`. (The CLI's watch mode instead keeps the last build without errors; see [Exit Status](./cli#exit-status).) Each build replaces `outFile` as `compileToFile()` does.
 - **Order**: builds run one at a time, and each is written and reported as it finishes, in order, so the output never goes back to an older state. Changes saved while a build runs are built together in one follow-up build. While saves keep coming, the output trails the latest save by at most about one build.
 - **Stopping**: after `controller.abort()` (or aborting the `signal` passed in the options), no build starts, and one still running writes and reports nothing; story format downloads it waits on are cancelled, so the process can exit.
-- **Paths that come and go**: a watched folder or file that doesn't exist yet is waited for and built once it appears, and one that is deleted, or renamed away and replaced (as `git checkout` or a generator may do), is followed to the new one at its path; the build after that reads every file again. A path that can't be watched (one the process may not read, say) is passed to `onError` as an error whose message starts with `Cannot watch`, and is tried again on the next change in the folder above it; the other paths are still watched.
+- **Paths that come and go**: a watched folder or file that doesn't exist yet is waited for and built once it appears, and one that is deleted, or renamed away and replaced (as `git checkout` or a generator may do), is followed to the new one at its path; the build after that reads every file again. A path that can't be watched (one the process may not read, say) is passed to `onError` as a `WatchPathError` (exported; its `path` names the path, and its message starts with `Cannot watch`), and is tried again on the next change in the folder above it; the other paths are still watched.
 - `onError` also receives an exception thrown by `onBuild`. An exception thrown by `onError` itself is printed to the console and doesn't stop the watch.
 
 ### `compileIncremental(options, cache, changedFiles?)`
@@ -115,6 +115,8 @@ interface CompileOptions {
   noRemote?: boolean; // default: false
   signal?: AbortSignal; // cancels the compile
   formatFetchTimeout?: number; // ms per format request; default: 30000, 0 = no limit
+  formatResolutionTimeout?: number; // ms for the whole format search; default: 120000, 0 = no limit
+  useDefaultFormatIndices?: boolean; // ask the Story Formats Archive; default: true
   tagAliases?: Record<string, string>;
   sourceInfo?: boolean; // default: false
   wordCountMethod?: WordCountMethod; // 'tweego' (default) or 'whitespace'
@@ -123,7 +125,7 @@ interface CompileOptions {
 
 `signal` cancels a compile: story format requests still in progress are aborted, and the promise rejects with the signal's reason (an `AbortError` for `controller.abort()`). Nothing from a cancelled download is written to the format cache.
 
-`formatFetchTimeout` limits each story format request (an index or a `format.js`), in milliseconds. A request that takes longer fails with a warning in `diagnostics`, and the next source is tried. The default is 30000; `0` turns the limit off; a negative value is a `TweeTsError` (`INVALID_OPTIONS`).
+`formatFetchTimeout` limits each story format request (an index or a `format.js`), in milliseconds. A request that takes longer fails with a warning in `diagnostics`, and the next source is tried. The default is 30000; `0` turns the limit off; a negative value is a `TweeTsError` (`INVALID_OPTIONS`). `formatResolutionTimeout` limits the whole search for the format, over every request (default 120000; `0` turns it off): when it passes, the request in progress stops with a warning, and the format URLs and indices not yet asked answer from the download cache only. `useDefaultFormatIndices: false` leaves the Story Formats Archive out, so only the configured `formatUrls` and `formatIndices` are asked.
 
 ```typescript
 import { compile } from '@rohal12/twee-ts';
@@ -355,10 +357,10 @@ A `<tw-storydata>` `ifid` that is not a valid IFID gives a warning in `diagnosti
 - `getFormatSearchDirs(extraPaths?: readonly string[], useTweegoPath = true): string[]`: the local format directories, lowest rank first (see [Search Order](./story-formats#search-order)).
 - `discoverFormats(searchDirs: readonly string[]): Map<string, StoryFormatInfo>`: the formats in those directories, keyed by format ID (folder name), keeping the greatest version of each name and major version.
 - `parseFormatJSON(source: string): Twine2FormatJSON | null`: the metadata a `format.js` passes to `storyFormat()`, read without running it (see [Format Metadata](./story-formats#format-metadata)), or `null` when it can't be used.
-- `parseSemver(version: string): [number, number, number] | null` and `semverCompare(a, b): number`: a version's major, minor and patch (the prerelease dropped), and their order.
+- `parseVersion(text: string): SemVer | null` and `compareVersions(a: SemVer, b: SemVer): number`: a version read as format selection reads it (SemVer 2.0.0, plus Tweego's leading `v` and `1`/`1.2` forms) as `{ major, minor, patch, prerelease }`, or `null`, and the order of two versions by SemVer precedence (a prerelease ranks below its release). They replace `parseSemver()` and `semverCompare()`, which dropped prereleases.
 
 ```typescript
-import { discoverFormats, getFormatSearchDirs, parseFormatJSON, parseSemver, semverCompare } from '@rohal12/twee-ts';
+import { compareVersions, discoverFormats, getFormatSearchDirs, parseFormatJSON, parseVersion } from '@rohal12/twee-ts';
 
 const dirs = getFormatSearchDirs(['storyformats']);
 const formats = discoverFormats(dirs);
@@ -372,9 +374,9 @@ const meta = parseFormatJSON(
 );
 console.log(meta?.name); // My Format
 
-const a = parseSemver('2.37.3');
-const b = parseSemver('v2.36');
-if (a && b) console.log(semverCompare(a, b) > 0); // true
+const a = parseVersion('2.37.3');
+const b = parseVersion('2.37.3-rc.1');
+if (a && b) console.log(compareVersions(a, b) > 0); // true
 ```
 
 ### Remote Formats
@@ -397,10 +399,15 @@ import {
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
 console.log(format?.filename);
 
-// With direct format URLs, a signal and a per-request timeout (RemoteFetchOptions)
-const fork = await resolveRemoteFormat('SugarCube', '2.37.3', [], ['https://example.com/sugarcube/format.js'], {
+// With direct format URLs, a signal, a per-request timeout and a limit for the whole lookup
+// (RemoteResolveOptions); failures reject with a TweeTsError (INVALID_OPTIONS or FORMAT_UNAVAILABLE)
+const fork = await resolveRemoteFormat('SugarCube', '2.37.3', {
+  urls: ['https://example.com/sugarcube/format.js'],
+  indices: [],
   signal: AbortSignal.timeout(60_000),
   timeout: 10_000,
+  resolutionTimeout: 30_000,
+  useDefaultIndices: false,
 });
 console.log(fork?.version);
 
@@ -433,7 +440,7 @@ console.log(totalBytes, count);
 console.log(getCacheDir());
 ```
 
-- `resolveRemoteFormat(name, version, indices?, urls?, options?): Promise<StoryFormatInfo | undefined>` rejects with an `Error` that lists every source's failure when a source fails and none answers, and when a URL is not an absolute `http:` or `https:` URL.
+- `resolveRemoteFormat(name, version, options?: RemoteResolveOptions): Promise<StoryFormatInfo | undefined>` rejects with a `TweeTsError`: `FORMAT_UNAVAILABLE`, whose `diagnostics` list every source's failure, when a source fails and none answers, and `INVALID_OPTIONS` when a URL is not an absolute `http:` or `https:` URL or a time limit is out of range.
 - `fetchDirectFormat(url, options?): Promise<StoryFormatInfo>`.
 - `listCachedFormats(): readonly CachedFormatEntry[]`; each entry has `name`, `version`, `source` (`'index'` or `'url'`), `origin` (the index or format URL), `sizeBytes` and `modifiedAt`.
 - `clearCachedFormats(name?): number`, `getCacheSize(): { totalBytes; count }`, `getCacheDir(): string`.
@@ -558,6 +565,8 @@ import type {
   LintResult,
   OmittingTag,
   OutputMode,
+  ParseOptions,
+  ParseResult,
   Passage,
   PassageMetadata,
   PassageOmission,
@@ -565,7 +574,9 @@ import type {
   ReadonlyPassage,
   ReadonlyStory,
   RemoteFetchOptions,
+  RemoteResolveOptions,
   SFAIndex,
+  SemVer,
   SFAIndexEntry,
   SourceInput,
   SourceLocation,
@@ -575,6 +586,7 @@ import type {
   TweeTsConfig,
   TweeTsErrorCode,
   Twine1Metadata,
+  Twine2FormatJSON,
   Twine2Metadata,
   WatchOptions,
   WordCountMethod,

@@ -37,6 +37,7 @@ import type { CompileResult, Diagnostic, TweeTsConfig, WatchOptions } from '../s
 import { compareVersions, parseVersion } from '../src/semver.js';
 
 import { VERSION } from '../src/version.js';
+import { generateIFID } from '../src/ifid.js';
 
 /** Exit statuses. */
 const EXIT_OK = 0;
@@ -355,7 +356,7 @@ const SCAFFOLD_FILES: readonly ScaffoldFile[] = [
     path: 'src/StoryData.tw',
     content: () => `:: StoryData
 {
-\t"ifid": "${crypto.randomUUID().toUpperCase()}"
+\t"ifid": "${generateIFID()}"
 }
 `,
   },

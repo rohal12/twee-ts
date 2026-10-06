@@ -17,35 +17,35 @@ import { findJavaScriptPassageLinks, findPassageLinks } from './sugarcube-macros
 
 export interface StoryMap {
   /** All passage names, in source order. */
-  passages: string[];
+  readonly passages: readonly string[];
   /** Only story passages (excludes StoryData, StoryTitle, scripts, stylesheets, etc.). */
-  storyPassages: string[];
+  readonly storyPassages: readonly string[];
   /** Only info/special passages. */
-  infoPassages: string[];
+  readonly infoPassages: readonly string[];
   /** All unique tags used across the story, sorted alphabetically. */
-  tags: string[];
+  readonly tags: readonly string[];
   /** Map of tag → passage names that carry that tag, each listed once even if the tag is repeated. */
-  passagesByTag: Map<string, string[]>;
+  readonly passagesByTag: ReadonlyMap<string, readonly string[]>;
   /** Map of passage name → tags on that passage, as written (a repeated tag appears twice). */
-  tagsByPassage: Map<string, string[]>;
+  readonly tagsByPassage: ReadonlyMap<string, readonly string[]>;
   /**
    * Map of passage name → passage names it links to.
    * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
    * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
    * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
-   * (see `sugarcube-macros.ts`). Links and calls in comments are not read. A script passage is
+   * (see Story Inspection in docs/api.md). Links and calls in comments are not read. A script passage is
    * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
    * CSS and links to nothing. With a `target` (see `InspectOptions`), a passage that output leaves
    * out links to nothing, except a script passage, which Twine 2 output runs.
    */
-  links: Map<string, string[]>;
+  readonly links: ReadonlyMap<string, readonly string[]>;
   /**
    * Broken links: `{ from, to }` pairs where `to` doesn't exist as a passage, or, with a `target`
    * (see `InspectOptions`), where that output leaves the `to` passage out (`omission` says why).
    */
-  brokenLinks: BrokenLink[];
+  readonly brokenLinks: readonly BrokenLink[];
   /** Story passages with no outgoing links (potential dead ends). */
-  deadEnds: string[];
+  readonly deadEnds: readonly string[];
   /**
    * Story passages that the player cannot reach: no chain of links leads to them from the start passage or
    * from an info passage (such as StoryInit, PassageHeader, or a `script` or `widget` passage, which the story
@@ -53,19 +53,19 @@ export interface StoryMap {
    * among itself, is an orphan. Only the links `links` lists count, so a passage that is shown only through a
    * macro such as `<<include>>` is listed too.
    */
-  orphans: string[];
+  readonly orphans: readonly string[];
   /** The configured start passage name, if any. */
-  start: string;
+  readonly start: string;
 }
 
 export interface BrokenLink {
-  from: string;
-  to: string;
+  readonly from: string;
+  readonly to: string;
   /**
    * Set when a passage named `to` exists, but the inspected output leaves it out of the story
    * (only with a `target`): why it is left out. Absent when no passage has the name.
    */
-  omission?: PassageOmission;
+  readonly omission?: PassageOmission;
 }
 
 /**
@@ -81,7 +81,7 @@ export interface BrokenLink {
  * - `<<link "Display" "PassageName">>`  (SugarCube macro)
  *
  * In link markup, the first `|`, `->` or `<-` divides the text from the passage name; image
- * markup (`[img[…][PassageName]]`) is not read. SugarCube macro arguments may be double- or
+ * markup links to the passage of its link component (`[img[pic.png][PassageName]]`). SugarCube macro arguments may be double- or
  * single-quoted, with backslash escapes, or bare words; a passage named by a variable or an
  * expression is known only in play and is skipped. Links and macro calls are also read inside the
  * quoted strings of macros' arguments, and inside the strings of `<<script>>` bodies and

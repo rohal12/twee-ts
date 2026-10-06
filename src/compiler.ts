@@ -17,9 +17,8 @@ import type {
   OutputMode,
   InlineSource,
   FileCacheEntry,
-  TweeTsErrorCode,
 } from './types.js';
-import { createStory, storyHas, getStoryStats } from './story.js';
+import { createStory, storyHas, getStoryStats, snapshot } from './story.js';
 import {
   getFilenames,
   isExcluded,
@@ -44,31 +43,17 @@ import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputFailure, InputProblem } from './input-policy.js';
-import { readUTF8 } from './util.js';
+import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
+import { TweeTsError } from './errors.js';
+import { buildTime } from './build-time.js';
+
+export { TweeTsError };
 
 const CREATOR_NAME = 'Twee-ts';
 
 const DEFAULT_FORMAT_ID = 'sugarcube-2';
 const DEFAULT_START_NAME = 'Start';
-
-/**
- * A build that could not run: nothing was built or written. `code` says why (see TweeTsErrorCode),
- * `diagnostics` holds what the build reported before it stopped, and `cause` the error behind it, if any.
- */
-export class TweeTsError extends Error {
-  readonly code: TweeTsErrorCode;
-
-  constructor(
-    message: string,
-    public diagnostics: Diagnostic[] = [],
-    options: { readonly code?: TweeTsErrorCode; readonly cause?: unknown } = {},
-  ) {
-    super(message, 'cause' in options ? { cause: options.cause } : undefined);
-    this.name = 'TweeTsError';
-    this.code = options.code ?? 'BUILD_FAILED';
-  }
-}
 
 /** Whether `error` is one no change to the sources can fix: a watch stops on it. */
 function isConfigurationError(error: unknown): error is TweeTsError {
@@ -329,13 +314,71 @@ function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+/**
+ * Every option compile(), compileToFile() and watch() read. `satisfies` keeps the list complete: an option
+ * added to the types and not here, or listed here and not in the types, is a compile error.
+ */
+const OPTION_KEYS: readonly string[] = Object.keys({
+  sources: true,
+  exclude: true,
+  outputMode: true,
+  formatId: true,
+  startPassage: true,
+  formatPaths: true,
+  useTweegoPath: true,
+  modules: true,
+  headFile: true,
+  trim: true,
+  twee2Compat: true,
+  testMode: true,
+  formatIndices: true,
+  formatUrls: true,
+  noRemote: true,
+  signal: true,
+  formatFetchTimeout: true,
+  formatResolutionTimeout: true,
+  useDefaultFormatIndices: true,
+  tagAliases: true,
+  sourceInfo: true,
+  wordCountMethod: true,
+  outFile: true,
+  onBuild: true,
+  onError: true,
+} satisfies Record<keyof WatchOptions, true>);
+
+/** What the options of the plugins and the config file are called in the compile options. */
+const OTHER_NAMES: ReadonlyMap<string, string> = new Map([
+  ['format', 'formatId'],
+  ['output', 'outFile'],
+]);
+
+/**
+ * A warning for each option the build does not read, as for a key a config file does not define: called from
+ * JavaScript, or with a spread config object, a misspelt option (`format` for `formatId`) would otherwise be
+ * left at its default without a word.
+ */
+function unknownOptionWarnings(options: CompileOptions): Diagnostic[] {
+  return Object.keys(options)
+    .filter((key) => !OPTION_KEYS.includes(key))
+    .map((key): Diagnostic => {
+      const suggestion = OTHER_NAMES.get(key) ?? similarKey(key, OPTION_KEYS);
+      const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
+      return { level: 'warning', message: `Unknown compile option "${key}"${hint}; it is ignored.` };
+    });
+}
+
 /** Throws a TweeTsError (`INVALID_OPTIONS`) for an option out of range, before anything is read. */
 function validateOptions(options: CompileOptions): void {
-  const timeout = options.formatFetchTimeout;
-  if (timeout !== undefined && !(timeout >= 0)) {
-    throw new TweeTsError(`formatFetchTimeout must be 0 or more milliseconds, not ${timeout}.`, [], {
-      code: 'INVALID_OPTIONS',
-    });
+  const timeouts = [
+    ['formatFetchTimeout', options.formatFetchTimeout],
+    ['formatResolutionTimeout', options.formatResolutionTimeout],
+  ] as const;
+  for (const [option, timeout] of timeouts) {
+    if (timeout !== undefined && !(timeout >= 0)) {
+      throw new TweeTsError(`${option} must be 0 or more milliseconds, not ${timeout}.`, [], {
+        code: 'INVALID_OPTIONS',
+      });
+    }
   }
 }
 
@@ -500,6 +543,9 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   options.signal?.throwIfAborted();
   validateOptions(options);
+  // Read once, so every time stamp in the output agrees (and SOURCE_DATE_EPOCH is checked before anything is read).
+  const time = buildTime();
+  diagnostics.push(...unknownOptionWarnings(options));
   checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
   // Clear per-compile index cache
@@ -612,7 +658,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       break;
 
     case 'twine1-archive':
-      output = toTwine1Archive(story, startName, { diagnostics });
+      output = toTwine1Archive(story, startName, { diagnostics, time });
       break;
 
     case 'json':
@@ -644,13 +690,13 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
-        : toTwine1HTML(story, format, startName, { head, diagnostics });
+        : toTwine1HTML(story, format, startName, { head, diagnostics, time });
       break;
     }
 
     default: {
       const _exhaustive: never = outputMode;
-      throw new TweeTsError(`Unhandled output mode: ${_exhaustive as string}`, diagnostics);
+      throw new TweeTsError(`Unhandled output mode: ${_exhaustive}`, diagnostics);
     }
   }
 
@@ -663,7 +709,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   // Nothing is delivered, or written by the caller, for a build that was aborted meanwhile.
   options.signal?.throwIfAborted();
-  return { output: output, story, format, diagnostics, stats };
+  // The story handed out is a frozen copy: it shares no object with the incremental cache (#246 S-4).
+  return { output: output, story: snapshot(story), format, diagnostics, stats };
 }
 
 /** How a build runs, beyond its options: what buildOutput() is called with by each entry point. */

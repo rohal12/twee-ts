@@ -11,12 +11,13 @@
  * (never text, a comment, an attribute value, template content or CDATA); where no such point exists, nothing is
  * inserted and the caller reports it.
  */
-import { parse, html as htmlSpec } from 'parse5';
+import { defaultTreeAdapter, parse, parseFragment, html as htmlSpec } from 'parse5';
 import type { DefaultTreeAdapterTypes } from 'parse5';
 import { cssContexts, javaScriptContexts } from './code-context.js';
 import type { InContext, SourceRange } from './code-context.js';
 import { attrEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
+import { TweeTsError } from './errors.js';
 
 type HtmlDocument = DefaultTreeAdapterTypes.Document;
 /** An element of a parsed document. */
@@ -456,7 +457,7 @@ function makeMarkers(html: string, occurrences: readonly PlaceholderOccurrence[]
   }
   const filler = free.pop();
   if (filler === undefined || free.length < occurrences.length) {
-    throw new Error('Too many placeholders to analyze in this template.');
+    throw new TweeTsError('Too many placeholders to analyze in this template.', [], { code: 'FORMAT_UNAVAILABLE' });
   }
   return occurrences.map((o, i) => (free[i] ?? '') + filler.repeat(o.innerEnd - o.innerStart - 1));
 }
@@ -619,16 +620,90 @@ const JAVASCRIPT_TYPES: ReadonlySet<string> = new Set([
   'text/x-javascript',
 ]);
 
+/** What a script element holds. */
+type ScriptLanguage = 'classic' | 'module' | 'json' | 'data';
+
 /** What a script element holds, from its `type` attribute (as HTML's "prepare the script element" reads it). */
-function scriptLanguage(script: HtmlElement): 'classic' | 'module' | 'json' | 'data' {
+function scriptLanguage(script: HtmlElement): ScriptLanguage {
   const type = attributeOf(script, 'type');
   const language = attributeOf(script, 'language');
   if (type === '' || (type === undefined && (language === undefined || language === ''))) return 'classic';
-  const typeString = (type ?? `text/${language ?? ''}`).replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').toLowerCase();
+  return typeStringLanguage(type ?? `text/${language ?? ''}`);
+}
+
+/**
+ * What a script element holds, from its script block's type string (HTML's "prepare the script element"): a
+ * JavaScript MIME type essence (ASCII case-insensitive, without parameters) is a classic script, `module` a module
+ * script, anything else a data block (`json` for a JSON type, which only template filling tells apart).
+ */
+function typeStringLanguage(type: string): ScriptLanguage {
+  const typeString = type.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase());
   if (JAVASCRIPT_TYPES.has(typeString)) return 'classic';
   if (typeString === 'module') return 'module';
   const essence = typeString.split(';')[0]?.trim() ?? '';
   return essence === 'application/json' || essence === 'text/json' || essence.endsWith('+json') ? 'json' : 'data';
+}
+
+/** A script that runs: classic (sloppy-mode) or module code, and its source text. */
+export interface RunningScript {
+  readonly kind: 'classic' | 'module';
+  readonly code: string;
+}
+
+/** jQuery 3.7.1's `rscriptType`: the `type` of a script it runs when it inserts one. */
+const JQUERY_SCRIPT_TYPE = /^$|^module$|\/(?:java|ecma)script/i;
+/** jQuery 3.7.1's `rcleanScript`: the comment or CDATA wrapper it strips from a script before running it. */
+const JQUERY_CLEAN_SCRIPT = /^\s*<!(?:\[CDATA\[|--)|(?:\]\]|--)>\s*$/g;
+
+/** The element jQuery parses inserted HTML in (`innerHTML` of a `div`). */
+const FRAGMENT_CONTEXT = defaultTreeAdapter.createElement('div', HTML_NS, []);
+
+/** How one script element runs when jQuery inserts it, or `undefined` when its content does not run. */
+function jQueryRuns(script: HtmlElement): RunningScript | undefined {
+  // jQuery tests `node.type`, the raw attribute, and loads a script with a `src` rather than reading its
+  // content (an SVG script has no `src` property; jQuery copies a non-empty `src` attribute, which the new
+  // script then loads).
+  const type = attributeOf(script, 'type') ?? '';
+  const src = attributeOf(script, 'src');
+  const html = script.namespaceURI === HTML_NS;
+  if (!JQUERY_SCRIPT_TYPE.test(type) || (html ? src !== undefined : src !== undefined && src !== '')) {
+    return undefined;
+  }
+  // DOMEval runs the content in a new script element with the old one's non-empty `type`, `src`, `nonce` and
+  // `noModule` (not `language`); the browser decides by the type, and runs no classic script marked `nomodule`.
+  const language = type === '' ? 'classic' : typeStringLanguage(type);
+  const noModule = html && attributeOf(script, 'nomodule') !== undefined;
+  switch (language) {
+    case 'classic':
+      return noModule ? undefined : { kind: 'classic', code: textContent(script).replace(JQUERY_CLEAN_SCRIPT, '') };
+    case 'module':
+      return { kind: 'module', code: textContent(script).replace(JQUERY_CLEAN_SCRIPT, '') };
+    case 'json':
+    case 'data':
+      return undefined;
+    default: {
+      const _exhaustive: never = language;
+      throw new Error(`unhandled script language: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * The scripts that run when jQuery 3.7.1 (which SugarCube 2 bundles) inserts `html`, as SugarCube inserts the
+ * `<script>` markup of a passage, in document order. jQuery parses the HTML as `innerHTML` of a `div` (so the
+ * element may end before the closing tag the markup was matched by, and other script elements may follow), and
+ * runs each script element outside template contents whose `type` its filter accepts and that has no `src`; the
+ * browser then runs it, or not, by HTML's script type rules. Content of a script that does not run, such as a
+ * template (`type="text/template"`) or JSON, is not code.
+ */
+export function scriptsJQueryRuns(html: string): RunningScript[] {
+  const fragment = parseFragment(FRAGMENT_CONTEXT, html, { scriptingEnabled: true });
+  const scripts: RunningScript[] = [];
+  for (const { node } of descendants(fragment, false)) {
+    const running = isElement(node) && node.tagName === 'script' ? jQueryRuns(node) : undefined;
+    if (running !== undefined) scripts.push(running);
+  }
+  return scripts;
 }
 
 /** A placeholder in the text of a script or style element: its site index, and its range in that text. */

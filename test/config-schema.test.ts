@@ -189,7 +189,7 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
   it('documents each rebased key in the schema as relative to the config file', () => {
     const rebased = ['sources', 'exclude', 'output', 'modules', 'headFile', 'formatPaths'] as const;
     for (const key of CONFIG_KEYS) {
-      expect(CONFIG_SPEC[key].description.includes('relative to the config file'), key).toBe(
+      expect(CONFIG_SPEC[key].spec.description.includes('relative to the config file'), key).toBe(
         new Set<string>(rebased).has(key),
       );
     }
@@ -202,5 +202,13 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     const expected = { sources: [join(at, 'src')], output: join(at, 'out.tw') };
     expect(loadConfig(join(dir, 'proj'))).toEqual(expected);
     expect(loadConfigFile(join(dir, 'proj', 'twee-ts.config.json'))).toEqual(expected);
+  });
+});
+
+describe('defaults the schema states', () => {
+  // Left out, formatId and startPassage leave the choice to StoryData, so the schema gives them no default:
+  // an editor that fills in defaults would otherwise override StoryData's format or start passage.
+  it.each(['formatId', 'startPassage'] as const)('gives %s no default', (key) => {
+    expect('default' in CONFIG_SPEC[key].spec).toBe(false);
   });
 });

@@ -117,9 +117,10 @@ describe('structure location edge cases', () => {
     for (let code = 0xe000; code <= 0xf8ff; code++) pua += String.fromCharCode(code);
     const template = `<p>${pua}{{X}}</p>`;
     const at = template.indexOf('{{X}}');
-    expect(() => analyzeTemplate(template, [{ start: at, end: at + 5, innerStart: at + 2, innerEnd: at + 3 }])).toThrow(
-      'Too many placeholders to analyze in this template.',
-    );
+    const analyze = (): unknown =>
+      analyzeTemplate(template, [{ start: at, end: at + 5, innerStart: at + 2, innerEnd: at + 3 }]);
+    expect(analyze).toThrow('Too many placeholders to analyze in this template.');
+    expect(analyze).toThrow(expect.objectContaining({ name: 'TweeTsError', code: 'FORMAT_UNAVAILABLE' }));
   });
 });
 

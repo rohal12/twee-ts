@@ -1,0 +1,10 @@
+{
+  "src/json-decode.ts": 98.6,
+  "src/lexer.ts": 97.2,
+  "src/link-markup.ts": 91.4,
+  "src/parser.ts": 88.5,
+  "src/semver.ts": 92.8,
+  "src/story.ts": 87.1,
+  "src/twee-syntax.ts": 99.4,
+  "total": 93.7
+}

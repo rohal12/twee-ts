@@ -137,8 +137,18 @@ function withoutEmptyPosition(line: string): string {
 }
 
 /**
+ * `text` as the content of a JSON string: a `"`, `\` or control character in a position is escaped, so it stays
+ * part of the position. Tweego puts the text in as it is, so `<1","size":"9,9>` adds a `size` key there and
+ * `<1\>` makes the metadata invalid JSON.
+ */
+function jsonStringContent(text: string): string {
+  return JSON.stringify(text).slice(1, -1);
+}
+
+/**
  * Convert Twee2 position blocks `<x,y>` in passage headers to Twee 3 metadata blocks `{"position":"x,y"}`,
- * exactly as Tweego does. Source text with no Twee2 syntax is returned unchanged.
+ * as Tweego does, except that the position is escaped as a JSON string (see {@link jsonStringContent}).
+ * Source text with no Twee2 syntax is returned unchanged.
  */
 export function twee2ToV3(s: string): string {
   const lines = s.split('\n');
@@ -147,7 +157,8 @@ export function twee2ToV3(s: string): string {
     .map((line) => {
       if (!line.startsWith('::')) return line;
       const m = matchHeader(line);
-      const converted = m === undefined ? line : `${m.head}${m.tags} {"position":"${m.position}"}`;
+      const converted =
+        m === undefined ? line : `${m.head}${m.tags} ${POSITION_OPEN}${jsonStringContent(m.position)}${POSITION_CLOSE}`;
       return withoutEmptyPosition(converted);
     })
     .join('\n');

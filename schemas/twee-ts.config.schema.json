@@ -39,12 +39,11 @@
     },
     "formatId": {
       "type": "string",
-      "description": "Story format directory ID (e.g. 'sugarcube-2')."
+      "description": "Story format ID (e.g. 'sugarcube-2'). Overrides StoryData's format; without it, StoryData's format decides, and 'sugarcube-2' when StoryData names none."
     },
     "startPassage": {
       "type": "string",
-      "default": "Start",
-      "description": "Name of the starting passage."
+      "description": "Name of the starting passage. Overrides StoryData's start; without it, StoryData's start decides, and 'Start' when StoryData names none."
     },
     "formatPaths": {
       "type": "array",
@@ -112,6 +111,17 @@
       "minimum": 0,
       "default": 30000,
       "description": "Milliseconds each story format request (an index or a format.js) may take before it fails with a warning and the next source is tried. 0 turns the limit off."
+    },
+    "formatResolutionTimeout": {
+      "type": "number",
+      "minimum": 0,
+      "default": 120000,
+      "description": "Milliseconds the search for the story format may take in all, over every request. When it passes, the format URLs and indices not yet asked are read from the download cache only. 0 turns the limit off."
+    },
+    "useDefaultFormatIndices": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ask the Story Formats Archive indices after formatIndices. false: only the configured indices and URLs are asked."
     },
     "tagAliases": {
       "type": "object",

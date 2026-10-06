@@ -81,8 +81,19 @@ export interface CompileOptions {
    * with a warning and the next source is tried. 0 turns the limit off. Default: 30000.
    */
   formatFetchTimeout?: number | undefined;
+  /**
+   * Milliseconds the search for the story format may take in all, over every request it makes.
+   * When the limit passes, the request in progress is stopped and the format URLs and indices not
+   * yet asked are read from the download cache only. 0 turns the limit off. Default: 120000.
+   */
+  formatResolutionTimeout?: number | undefined;
+  /**
+   * Whether the Story Formats Archive indices are asked after `formatIndices`. Set it to false so a
+   * project with its own archive never contacts the Story Formats Archive. Default: true.
+   */
+  useDefaultFormatIndices?: boolean | undefined;
   /** Map alias tags to target tags (e.g. { library: 'script' }); each passage with an alias gets the target too. */
-  tagAliases?: Record<string, string> | undefined;
+  tagAliases?: Readonly<Record<string, string>> | undefined;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
   sourceInfo?: boolean | undefined;
   /** Word counting method. Default: 'tweego'. */
@@ -124,33 +135,39 @@ export interface WatchOptions extends CompileToFileOptions {
  * by twee-ts: a build that cannot go on throws a TweeTsError instead.)
  */
 export type Diagnostic =
-  | { level: 'warning'; message: string; file?: string; line?: number }
-  | { level: 'error'; message: string; file?: string; line?: number; fatal?: boolean };
+  | { readonly level: 'warning'; readonly message: string; readonly file?: string; readonly line?: number }
+  | {
+      readonly level: 'error';
+      readonly message: string;
+      readonly file?: string;
+      readonly line?: number;
+      readonly fatal?: boolean;
+    };
 
 export interface CompileResult {
   /** The compiled output string (HTML, Twee, JSON, etc.). */
-  output: string;
+  readonly output: string;
   /** The story model, read-only. */
-  story: ReadonlyStory;
+  readonly story: ReadonlyStory;
   /** The format used for compilation (undefined for non-HTML modes). */
-  format?: StoryFormatInfo | undefined;
+  readonly format?: StoryFormatInfo | undefined;
   /** Warnings and errors. The output is built even when some are errors; check them. */
-  diagnostics: Diagnostic[];
+  readonly diagnostics: readonly Diagnostic[];
   /** Compilation statistics. */
-  stats: CompileStats;
+  readonly stats: CompileStats;
 }
 
 export interface CompileStats {
   /** Every passage. */
-  passages: number;
+  readonly passages: number;
   /** The passages that are not info passages (special names, script, stylesheet, `Twine.*` tags…). */
-  storyPassages: number;
+  readonly storyPassages: number;
   /** The word count of the story passages (see `wordCountMethod`). */
-  words: number;
+  readonly words: number;
   /** The source files loaded, in order, as paths relative to the working directory when inside it. */
-  files: string[];
+  readonly files: readonly string[];
   /** The module files and the head file the build injected (HTML output only), as Tweego's "External files". */
-  externalFiles?: string[];
+  readonly externalFiles?: readonly string[];
 }
 
 /**
@@ -158,10 +175,14 @@ export interface CompileStats {
  * - `OUTPUT_IS_INPUT`: the output would overwrite an input (a source, module, head file, config file or story
  *   format), or a source file of the output's type found in a source folder.
  * - `INPUT_UNAVAILABLE`: an input the input policy makes fatal (the head file, the config file) can't be used.
- * - `INVALID_OPTIONS`: an option is out of range, or needs a newer Node.js.
+ * - `INVALID_OPTIONS`: an option is out of range or not usable (a format URL that is not http(s), say), or
+ *   needs a newer Node.js.
+ * - `FORMAT_UNAVAILABLE`: `resolveRemoteFormat()` found the format nowhere and some source failed; the
+ *   error's diagnostics hold every failure.
  * - `BUILD_FAILED`: anything else (no story format for HTML output, say).
  */
-export type TweeTsErrorCode = 'OUTPUT_IS_INPUT' | 'INPUT_UNAVAILABLE' | 'INVALID_OPTIONS' | 'BUILD_FAILED';
+export type TweeTsErrorCode =
+  'OUTPUT_IS_INPUT' | 'INPUT_UNAVAILABLE' | 'INVALID_OPTIONS' | 'FORMAT_UNAVAILABLE' | 'BUILD_FAILED';
 
 // --- Passage ---
 
@@ -371,6 +392,22 @@ export interface RemoteFetchOptions {
   readonly timeout?: number | undefined;
 }
 
+/** Options of a lookup that may ask several sources, as `resolveRemoteFormat()` does. */
+export interface RemoteResolveOptions extends RemoteFetchOptions {
+  /** SFA-compatible index.json URLs, asked in order after `urls`. */
+  readonly indices?: readonly string[] | undefined;
+  /** Direct format.js URLs, asked first, in order. */
+  readonly urls?: readonly string[] | undefined;
+  /**
+   * Milliseconds the whole lookup may take, over every request. When it passes, the request in
+   * progress is stopped and the sources not yet asked are read from the download cache only. 0 turns
+   * the limit off. Default: 120000.
+   */
+  readonly resolutionTimeout?: number | undefined;
+  /** Whether the Story Formats Archive indices are asked after the given indices. Default: true. */
+  readonly useDefaultIndices?: boolean | undefined;
+}
+
 // --- Incremental compilation cache ---
 
 export interface FileCacheEntry {
@@ -388,32 +425,47 @@ export interface FileCacheEntry {
    * twee-ts to set.
    */
   readonly signature?: string;
+  /**
+   * The file's passages, frozen with everything they hold, so that no build and no caller can change what a
+   * later build replays. `CompileResult.story` holds copies of them, never these objects.
+   */
   readonly passages: readonly Passage[];
+  /** The diagnostics of reading the file, frozen; each build reports copies of them. */
   readonly diagnostics: readonly Diagnostic[];
 }
 
 // --- Config file ---
 
-export interface TweeTsConfig {
-  sources?: string[] | undefined;
-  exclude?: string[] | undefined;
+/** The compile options a config file may set, with the same meaning (see CompileOptions). */
+type ConfigCompileOption =
+  | 'exclude'
+  | 'outputMode'
+  | 'formatId'
+  | 'startPassage'
+  | 'formatPaths'
+  | 'formatIndices'
+  | 'formatUrls'
+  | 'useTweegoPath'
+  | 'modules'
+  | 'headFile'
+  | 'trim'
+  | 'twee2Compat'
+  | 'testMode'
+  | 'noRemote'
+  | 'formatFetchTimeout'
+  | 'formatResolutionTimeout'
+  | 'useDefaultFormatIndices'
+  | 'tagAliases'
+  | 'sourceInfo'
+  | 'wordCountMethod';
+
+/**
+ * A config file (`twee-ts.config.json`): the compile options it may set, which mean what they mean in
+ * `CompileOptions`, plus `sources` (paths only) and `output`.
+ */
+export interface TweeTsConfig extends Pick<CompileOptions, ConfigCompileOption> {
+  /** Files or directories to compile. */
+  sources?: readonly string[] | undefined;
+  /** Output file path; "-" for standard output. */
   output?: string | undefined;
-  outputMode?: OutputMode | undefined;
-  formatId?: string | undefined;
-  startPassage?: string | undefined;
-  formatPaths?: string[] | undefined;
-  formatIndices?: string[] | undefined;
-  formatUrls?: string[] | undefined;
-  useTweegoPath?: boolean | undefined;
-  modules?: string[] | undefined;
-  headFile?: string | undefined;
-  trim?: boolean | undefined;
-  twee2Compat?: boolean | undefined;
-  testMode?: boolean | undefined;
-  noRemote?: boolean | undefined;
-  /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
-  formatFetchTimeout?: number | undefined;
-  tagAliases?: Record<string, string> | undefined;
-  sourceInfo?: boolean | undefined;
-  wordCountMethod?: WordCountMethod | undefined;
 }

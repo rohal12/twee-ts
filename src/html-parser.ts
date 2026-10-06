@@ -13,10 +13,10 @@
  * HTML cannot carry (see `html-output-check.ts`), which compiling reports.
  */
 import type { Passage, PassageMetadata, Diagnostic, DecompileOptions, Story } from './types.js';
-import { createStory, storyAdd, storyPrepend, marshalStoryData, withGeneratedName, freeName } from './story.js';
+import { createStory, storyAdd, storyPrepend, marshalStoryData, freeName } from './story.js';
 import { rot13, tiddlerUnescape } from './escape.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
-import { isObfuscatable } from './passage.js';
+import { isObfuscatable, withGeneratedName } from './passage.js';
 import { attributeOf, childElements, findStoreArea, findStoryData, parseHtml, textContent } from './html-structure.js';
 import type { HtmlElement } from './html-structure.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
@@ -93,12 +93,13 @@ function decompileTwine2(
 ): void {
   // Parse tw-storydata attributes.
   let startnode = 0;
+  let startFound = false;
   const attr = (name: string): string => attributeOf(storyData, name) ?? '';
 
   if (attr('name')) story.name = attr('name');
   if (attr('startnode')) {
-    const parsed = parseInt(attr('startnode'), 10);
-    if (Number.isNaN(parsed)) {
+    const parsed = parseInteger(attr('startnode'));
+    if (parsed === undefined) {
       diagnostics.push({
         level: 'warning',
         message: `Cannot parse "tw-storydata" content attribute "startnode" as an integer; value "${attr('startnode')}".`,
@@ -110,8 +111,8 @@ function decompileTwine2(
   if (attr('ifid')) story.ifid = normalizeIFID(attr('ifid'));
   if (checks.ifid) diagnostics.push(...storyDataIFIDDiagnostics(attr('ifid')));
   if (attr('zoom')) {
-    const parsed = parseFloat(attr('zoom'));
-    if (Number.isNaN(parsed)) {
+    const parsed = parseDecimal(attr('zoom'));
+    if (parsed === undefined) {
       diagnostics.push({
         level: 'warning',
         message: `Cannot parse "tw-storydata" content attribute "zoom" as a float; value "${attr('zoom')}".`,
@@ -162,8 +163,8 @@ function decompileTwine2(
         const pidValue = attributeOf(node, 'pid') ?? '';
 
         if (pidValue) {
-          const parsed = parseInt(pidValue, 10);
-          if (Number.isNaN(parsed)) {
+          const parsed = parseInteger(pidValue);
+          if (parsed === undefined) {
             diagnostics.push({
               level: 'warning',
               message: `Cannot parse "tw-passagedata" content attribute "pid" as an integer; value "${pidValue}".`,
@@ -178,12 +179,13 @@ function decompileTwine2(
         if (position) metadata.position = position;
         if (size) metadata.size = size;
 
-        if (pid === startnode && pid !== 0) {
-          story.twine2.start = name;
-        }
-
         const text = passageText(textContent(node));
-        const passage: Passage = { name, tags, text };
+        const own = ownName(name, text, story, takenNames, diagnostics);
+        if (pid === startnode && pid !== 0) {
+          story.twine2.start = own;
+          startFound = true;
+        }
+        const passage: Passage = { name: own, tags, text };
         if (metadata.position || metadata.size) {
           passage.metadata = metadata;
         }
@@ -197,8 +199,53 @@ function decompileTwine2(
     }
   }
 
+  if (startnode !== 0 && !startFound) {
+    diagnostics.push({
+      level: 'warning',
+      message: `The "tw-storydata" content attribute "startnode" is ${startnode}, but no "tw-passagedata" has that "pid"; the story has no start passage.`,
+    });
+  }
+
   // Prepend StoryData passage with serialized metadata.
   storyPrepend(story, { name: 'StoryData', tags: [], text: marshalStoryData(story) }, diagnostics);
+}
+
+/** An integer as Go's `strconv.Atoi` reads it (an optional sign and ASCII digits), within JavaScript's safe range. */
+function parseInteger(value: string): number | undefined {
+  if (!/^[+-]?[0-9]+$/.test(value)) return undefined;
+  const n = Number(value);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+/** A finite decimal number (`0.6`, `.5`, `6e-1`), with nothing else around it. */
+function parseDecimal(value: string): number | undefined {
+  if (!/^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** What the special passages that the `tw-storydata` attributes stand for hold. */
+const ATTRIBUTE_PASSAGES: Readonly<Record<string, string>> = {
+  StoryData: 'the story metadata',
+  StoryTitle: 'the story name',
+};
+
+/**
+ * The name a `tw-passagedata` passage keeps in the story. In Twine 2 HTML the story metadata and name are the
+ * `tw-storydata` attributes, and a passage named StoryData or StoryTitle is an ordinary passage; in Twee those
+ * names are the special passages that hold them. So such a passage, unless it is a StoryTitle that holds the
+ * story name, takes the first free name (`StoryData 2`, …), with a warning, and the attributes keep deciding.
+ */
+function ownName(name: string, text: string, story: Story, taken: Set<string>, diagnostics: Diagnostic[]): string {
+  const holds = Object.hasOwn(ATTRIBUTE_PASSAGES, name) ? ATTRIBUTE_PASSAGES[name] : undefined;
+  if (holds === undefined || (name === 'StoryTitle' && trimTweeSpace(text) === story.name)) return name;
+  const free = freeName(name, (n) => !taken.has(n));
+  taken.add(free);
+  diagnostics.push({
+    level: 'warning',
+    message: `Passage "${name}" renamed to "${free}": in Twee, "${name}" is the special passage that holds ${holds}, which this file's "tw-storydata" attributes give. Links to it must be changed by hand.`,
+  });
+  return free;
 }
 
 function passageDataName(node: HtmlElement): string {

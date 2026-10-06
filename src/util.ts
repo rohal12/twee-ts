@@ -6,6 +6,20 @@ import { parse as parsePath } from 'node:path';
 import type { Diagnostic } from './types.js';
 import { normalizeSourceText } from './source-text.js';
 
+/** Whether `value` is an object other than an array, whose properties can be read by name. */
+export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The known key that `key` most likely stands for: one that differs from it only in letter case, `-` or `_`
+ * (`formatID`, `output-mode`), or undefined.
+ */
+export function similarKey(key: string, known: readonly string[]): string | undefined {
+  const fold = (k: string): string => k.toLowerCase().replace(/[-_]/g, '');
+  return known.find((candidate) => fold(candidate) === fold(key));
+}
+
 /** Text decoded from bytes, with the warning when the bytes were not valid UTF-8. */
 export interface DecodedText {
   readonly text: string;

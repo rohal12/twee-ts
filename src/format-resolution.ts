@@ -9,7 +9,7 @@
  * can answer is reported as an error rather than swapped for a different story format.
  * docs/story-formats.md ("How a format is chosen") states the same policy.
  */
-import type { Diagnostic, FormatRequest, RemoteFetchOptions, StoryFormatInfo } from './types.js';
+import type { Diagnostic, FormatRequest, RemoteFetchOptions, RemoteResolveOptions, StoryFormatInfo } from './types.js';
 import type { FormatCandidate, MatchTier } from './formats.js';
 import {
   describeFormatRequest,
@@ -31,12 +31,15 @@ import {
   clearIndexCache,
   DEFAULT_SFA_INDICES,
   fetchIndex,
+  MAX_TIMER_DELAY,
   obtainIndexEntry,
   obtainUrlFormat,
   requestTimeout,
+  resolutionTimeout,
   useCachedRecord,
 } from './remote-formats.js';
 import { parseVersion } from './semver.js';
+import { TweeTsError } from './errors.js';
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
@@ -49,6 +52,10 @@ export interface FormatResolutionOptions {
   readonly signal?: AbortSignal | undefined;
   /** Milliseconds each format request may take. */
   readonly formatFetchTimeout?: number | undefined;
+  /** Milliseconds the whole search may take (0: no limit). */
+  readonly formatResolutionTimeout?: number | undefined;
+  /** Whether the Story Formats Archive indices are asked after `formatIndices` (default true). */
+  readonly useDefaultFormatIndices?: boolean | undefined;
 }
 
 /** Choose the format request: explicit format ID > StoryData format > default ID. */
@@ -96,6 +103,42 @@ interface Resolution {
 /** Rethrow the abort reason when the signal has aborted; failures after an abort are not failures of a source. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason;
+}
+
+/**
+ * The overall time limit of one search: `signal` aborts the requests when either the caller's signal
+ * aborts or the limit passes (with `message` as the reason); `expired` tells whether the limit
+ * passed. `dispose` stops the timer, and must be called when the search ends.
+ */
+interface Deadline {
+  readonly signal: AbortSignal | undefined;
+  readonly caller: AbortSignal | undefined;
+  readonly expired: () => boolean;
+  readonly message: string;
+  readonly dispose: () => void;
+}
+
+/** Start the time limit of a search: `ms` milliseconds (0, or more than a timer takes: none), named `option` in messages. */
+function startDeadline(caller: AbortSignal | undefined, ms: number, option: string): Deadline {
+  const message =
+    `the search stopped after ${ms} ms, the limit ${option} sets for finding the story format; ` +
+    'the format URLs and indices not asked by then were read from the download cache only';
+  if (ms === 0 || ms > MAX_TIMER_DELAY) {
+    return { signal: caller, caller, expired: () => false, message, dispose: () => undefined };
+  }
+  const limit = new AbortController();
+  const timer = setTimeout(() => {
+    limit.abort(new Error(message));
+  }, ms);
+  return {
+    signal: caller === undefined ? limit.signal : AbortSignal.any([caller, limit.signal]),
+    caller,
+    expired: () => limit.signal.aborted,
+    message,
+    dispose: () => {
+      clearTimeout(timer);
+    },
+  };
 }
 
 /** A cached download as a candidate: it answers as the index entry or URL it was downloaded for. */
@@ -161,14 +204,28 @@ async function resolveWith(
   request: FormatRequest,
   sources: Sources,
   options: RemoteFetchOptions,
+  deadline: Deadline,
   diagnostics: Diagnostic[],
 ): Promise<Resolution> {
   const wanted = describeFormatRequest(request);
   const failures: string[] = [];
   const fail = (message: string): void => {
     const text = `Remote format fetch failed for ${wanted}: ${message}`;
+    if (failures.includes(text)) return;
     failures.push(text);
     diagnostics.push({ level: 'warning', message: text });
+  };
+  /** Whether the network may be used now: not offline, and the time limit has not passed. */
+  const online = (): boolean => {
+    if (!sources.online) return false;
+    if (!deadline.expired()) return true;
+    fail(deadline.message);
+    return false;
+  };
+  /** Rethrow a caller's abort; otherwise describe why a request failed (the time limit, when it passed). */
+  const failure = (e: unknown): string => {
+    throwIfAborted(deadline.caller);
+    return deadline.expired() ? deadline.message : errorText(e);
   };
   const notes: string[] = [];
   const skipped: Skipped[] = [];
@@ -207,7 +264,7 @@ async function resolveWith(
 
   const gatherUrl = async (url: string, rank: number): Promise<SourcedCandidate[]> => {
     const label = `the cached copy of format URL ${url}`;
-    if (!sources.online) {
+    if (!online()) {
       const record = cachedUrlRecord(url);
       if (!record) notes.push(`format URL ${url} has no cached copy`);
       return record ? [cachedCandidate(record, rank, label)] : [];
@@ -227,22 +284,22 @@ async function resolveWith(
         },
       ];
     } catch (e) {
-      throwIfAborted(options.signal);
+      const why = failure(e);
       const record = cachedUrlRecord(url);
-      fail(`${errorText(e)}${record ? `; using the copy downloaded on ${record.fetchedAt}` : ''}`);
+      fail(`${why}${record ? `; using the copy downloaded on ${record.fetchedAt}` : ''}`);
       return record ? [cachedCandidate(record, rank, label)] : [];
     }
   };
 
   const gatherIndex = async (indexUrl: string, rank: number): Promise<SourcedCandidate[]> => {
-    if (!sources.online) return cachedFrom(indexUrl, rank);
+    if (!online()) return cachedFrom(indexUrl, rank);
     let index: FormatIndex;
     try {
       index = await fetchIndex(indexUrl, options);
     } catch (e) {
-      throwIfAborted(options.signal);
+      const why = failure(e);
       const fallback = cachedFrom(indexUrl, rank);
-      fail(`${errorText(e)}${fallback.length > 0 ? '; using the formats downloaded from it before' : ''}`);
+      fail(`${why}${fallback.length > 0 ? '; using the formats downloaded from it before' : ''}`);
       return fallback;
     }
     skipped.push(
@@ -275,8 +332,7 @@ async function resolveWith(
         diagnostics.push(...obtained.warnings.map((message) => ({ level: 'warning' as const, message })));
         return { info: obtained.info, tier: selection.tier, label: selection.choice.label };
       } catch (e) {
-        throwIfAborted(options.signal);
-        fail(errorText(e));
+        fail(failure(e));
         gathered.splice(gathered.indexOf(selection.choice), 1);
       }
     }
@@ -354,47 +410,88 @@ export async function resolveStoryFormat(
   options: FormatResolutionOptions,
   diagnostics: Diagnostic[],
 ): Promise<StoryFormatInfo | undefined> {
-  const fetchOptions: RemoteFetchOptions = { signal: options.signal, timeout: options.formatFetchTimeout };
-  requestTimeout(fetchOptions);
+  requestTimeout({ timeout: options.formatFetchTimeout });
+  // compile() has checked both time limits (validateOptions()).
+  const limit = resolutionTimeout(options.formatResolutionTimeout);
   const sources: Sources = {
     searchDirs: getFormatSearchDirs(options.formatPaths, options.useTweegoPath ?? true),
     urls: checkedUrls(options.formatUrls, 'formatUrls', diagnostics),
-    indices: [...checkedUrls(options.formatIndices, 'formatIndices', diagnostics), ...DEFAULT_SFA_INDICES],
+    indices: [
+      ...checkedUrls(options.formatIndices, 'formatIndices', diagnostics),
+      ...((options.useDefaultFormatIndices ?? true) ? DEFAULT_SFA_INDICES : []),
+    ],
     online: !(options.noRemote ?? false),
   };
-  return (await resolveWith(request, sources, fetchOptions, diagnostics)).info;
+  const deadline = startDeadline(options.signal, limit, 'formatResolutionTimeout');
+  try {
+    const fetchOptions: RemoteFetchOptions = { signal: deadline.signal, timeout: options.formatFetchTimeout };
+    return (await resolveWith(request, sources, fetchOptions, deadline, diagnostics)).info;
+  } finally {
+    deadline.dispose();
+  }
+}
+
+/** The time limit of a lookup; a TweeTsError (`INVALID_OPTIONS`) names a time limit that is not 0 or more. */
+function lookupLimit(options: RemoteResolveOptions): number {
+  const limits = [
+    ['timeout', options.timeout],
+    ['resolutionTimeout', options.resolutionTimeout],
+  ] as const;
+  for (const [option, value] of limits) {
+    if (value !== undefined && !(value >= 0)) {
+      throw new TweeTsError(`${option} must be 0 or more milliseconds, not ${value}`, [], { code: 'INVALID_OPTIONS' });
+    }
+  }
+  return resolutionTimeout(options.resolutionTimeout);
 }
 
 /**
  * Resolve a story format by name and version from format URLs and format indices only (no local
- * folders), by the same policy as a compile: `urls` first, then `indices`, then the Story Formats
- * Archive. Returns undefined when no source has the format; throws, listing every failure, when
- * none has it and some source failed, or when a URL is not usable.
+ * folders), by the same policy as a compile: `options.urls` first, then `options.indices`, then the
+ * Story Formats Archive. Returns undefined when no source has the format.
  *
  * `options.signal` aborts the lookup, which then rejects with the signal's reason;
- * `options.timeout` limits each request (default 30000 ms).
+ * `options.timeout` limits each request (default 30000 ms), and `options.resolutionTimeout` the
+ * whole lookup (default 120000 ms); `options.useDefaultIndices: false` leaves the Story Formats
+ * Archive out.
+ *
+ * @throws A TweeTsError: `INVALID_OPTIONS` for a URL or time limit that cannot be used, before any
+ *   request; `FORMAT_UNAVAILABLE`, listing every failure (also in its `diagnostics`), when no source
+ *   has the format and some source failed.
  */
 export async function resolveRemoteFormat(
   name: string,
   version: string,
-  indices?: readonly string[],
-  urls?: readonly string[],
-  options: RemoteFetchOptions = {},
+  options: RemoteResolveOptions = {},
 ): Promise<StoryFormatInfo | undefined> {
   options.signal?.throwIfAborted();
-  requestTimeout(options);
+  const limit = lookupLimit(options);
   // As each compile does: an index is fetched afresh for each lookup, then shared within it.
   clearIndexCache();
   const diagnostics: Diagnostic[] = [];
   const sources: Sources = {
     searchDirs: undefined,
-    urls: checkedUrls(urls, 'urls', diagnostics),
-    indices: [...checkedUrls(indices, 'indices', diagnostics), ...DEFAULT_SFA_INDICES],
+    urls: checkedUrls(options.urls, 'urls', diagnostics),
+    indices: [
+      ...checkedUrls(options.indices, 'indices', diagnostics),
+      ...((options.useDefaultIndices ?? true) ? DEFAULT_SFA_INDICES : []),
+    ],
     online: true,
   };
-  const invalid = diagnostics.filter((d) => d.level === 'error').map((d) => d.message);
-  if (invalid.length > 0) throw new Error(invalid.join('\n'));
-  const { info, failures } = await resolveWith({ kind: 'name', name, version }, sources, options, diagnostics);
-  if (info === undefined && failures.length > 0) throw new Error(failures.join('\n'));
-  return info;
+  const invalid = diagnostics.filter((d) => d.level === 'error');
+  if (invalid.length > 0) {
+    throw new TweeTsError(invalid.map((d) => d.message).join('\n'), invalid, { code: 'INVALID_OPTIONS' });
+  }
+  const deadline = startDeadline(options.signal, limit, 'resolutionTimeout');
+  try {
+    const fetchOptions: RemoteFetchOptions = { signal: deadline.signal, timeout: options.timeout };
+    const request: FormatRequest = { kind: 'name', name, version };
+    const { info, failures } = await resolveWith(request, sources, fetchOptions, deadline, diagnostics);
+    if (info === undefined && failures.length > 0) {
+      throw new TweeTsError(failures.join('\n'), diagnostics, { code: 'FORMAT_UNAVAILABLE' });
+    }
+    return info;
+  } finally {
+    deadline.dispose();
+  }
 }

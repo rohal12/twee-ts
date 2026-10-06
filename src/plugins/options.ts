@@ -7,10 +7,11 @@
  */
 import { resolve } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
-import { TweeTsError } from '../compiler.js';
+import { TweeTsError } from '../errors.js';
 import { isExcluded } from '../filesystem.js';
 import { isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
+import { isRecord } from '../util.js';
 
 /**
  * The compile options a plugin passes on to the compiler. `sources` and
@@ -21,9 +22,12 @@ export type PluginCompileOptions = Omit<Partial<CompileOptions>, 'sources' | 'fo
 
 /** The options both plugins take. */
 export interface SharedPluginOptions {
-  /** Source directories/files to compile, relative to the working directory. */
-  sources: string[];
-  /** Story format ID. */
+  /**
+   * Source directories/files to compile, relative to the working directory. The plugins take paths only: a
+   * bundler watches files, so the inline sources `compile()` accepts are not supported here.
+   */
+  sources: readonly string[];
+  /** Story format ID (`formatId` in the compile options). */
   format?: string | undefined;
   /**
    * Output file name, relative to the output folder: names separated by forward
@@ -76,10 +80,6 @@ export interface ResolvedPluginOptions {
 
 function fail(kind: PluginKind, message: string): never {
   throw new TweeTsError(`twee-ts ${kind} plugin: ${message}`, [], { code: 'INVALID_OPTIONS' });
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

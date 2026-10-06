@@ -51,7 +51,8 @@ function emittedFilePath(output: OutputLocation, fileName: string): string | und
 export function outputLocations(option: unknown): OutputLocation[] {
   return (Array.isArray(option) ? option : [option]).flatMap((output: unknown): OutputLocation[] => {
     if (typeof output !== 'object' || output === null) return [];
-    const { dir, file } = output as { readonly dir?: unknown; readonly file?: unknown };
+    const dir: unknown = 'dir' in output ? output.dir : undefined;
+    const file: unknown = 'file' in output ? output.file : undefined;
     const location = {
       ...(typeof dir === 'string' ? { dir } : {}),
       ...(typeof file === 'string' ? { file } : {}),

@@ -70,7 +70,7 @@ function options(extra: Partial<CompileOptions>): CompileOptions {
 }
 
 /** Run a compile that must fail for lack of a format, and return its diagnostics. */
-async function failingDiagnostics(opts: CompileOptions): Promise<Diagnostic[]> {
+async function failingDiagnostics(opts: CompileOptions): Promise<readonly Diagnostic[]> {
   try {
     await compile(opts);
   } catch (e) {

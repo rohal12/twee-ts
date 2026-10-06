@@ -413,8 +413,30 @@ describe('loadSources: Twine 2 HTML story name', () => {
     const story = freshStory();
     const diag: Diagnostic[] = [];
     loadSources(story, [file], { trim: true }, diag, new Set());
+    // The tw-storydata name is the story's name, as Twine 2 and the story format read it; the passage
+    // named StoryTitle is an ordinary passage there, kept under a free name (#246 S-1).
+    expect(diag.map((d) => d.message)).toEqual([
+      'Passage "StoryTitle" renamed to "StoryTitle 2": in Twee, "StoryTitle" is the special passage that holds the story name, which this file\'s "tw-storydata" attributes give. Links to it must be changed by hand.',
+    ]);
+    expect(story.name).toBe('Review Story');
+    expect(story.passages.filter((p) => p.name === 'StoryTitle').map((p) => p.text)).toEqual(['Review Story']);
+    expect(story.passages.filter((p) => p.name === 'StoryTitle 2').map((p) => p.text)).toEqual(['Passage Title']);
+  });
+
+  it('keeps a StoryTitle passage of the HTML that holds the story name, and adds no second one', () => {
+    const file = join(tmpDir, 'story.html');
+    writeFileSync(
+      file,
+      NAMED_HTML.replace(
+        '</tw-storydata>',
+        '<tw-passagedata pid="2" name="StoryTitle" tags="" position="0,0" size="100,100">Review Story</tw-passagedata>\n</tw-storydata>',
+      ),
+    );
+    const story = freshStory();
+    const diag: Diagnostic[] = [];
+    loadSources(story, [file], { trim: true }, diag, new Set());
     expect(diag).toEqual([]);
-    expect(story.name).toBe('Passage Title');
+    expect(story.name).toBe('Review Story');
     expect(story.passages.filter((p) => p.name === 'StoryTitle')).toHaveLength(1);
   });
 

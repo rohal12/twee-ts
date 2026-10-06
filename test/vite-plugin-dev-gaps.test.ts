@@ -4,7 +4,6 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { attr, elements, parentTag } from './helpers/html.js';
 import { tmpdir } from 'node:os';
-import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import {
   build,
   createLogger,
@@ -16,7 +15,7 @@ import {
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { compileJavaScript } from './helpers/javascript.js';
-import { bundlerOptionsKey, hasEntry, peerRun, watcherReady } from './helpers/plugins.js';
+import { bundlerOptionsKey, hasEntry, peerRun, watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -45,32 +44,19 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function freePort(): Promise<number> {
-  return new Promise((done) => {
-    const probe = createNetServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => {
-        done(port);
-      });
-    });
-  });
-}
-
 /** Starts a dev server on a free port with no logging unless `customLogger` is given; returns its base URL. */
 async function start(dir: string, options: Parameters<typeof tweeTsPlugin>[0], customLogger?: Logger): Promise<string> {
-  const port = await freePort();
   server = await createServer({
     configFile: false,
     root: dir,
     logLevel: 'silent',
     ...(customLogger ? { customLogger } : {}),
     plugins: [tweeTsPlugin(options)],
-    server: { host: '127.0.0.1', port, strictPort: true },
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
   });
   await server.listen();
   await watcherReady(server);
-  return `http://127.0.0.1:${port}/`;
+  return `${serverUrl(server)}/`;
 }
 
 /** A logger that keeps what it is given, by level. */
@@ -248,15 +234,14 @@ describe.skipIf(!hasEntry || peerRun)(
     const VIRTUAL_ENTRY = 'import message from "virtual:test-message";\nglobalThis.m = message;\n';
 
     async function serve(config: InlineConfig): Promise<string> {
-      const port = await freePort();
       server = await createServer({
         logLevel: 'silent',
         ...config,
-        server: { host: '127.0.0.1', port, strictPort: true },
+        server: { host: '127.0.0.1', port: 0, strictPort: false },
       });
       await server.listen();
       await watcherReady(server);
-      return `http://127.0.0.1:${port}/`;
+      return `${serverUrl(server)}/`;
     }
 
     it('applies an inline plugin with configFile:false in dev and in a production build', async () => {

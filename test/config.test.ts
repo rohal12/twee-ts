@@ -301,6 +301,19 @@ describe('scaffoldConfig', () => {
     expect(parsed['sources']).toEqual(['src/']);
     expect(parsed['output']).toBe('story.html');
   });
+
+  it('names the schema of the installed release, so an editor checks the keys it reads (#250)', () => {
+    for (const version of ['2.0.0', '2.0.0-rc.1']) {
+      expect(parseJsonObject(scaffoldConfig(version))['$schema'], version).toBe(
+        `https://unpkg.com/@rohal12/twee-ts@${version}/schemas/twee-ts.config.schema.json`,
+      );
+    }
+    for (const version of ['0.0.0-development', '', '2.0']) {
+      expect(parseJsonObject(scaffoldConfig(version))['$schema'], version).toBe(
+        'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
+      );
+    }
+  });
 });
 
 describe('JSON Schema', () => {
@@ -328,6 +341,8 @@ describe('JSON Schema', () => {
       'testMode',
       'noRemote',
       'formatFetchTimeout',
+      'formatResolutionTimeout',
+      'useDefaultFormatIndices',
       'tagAliases',
       'sourceInfo',
     ];

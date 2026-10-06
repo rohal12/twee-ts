@@ -242,7 +242,10 @@ describe('findPassageLinks', () => {
   it('reads on after markup SugarCube rejects, from just after its opener', () => {
     expect(findPassageLinks('[[<<goto "A">>\n')).toEqual([]);
     expect(findPassageLinks('[[a<<goto "A">>\n')).toEqual([{ via: 'goto', passage: 'A' }]);
-    expect(findPassageLinks('[img[x.png][<<goto "A">>]] [img[x.png]')).toEqual([]);
+    // Image markup names its link component, read as link markup reads a passage name.
+    expect(findPassageLinks('[img[x.png][<<goto "A">>]] [img[x.png]')).toEqual([
+      { via: 'markup', passage: '<<goto "A">>' },
+    ]);
   });
 
   it('stays fast when many comments, markup or elements are never closed', () => {
