@@ -142,68 +142,30 @@ function linkName(component: string): string {
  */
 function readCoreComponents(reader: Reader, from: number): { link: string; end: ComponentEnd } | undefined {
   const { text } = reader;
-  let delimiter: 'none' | 'ltr' | 'rtl' = 'none';
-  let componentStart = from;
-  let link: string | undefined;
-  let depth = 2;
-  let pos = from;
-  while (pos < reader.limit) {
-    const ch = text[pos];
-    pos += 1;
-    switch (ch) {
-      case '\n':
-        markScanned(reader, pos);
-        return undefined;
-      case '"': {
-        const end = readQuoted(reader, pos, '"');
-        if (end === undefined) {
-          return undefined;
-        }
-        pos = end;
-        break;
-      }
-      case '|':
-        if (delimiter === 'none') {
-          delimiter = 'ltr';
-          componentStart = pos;
-        }
-        break;
-      case '-':
-        if (delimiter === 'none' && text[pos] === '>') {
-          delimiter = 'ltr';
-          pos += 1;
-          componentStart = pos;
-        }
-        break;
-      case '<':
-        if (delimiter === 'none' && text[pos] === '-') {
-          delimiter = 'rtl';
-          link = text.slice(componentStart, pos - 1);
-          pos += 1;
-          componentStart = pos;
-        }
-        break;
-      case '[':
-        depth += 1;
-        break;
-      case ']': {
-        depth -= 1;
-        if (depth === 1) {
-          const end = componentEnd(reader, pos);
-          if (end === undefined) {
-            return undefined;
-          }
-          // With `<-`, the link came first and this component is the text.
-          return { link: link ?? text.slice(componentStart, end.textEnd), end };
-        }
-        break;
-      }
-      default:
-        break;
+  const split: { delimiter: 'none' | 'ltr' | 'rtl'; componentStart: number; link: string | undefined } = {
+    delimiter: 'none',
+    componentStart: from,
+    link: undefined,
+  };
+  const end = scanComponent(reader, from, '"', (ch, pos) => {
+    if (split.delimiter !== 'none') {
+      return pos;
     }
-  }
-  markScanned(reader, pos);
-  return undefined;
+    if (ch === '|') {
+      split.delimiter = 'ltr';
+      split.componentStart = pos;
+    } else if (ch === '-' && text[pos] === '>') {
+      split.delimiter = 'ltr';
+      split.componentStart = pos + 1;
+    } else if (ch === '<' && text[pos] === '-') {
+      split.delimiter = 'rtl';
+      split.link = text.slice(split.componentStart, pos - 1);
+      split.componentStart = pos + 1;
+    }
+    return Math.max(pos, split.componentStart);
+  });
+  // With `<-`, the link came first and this component is the text.
+  return end === undefined ? undefined : { link: split.link ?? text.slice(split.componentStart, end.textEnd), end };
 }
 
 /**
@@ -211,39 +173,45 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
  * setter, in which single quotes also quote.
  */
 function readComponent(reader: Reader, from: number, setter: boolean): ComponentEnd | undefined {
+  return scanComponent(reader, from, setter ? `"'` : '"', (_ch, pos) => pos);
+}
+
+/**
+ * Reads a component from `from` to the `]` that brings the bracket depth back to one: square
+ * brackets nest, a string in one of `quotes` is read as a unit, and a line feed ends the markup
+ * unread. Any other character is passed to `onOther`, which returns where reading goes on.
+ */
+function scanComponent(
+  reader: Reader,
+  from: number,
+  quotes: string,
+  onOther: (ch: string, pos: number) => number,
+): ComponentEnd | undefined {
   const { text } = reader;
   let depth = 2;
   let pos = from;
   while (pos < reader.limit) {
-    const ch = text[pos];
+    const ch = text.charAt(pos);
     pos += 1;
-    switch (ch) {
-      case '\n':
-        markScanned(reader, pos);
+    if (ch === '\n') {
+      markScanned(reader, pos);
+      return undefined;
+    }
+    if (quotes.includes(ch)) {
+      const end = readQuoted(reader, pos, ch);
+      if (end === undefined) {
         return undefined;
-      case '"':
-      case "'": {
-        if (ch === "'" && !setter) {
-          break;
-        }
-        const end = readQuoted(reader, pos, ch);
-        if (end === undefined) {
-          return undefined;
-        }
-        pos = end;
-        break;
       }
-      case '[':
-        depth += 1;
-        break;
-      case ']':
-        depth -= 1;
-        if (depth === 1) {
-          return componentEnd(reader, pos);
-        }
-        break;
-      default:
-        break;
+      pos = end;
+    } else if (ch === '[') {
+      depth += 1;
+    } else if (ch === ']') {
+      depth -= 1;
+      if (depth === 1) {
+        return componentEnd(reader, pos);
+      }
+    } else {
+      pos = onOther(ch, pos);
     }
   }
   markScanned(reader, pos);
