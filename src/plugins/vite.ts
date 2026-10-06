@@ -31,18 +31,18 @@ export interface TweeTsVitePluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
   sources: string[];
   /** Story format ID. */
-  format?: string;
+  format?: string | undefined;
   /** Output filename in build output. Default: 'index.html'. */
-  outputFilename?: string;
+  outputFilename?: string | undefined;
   /** Additional compile options. `sources` and `formatId` come from the options above. */
-  compileOptions?: Partial<CompileOptions>;
+  compileOptions?: Partial<CompileOptions> | undefined;
   /**
    * A JS or TS file, relative to the working directory. Vite bundles it and
    * everything it imports into one self-contained script that becomes the
    * story's Story JavaScript; CSS it imports becomes the Story Stylesheet.
    * Requires Vite 8.
    */
-  entry?: string;
+  entry?: string | undefined;
 }
 
 /** Passage names the bundled entry takes inside the story. */
@@ -464,10 +464,13 @@ async function bundleEntryForDev(config: ResolvedConfig, entryPath: string): Pro
   const watchFiles = new Set<string>();
   // With a config file the entry build reads it again, plugins and all, so only what the server was given on top
   // of it comes across. Without one, the resolved settings that change how code bundles do.
-  const { define, resolve: inlineResolve } = config.inlineConfig;
-  const settings: InlineConfig = config.configFile
-    ? { define, ...(inlineResolve?.alias ? { resolve: { alias: inlineResolve.alias } } : {}) }
-    : { define: config.define, resolve: { alias: config.resolve.alias } };
+  // Vite reads an absent `define` the same as an undefined one (its config merge skips undefined values).
+  const define = config.configFile ? config.inlineConfig.define : config.define;
+  const alias = config.configFile ? config.inlineConfig.resolve?.alias : config.resolve.alias;
+  const settings: InlineConfig = {
+    ...(define ? { define } : {}),
+    ...(alias ? { resolve: { alias } } : {}),
+  };
   const inline: InlineConfig & Record<string, unknown> = {
     configFile: config.configFile ?? false,
     root: config.root,

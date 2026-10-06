@@ -18,11 +18,11 @@ export interface TweeTsRollupPluginOptions {
   /** Source directories/files to compile. */
   sources: string[];
   /** Story format ID. */
-  format?: string;
+  format?: string | undefined;
   /** Output filename. Default: 'index.html'. */
-  outputFilename?: string;
+  outputFilename?: string | undefined;
   /** Additional compile options. */
-  compileOptions?: Partial<CompileOptions>;
+  compileOptions?: Partial<CompileOptions> | undefined;
 }
 
 /**

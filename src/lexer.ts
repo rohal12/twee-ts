@@ -99,12 +99,11 @@ function acceptQuoted(ctx: LexerContext, quote: number): string | null {
     const ch = ctx.next();
     switch (ch) {
       case 0x5c: {
-        // backslash
+        // A backslash escapes the next character, but not a line end.
         const r = ctx.next();
-        if (r !== 0x0a && r !== EOF) break;
-        // fall through
+        if (r === 0x0a || r === EOF) return 'unterminated quoted string';
+        break;
       }
-      // falls through
       case 0x0a:
       case EOF:
         return 'unterminated quoted string';
@@ -159,15 +158,13 @@ function lexName(ctx: LexerContext): StateFn {
   let r: number;
   outer: for (;;) {
     r = ctx.next();
+    if (r === 0x5c) {
+      // A backslash escapes the next character, but an escaped line end still ends the name.
+      const next = ctx.next();
+      if (next !== 0x0a && next !== EOF) continue;
+      r = next;
+    }
     switch (r) {
-      case 0x5c: {
-        // backslash
-        const next = ctx.next();
-        if (next !== 0x0a && next !== EOF) break;
-        // fall through to terminators
-        r = next;
-      }
-      // falls through
       case 0x5b: // [
       case 0x5d: // ]
       case 0x7b: // {
@@ -233,15 +230,15 @@ function lexTags(ctx: LexerContext): StateFn {
     const r = ctx.next();
     switch (r) {
       case 0x5c: {
-        // backslash
+        // A backslash escapes the next character, but not a line end (which is consumed, not backed up).
         const next = ctx.next();
-        if (next !== 0x0a && next !== EOF) break;
-        // fall through
+        if (next === 0x0a || next === EOF) return ctx.errorf('unterminated tag block');
+        break;
       }
-      // falls through
       case 0x0a:
+        ctx.backup();
+        return ctx.errorf('unterminated tag block');
       case EOF:
-        if (r === 0x0a) ctx.backup();
         return ctx.errorf('unterminated tag block');
       case 0x5d: // ]
         if (ctx.pos > ctx.start) ctx.emit(ItemType.Tags);
@@ -272,7 +269,7 @@ function lexMetadata(ctx: LexerContext): StateFn {
       }
       case 0x0a: // newline
         ctx.backup();
-      // falls through
+        return ctx.errorf('unterminated metadata block');
       case EOF:
         return ctx.errorf('unterminated metadata block');
       case 0x7b: // {

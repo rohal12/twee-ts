@@ -385,9 +385,9 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
     const tagColors = json['tag-colors'];
     if (!tagColors) throw new Error('expected tag-colors');
     expect(Object.keys(tagColors).length).toBe(3);
-    expect(tagColors.bar).toBe('Green');
-    expect(tagColors.foo).toBe('red');
-    expect(tagColors.qaz).toBe('blue');
+    expect(tagColors['bar']).toBe('Green');
+    expect(tagColors['foo']).toBe('red');
+    expect(tagColors['qaz']).toBe('blue');
   });
 
   // --- zoom ---
@@ -707,8 +707,8 @@ describe('Twine 2 JSON Output Spec -- Passage Data Encoding', () => {
     if (!start) throw new Error('expected Start passage');
     if (!start.metadata) throw new Error('expected metadata');
     expect(typeof start.metadata).toBe('object');
-    expect(start.metadata.position).toBe('600,400');
-    expect(start.metadata.size).toBe('100,200');
+    expect(start.metadata['position']).toBe('600,400');
+    expect(start.metadata['size']).toBe('100,200');
   });
 
   it('metadata: position value is a comma-separated coordinate string', async () => {
@@ -717,8 +717,8 @@ describe('Twine 2 JSON Output Spec -- Passage Data Encoding', () => {
     const start = json.passages.find((p) => p.name === 'Start');
     if (!start) throw new Error('expected Start passage');
     if (!start.metadata) throw new Error('expected metadata');
-    expect(typeof start.metadata.position).toBe('string');
-    expect(start.metadata.position).toMatch(/^\d+,\d+$/);
+    expect(typeof start.metadata['position']).toBe('string');
+    expect(start.metadata['position']).toMatch(/^\d+,\d+$/);
   });
 
   it('metadata: size value is a comma-separated dimension string', async () => {
@@ -727,8 +727,8 @@ describe('Twine 2 JSON Output Spec -- Passage Data Encoding', () => {
     const start = json.passages.find((p) => p.name === 'Start');
     if (!start) throw new Error('expected Start passage');
     if (!start.metadata) throw new Error('expected metadata');
-    expect(typeof start.metadata.size).toBe('string');
-    expect(start.metadata.size).toMatch(/^\d+,\d+$/);
+    expect(typeof start.metadata['size']).toBe('string');
+    expect(start.metadata['size']).toMatch(/^\d+,\d+$/);
   });
 
   it('metadata: omitted when not defined', async () => {
@@ -744,8 +744,8 @@ describe('Twine 2 JSON Output Spec -- Passage Data Encoding', () => {
     const start = json.passages.find((p) => p.name === 'Start');
     if (!start) throw new Error('expected Start passage');
     if (!start.metadata) throw new Error('expected metadata');
-    expect(start.metadata.position).toBe('300,100');
-    expect(start.metadata.size).toBeUndefined();
+    expect(start.metadata['position']).toBe('300,100');
+    expect(start.metadata['size']).toBeUndefined();
   });
 
   it('metadata: name-value pairs are string:string (not other types)', async () => {
@@ -790,11 +790,11 @@ describe('Twine 2 JSON Output Spec -- Passage Data Encoding', () => {
     if (!start) throw new Error('expected Start passage');
     if (!start.metadata) throw new Error('expected metadata');
     // Values must be strings, not parsed into arrays or numbers
-    expect(typeof start.metadata.position).toBe('string');
-    expect(typeof start.metadata.size).toBe('string');
+    expect(typeof start.metadata['position']).toBe('string');
+    expect(typeof start.metadata['size']).toBe('string');
     // Must not be parsed into arrays
-    expect(Array.isArray(start.metadata.position)).toBe(false);
-    expect(Array.isArray(start.metadata.size)).toBe(false);
+    expect(Array.isArray(start.metadata['position'])).toBe(false);
+    expect(Array.isArray(start.metadata['size'])).toBe(false);
   });
 
   it('passage objects do NOT contain a pid property', async () => {
@@ -1090,7 +1090,7 @@ describe('Twine 2 JSON Output Spec -- JSON String Escaping', () => {
     const { json } = await compileToJSON(source);
     const tagColors = json['tag-colors'];
     if (!tagColors) throw new Error('expected tag-colors');
-    expect(tagColors.scene).toBe('#ff0000');
+    expect(tagColors['scene']).toBe('#ff0000');
   });
 });
 

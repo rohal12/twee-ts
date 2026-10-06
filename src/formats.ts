@@ -200,7 +200,7 @@ export function getFormatSearchDirs(extraPaths: readonly string[] = [], useTweeg
   const dirs = [...basePaths].flatMap((base) => subdirNames.map((sub) => join(base, sub))).filter(isDirectory);
 
   // TWEEGO_PATH environment variable
-  const tweegoPath = useTweegoPath ? process.env.TWEEGO_PATH : undefined;
+  const tweegoPath = useTweegoPath ? process.env['TWEEGO_PATH'] : undefined;
   if (tweegoPath) dirs.push(...tweegoPath.split(process.platform === 'win32' ? ';' : ':'));
 
   // Extra user-provided paths outrank everything else.

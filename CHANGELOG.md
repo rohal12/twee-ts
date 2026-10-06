@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)
+
 ## [1.18.2] - 2026-10-06
 
 ### Fixed

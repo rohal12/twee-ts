@@ -3734,7 +3734,7 @@ describe('Twee 3 Roundtrip — Full Story', () => {
     const storyData = reparsed.passages.find((p) => p.name === 'StoryData');
     if (!storyData) throw new Error('expected StoryData passage in roundtrip');
     const json = JSON.parse(storyData.text) as Record<string, unknown>;
-    expect(json.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(json['ifid']).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
 
     // Verify StoryTitle is preserved
     const storyTitle = reparsed.passages.find((p) => p.name === 'StoryTitle');

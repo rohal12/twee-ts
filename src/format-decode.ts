@@ -148,22 +148,22 @@ function toFormatJSON(raw: unknown): FormatDecodeResult {
     return { ok: false, reason: 'Story format JSON chunk is not an object.' };
   }
   const obj = raw as Record<string, unknown>;
-  if (typeof obj.version !== 'string') return { ok: false, reason: 'Story format has no "version" string.' };
-  if (typeof obj.source !== 'string') return { ok: false, reason: 'Story format has no "source" string.' };
-  if (!parseVersion(obj.version)) {
-    return { ok: false, reason: `Story format version ${JSON.stringify(obj.version)} is not a SemVer version.` };
+  if (typeof obj['version'] !== 'string') return { ok: false, reason: 'Story format has no "version" string.' };
+  if (typeof obj['source'] !== 'string') return { ok: false, reason: 'Story format has no "source" string.' };
+  if (!parseVersion(obj['version'])) {
+    return { ok: false, reason: `Story format version ${JSON.stringify(obj['version'])} is not a SemVer version.` };
   }
   const data: Twine2FormatJSON = {
-    name: typeof obj.name === 'string' ? obj.name : UNNAMED_FORMAT_NAME,
-    version: obj.version,
-    source: obj.source,
-    proofing: obj.proofing === true,
+    name: typeof obj['name'] === 'string' ? obj['name'] : UNNAMED_FORMAT_NAME,
+    version: obj['version'],
+    source: obj['source'],
+    proofing: obj['proofing'] === true,
   };
-  if (typeof obj.author === 'string') data.author = obj.author;
-  if (typeof obj.description === 'string') data.description = obj.description;
-  if (typeof obj.image === 'string') data.image = obj.image;
-  if (typeof obj.url === 'string') data.url = obj.url;
-  if (typeof obj.license === 'string') data.license = obj.license;
+  if (typeof obj['author'] === 'string') data.author = obj['author'];
+  if (typeof obj['description'] === 'string') data.description = obj['description'];
+  if (typeof obj['image'] === 'string') data.image = obj['image'];
+  if (typeof obj['url'] === 'string') data.url = obj['url'];
+  if (typeof obj['license'] === 'string') data.license = obj['license'];
   return { ok: true, data };
 }
 

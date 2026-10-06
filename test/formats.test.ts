@@ -289,9 +289,9 @@ describe('relaxed format.js parsing (#154)', () => {
       it(`keeps a source with ${sourceLabel} byte-identical when written with ${writerLabel}`, () => {
         const formatJs = write(source);
         const expected = evaluate(formatJs);
-        expect(expected.source).toBe(source);
+        expect(expected['source']).toBe(source);
         const data = parseFormatJSON(formatJs);
-        expect(data?.source).toBe(expected.source);
+        expect(data?.source).toBe(expected['source']);
         expect(data?.name).toBe('T');
         expect(data?.version).toBe('1.0.0');
       });

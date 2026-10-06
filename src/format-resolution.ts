@@ -25,15 +25,15 @@ import {
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
-  readonly formatPaths?: readonly string[];
-  readonly useTweegoPath?: boolean;
-  readonly noRemote?: boolean;
-  readonly formatIndices?: readonly string[];
-  readonly formatUrls?: readonly string[];
+  readonly formatPaths?: readonly string[] | undefined;
+  readonly useTweegoPath?: boolean | undefined;
+  readonly noRemote?: boolean | undefined;
+  readonly formatIndices?: readonly string[] | undefined;
+  readonly formatUrls?: readonly string[] | undefined;
   /** Aborts the format requests; resolution then rejects with the signal's reason. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Milliseconds each format request may take. */
-  readonly formatFetchTimeout?: number;
+  readonly formatFetchTimeout?: number | undefined;
 }
 
 /** Choose the format request: explicit format ID > StoryData format > default ID. */

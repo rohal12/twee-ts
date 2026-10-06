@@ -421,21 +421,21 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
     it('source is required and contains HTML template', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toBeDefined();
-      expect(typeof obj.source).toBe('string');
-      expect(obj.source).toContain('<html>');
+      expect(obj['source']).toBeDefined();
+      expect(typeof obj['source']).toBe('string');
+      expect(obj['source']).toContain('<html>');
     });
 
     it('source contains {{STORY_NAME}} placeholder', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toContain('{{STORY_NAME}}');
+      expect(obj['source']).toContain('{{STORY_NAME}}');
     });
 
     it('source contains {{STORY_DATA}} placeholder', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toContain('{{STORY_DATA}}');
+      expect(obj['source']).toContain('{{STORY_DATA}}');
     });
 
     it('placeholders are not themselves required -- source without placeholders is valid', () => {

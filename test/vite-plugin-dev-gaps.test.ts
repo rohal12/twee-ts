@@ -334,7 +334,7 @@ describe('vite plugin: user configuration in the dev entry build', { timeout: 30
 describe('vite plugin: the client script in the served head', { timeout: 30_000 }, () => {
   function clientScripts(html: string) {
     return DomUtils.getElementsByTagName('script', parseDocument(html), true).filter(
-      (script) => script.attribs.src === '/@vite/client',
+      (script) => script.attribs['src'] === '/@vite/client',
     );
   }
 

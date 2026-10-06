@@ -267,11 +267,11 @@ function isValidEntry(val: unknown): val is SFAIndexEntry {
   if (typeof val !== 'object' || val === null || Array.isArray(val)) return false;
   const obj = val as Record<string, unknown>;
   return (
-    typeof obj.name === 'string' &&
-    typeof obj.version === 'string' &&
-    typeof obj.checksums === 'object' &&
-    obj.checksums !== null &&
-    !Array.isArray(obj.checksums)
+    typeof obj['name'] === 'string' &&
+    typeof obj['version'] === 'string' &&
+    typeof obj['checksums'] === 'object' &&
+    obj['checksums'] !== null &&
+    !Array.isArray(obj['checksums'])
   );
 }
 
