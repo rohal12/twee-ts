@@ -96,8 +96,9 @@ describe('javaScriptStrings edge cases', () => {
     expect(javaScriptStrings(`"\\1" "kept"`)).toEqual(['kept']);
   });
 
-  it('does not read a string again that is known not to close', () => {
-    expect(javaScriptStrings(`'a "b" c\n"d"`)).toEqual(['b', 'd']);
+  it('skips the rest of the line where a string does not close', () => {
+    // Read from inside an unclosed string, "b" would be a string the author never wrote.
+    expect(javaScriptStrings(`'a "b" c\n"d"`)).toEqual(['d']);
     expect(javaScriptStrings(`"a\\`)).toEqual([]);
   });
 });

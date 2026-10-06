@@ -70,7 +70,7 @@ IDs and format names match without regard to letter case, in local directories, 
 
 ### Format Metadata
 
-Twine 2 `format.js` files contain a JSON object with the following fields:
+Twine 2 `format.js` files pass an object to `window.storyFormat()`, with the following fields:
 
 | Field         | Required | Description                                        |
 | ------------- | -------- | -------------------------------------------------- |
@@ -84,7 +84,15 @@ Twine 2 `format.js` files contain a JSON object with the following fields:
 | `url`         | No       | Format homepage URL                                |
 | `license`     | No       | Format license                                     |
 
-The object does not have to be strict JSON: as Twine 2 runs `format.js` as JavaScript, twee-ts also accepts the JavaScript object literal syntax some formats use, such as single-quoted strings, unquoted property keys, trailing commas and comments. Only the structure is relaxed; string values, including the `source`, are read exactly as JavaScript would read them. twee-ts also drops Harlowe's function-valued `setup` property, whether the format comes from a local directory or a download.
+Twine 2 runs `format.js` as a classic script, so twee-ts reads it as JavaScript too, with a real JavaScript parser ([acorn](https://github.com/acornjs/acorn), bundled), but never runs it:
+
+- The file must be valid JavaScript. If it is not, the format is skipped with the parser's message and the line and column of the error, counting every JavaScript line break (LF, CR, CR LF, U+2028 and U+2029).
+- The format object is the object literal passed to the file's one call of `storyFormat`: `window.storyFormat({…})`, `storyFormat({…})`, `window['storyFormat']({…})`, `window.storyFormat?.({…})` and the like, anywhere in the file. Comments (HTML-like `<!--` and `-->` comments included), strings, template literals and regular expressions around the call are read as JavaScript reads them. A file with no such call is read only if all of it is one object literal, as Tweego reads it; a file with several calls is skipped.
+- The object is read as data. Supported, with JavaScript's own values: string, number, `true`, `false` and `null` literals (in every notation JavaScript allows, such as `'single quotes'`, `0x1F`, `010` or `1_000`), a `-` or `+` before a number, template literals without `${…}`, arrays and nested objects, keys that are names, strings or numbers, comments and trailing commas. Of duplicate keys, the last value wins, as in JavaScript.
+- A property whose value is a function, such as Harlowe's `setup`, is left out wherever it is in the object, however it is written.
+- Anything else in the object is an error that names the property and its line and column: variables (`undefined`, `NaN` and `Infinity` included), BigInts, regular expressions, computed keys, spreads, getters and setters, shorthand properties, array holes, operators and calls. So is a `__proto__` key, which in JavaScript sets the object's prototype instead of adding a property.
+
+An optional field of the wrong type, such as a numeric `name`, is ignored.
 
 The `version` is read as Tweego reads it: a SemVer version such as `2.37.3` or `2.0.0-beta.1`, optionally with a leading `v`, and with `1.0` or `1` standing for `1.0.0`. The version is kept as written.
 

@@ -108,17 +108,25 @@ describe('format wrapper comments (#221)', () => {
     expect(parseFormatJSON(`xstoryFormat({"name":"X"}); storyFormat /* c */ ; window.storyFormat(${obj});`)?.name).toBe(
       'E',
     );
-    expect(parseFormatJSON(`window.storyFormat(\n // c\n ${obj} // tail`)?.name).toBe('E');
+    expect(parseFormatJSON(`window.storyFormat(\n // c\n ${obj}); // tail`)?.name).toBe('E');
   });
 
-  it('copes with escapes, template substitutions and unterminated trivia', () => {
-    expect(parseFormatJSON(`var a = "q\\" {"; var b = \`x\${ "}" + \`{\` }\`; storyFormat(${obj}); /* {`)?.name).toBe(
-      'E',
-    );
+  it('copes with escapes and template substitutions, and rejects unterminated trivia', () => {
+    const prelude = `var a = "q\\" {"; var b = \`x\${ "}" + \`{\` }\`;`;
+    expect(parseFormatJSON(`${prelude} storyFormat(${obj});`)?.name).toBe('E');
     expect(parseFormatJSON(`storyFormat(${obj}); // {`)?.name).toBe('E');
+    // A browser cannot run a file with an unterminated comment or call, so neither can be used.
+    expect(decodeFormatJSON(`${prelude} storyFormat(${obj}); /* {`)).toEqual({
+      ok: false,
+      reason: 'The story format file is not valid JavaScript: Unterminated comment at line 1, column 103.',
+    });
+    expect(decodeFormatJSON(`window.storyFormat(\n // c\n ${obj} // tail`)).toEqual({
+      ok: false,
+      reason: 'The story format file is not valid JavaScript: Unexpected token at line 3, column 53.',
+    });
   });
 
-  it('falls back to the last closing brace when the object is not balanced', () => {
+  it('reads an object whose function holds regular expressions with quotes and braces', () => {
     const regex = '{"name":"E","version":"1.0.0","source":"s","setup": function(){ return /\'{/; }}';
     expect(decodeFormatJSON(`storyFormat(${regex}); // }`).ok).toBe(true);
     expect(decodeFormatJSON('storyFormat({"name":"E", "source": `x${ ').ok).toBe(false);
@@ -147,7 +155,7 @@ describe('format wrapper comments (#221)', () => {
 
   it('reports no chunk when only comments and strings hold braces', () => {
     const result = decodeFormatJSON('/* { } */ var s = "{}";');
-    expect(result).toEqual({ ok: false, reason: 'Could not find Twine 2 style story format JSON chunk.' });
+    expect(result).toEqual({ ok: false, reason: 'Could not find a storyFormat({…}) call in the story format file.' });
   });
 
   it('reads the source of a locally discovered format with wrapper comments', () => {
@@ -339,7 +347,9 @@ describe('relaxed format.js parsing (#154)', () => {
         { level: 'warning', message: expect.stringMatching(/^format badversion-1: Skipping format; .*"latest"/) },
         {
           level: 'warning',
-          message: expect.stringMatching(/^format broken-1: Skipping format; Could not decode story format JSON chunk/),
+          message: expect.stringMatching(
+            /^format broken-1: Skipping format; Could not decode the story format object: Unsupported identifier "x" at property source \(line 1, column 58\)/,
+          ),
         },
       ]);
     } finally {

@@ -13,7 +13,7 @@ const RE_SOURCE_MAPPING_URL = /\n\/\/# sourceMappingURL=\S+\s*$/;
  * The build regenerates THIRD_PARTY_NOTICES from the packages it actually bundled and fails
  * when that set differs from this list.
  */
-const BUNDLED_PACKAGES = ['htmlparser2', 'domhandler', 'domelementtype', 'entities'];
+const BUNDLED_PACKAGES = ['htmlparser2', 'domhandler', 'domelementtype', 'entities', 'acorn'];
 
 const BIN_CHUNK = 'bin/twee-ts.js';
 const LEGAL_BANNER =
