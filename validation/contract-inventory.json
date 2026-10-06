@@ -1,0 +1,237 @@
+{
+  "revision": 2,
+  "areas": [
+    {
+      "id": "api",
+      "contract": "Public compile APIs, incremental equivalence, cancellation and diagnostics",
+      "paths": ["src/index.ts", "src/types.ts", "src/compiler.ts"],
+      "tests": [
+        "test/compile.test.ts",
+        "test/incremental.test.ts",
+        "test/compiler-order-abort.test.ts",
+        "test/readonly-types.test.ts"
+      ],
+      "interactions": [
+        "sources \u00d7 modes \u00d7 trim \u00d7 tag aliases",
+        "cold/warm and same-mtime changes",
+        "abort and failed writes"
+      ]
+    },
+    {
+      "id": "syntax",
+      "contract": "Twee syntax, normalization, errors and source locations",
+      "paths": ["src/lexer.ts", "src/parser.ts", "src/source-text.ts", "src/twee2-compat.ts"],
+      "tests": [
+        "test/lexer.test.ts",
+        "test/parser.test.ts",
+        "test/parser-malformed.test.ts",
+        "test/source-info.test.ts"
+      ],
+      "interactions": [
+        "all line terminators and encodings",
+        "escaped headers/tags/metadata",
+        "malformed input diagnostics"
+      ]
+    },
+    {
+      "id": "story",
+      "contract": "Passage precedence, generated names, special metadata, start and IFID",
+      "paths": ["src/story.ts", "src/passage.ts", "src/start-passage.ts", "src/ifid.ts"],
+      "tests": [
+        "test/story.test.ts",
+        "test/start-passage.test.ts",
+        "test/ifid.test.ts",
+        "test/compiler-review-regressions.test.ts"
+      ],
+      "interactions": [
+        "duplicate metadata replacement",
+        "private/script/style omission",
+        "reordering and generated collisions"
+      ]
+    },
+    {
+      "id": "loading",
+      "contract": "Filesystem and inline source loading, exclusions, media and cache invalidation",
+      "paths": ["src/loader.ts", "src/media-types.ts", "src/util.ts"],
+      "tests": [
+        "test/loader.test.ts",
+        "test/loader-extensions.test.ts",
+        "test/incremental.test.ts",
+        "test/media-types.test.ts"
+      ],
+      "interactions": ["file/inline precedence", "binary text encodings", "add/delete/replace files"]
+    },
+    {
+      "id": "watch",
+      "contract": "Real filesystem watches, outputs, links and serialized rebuild lifecycle",
+      "paths": ["src/filesystem.ts", "src/atomic-write.ts"],
+      "tests": [
+        "test/watch.test.ts",
+        "test/watch-gaps.test.ts",
+        "test/watch-symlinks.test.ts",
+        "test/atomic-write.test.ts",
+        "test/compile-to-file-symlink.test.ts"
+      ],
+      "interactions": [
+        "edits, atomic saves, retargeting, recreation",
+        "source/head/module dependencies",
+        "abort cleanup and output feedback"
+      ]
+    },
+    {
+      "id": "formats",
+      "contract": "Local and remote identity/version selection, decoding and caches",
+      "paths": [
+        "src/formats.ts",
+        "src/format-resolution.ts",
+        "src/remote-formats.ts",
+        "src/semver.ts",
+        "src/relaxed-json.ts"
+      ],
+      "tests": [
+        "test/formats.test.ts",
+        "test/format-resolution.test.ts",
+        "test/remote-formats.test.ts",
+        "test/remote-formats-shared.test.ts",
+        "test/compiler-review-regressions.test.ts"
+      ],
+      "interactions": [
+        "named/nameless \u00d7 cold/offline",
+        "URL queries/fragments/reserved segments",
+        "timeouts, concurrent waiters, checksums"
+      ]
+    },
+    {
+      "id": "output",
+      "contract": "All six output modes, omission, escaping, template expansion and round trips",
+      "paths": [
+        "src/output-twine1.ts",
+        "src/output-twine2.ts",
+        "src/output-twee.ts",
+        "src/passage-omission.ts",
+        "src/escape.ts",
+        "src/template.ts",
+        "src/html-parser.ts"
+      ],
+      "tests": [
+        "test/output-twine1.test.ts",
+        "test/output-twine2-twee-defaults.test.ts",
+        "test/output-twee.test.ts",
+        "test/output-gaps.test.ts",
+        "test/html-parser.test.ts",
+        "test/twine1-obfuscation.test.ts"
+      ],
+      "interactions": [
+        "Twine 1 obfuscation and title",
+        "special names and hostile text",
+        "HTML/decompile/Twee round trips"
+      ]
+    },
+    {
+      "id": "analysis",
+      "contract": "Inspection, lint, static links, macros and strings",
+      "paths": [
+        "src/inspect.ts",
+        "src/lint.ts",
+        "src/link-markup.ts",
+        "src/javascript-strings.ts",
+        "src/sugarcube-macros.ts"
+      ],
+      "tests": [
+        "test/inspect.test.ts",
+        "test/lint.test.ts",
+        "test/link-markup.test.ts",
+        "test/javascript-strings.test.ts",
+        "test/sugarcube-macros.test.ts"
+      ],
+      "interactions": ["dynamic versus static targets", "omitted destinations", "quoted comments and nested syntax"]
+    },
+    {
+      "id": "modules",
+      "contract": "Script/style/head injection and HTML head scanning",
+      "paths": ["src/modules.ts"],
+      "tests": ["test/modules.test.ts", "test/modules-head-scan.test.ts"],
+      "interactions": [
+        "comments/attributes/script raw text",
+        "source order and duplicated modules",
+        "module/head filesystem changes"
+      ]
+    },
+    {
+      "id": "configuration",
+      "contract": "Config loading/scaffold/schema, CLI overrides and diagnostics",
+      "paths": ["src/config.ts", "schemas/twee-ts.config.schema.json"],
+      "tests": ["test/config.test.ts", "test/cli.test.ts"],
+      "interactions": [
+        "missing versus unreadable files",
+        "unknown keys and wrong runtime types",
+        "cwd and relative paths"
+      ]
+    },
+    {
+      "id": "cli",
+      "contract": "Every CLI command/option, exit statuses, logging, watch and cache management",
+      "paths": ["bin/twee-ts.ts"],
+      "tests": ["test/cli.test.ts", "test/inspect-duplicates.test.ts"],
+      "interactions": [
+        "invalid options preserve output",
+        "stdin, config and positional precedence",
+        "cache commands and cancellation"
+      ]
+    },
+    {
+      "id": "vite",
+      "contract": "Vite >=5 plugin build/dev lifecycle; entry bundling only Vite >=8",
+      "paths": ["src/plugins/vite.ts", "src/plugins/paths.ts", "src/plugins/diagnostics.ts"],
+      "tests": [
+        "test/vite-plugin.test.ts",
+        "test/vite-plugin-v7.test.ts",
+        "test/vite-plugin-dev-gaps.test.ts",
+        "test/vite-entry-build-logger.test.ts",
+        "test/vite-paths.test.ts"
+      ],
+      "interactions": [
+        "define/alias/plugins and inline config",
+        "development refresh and missed events",
+        "entry CSS and output exclusion"
+      ]
+    },
+    {
+      "id": "rollup",
+      "contract": "Rollup plugin build/watch, errors, outputs and dependency tracking",
+      "paths": ["src/plugins/rollup.ts"],
+      "tests": ["test/rollup-plugin.test.ts", "test/plugin-diagnostics.test.ts"],
+      "interactions": [
+        "multiple outputs and manual inputs",
+        "head/modules and folder churn",
+        "output exclusion and failures"
+      ]
+    },
+    {
+      "id": "distribution",
+      "contract": "ESM/CJS/types/plugin exports, executable CLI, schema and packed installation",
+      "paths": ["src/version.ts"],
+      "tests": ["test/version.test.ts", "test/plugin-types.test.ts", "test/readonly-types.test.ts"],
+      "interactions": [
+        "tarball contents and isolated install",
+        "peer dependency versions",
+        "Node/OS support and creator version"
+      ]
+    }
+  ],
+  "requiredChecks": ["typecheck", "unit", "build", "contracts", "extended", "package", "gate-tests"],
+  "requiredEnvironments": [
+    "linux-node22",
+    "linux-node24",
+    "windows-node22",
+    "windows-node24",
+    "macos-node22",
+    "macos-node24"
+  ],
+  "additionalRequiredChecks": ["vite-5", "vite-6", "vite-7", "vite-8", "browser", "tweego-differential"],
+  "limits": [
+    "Finite generated corpus and independent sweeps cannot prove absence of all defects.",
+    "Story format game logic is external; browser smoke verifies compiler-produced HTML.",
+    "Live external archives and hostile resource exhaustion require separately recorded evidence."
+  ]
+}

@@ -69,3 +69,54 @@ it.each(['absolute', 'relative', 'same directory'] as const)(
   },
   15000,
 );
+
+it('rebuilds when an intermediate symlink is retargeted', async () => {
+  const middleDir = join(root, 'middle');
+  mkdirSync(middleDir);
+  const original = join(root, 'actual', 'first.tw');
+  const replacement = join(root, 'actual', 'second.tw');
+  const middle = join(middleDir, 'story.tw');
+  const link = join(root, 'links', 'story.tw');
+  writeFileSync(original, story('CHAIN_BEFORE'));
+  writeFileSync(replacement, story('CHAIN_AFTER'));
+  symlinkSync(original, middle);
+  symlinkSync(middle, link);
+  const builds: CompileResult[] = [];
+  controller = await watch({
+    sources: [link],
+    outputMode: 'json',
+    outFile: join(root, 'output.json'),
+    onBuild: (r) => builds.push(r),
+  });
+  await expect.poll(() => builds.at(-1)?.output).toContain('CHAIN_BEFORE');
+  rmSync(middle);
+  symlinkSync(replacement, middle);
+  await expect.poll(() => builds.at(-1)?.output, { timeout: 4000 }).toContain('CHAIN_AFTER');
+}, 7000);
+
+it.each(['head', 'module'] as const)(
+  'observes a symlinked %s dependency through the public watcher',
+  async (kind) => {
+    const target = join(root, 'actual', kind === 'head' ? 'head.html' : 'module.js');
+    const link = join(root, 'links', kind === 'head' ? 'head.html' : 'module.js');
+    const content = (marker: string): string =>
+      kind === 'head' ? `<meta name="review" content="${marker}">` : `window.REVIEW='${marker}';`;
+    writeFileSync(target, content('DEPENDENCY_BEFORE'));
+    symlinkSync(target, link);
+    const builds: CompileResult[] = [];
+    controller = await watch({
+      sources: [{ filename: 'story.tw', content: story('Start') }],
+      formatId: 'test-format-1',
+      formatPaths: [join(__dirname, 'fixtures', 'storyformats')],
+      useTweegoPath: false,
+      noRemote: true,
+      ...(kind === 'head' ? { headFile: link } : { modules: [link] }),
+      outFile: join(root, 'output.html'),
+      onBuild: (r) => builds.push(r),
+    });
+    await expect.poll(() => builds.at(-1)?.output).toContain('DEPENDENCY_BEFORE');
+    writeFileSync(target, content('DEPENDENCY_AFTER'));
+    await expect.poll(() => builds.at(-1)?.output, { timeout: 4000 }).toContain('DEPENDENCY_AFTER');
+  },
+  7000,
+);

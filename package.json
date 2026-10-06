@@ -1,7 +1,7 @@
 {
   "name": "@rohal12/twee-ts",
   "version": "1.2.0",
-  "description": "TypeScript Twee-to-HTML compiler — a complete reimplementation of Tweego",
+  "description": "TypeScript Twee-to-HTML compiler \u2014 a complete reimplementation of Tweego",
   "type": "module",
   "license": "Unlicense",
   "publishConfig": {
@@ -57,7 +57,13 @@
     "format:check": "prettier --check .",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "validate:contracts": "node validation/compiler-contracts.mjs",
+    "validate:extended": "node validation/extended-contracts.mjs",
+    "validate:package": "node validation/package-contracts.mjs",
+    "validate:gate-tests": "node --test validation/review-state.test.mjs",
+    "validate:collect": "node validation/collect-checks.mjs",
+    "validate:release": "node validation/release-gate.mjs"
   },
   "packageManager": "pnpm@10.14.0",
   "engines": {

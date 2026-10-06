@@ -33,28 +33,56 @@ jobs:
       - name: Type check (strict, no warnings)
         run: pnpm run typecheck
 
-  test:
-    runs-on: ubuntu-latest
+  validation:
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node-version: [22, 24]
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
-
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
-
       - run: pnpm install --frozen-lockfile
+      - name: Record compiler and distribution contracts
+        run: pnpm validate:collect
+      - name: Upload evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: validation-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: validation/reports/*-node*/
 
-      - name: Run tests
-        run: pnpm test
-
-      - name: Build
-        run: pnpm run build
+  vite-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vite-version: ['5.0.0', '6.0.0', '7.0.0', '8.3.1']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Installed plugin against supported Vite peer
+        shell: bash
+        run: |
+          TWEE_VITE_MAJOR="${{ matrix.vite-version }}"
+          TWEE_VITE_MAJOR="${TWEE_VITE_MAJOR%%.*}"
+          node validation/run-check.mjs --id "vite-$TWEE_VITE_MAJOR" --environment linux-node22 --report "validation/reports/vite-$TWEE_VITE_MAJOR.json" -- node validation/vite-contracts.mjs --version "${{ matrix.vite-version }}"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: vite-${{ matrix.vite-version }}
+          path: validation/reports/vite-*.json
 
   coverage:
     runs-on: ubuntu-latest

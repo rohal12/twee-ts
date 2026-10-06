@@ -35,6 +35,11 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      # Evidence artifacts may be committed after the frozen review revision: the gate
+      # binds their contents to compiler, dependencies, validation and supported contract.
+      - name: Require complete release review evidence
+        run: pnpm validate:release
+
       # Publishes through npm trusted publishing (OIDC, id-token: write above); no npm token.
       - name: Release to npm
         uses: tobua/release-npm-action@v5

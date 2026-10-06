@@ -189,6 +189,9 @@ export async function watchWithWriteFilter(
     try {
       let request: WatchBuildRequest | undefined = first;
       while (request !== undefined) {
+        // Unknown/root identity changes may replace contents while preserving mtimes.
+        // A full watch rebuild must read them again; ordinary incremental calls retain caching.
+        if (request.changedFiles === undefined) cache.clear();
         const outcome = await buildOutput(buildOptions, cache, request.changedFiles, options.outFile).then(
           (result): WatchBuildOutcome => ({ ok: true, result }),
           (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),

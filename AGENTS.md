@@ -1,15 +1,24 @@
-# Compiler reviews
+# Compiler validation and reviews
 
-For compiler validation and whole-repository reviews, read
-[`docs/compiler-validation.md`](docs/compiler-validation.md) first. Use its fixed
-behavior matrix and stopping criteria. A diff review still reviews the whole diff;
-the matrix adds the affected behavior checks, rather than replacing that review.
+Read [docs/compiler-validation.md](docs/compiler-validation.md) and
+[validation/contract-inventory.json](validation/contract-inventory.json) first.
+The 59-case matrix is a historical regression baseline. Passing it is not open
+review convergence. Review the whole supported surface, including interactions
+and support claims; identify omissions in the inventory before testing.
 
-Record the reviewed commit, exact commands, case IDs, and explicit limits. Re-run
-previously passing cases after fixes. Group failures by violated invariant and
-update the owning issue instead of opening a ticket for every input variant.
-Never describe untested cases as passing or close an issue from one example alone.
+Use the user-approved three-method open review gate: implementation/invariants,
+adversarial integration, and compatibility/distribution. Every reviewer covers
+all inventory areas using their assigned method. Record the exact frozen
+fingerprint, scope hash, reviewed commit, commands, seeds, environment, covered
+areas, findings and limits. A finding or incomplete review resets the clean
+streak; changes to product or validation invalidate previous clean sweeps.
 
-Validation artifacts in `validation/` deliberately include failing contracts until
-their owning issues are fixed. They are separate from the normal Vitest suite;
-do not weaken their assertions or hide their failures to obtain a green result.
+Group failures by invariant and update their owning GitHub issue. Fix the class,
+add sibling regression cases, and rerun earlier passing checks. Do not call a
+case passing without executing it, suppress known failures, narrow promised
+support to obtain green evidence, or close an issue from one example alone.
+
+Evidence files are auditable records, not mathematical proofs. Missing platform,
+peer-version, browser or differential results remain release blockers. Run
+`pnpm validate:release` before claiming readiness; a green normal test suite or a
+no-new-regressions matrix comparison cannot bypass it.

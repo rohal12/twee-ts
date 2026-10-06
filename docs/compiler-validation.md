@@ -1,4 +1,82 @@
-# Compiler validation and review convergence
+# Compiler validation and release evidence
+
+## Open review gate (revision 2)
+
+A green fixed matrix proves those cases, not that the repository is bug free.
+Revision 1's 59 cases missed metadata replacement, nameless indexed offline
+reuse, index URL components, individual symlink targets, and JavaScript line
+terminators. Those are now permanent Vitest regressions for #236–#239 and #221.
+The older reports below remain unchanged as historical evidence.
+
+The supported contract is inventoried in
+[`validation/contract-inventory.json`](../validation/contract-inventory.json).
+It assigns every compiler/CLI/schema file to a behavior area, maps existing
+regression tests, and lists interactions. Inventory omissions are reviewed
+before tests. New source files that have no area fail the release gate.
+
+1. Freeze a product and validation revision. `node validation/release-gate.mjs
+--fingerprint` prints its SHA-256 and inventory hash. The fingerprint includes
+   sources, CLI, schemas, dependencies, tests, validation scripts, CI, agent
+   instructions and API/support documentation. Evidence/report-only commits do
+   not change the audited product. Record the actual Git commit too.
+2. Run `pnpm validate:collect` on Linux, macOS and Windows with Node 22 and 24.
+   It captures typecheck, unit tests, build, fixed contracts, 288 deterministic
+   cross-feature cases, isolated packed installation, and gate tests. Actual
+   runtime/platform determine each evidence label. A changed fingerprint during
+   a command invalidates that result.
+3. Run installed-plugin build/dev/edit tests against Vite 5.0.0, 6.0.0, 7.0.0
+   and 8.3.1. CI provisions these versions separately. Entry bundling remains
+   Vite 8+ and has additional regression tests. This is representative version
+   evidence, not a proof of every release allowed by `vite >=5`.
+4. Run real browser and reference-compiler checks, explicitly provisioning their
+   inputs: `BROWSER_FORMAT_PATH=/path/to/storyformats node
+validation/browser-contracts.mjs` (real SugarCube, Chromium) and
+   `TWEEGO_BINARY=/path/to/tweego node validation/tweego-contracts.mjs`.
+   Record their exact versions/checksums and limitations. Missing tools never
+   mean pass. These scripts currently need provisioned inputs and are not
+   automatically satisfied by the CI matrix.
+5. Run three independent full **open** sweeps of that same frozen revision.
+   Assign distinct reviewers and methods: implementation/invariants,
+   adversarial public integration, and compatibility/distribution. Each covers
+   every inventory area, actively looks beyond registered cases, and records
+   omitted probes. An incomplete sweep or actionable finding resets the streak.
+   Fix by invariant, add sibling cases, rerun earlier checks, freeze the resulting
+   revision and restart the three sweeps. Repeating a matrix or limiting reviews
+   to the latest diff does not count as an open sweep.
+6. Assemble `validation/release-evidence.json` from the captured reports and
+   review records, then run `pnpm validate:release`. Missing/stale artifacts,
+   nonzero exits, known failures, uncovered support, incomplete scope, or fewer
+   than three independent clean sweeps block the release workflow. A reviewer
+   attestation remains a trusted human/agent record: the gate cannot establish
+   that an asserted review was exhaustive.
+
+`validation/run-check.mjs --id ID --environment ENV --report FILE -- COMMAND
+ARGS...` captures a check's command, exit, output, timing and fingerprint. For
+fixed-matrix checks add `--result FILE` so the gate rejects known failures even
+when baseline comparison exits zero. Checks in release evidence contain
+`id`, `environment`, `command`, `exitCode`, `artifact`, and `sha256` of the
+artifact bytes. Each artifact must match the frozen fingerprint.
+
+Evidence schema version 1 also contains `fingerprint`, `inventorySha256`,
+`openFindings`, `supportGaps`, and chronological `reviews`. Each review contains
+`id`, `reviewer`, `method`, `fingerprint`, `inventorySha256`, `status`
+(`clean`, `findings`, or `incomplete`), `findings`, `coverage` (all area IDs),
+`artifact`, and its `sha256`. Record findings and gaps explicitly; never clear
+those arrays merely to pass the gate. The executable gate tests show acceptance
+and rejection examples.
+
+The resulting claim is: **no known actionable defects, with recorded validation
+and three clean open sweeps of this revision under the stated contract**.
+No finite review process guarantees that another sweep can never find a bug.
+A further finding is evidence that the discovery process missed a behavior;
+record why, extend the invariant coverage, and invalidate the previous readiness
+claim. Maintain the release ledger rather than restarting undocumented reviews.
+
+## Historical fixed-matrix procedure (revision 1)
+
+The procedure and reports below describe the old bounded baseline. They remain
+useful for regression comparisons; their stopping criteria are superseded by
+revision 2 for release-readiness and whole-repository convergence claims.
 
 This is the standing procedure for validating twee-ts. Its purpose is to make
 successive reviews cover a known scope and repair defect classes, rather than

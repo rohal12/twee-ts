@@ -279,19 +279,23 @@ interface RootState {
   /** The path itself: a folder is watched recursively; a file is watched through `anchor`. */
   readonly self: PathKind;
   /** A named symlink also needs the target's parent watched for edits and atomic saves. */
-  readonly target: { readonly path: string; readonly anchor: RootState['anchor'] } | undefined;
+  readonly targets: readonly { readonly path: string; readonly anchor: RootState['anchor'] }[];
 }
 
 function rootState(abs: string): RootState {
-  let target: RootState['target'];
+  const targets: { readonly path: string; readonly anchor: RootState['anchor'] }[] = [];
   try {
-    // Resolve links even while the target is missing, so its recreation stays observable.
+    // Keep each link in the chain observable, including while its final target is missing.
     let path = abs;
     const seen = new Set<string>();
     while (lstatSync(path).isSymbolicLink()) {
-      if (seen.has(path)) throw new Error('Symlink cycle');
+      if (seen.has(path)) break;
       seen.add(path);
       path = resolve(dirname(path), readlinkSync(path));
+      const watchedPath = join(realPathOf(dirname(path)), basename(path));
+      if (watchedPath !== abs && !targets.some((target) => target.path === watchedPath)) {
+        targets.push({ path: watchedPath, anchor: nearestFolderAbove(watchedPath) });
+      }
       try {
         lstatSync(path);
       } catch {
@@ -299,11 +303,13 @@ function rootState(abs: string): RootState {
       }
     }
     const real = realPathOf(path);
-    if (real !== abs && pathKind(real).kind !== 'dir') target = { path: real, anchor: nearestFolderAbove(real) };
+    if (real !== abs && pathKind(real).kind !== 'dir' && !targets.some((target) => target.path === real)) {
+      targets.push({ path: real, anchor: nearestFolderAbove(real) });
+    }
   } catch {
     // Its own anchor observes a missing path's creation or a link's retargeting.
   }
-  return { anchor: nearestFolderAbove(abs), self: pathKind(abs), target };
+  return { anchor: nearestFolderAbove(abs), self: pathKind(abs), targets };
 }
 
 function nearestFolderAbove(abs: string): RootState['anchor'] {
@@ -321,8 +327,13 @@ function sameWatches(a: RootState, b: RootState): boolean {
     a.anchor?.path === b.anchor?.path &&
     a.anchor?.id === b.anchor?.id &&
     selfId(a) === selfId(b) &&
-    a.target?.path === b.target?.path &&
-    a.target?.anchor?.id === b.target?.anchor?.id
+    a.targets.length === b.targets.length &&
+    a.targets.every(
+      (target, i) =>
+        target.path === b.targets[i]?.path &&
+        target.anchor?.path === b.targets[i]?.anchor?.path &&
+        target.anchor?.id === b.targets[i]?.anchor?.id,
+    )
   );
 }
 
@@ -432,7 +443,7 @@ export function watchFilesystem(
     for (const w of root.watchers) w.close();
     root.watchers = [];
     root.failed = false;
-    const { anchor, self, target } = root.state;
+    const { anchor, self, targets } = root.state;
     if (anchor) {
       startWatch(root, anchor.path, false, (filename) => {
         // A file is watched through its folder, not on its own: the OS reports only the file's
@@ -444,7 +455,7 @@ export function watchFilesystem(
         const changedPath = filename === '' ? undefined : resolve(anchor.path, filename);
         if (
           changedPath !== undefined &&
-          ((isFile && changedPath === root.abs) || changedPath === root.state.target?.path)
+          ((isFile && changedPath === root.abs) || root.state.targets.some((target) => changedPath === target.path))
         )
           fileChanged(root.abs, true);
       });
@@ -459,11 +470,16 @@ export function watchFilesystem(
         }
       });
     }
-    if (target?.anchor && target.anchor.path !== anchor?.path) {
-      const targetAnchor = target.anchor;
+    const targetAnchors = new Map(
+      targets
+        .filter((target) => target.anchor && target.anchor.path !== anchor?.path)
+        .map((target) => [target.anchor!.path, target.anchor!]),
+    );
+    for (const targetAnchor of targetAnchors.values()) {
       startWatch(root, targetAnchor.path, false, (filename) => {
+        const changedPath = filename === '' ? undefined : resolve(targetAnchor.path, filename);
         recheck(root, true);
-        if (filename === '' || resolve(targetAnchor.path, filename) === target.path) fileChanged(root.abs, true);
+        if (filename === '' || targets.some((target) => target.path === changedPath)) fileChanged(root.abs, true);
       });
     }
     if (!root.failed) root.lastReport = undefined;
