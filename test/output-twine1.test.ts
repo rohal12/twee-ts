@@ -17,7 +17,9 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'twee-ts-output-twine1-'));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 /** A Twine 1 format named `custom-1` whose header is `header`; shared components go in `dir`. */
 function format(header: string): StoryFormatInfo {

@@ -101,7 +101,8 @@ Follow type-first development: define data models and function signatures before
 
 - Run: `pnpm test`
 - Tests use Vitest with `describe`/`it`/`expect`
-- Test fixtures in `test/fixtures/`
+- Test fixtures in `test/fixtures/`; shared test helpers in `test/helpers/`
+- Every test must assert something (`expect.requireAssertions` in `vitest.config.ts`), and no `expect()` may sit inside a conditional (`vitest/no-conditional-expect`): assert the outcome the spec or the code gives, unconditionally
 - Real-world validation: the `../tweego/CleanSlate/` project (605 passages, 241K words) compiles successfully
 - Add or update focused tests when changing logic; test behavior, not implementation details
 - New features need tests; bug fixes need regression tests
@@ -113,7 +114,9 @@ Follow type-first development: define data models and function signatures before
 - `pnpm test -t "test name"` — run tests matching a name pattern
 - `pnpm run test:watch` — run tests in watch mode
 - `pnpm run test:coverage` — run tests with V8 coverage report
-- `pnpm run typecheck` — strict type checking
+- `pnpm run typecheck` — strict type checking (`exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch` and the other flags in `tsconfig.json`)
+- `pnpm run lint` — ESLint with typescript-eslint `strictTypeChecked` + `stylisticTypeChecked` and the Vitest rules (`eslint.config.js`; typescript-eslint runs on TypeScript 6, see `.pnpmfile.cjs`)
+- `pnpm run knip` — unused files, exports and dependencies (`knip.jsonc`); exports of the package entry points count as used
 - `pnpm run build` — production build (ESM + CJS via tsdown)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting

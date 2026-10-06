@@ -38,9 +38,7 @@ function buildIndex(story: Story): NameIndex {
  */
 function currentIndex(story: Story): NameIndex {
   const index = passageIndex.get(story);
-  return index !== undefined && index.passages === story.passages && index.names.length === story.passages.length
-    ? index
-    : buildIndex(story);
+  return index?.passages === story.passages && index.names.length === story.passages.length ? index : buildIndex(story);
 }
 
 /**
@@ -210,7 +208,7 @@ export function storyGet(story: Story, name: string): Passage | undefined {
   return i === -1 ? undefined : story.passages[i];
 }
 
-export function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
+function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
   const i = position(story, p.name);
   if (i === -1) {
     push(story, p);
@@ -275,6 +273,9 @@ export function marshalStoryData(story: ReadonlyStory): string {
   return JSON.stringify(data, null, '\t');
 }
 
+/** StoryData as JSON.parse() gives it: any field may hold any value. */
+type UnvalidatedStoryData = { readonly [K in keyof StoryDataJSON]?: unknown };
+
 export function unmarshalStoryData(story: Story, json: string): string | null {
   let raw: unknown;
   try {
@@ -286,7 +287,7 @@ export function unmarshalStoryData(story: Story, json: string): string | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return 'Cannot unmarshal "StoryData"; expected a JSON object';
   }
-  const data = raw as StoryDataJSON;
+  const data: UnvalidatedStoryData = raw;
 
   // StoryData holds all of this metadata, so a field it leaves out gets its default, not the
   // value of an earlier StoryData passage. The StorySettings IFID is kept apart (legacyIFID).
@@ -348,6 +349,9 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
       case 'zoom':
         obsolete.push('"zoom"');
         continue;
+      default:
+        // Any other key is a setting.
+        break;
     }
 
     story.twine1.settings.set(key, val);
@@ -428,6 +432,10 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
       story.name = trimmed;
       break;
     }
+
+    default:
+      // Any other name is an ordinary passage.
+      break;
   }
 
   storyAppend(story, processed, diagnostics);

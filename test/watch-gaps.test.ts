@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import type { FSWatcher } from 'node:fs';
 import { watch, watchWithWriteFilter } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
+import type * as NodeFs from 'node:fs';
 
 type Listener = (event: string, filename: string | null) => void;
 
@@ -12,7 +13,7 @@ const fake = vi.hoisted(() => ({ listeners: [] as { path: string; listener: List
 
 // fs.watch records its listeners instead of asking the OS, so the tests deliver the events themselves.
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   const { EventEmitter } = await import('node:events');
   return {
     ...actual,
@@ -82,7 +83,7 @@ describe('watch with an already aborted signal', () => {
     const errors: Error[] = [];
     let idle: () => void = () => {};
     const settled = new Promise<void>((done) => (idle = done));
-    controller = await watchWithWriteFilter(
+    controller = watchWithWriteFilter(
       {
         ...COMPILE,
         sources: [src],
@@ -92,7 +93,11 @@ describe('watch with an already aborted signal', () => {
         onError: (e) => errors.push(e),
       },
       () => true,
-      { onIdle: () => idle() },
+      {
+        onIdle: () => {
+          idle();
+        },
+      },
     );
     await settled;
 
@@ -113,7 +118,7 @@ describe('watch and a hook that fails', () => {
         return n;
       };
     });
-    controller = await watchWithWriteFilter(
+    controller = watchWithWriteFilter(
       { ...COMPILE, sources: [src], outFile, onError: (e) => errors.push(e) },
       () => true,
       {

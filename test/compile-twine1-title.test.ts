@@ -15,7 +15,9 @@ describe('compile with a Twine 1 format', () => {
       '<html><body><script>var start="START_AT";</script><div id="storeArea">"STORY"</div></body></html>',
     );
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const options = () => ({
     formatId: 'custom-1',

@@ -35,7 +35,9 @@ describe('loadModules: font types', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-fonts-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it.each(['otf', 'ttf', 'woff', 'woff2'])('embeds a .%s file as a base64 @font-face', (ext) => {
     const file = join(tmpDir, `Face.${ext}`);

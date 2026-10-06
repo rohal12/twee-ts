@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { compile } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
 import type { CompileOptions, InlineSource } from '../src/types.js';
+import { parseJsonObject } from './helpers/json.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -42,7 +43,7 @@ describe('effective starting passage in JSON output and the returned story', () 
       outputMode: 'json',
       startPassage: 'Begin',
     });
-    expect(JSON.parse(result.output).start).toBe('Begin');
+    expect(parseJsonObject(result.output)['start']).toBe('Begin');
     expect(result.story.twine2.start).toBe('Begin');
   });
 
@@ -52,7 +53,7 @@ describe('effective starting passage in JSON output and the returned story', () 
       outputMode: 'json',
       startPassage: 'Begin',
     });
-    expect(JSON.parse(result.output).start).toBe('Begin');
+    expect(parseJsonObject(result.output)['start']).toBe('Begin');
     expect(result.story.twine2.start).toBe('Begin');
   });
 
@@ -196,7 +197,9 @@ describe('Twine 1 HTML rejects a starting passage it does not emit', () => {
     );
   });
 
-  afterAll(() => rmSync(formatDir, { recursive: true, force: true }));
+  afterAll(() => {
+    rmSync(formatDir, { recursive: true, force: true });
+  });
 
   it('reports a Twine.private start passage', async () => {
     const result = await compile({

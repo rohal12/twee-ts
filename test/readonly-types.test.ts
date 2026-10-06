@@ -6,6 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import type { CompileResult, Passage, ReadonlyPassage, ReadonlyStory } from '../src/types.js';
 
+/** Takes a mutable passage, to probe what is assignable to one. */
+function takesMutablePassage(_passage: Passage): void {
+  // Only its parameter type matters.
+}
+
+/* eslint-disable @typescript-eslint/no-unsafe-call -- each probe below is a type error on purpose (under @ts-expect-error), so its callee has no type. */
 function rejectedWrites(result: CompileResult, passage: ReadonlyPassage, story: ReadonlyStory): void {
   // @ts-expect-error tags cannot be appended to
   passage.tags.push('x');
@@ -32,12 +38,16 @@ function rejectedWrites(result: CompileResult, passage: ReadonlyPassage, story: 
   // @ts-expect-error passages of the compile result cannot be edited
   result.story.passages[0]?.tags.push('x');
   // @ts-expect-error a read-only passage is not a mutable Passage
-  const mutable: Passage = passage;
-  void mutable;
+  takesMutablePassage(passage);
 }
-void rejectedWrites;
+/* eslint-enable @typescript-eslint/no-unsafe-call */
 
 describe('read-only passage types', () => {
+  it('has its rejected writes checked at compile time', () => {
+    // The probes run under `pnpm run typecheck`; calling them would make the writes for real.
+    expect(rejectedWrites).toBeTypeOf('function');
+  });
+
   it('still allows reading tags and metadata', () => {
     const passage: ReadonlyPassage = { name: 'Start', tags: ['a', 'b'], text: 'Hi', metadata: { position: '1,2' } };
     const tags: readonly string[] = passage.tags;

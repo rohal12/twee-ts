@@ -465,10 +465,14 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     // Rollup's file watcher may not be ready right after the first build; the
     // fix is saved again until a build picks it up.
     const fixed = nextBuild(started);
-    const save = (): void => writeFileSync(join(dir, 'story', 'start.tw'), STORY, 'utf-8');
+    const save = (): void => {
+      writeFileSync(join(dir, 'story', 'start.tw'), STORY, 'utf-8');
+    };
     save();
     const resave = setInterval(save, 250);
-    const events = await fixed.finally(() => clearInterval(resave));
+    const events = await fixed.finally(() => {
+      clearInterval(resave);
+    });
     expect(errorMessages(events)).toEqual([]);
     expect(events.map((event) => event.code)).toContain('BUNDLE_END');
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
@@ -494,12 +498,18 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
 
     // Rollup's file watcher may not be ready right after the first build; the
     // edit is saved again until a build picks it up.
-    const save = (): void => writeFileSync(join(story, 'start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+    const save = (): void => {
+      writeFileSync(join(story, 'start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+    };
     save();
     const resave = setInterval(save, 250);
     await vi
-      .waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT'), settled)
-      .finally(() => clearInterval(resave));
+      .waitFor(() => {
+        expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT');
+      }, settled)
+      .finally(() => {
+        clearInterval(resave);
+      });
     expect(readFileSync(out, 'utf-8')).not.toContain('OLD_TEXT');
   });
 
@@ -527,16 +537,24 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     started.on('event', (event) => {
       if (event.code === 'BUNDLE_END') void event.result.close();
     });
-    await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
+    }, settled);
 
     // Rollup's file watcher may not be ready right after the first build; the
     // edit is saved again until a build picks it up.
-    const save = (): void => writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+    const save = (): void => {
+      writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+    };
     save();
     const resave = setInterval(save, 250);
     await vi
-      .waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT'), settled)
-      .finally(() => clearInterval(resave));
+      .waitFor(() => {
+        expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT');
+      }, settled)
+      .finally(() => {
+        clearInterval(resave);
+      });
     const html = readFileSync(out, 'utf-8');
     expect(html).not.toContain('OLD_TEXT');
     expect(hasDeletedPassage(html)).toBe(false);
@@ -545,7 +563,9 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     // the end of the check: the watcher reports changes in the order they happen, so once
     // the save is built, a change from writing the last build would have been reported before it.
     writeFileSync(join(dir, 'story/start.tw'), storyWith('LAST_TEXT'), 'utf-8');
-    await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('LAST_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(readFileSync(out, 'utf-8')).toContain('LAST_TEXT');
+    }, settled);
     expect(changes.map((id) => basename(id))).toContain('start.tw');
     expect(changes.filter((id) => isInside(id, outDir))).toEqual([]);
   });

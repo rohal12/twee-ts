@@ -11,11 +11,11 @@ import { normalizeTweeSourceText } from './source-text.js';
 
 export interface ParseOptions {
   /** Filename for diagnostics. */
-  filename?: string;
+  filename?: string | undefined;
   /** Trim whitespace from passage content. Default: true. */
-  trim?: boolean;
+  trim?: boolean | undefined;
   /** Enable Twee2 compatibility. Default: false. */
-  twee2Compat?: boolean;
+  twee2Compat?: boolean | undefined;
 }
 
 export interface ParseResult {

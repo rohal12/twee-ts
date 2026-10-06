@@ -11,16 +11,16 @@ import { join } from 'node:path';
 import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { compile } from '../src/compiler.js';
+import { compile, TweeTsError } from '../src/compiler.js';
 import {
   discoverFormats,
   getFormatIdByName,
   getFormatIdByNameAndVersion,
-  parseFormatJSON,
   parseSemver,
   readFormatSource,
   semverCompare,
 } from '../src/formats.js';
+import { parseFormatJSON } from '../src/format-decode.js';
 import type { StoryFormatInfo } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
@@ -62,11 +62,13 @@ function cleanupTemp(): void {
   tempDir = undefined;
 }
 
-afterAll(() => cleanupTemp());
+afterAll(() => {
+  cleanupTemp();
+});
 
 /** Helper: parse format object from raw format.js content. */
 function parseFormatObject(content: string): Record<string, unknown> {
-  const match = content.match(/window\.storyFormat\s*\(([\s\S]*)\)\s*;?\s*$/);
+  const match = /window\.storyFormat\s*\(([\s\S]*)\)\s*;?\s*$/.exec(content);
   if (!match) throw new Error('expected storyFormat match');
   const matchContent = match[1];
   if (!matchContent) throw new Error('expected match group 1');
@@ -108,7 +110,9 @@ describe('Twine 2 Story Formats Spec -- Structure: Wrapper', () => {
 // Spec Section: Keys
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Keys', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   // -----------------------------------------------------------------------
   // name: (string) *Optional.* The name of the story format.
@@ -181,12 +185,11 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
 
     it('all discovered Twine 2 formats have semver-style versions (x.y.z)', () => {
       // Spec: "semantic version-style formatting (x.y.z, e.g., 1.2.1) of the version is also required"
-      const formats = discoverFormats([FORMAT_DIR]);
-      for (const [, format] of formats) {
-        if (format.isTwine2) {
-          // Must match x.y.z at minimum, optionally followed by pre-release or build metadata
-          expect(format.version).toMatch(/^\d+\.\d+\.\d+([+-].*)?$/);
-        }
+      const twine2 = [...discoverFormats([FORMAT_DIR]).values()].filter((format) => format.isTwine2);
+      expect(twine2).not.toHaveLength(0);
+      for (const format of twine2) {
+        // Must match x.y.z at minimum, optionally followed by pre-release or build metadata
+        expect(format.version).toMatch(/^\d+\.\d+\.\d+([+-].*)?$/);
       }
     });
 
@@ -212,10 +215,7 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
       const formats = discoverFormats([formatDir]);
       const format = [...formats.values()].find((f) => f.name === 'InvalidVer');
       // A completely invalid version MUST be rejected -- format should not be discovered
-      if (format) {
-        // If somehow discovered, version must still be valid semver
-        expect(format.version).toMatch(/^\d+\.\d+\.\d+([+-].*)?$/);
-      }
+      expect(format).toBeUndefined();
     });
 
     it('format with pre-release SemVer version loads', () => {
@@ -421,21 +421,21 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
     it('source is required and contains HTML template', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toBeDefined();
-      expect(typeof obj.source).toBe('string');
-      expect(obj.source).toContain('<html>');
+      expect(obj['source']).toBeDefined();
+      expect(typeof obj['source']).toBe('string');
+      expect(obj['source']).toContain('<html>');
     });
 
     it('source contains {{STORY_NAME}} placeholder', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toContain('{{STORY_NAME}}');
+      expect(obj['source']).toContain('{{STORY_NAME}}');
     });
 
     it('source contains {{STORY_DATA}} placeholder', () => {
       const content = readFileSync(join(FORMAT_DIR, 'test-format-1', 'format.js'), 'utf-8');
       const obj = parseFormatObject(content);
-      expect(obj.source).toContain('{{STORY_DATA}}');
+      expect(obj['source']).toContain('{{STORY_DATA}}');
     });
 
     it('placeholders are not themselves required -- source without placeholders is valid', () => {
@@ -459,26 +459,36 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
       expect(format).toBeUndefined();
     });
 
-    it('compilation with a format missing source key fails or produces an error', async () => {
+    it('compilation with a format missing source key fails with an error', async () => {
       const formatDir = writeTempFormat(
         'no-source-compile-format',
         'window.storyFormat({"name":"NoSourceCompile","version":"1.0.0"});',
       );
       const source = minimalStory(':: Start\nHello');
-      try {
-        const result = await compile({
-          sources: [{ filename: 'test.tw', content: source }],
-          formatId: 'no-source-compile-format',
-          formatPaths: [formatDir],
-          useTweegoPath: false,
-        });
-        // If it doesn't throw, it should produce diagnostics
-        const hasError = result.diagnostics.some((d) => d.level === 'error');
-        expect(hasError || result.output === '').toBe(true);
-      } catch (error) {
-        // Throwing is acceptable -- source is Required per spec
-        expect(error).toBeDefined();
-      }
+      const error = await compile({
+        sources: [{ filename: 'test.tw', content: source }],
+        formatId: 'no-source-compile-format',
+        formatPaths: [formatDir],
+        useTweegoPath: false,
+        noRemote: true,
+      }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      // The format is skipped, with the reason, so the compile has no format to build with.
+      expect(error).toBeInstanceOf(TweeTsError);
+      expect(error).toMatchObject({
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            level: 'warning',
+            message: expect.stringContaining('Story format has no "source" string'),
+          }),
+          expect.objectContaining({
+            level: 'error',
+            message: expect.stringContaining('"no-source-compile-format" is not available'),
+          }),
+        ]),
+      });
     });
 
     it('source must be an adequately escaped string', () => {
@@ -521,7 +531,9 @@ describe('Twine 2 Story Formats Spec -- Keys', () => {
 // required by compilers."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Non-Strict JSON', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   // Spec: "While ideally the object should be formatted as JSON, this is not currently
   // required by compilers." This means compilers MUST accept non-strict JSON.
@@ -566,7 +578,9 @@ describe('Twine 2 Story Formats Spec -- Non-Strict JSON', () => {
 // *codeMirrorSyntax* and *editorToolbar*, but these have not yet been implemented."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Deprecated and Proposed Keys', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('format with setup function key loads successfully (deprecated per spec)', () => {
     // Spec: "Harlowe also includes a deprecated *setup* key"
@@ -652,7 +666,9 @@ describe('Twine 2 Story Formats Spec -- Deprecated and Proposed Keys', () => {
 // into custom attributes."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Placeholder Replacement', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('{{STORY_NAME}} is replaced with the story name in the output', async () => {
     const source = [
@@ -796,7 +812,9 @@ describe('Twine 2 Story Formats Spec -- Placeholder Replacement', () => {
 // format.js." Formats are in named directories.
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Format Discovery', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('discovers format from format.js in a named directory', () => {
     const formats = discoverFormats([FORMAT_DIR]);
@@ -846,7 +864,9 @@ describe('Twine 2 Story Formats Spec -- Format Discovery', () => {
 // and passage data into a new HTML file."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Format Selection via StoryData', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('format specified in StoryData is used for compilation', async () => {
     const formatDir = writeTempFormat(
@@ -952,7 +972,9 @@ describe('Twine 2 Story Formats Spec -- Format Selection via StoryData', () => {
 // a major ('breaking') version is installed."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('different name = different format (both discovered)', () => {
     // Spec: considered different if "the name is not the same"
@@ -1121,10 +1143,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
     // (Omitting the name will lead to an Untitled Story Format.)"
     // parseFormatJSON should still return a valid result with a default name.
     const result = parseFormatJSON('window.storyFormat({"version":"1.0.0","source":"<html></html>"});', 'test');
-    expect(result).not.toBeNull();
-    if (result) {
-      expect(typeof result.name).toBe('string');
-    }
+    expect(result?.name).toBe('Untitled Story Format');
   });
 
   it('returns null when version is missing', () => {
@@ -1154,11 +1173,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
       'window.storyFormat({"name":"Harlowe","version":"3.3.9","source":"<html></html>","setup": function(){}});';
     const result = parseFormatJSON(input, 'harlowe-3');
     // Must parse successfully -- Harlowe's setup function is a known pattern
-    expect(result).not.toBeNull();
-    if (result) {
-      expect(result.name).toBe('Harlowe');
-      expect(result.version).toBe('3.3.9');
-    }
+    expect(result).toMatchObject({ name: 'Harlowe', version: '3.3.9' });
   });
 
   it('returns correct source string from parsed format', () => {
@@ -1208,7 +1223,9 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
 // derived from the containing folder."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('discovers Twine 1 format from header.html in a named directory', () => {
     const dir = join(tempRoot(), 'twine1-format');
@@ -1320,8 +1337,8 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
     const twine2 = [...formats.values()].find((f) => f.id === 'twine2-coexist');
     expect(twine1).toBeDefined();
     expect(twine2).toBeDefined();
-    if (twine1) expect(twine1.isTwine2).toBe(false);
-    if (twine2) expect(twine2.isTwine2).toBe(true);
+    expect(twine1?.isTwine2).toBe(false);
+    expect(twine2?.isTwine2).toBe(true);
   });
 
   it('Twine 2 format.js takes priority over header.html in same directory', () => {
@@ -1351,7 +1368,9 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Format Support', () => {
 // and 'STORY_SIZE', for the number of passages."
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('"STORY" placeholder is replaced with passage data in Twine 1 output', async () => {
     const dir = join(tempRoot(), 'twine1-replacement-test');
@@ -1429,7 +1448,9 @@ describe('Twine 2 Story Formats Spec -- Twine 1 Placeholder Replacement', () => 
 // "Proofing and other utility formats do not 'run' the story"
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Playable vs Proofing Distinction', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('non-proofing format has proofing=false (playable format)', () => {
     const formatDir = writeTempFormat(
@@ -1702,7 +1723,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Utilities', () => {
 describe('Twine 2 Story Formats Spec -- SemVer Format Selection', () => {
   /** Helper: build a StoryFormatInfo map from an array of partial format definitions. */
   function buildFormatMap(
-    entries: ReadonlyArray<{ readonly id: string; readonly name: string; readonly version: string }>,
+    entries: readonly { readonly id: string; readonly name: string; readonly version: string }[],
   ): Map<string, StoryFormatInfo> {
     const map = new Map<string, StoryFormatInfo>();
     for (const entry of entries) {
@@ -1839,7 +1860,9 @@ describe('Twine 2 Story Formats Spec -- SemVer Format Selection', () => {
 // This test verifies that parseFormatJSON handles missing name per spec.
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Name Key Strictness', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('parseFormatJSON MUST accept format objects without a name key (name is Optional)', () => {
     // Spec: "name: (string) Optional."
@@ -1887,7 +1910,9 @@ describe('Twine 2 Story Formats Spec -- Name Key Strictness', () => {
 // HTML output of the story format"
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Source Compilation Strictness', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('compiled output preserves the structure of the format source template', async () => {
     // Spec: source is "the full HTML output of the story format"
@@ -1935,7 +1960,9 @@ describe('Twine 2 Story Formats Spec -- Source Compilation Strictness', () => {
 // Non-boolean truthy values MUST NOT be treated as true.
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- Proofing Key Strictness', () => {
-  afterAll(() => cleanupTemp());
+  afterAll(() => {
+    cleanupTemp();
+  });
 
   it('proofing must be strictly boolean true, not truthy string "true"', () => {
     // Spec: "proofing: (boolean)" -- must be boolean, not string

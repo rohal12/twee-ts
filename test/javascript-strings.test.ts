@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from '../src/javascript-strings.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 /** Small seeded generator, so the random cases are the same on every run. */
 function makeRandom(seed: number): (n: number) => number {
@@ -14,7 +15,7 @@ describe('evalStringLiteral', () => {
   /** What strict-mode JavaScript, which SugarCube uses to evaluate a quoted argument, makes of it. */
   function strictEval(literal: string): string | undefined {
     try {
-      return new Function(`"use strict"; return ${literal};`)() as string;
+      return evaluateJavaScript(`"use strict"; return ${literal};`) as string;
     } catch {
       return undefined;
     }

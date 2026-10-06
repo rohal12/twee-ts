@@ -3,17 +3,17 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  decodeFormatJSON,
   discoverAllFormats,
   discoverFormats,
   getFormatIdByName,
   getFormatIdByNameAndVersion,
   makeFormatId,
-  parseFormatJSON,
   readFormatSource,
   selectFormatCandidate,
 } from '../src/formats.js';
+import { decodeFormatJSON, parseFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, FormatRequest } from '../src/types.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'storyformats');
 
@@ -254,8 +254,13 @@ describe('relaxed format.js parsing (#154)', () => {
   /** What Twine 2 sees: it runs format.js as JavaScript. */
   function evaluate(formatJs: string): Record<string, unknown> {
     let captured: unknown;
-    const run = new Function('window', formatJs) as (window: { storyFormat: (o: unknown) => void }) => void;
-    run({ storyFormat: (o) => (captured = o) });
+    evaluateJavaScript(formatJs, {
+      window: {
+        storyFormat: (o: unknown) => {
+          captured = o;
+        },
+      },
+    });
     if (typeof captured !== 'object' || captured === null) throw new Error('format.js did not call storyFormat');
     return captured as Record<string, unknown>;
   }
@@ -290,9 +295,9 @@ describe('relaxed format.js parsing (#154)', () => {
       it(`keeps a source with ${sourceLabel} byte-identical when written with ${writerLabel}`, () => {
         const formatJs = write(source);
         const expected = evaluate(formatJs);
-        expect(expected.source).toBe(source);
+        expect(expected['source']).toBe(source);
         const data = parseFormatJSON(formatJs);
-        expect(data?.source).toBe(expected.source);
+        expect(data?.source).toBe(expected['source']);
         expect(data?.name).toBe('T');
         expect(data?.version).toBe('1.0.0');
       });

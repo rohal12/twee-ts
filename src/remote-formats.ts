@@ -19,7 +19,8 @@ import type {
   StoryFormatInfo,
   Twine2FormatJSON,
 } from './types.js';
-import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate, UNNAMED_FORMAT_NAME } from './formats.js';
+import { parseFormatJSON, UNNAMED_FORMAT_NAME } from './format-decode.js';
+import { parseSemver, makeFormatId, selectFormatCandidate } from './formats.js';
 import type { SelectFormatOptions } from './formats.js';
 import { sameVersion } from './semver.js';
 import { decodeText, readUTF8 } from './util.js';
@@ -31,7 +32,7 @@ const DEFAULT_SFA_INDICES = [
 ];
 
 /** How long one story format request (an index or a format.js) may take by default, in milliseconds. */
-export const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
+const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
 
 /** The longest delay a timer accepts; a longer timeout means no limit. */
 const MAX_TIMER_DELAY = 2_147_483_647;
@@ -39,7 +40,8 @@ const MAX_TIMER_DELAY = 2_147_483_647;
 /** Get the cache directory for downloaded story formats. */
 export function getCacheDir(): string {
   const xdg = process.env['XDG_CACHE_HOME'];
-  const base = xdg || join(homedir(), '.cache');
+  // An empty XDG_CACHE_HOME counts as unset, as the XDG Base Directory spec says.
+  const base = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.cache');
   return join(base, 'twee-ts', 'storyformats');
 }
 
@@ -168,7 +170,10 @@ function shareRequest<T>(
   { signal, timeout, timedOut }: WaitOptions,
   start: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  if (signal?.aborted) return Promise.reject(signal.reason);
+  if (signal?.aborted) {
+    const reason: unknown = signal.reason;
+    return Promise.reject(reason);
+  }
   const request = (sharedRequests.get(key) as SharedRequest<T> | undefined) ?? startSharedRequest(key, start);
   request.waiters++;
 
@@ -190,9 +195,15 @@ function shareRequest<T>(
       }
       reject(reason);
     };
-    const onAbort = (): void => giveUp(signal?.reason);
+    const onAbort = (): void => {
+      giveUp(signal?.reason);
+    };
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (timeout > 0 && timeout <= MAX_TIMER_DELAY) timer = setTimeout(() => giveUp(timedOut()), timeout);
+    if (timeout > 0 && timeout <= MAX_TIMER_DELAY) {
+      timer = setTimeout(() => {
+        giveUp(timedOut());
+      }, timeout);
+    }
     request.promise.then(
       (value) => {
         stopWaiting();
@@ -266,11 +277,11 @@ function isValidEntry(val: unknown): val is SFAIndexEntry {
   if (typeof val !== 'object' || val === null || Array.isArray(val)) return false;
   const obj = val as Record<string, unknown>;
   return (
-    typeof obj.name === 'string' &&
-    typeof obj.version === 'string' &&
-    typeof obj.checksums === 'object' &&
-    obj.checksums !== null &&
-    !Array.isArray(obj.checksums)
+    typeof obj['name'] === 'string' &&
+    typeof obj['version'] === 'string' &&
+    typeof obj['checksums'] === 'object' &&
+    obj['checksums'] !== null &&
+    !Array.isArray(obj['checksums'])
   );
 }
 
@@ -308,12 +319,12 @@ interface FindEntryResult {
  * Find the best matching entry in an SFA index.
  * Exact version preferred, then highest version with same major.
  */
-export function findEntry(index: SFAIndex, name: string, version: string): FindEntryResult | undefined {
+export function findEntry(index: Partial<SFAIndex>, name: string, version: string): FindEntryResult | undefined {
   return findEntryForRequest(index, { kind: 'name', name, version });
 }
 
 /** Find the best matching entry in an SFA index for a name or ID request (twine2 entries first). */
-function findEntryForRequest(index: SFAIndex, request: FormatRequest): FindEntryResult | undefined {
+function findEntryForRequest(index: Partial<SFAIndex>, request: FormatRequest): FindEntryResult | undefined {
   const candidates: FindEntryResult[] = [
     ...(index.twine2 ?? []).map((entry) => ({ entry, formatType: 'twine2' as const })),
     ...(index.twine1 ?? []).map((entry) => ({ entry, formatType: 'twine1' as const })),
@@ -351,7 +362,11 @@ function cachedFormatInfo(
  * agree. A format.js that names no format ({@link UNNAMED_FORMAT_NAME}) is allowed: such formats
  * exist, and the index entry then supplies the name it is cached under.
  */
-function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downloadUrl: string): void {
+function checkFormatIdentity(
+  entry: Pick<SFAIndexEntry, 'name' | 'version'>,
+  data: Twine2FormatJSON,
+  downloadUrl: string,
+): void {
   const nameMatches = data.name === UNNAMED_FORMAT_NAME || data.name.toLowerCase() === entry.name.toLowerCase();
   if (nameMatches && sameVersion(data.version, entry.version)) return;
   throw new Error(
@@ -367,7 +382,10 @@ function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downl
  * entry, within its own timeout.
  */
 export async function fetchAndCacheFormat(
-  entry: SFAIndexEntry,
+  // The parts of an index entry a download uses; an entry without checksums is downloaded unchecked.
+  entry: Pick<SFAIndexEntry, 'name' | 'version'> & {
+    readonly checksums?: Readonly<Record<string, string>> | undefined;
+  },
   downloadUrl: string,
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo> {
@@ -376,9 +394,10 @@ export async function fetchAndCacheFormat(
   const bytes = await shareDownload(downloadUrl, options);
 
   // Verify the checksum against the bytes as served, if the entry has one.
-  const checksumKey = Object.keys(entry.checksums ?? {}).find((k) => k.endsWith('format.js'));
+  const checksums = entry.checksums ?? {};
+  const checksumKey = Object.keys(checksums).find((k) => k.endsWith('format.js'));
   if (checksumKey) {
-    const expected = entry.checksums[checksumKey];
+    const expected = checksums[checksumKey];
     if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
     if (!(await verifySHA256(bytes, expected))) {
       throw new Error(`Checksum verification failed for ${entry.name} ${entry.version}`);
@@ -507,7 +526,7 @@ function toError(e: unknown): Error {
  * 4. Fall back to a compatible download from the shared cache (e.g. when offline)
  *
  * `options.signal` aborts the lookup, which then rejects with the signal's reason;
- * `options.timeout` limits each request (default {@link DEFAULT_FORMAT_FETCH_TIMEOUT} ms).
+ * `options.timeout` limits each request (default 30000 ms).
  */
 export async function resolveRemoteFormat(
   name: string,

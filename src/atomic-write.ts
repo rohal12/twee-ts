@@ -42,7 +42,7 @@ function resolveWriteTarget(path: string): string {
   let current = path;
   for (let depth = 0; depth <= MAX_LINK_DEPTH; depth++) {
     const stat = lstatSync(current, { throwIfNoEntry: false });
-    if (stat === undefined || !stat.isSymbolicLink()) return current;
+    if (!stat?.isSymbolicLink()) return current;
     current = resolve(dirname(current), readlinkSync(current));
   }
   throw Object.assign(new Error(`ELOOP: too many levels of symbolic links, ${path}`), { code: 'ELOOP' });

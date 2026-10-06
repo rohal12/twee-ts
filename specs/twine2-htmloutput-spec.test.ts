@@ -51,7 +51,7 @@ function minimalStory(passages: string): string {
  * Works for both full HTML and archive output.
  */
 function extractStoryData(html: string): string {
-  const match = html.match(/<tw-storydata[\s\S]*?<\/tw-storydata>/);
+  const match = /<tw-storydata[\s\S]*?<\/tw-storydata>/.exec(html);
   if (!match) throw new Error('output must contain <tw-storydata>');
   return match[0];
 }
@@ -66,7 +66,7 @@ function attr(element: string, name: string): string | null {
 /** Extract the opening <tw-storydata> tag. */
 function storyDataTag(html: string): string {
   const chunk = extractStoryData(html);
-  const match = chunk.match(/<tw-storydata[^>]*>/);
+  const match = /<tw-storydata[^>]*>/.exec(chunk);
   if (!match) throw new Error('expected <tw-storydata> tag');
   return match[0];
 }
@@ -79,7 +79,7 @@ function passageElements(html: string): readonly string[] {
 
 /** Extract the text content between the tags of a <tw-passagedata> element. */
 function passageContent(passageElement: string): string {
-  const match = passageElement.match(/>([^]*)<\/tw-passagedata>/);
+  const match = />([^]*)<\/tw-passagedata>/.exec(passageElement);
   if (!match) throw new Error('expected passage content');
   return match[1] ?? '';
 }
@@ -463,8 +463,8 @@ describe('Twine 2 HTML Output Spec — Story Data Attributes', () => {
     // startnode is optional — it can be absent, empty, or produce a diagnostic
     const hasDiag = result.diagnostics.some(
       (d) =>
-        (d.level === 'error' || d.level === 'warning') &&
-        (d.message.toLowerCase().includes('start') || d.message.toLowerCase().includes('startnode')),
+        // Every diagnostic is a warning or an error.
+        d.message.toLowerCase().includes('start') || d.message.toLowerCase().includes('startnode'),
     );
     expect(startNode === null || startNode === '' || hasDiag).toBe(true);
   });
@@ -476,22 +476,15 @@ describe('Twine 2 HTML Output Spec — Story Data Attributes', () => {
   it('tags attribute on <tw-storydata>: optional per spec', async () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const tagsMatch = tag.match(/\btags="([^"]*)"/);
-    // If present, value should be a string (empty or space-separated tags)
-    if (tagsMatch) {
-      expect(typeof tagsMatch[1]).toBe('string');
-    }
-    // Not asserting it MUST be present — spec says Optional
+    // Optional per spec; twee-ts always writes it, as a space-separated list of tags.
+    expect(tag).toMatch(/\btags="[^"]*"/);
   });
 
   it('tags attribute on <tw-storydata>: absent or empty when no story tags', async () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const tagsMatch = tag.match(/\btags="([^"]*)"/);
-    // If present, should be empty; if absent, also spec-compliant
-    if (tagsMatch) {
-      expect(tagsMatch[1]).toBe('');
-    }
+    // Absent or empty is spec-compliant; twee-ts writes it empty.
+    expect(attr(tag, 'tags')).toBe('');
   });
 
   it('tags attribute on <tw-storydata>: contains story-level tags when set', async () => {
@@ -585,11 +578,8 @@ describe('Twine 2 HTML Output Spec — Story Data Attributes', () => {
     // Spec says zoom is optional; verify the attribute is handled correctly
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const zoom = attr(tag, 'zoom');
-    // zoom may be absent (null) or present as a string
-    if (zoom !== null) {
-      expect(Number.isFinite(Number(zoom))).toBe(true);
-    }
+    // zoom may be absent; twee-ts writes the default zoom, 1, as a decimal number.
+    expect(attr(tag, 'zoom')).toBe('1');
   });
 
   it('zoom attribute: value is a decimal string', async () => {
@@ -1150,7 +1140,7 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     const source = minimalStory([':: Start', 'Hello', '', ':: JS [script]', 'window.setup = {};'].join('\n'));
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = chunk.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
     if (!scriptMatch) throw new Error('expected <script> element');
     expect(scriptMatch[1]).toContain('window.setup = {};');
   });
@@ -1180,7 +1170,7 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     const chunk = extractStoryData(result.output);
     const scriptMatches = [...chunk.matchAll(/<script[^>]*>/g)];
     expect(scriptMatches).toHaveLength(1);
-    const scriptMatch = chunk.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
     if (!scriptMatch) throw new Error('expected <script> element');
     expect(scriptMatch[1]).toContain('window.a = 1;');
     expect(scriptMatch[1]).toContain('window.b = 2;');
@@ -1199,7 +1189,7 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     );
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = chunk.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
     if (!scriptMatch) throw new Error('expected <script> element');
     // Script content must NOT be HTML-escaped — it is raw JavaScript
     expect(scriptMatch[1]).toContain('if (a < b && c > d) { x = "y"; }');
@@ -1212,7 +1202,7 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     const source = minimalStory(':: Start\nHello');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = chunk.match(/<script[^>]*>/);
+    const scriptMatch = /<script[^>]*>/.exec(chunk);
     if (!scriptMatch) throw new Error('expected <script> element');
     expect(scriptMatch[0]).toContain('id="twine-user-script"');
     expect(scriptMatch[0]).toContain('type="text/twine-javascript"');
@@ -1253,7 +1243,7 @@ describe('Twine 2 HTML Output Spec — Story Stylesheet', () => {
     );
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const styleMatch = chunk.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*>([\s\S]*?)<\/style>/.exec(chunk);
     if (!styleMatch) throw new Error('expected <style> element');
     expect(styleMatch[1]).toContain('body { font-size: 1.5em; }');
   });
@@ -1283,7 +1273,7 @@ describe('Twine 2 HTML Output Spec — Story Stylesheet', () => {
     const chunk = extractStoryData(result.output);
     const styleMatches = [...chunk.matchAll(/<style[^>]*>/g)];
     expect(styleMatches).toHaveLength(1);
-    const styleMatch = chunk.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*>([\s\S]*?)<\/style>/.exec(chunk);
     if (!styleMatch) throw new Error('expected <style> element');
     expect(styleMatch[1]).toContain('body { color: red; }');
     expect(styleMatch[1]).toContain('p { margin: 0; }');
@@ -1302,7 +1292,7 @@ describe('Twine 2 HTML Output Spec — Story Stylesheet', () => {
     );
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const styleMatch = chunk.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*>([\s\S]*?)<\/style>/.exec(chunk);
     if (!styleMatch) throw new Error('expected <style> element');
     // Stylesheet content must NOT be HTML-escaped — it is raw CSS
     expect(styleMatch[1]).toContain('p > span { content: "a & b"; }');
@@ -1314,7 +1304,7 @@ describe('Twine 2 HTML Output Spec — Story Stylesheet', () => {
     const source = minimalStory(':: Start\nHello');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const styleMatch = chunk.match(/<style[^>]*>/);
+    const styleMatch = /<style[^>]*>/.exec(chunk);
     if (!styleMatch) throw new Error('expected <style> element');
     expect(styleMatch[0]).toContain('id="twine-user-stylesheet"');
     expect(styleMatch[0]).toContain('type="text/twine-css"');
@@ -1358,7 +1348,7 @@ describe('Twine 2 HTML Output Spec — Passage Tag Colors (<tw-tag>)', () => {
     ].join('\n');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const tagMatch = chunk.match(/<tw-tag[^>]*>/);
+    const tagMatch = /<tw-tag[^>]*>/.exec(chunk);
     if (!tagMatch) throw new Error('expected <tw-tag> element');
     expect(attr(tagMatch[0], 'name')).toBe('foo');
   });
@@ -1376,7 +1366,7 @@ describe('Twine 2 HTML Output Spec — Passage Tag Colors (<tw-tag>)', () => {
     ].join('\n');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const tagMatch = chunk.match(/<tw-tag[^>]*>/);
+    const tagMatch = /<tw-tag[^>]*>/.exec(chunk);
     if (!tagMatch) throw new Error('expected <tw-tag> element');
     expect(attr(tagMatch[0], 'color')).toBe('red');
   });
@@ -1532,14 +1522,9 @@ describe('Twine 2 HTML Output Spec — Passage Tag Colors (<tw-tag>)', () => {
     ].join('\n');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const validColors = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple'];
-    const tagMatches = [...chunk.matchAll(/<tw-tag[^>]*>/g)];
-    for (const tagMatch of tagMatches) {
-      const colorVal = attr(tagMatch[0], 'color');
-      if (colorVal !== null) {
-        expect(validColors).toContain(colorVal);
-      }
-    }
+    // twee-ts leaves out a tag whose color is not one of the seven.
+    expect(chunk).not.toMatch(/<tw-tag\b/);
+    expect(chunk).not.toContain('pink');
   });
 });
 
@@ -1650,7 +1635,7 @@ describe('Twine 2 HTML Output Spec — Full HTML (with story format)', () => {
     const source = minimalStory(':: Start\nA & B < C > D "E" \'F\'');
     const result = await compileToHTML(source);
     const chunk = extractStoryData(result.output);
-    const passageMatch = chunk.match(/<tw-passagedata[^>]*name="Start"[^>]*>([\s\S]*?)<\/tw-passagedata>/);
+    const passageMatch = /<tw-passagedata[^>]*name="Start"[^>]*>([\s\S]*?)<\/tw-passagedata>/.exec(chunk);
     if (!passageMatch) throw new Error('expected Start passage in output');
     const content = passageMatch[1];
     expect(content).toContain('&amp;');

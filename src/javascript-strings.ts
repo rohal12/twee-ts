@@ -287,7 +287,7 @@ export function javaScriptStrings(source: string): string[] {
       i += 2;
       continue;
     }
-    if (frame.kind === 'code' && frames.length > 1 && (ch === '{' || ch === '}')) {
+    if (frames.length > 1 && (ch === '{' || ch === '}')) {
       if (ch === '{') {
         frames[frames.length - 1] = { kind: 'code', braces: frame.braces + 1 };
       } else if (frame.braces > 0) {

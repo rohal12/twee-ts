@@ -12,7 +12,10 @@ export type WordCountMethod = 'tweego' | 'whitespace';
 
 // --- Source input ---
 
-export type InlineSource = { filename: string; content: string | Buffer };
+export interface InlineSource {
+  filename: string;
+  content: string | Buffer;
+}
 export type SourceInput = string | InlineSource;
 
 // --- Compile options ---
@@ -28,52 +31,52 @@ export interface CompileOptions {
    * Glob patterns for files to leave out of `sources`, matched against each file's
    * path relative to the working directory (as `stats.files` lists it). Modules are not affected.
    */
-  exclude?: readonly string[];
+  exclude?: readonly string[] | undefined;
   /** Output mode. Default: 'html'. */
-  outputMode?: OutputMode;
+  outputMode?: OutputMode | undefined;
   /** Story format directory ID (e.g. 'sugarcube-2'). */
-  formatId?: string;
+  formatId?: string | undefined;
   /** Name of the starting passage. Default: 'Start'. */
-  startPassage?: string;
+  startPassage?: string | undefined;
   /** Extra directories to search for story formats. */
-  formatPaths?: readonly string[];
+  formatPaths?: readonly string[] | undefined;
   /** Also search TWEEGO_PATH env for formats. Default: true. */
-  useTweegoPath?: boolean;
+  useTweegoPath?: boolean | undefined;
   /** Module files to inject into <head>. */
-  modules?: readonly string[];
+  modules?: readonly string[] | undefined;
   /** Raw HTML file to append to <head>. */
-  headFile?: string;
+  headFile?: string | undefined;
   /** Trim passage whitespace. Default: true. */
-  trim?: boolean;
+  trim?: boolean | undefined;
   /** Twee2 compatibility mode. Default: false. */
-  twee2Compat?: boolean;
+  twee2Compat?: boolean | undefined;
   /** Enable debug/test mode option. Default: false. */
-  testMode?: boolean;
+  testMode?: boolean | undefined;
   /** URLs to SFA-compatible index.json files for remote format lookup. */
-  formatIndices?: readonly string[];
+  formatIndices?: readonly string[] | undefined;
   /**
    * Direct URLs to format.js files. Each URL's download is cached under that URL, and is
    * looked up before the downloads shared by name and version.
    */
-  formatUrls?: readonly string[];
+  formatUrls?: readonly string[] | undefined;
   /** Disable remote format fetching. Default: false. */
-  noRemote?: boolean;
+  noRemote?: boolean | undefined;
   /**
    * Cancels the compile. Story format requests still in progress are aborted, and the compile
    * rejects with the signal's reason. `watch()` aborts its builds, and stops watching, when it aborts.
    */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
   /**
    * Milliseconds each story format request (an index or a format.js) may take before it fails
    * with a warning and the next source is tried. 0 turns the limit off. Default: 30000.
    */
-  formatFetchTimeout?: number;
+  formatFetchTimeout?: number | undefined;
   /** Map alias tags to canonical special tags (e.g. { library: 'script' }). */
-  tagAliases?: Record<string, string>;
+  tagAliases?: Record<string, string> | undefined;
   /** Emit source file and line as data- attributes on passage elements. Default: false. */
-  sourceInfo?: boolean;
+  sourceInfo?: boolean | undefined;
   /** Word counting method. Default: 'tweego'. */
-  wordCountMethod?: WordCountMethod;
+  wordCountMethod?: WordCountMethod | undefined;
 }
 
 export interface CompileToFileOptions extends CompileOptions {
@@ -91,13 +94,13 @@ export interface WatchOptions extends CompileToFileOptions {
    * run one at a time and are reported in order, each as it finishes, also while changes keep
    * arriving: the changes made during a build go into one follow-up build after it.
    */
-  onBuild?: (result: CompileResult) => void;
+  onBuild?: ((result: CompileResult) => void) | undefined;
   /**
    * Called when a build fails with a fatal error (nothing is written), when `onBuild` throws,
    * and when a watched path can't be watched (the other paths are still watched). An exception
    * thrown here is reported to the console, and watching goes on.
    */
-  onError?: (error: Error) => void;
+  onError?: ((error: Error) => void) | undefined;
 }
 
 // --- Compile result ---
@@ -112,7 +115,7 @@ export interface CompileResult {
   /** The parsed story model (read-only after compilation). */
   story: ReadonlyStory;
   /** The format used for compilation (undefined for non-HTML modes). */
-  format?: StoryFormatInfo;
+  format?: StoryFormatInfo | undefined;
   /** Collected diagnostics. */
   diagnostics: Diagnostic[];
   /** Compilation statistics. */
@@ -143,8 +146,8 @@ export interface Passage {
   name: string;
   tags: string[];
   text: string;
-  metadata?: PassageMetadata;
-  source?: SourceLocation;
+  metadata?: PassageMetadata | undefined;
+  source?: SourceLocation | undefined;
 }
 
 // --- Branded types ---
@@ -180,12 +183,12 @@ export interface Story {
 
 export type ReadonlyPassage = Readonly<Omit<Passage, 'tags' | 'metadata'>> & {
   readonly tags: readonly string[];
-  readonly metadata?: Readonly<PassageMetadata>;
+  readonly metadata?: Readonly<PassageMetadata> | undefined;
 };
 
 export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2'>> & {
   readonly passages: readonly ReadonlyPassage[];
-  readonly twine1: Readonly<Omit<Twine1Metadata, 'settings'>> & {
+  readonly twine1: {
     readonly settings: ReadonlyMap<string, string>;
   };
   readonly twine2: Readonly<Omit<Twine2Metadata, 'options' | 'tagColors'>> & {
@@ -213,7 +216,7 @@ export interface DecompileOptions {
    * Trim whitespace at both ends of passage text (and of the Twine 2 story stylesheet and script),
    * as the Twee lexer does. When false, the stored text is kept exactly. Default: true.
    */
-  readonly trim?: boolean;
+  readonly trim?: boolean | undefined;
 }
 
 // --- Story inspection ---
@@ -228,7 +231,7 @@ export interface InspectOptions {
    * target, every source passage gives links, and a link is broken only when no passage has its
    * name.
    */
-  readonly target?: PassageOutputTarget;
+  readonly target?: PassageOutputTarget | undefined;
 }
 
 // --- Story format ---
@@ -320,9 +323,9 @@ export interface SFAIndex {
 /** Options for the network requests that fetch story formats and their indices. */
 export interface RemoteFetchOptions {
   /** Aborts the requests; the call then rejects with the signal's reason. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Milliseconds each request may take before it fails. 0 turns the limit off. Default: 30000. */
-  readonly timeout?: number;
+  readonly timeout?: number | undefined;
 }
 
 // --- Incremental compilation cache ---
@@ -342,25 +345,25 @@ export interface FileCacheEntry {
 // --- Config file ---
 
 export interface TweeTsConfig {
-  sources?: string[];
-  exclude?: string[];
-  output?: string;
-  outputMode?: OutputMode;
-  formatId?: string;
-  startPassage?: string;
-  formatPaths?: string[];
-  formatIndices?: string[];
-  formatUrls?: string[];
-  useTweegoPath?: boolean;
-  modules?: string[];
-  headFile?: string;
-  trim?: boolean;
-  twee2Compat?: boolean;
-  testMode?: boolean;
-  noRemote?: boolean;
+  sources?: string[] | undefined;
+  exclude?: string[] | undefined;
+  output?: string | undefined;
+  outputMode?: OutputMode | undefined;
+  formatId?: string | undefined;
+  startPassage?: string | undefined;
+  formatPaths?: string[] | undefined;
+  formatIndices?: string[] | undefined;
+  formatUrls?: string[] | undefined;
+  useTweegoPath?: boolean | undefined;
+  modules?: string[] | undefined;
+  headFile?: string | undefined;
+  trim?: boolean | undefined;
+  twee2Compat?: boolean | undefined;
+  testMode?: boolean | undefined;
+  noRemote?: boolean | undefined;
   /** Milliseconds each story format request may take. 0 turns the limit off. Default: 30000. */
-  formatFetchTimeout?: number;
-  tagAliases?: Record<string, string>;
-  sourceInfo?: boolean;
-  wordCountMethod?: WordCountMethod;
+  formatFetchTimeout?: number | undefined;
+  tagAliases?: Record<string, string> | undefined;
+  sourceInfo?: boolean | undefined;
+  wordCountMethod?: WordCountMethod | undefined;
 }

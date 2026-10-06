@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { parseRelaxedJSON } from '../src/relaxed-json.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 /** What JavaScript evaluation gives for a literal. */
-const evaluate = (literal: string): unknown => new Function(`return (${literal});`)();
+const evaluate = (literal: string): unknown => evaluateJavaScript(`return (${literal});`);
 
 describe('parseRelaxedJSON', () => {
   it('reads strict JSON the way JSON.parse does', () => {
@@ -26,7 +27,7 @@ describe('parseRelaxedJSON', () => {
     const value = parseRelaxedJSON('{"__proto__": {"polluted": true}}') as Record<string, unknown>;
     expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
     expect(Object.keys(value)).toEqual(['__proto__']);
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
   });
 
   it('parses only the given range, and reports positions in the whole text', () => {

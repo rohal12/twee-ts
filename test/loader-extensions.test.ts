@@ -24,7 +24,9 @@ let tmpDir: string;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-ext-'));
 });
-afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 describe.each([
   ['loadSources', 'full'],

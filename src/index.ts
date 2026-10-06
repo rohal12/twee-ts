@@ -22,7 +22,8 @@ export { applyTagAliases } from './passage.js';
 // Lower-level exports
 export { TweeLexer, tweeLexer } from './lexer.js';
 export { parseTwee } from './parser.js';
-export { discoverFormats, getFormatSearchDirs, parseSemver, semverCompare, parseFormatJSON } from './formats.js';
+export { discoverFormats, getFormatSearchDirs, parseSemver, semverCompare } from './formats.js';
+export { parseFormatJSON } from './format-decode.js';
 export { generateIFID, validateIFID, createIFID } from './ifid.js';
 
 // Config
@@ -62,6 +63,8 @@ export type {
   Story,
   Passage,
   PassageMetadata,
+  Twine1Metadata,
+  Twine2Metadata,
   StoryFormatInfo,
   OutputMode,
   SourceInput,

@@ -12,7 +12,9 @@ describe('loadModules', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('loads CSS files as <style> tags', () => {
     const file = join(tmpDir, 'theme.css');
@@ -73,7 +75,7 @@ describe('loadModules', () => {
     const file = join(tmpDir, 'dup.css');
     writeFileSync(file, 'body {}');
     const result = loadModules([file, file]);
-    const count = (result.match(/<style/g) || []).length;
+    const count = (result.match(/<style/g) ?? []).length;
     expect(count).toBe(1);
   });
 
@@ -100,7 +102,9 @@ describe('modifyHead', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   const baseHtml = '<html><head><title>Test</title></head><body></body></html>';
 
@@ -242,7 +246,9 @@ describe('modifyHead HTML context', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   function inject(html: string, diagnostics?: Diagnostic[]): string {
     const headFile = join(tmpDir, 'head.html');
@@ -295,7 +301,9 @@ describe('module injection through the renderers, with tags in other HTML contex
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-modules-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   function options(kind: 'twine2' | 'twine1', template: string) {
     const formats = join(tmpDir, 'formats');
@@ -328,7 +336,7 @@ describe('module injection through the renderers, with tags in other HTML contex
     '</body></html>';
 
   for (const kind of ['twine2', 'twine1'] as const) {
-    describe(kind, () => {
+    describe(`${kind} template`, () => {
       it.each([
         ['an inline script', '<script>const close = "</head>";</script>'],
         ['an HTML comment', '<!-- </head> -->'],

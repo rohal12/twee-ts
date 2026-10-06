@@ -9,7 +9,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 export const TOOLS = ['jscpd', 'cpd', 'fallow'] as const;
 export type Tool = (typeof TOOLS)[number];
 
-export function isTool(value: string): value is Tool {
+function isTool(value: string): value is Tool {
   return TOOLS.some((tool) => tool === value);
 }
 
@@ -58,7 +58,7 @@ export interface Arguments {
   readonly base: string | undefined;
 }
 
-export const USAGE = `usage: tsx scripts/duplication.ts [${TOOLS.join('|')}]... [--base <ref>]`;
+const USAGE = `usage: tsx scripts/duplication.ts [${TOOLS.join('|')}]... [--base <ref>]`;
 
 // ---------------------------------------------------------------------------
 // Reading untrusted JSON

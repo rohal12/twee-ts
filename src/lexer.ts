@@ -99,12 +99,11 @@ function acceptQuoted(ctx: LexerContext, quote: number): string | null {
     const ch = ctx.next();
     switch (ch) {
       case 0x5c: {
-        // backslash
+        // A backslash escapes the next character, but not a line end.
         const r = ctx.next();
-        if (r !== 0x0a && r !== EOF) break;
-        // fall through
+        if (r === 0x0a || r === EOF) return 'unterminated quoted string';
+        break;
       }
-      // falls through
       case 0x0a:
       case EOF:
         return 'unterminated quoted string';
@@ -159,15 +158,13 @@ function lexName(ctx: LexerContext): StateFn {
   let r: number;
   outer: for (;;) {
     r = ctx.next();
+    if (r === 0x5c) {
+      // A backslash escapes the next character, but an escaped line end still ends the name.
+      const next = ctx.next();
+      if (next !== 0x0a && next !== EOF) continue;
+      r = next;
+    }
     switch (r) {
-      case 0x5c: {
-        // backslash
-        const next = ctx.next();
-        if (next !== 0x0a && next !== EOF) break;
-        // fall through to terminators
-        r = next;
-      }
-      // falls through
       case 0x5b: // [
       case 0x5d: // ]
       case 0x7b: // {
@@ -176,35 +173,29 @@ function lexName(ctx: LexerContext): StateFn {
       case EOF:
         if (r !== EOF) ctx.backup();
         break outer;
+      default:
+        // Any other character is part of the name.
+        break;
     }
   }
   // Always emit a name item, even if empty.
   ctx.emit(ItemType.Name);
-
-  switch (r) {
-    case 0x5b:
-      return lexTags; // [
-    case 0x5d:
-      return ctx.errorf(`unexpected right square bracket ']'`);
-    case 0x7b:
-      return lexMetadata; // {
-    case 0x7d:
-      return ctx.errorf(`unexpected right curly brace '}'`);
-    case 0x0a: // newline
-      ctx.pos++;
-      ctx.ignore();
-      return lexContent;
-  }
-  ctx.emit(ItemType.EOF);
-  return null;
+  return lexAfterHeaderPart(ctx, r);
 }
 
 function lexNextOptionalBlock(ctx: LexerContext): StateFn {
   // Consume whitespace.
   ctx.acceptRun(' \t');
   ctx.ignore();
+  return lexAfterHeaderPart(ctx, ctx.peek());
+}
 
-  const r = ctx.peek();
+/**
+ * The state after the passage name or an optional block, by the character `r` that follows it (not yet
+ * consumed). The name ends only at one of the characters handled here, so only an optional block can be
+ * followed by an illegal one.
+ */
+function lexAfterHeaderPart(ctx: LexerContext, r: number): StateFn {
   switch (r) {
     case 0x5b:
       return lexTags; // [
@@ -221,8 +212,9 @@ function lexNextOptionalBlock(ctx: LexerContext): StateFn {
     case EOF:
       ctx.emit(ItemType.EOF);
       return null;
+    default:
+      return ctx.errorf(`illegal character '${String.fromCharCode(r)}' amid the optional blocks`);
   }
-  return ctx.errorf(`illegal character '${String.fromCharCode(r)}' amid the optional blocks`);
 }
 
 function lexTags(ctx: LexerContext): StateFn {
@@ -233,15 +225,15 @@ function lexTags(ctx: LexerContext): StateFn {
     const r = ctx.next();
     switch (r) {
       case 0x5c: {
-        // backslash
+        // A backslash escapes the next character, but not a line end (which is consumed, not backed up).
         const next = ctx.next();
-        if (next !== 0x0a && next !== EOF) break;
-        // fall through
+        if (next === 0x0a || next === EOF) return ctx.errorf('unterminated tag block');
+        break;
       }
-      // falls through
       case 0x0a:
+        ctx.backup();
+        return ctx.errorf('unterminated tag block');
       case EOF:
-        if (r === 0x0a) ctx.backup();
         return ctx.errorf('unterminated tag block');
       case 0x5d: // ]
         if (ctx.pos > ctx.start) ctx.emit(ItemType.Tags);
@@ -252,6 +244,9 @@ function lexTags(ctx: LexerContext): StateFn {
         return ctx.errorf(`unexpected left curly brace '{'`);
       case 0x7d: // }
         return ctx.errorf(`unexpected right curly brace '}'`);
+      default:
+        // Any other character is part of the tags.
+        break;
     }
   }
 }
@@ -272,7 +267,7 @@ function lexMetadata(ctx: LexerContext): StateFn {
       }
       case 0x0a: // newline
         ctx.backup();
-      // falls through
+        return ctx.errorf('unterminated metadata block');
       case EOF:
         return ctx.errorf('unterminated metadata block');
       case 0x7b: // {
@@ -284,6 +279,9 @@ function lexMetadata(ctx: LexerContext): StateFn {
           if (ctx.pos > ctx.start) ctx.emit(ItemType.Metadata);
           return lexNextOptionalBlock;
         }
+        break;
+      default:
+        // Any other character is part of the metadata.
         break;
     }
   }

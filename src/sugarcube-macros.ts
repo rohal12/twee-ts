@@ -201,7 +201,9 @@ interface ArgumentPartScan {
 export function tagMatcher(
   text: string,
   lastClose = text.lastIndexOf('>>'),
-  onWork: (characters: number) => void = () => {},
+  onWork: (characters: number) => void = () => {
+    // Work is counted only for callers that ask (tests).
+  },
 ): (start: number) => ScannedTag | undefined {
   const scanFrom = new Map<ArgumentPartKind, number>();
   return (start) => {

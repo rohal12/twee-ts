@@ -47,7 +47,9 @@ describe('Twee output round trip', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-twee-output-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   async function toTwee(html: string, outputMode: OutputMode = 'twee3') {
     const file = join(dir, 'story.html');

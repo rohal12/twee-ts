@@ -116,8 +116,11 @@ export async function compileIncremental(
  * Aborting the returned controller, or the `signal` in the options, stops watching and
  * aborts the story format requests of the build in progress.
  */
-export async function watch(options: WatchOptions): Promise<AbortController> {
-  return watchWithWriteFilter(options, () => true);
+export function watch(options: WatchOptions): Promise<AbortController> {
+  // Watching starts synchronously; an error while starting rejects rather than throws.
+  return new Promise((resolveWatch) => {
+    resolveWatch(watchWithWriteFilter(options, () => true));
+  });
 }
 
 /**
@@ -127,11 +130,11 @@ export async function watch(options: WatchOptions): Promise<AbortController> {
  * Internal, for the CLI, which keeps the last good output when a rebuild reports errors;
  * not part of the public API.
  */
-export async function watchWithWriteFilter(
+export function watchWithWriteFilter(
   options: WatchOptions,
   shouldWrite: (result: CompileResult) => boolean,
   hooks: WatchHooks = {},
-): Promise<AbortController> {
+): AbortController {
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
   // Every build runs with the controller's signal, which the caller's own signal also aborts (below).
@@ -214,14 +217,18 @@ export async function watchWithWriteFilter(
         queued = queued === undefined ? request : mergeBuildRequests(queued, request);
         return;
       }
-      drain(request).catch((e: unknown) => reportError(toError(e)));
+      drain(request).catch((e: unknown) => {
+        reportError(toError(e));
+      });
     },
     ignore,
     reportError,
   );
 
   const outer = options.signal;
-  const onOuterAbort = (): void => controller.abort(outer?.reason);
+  const onOuterAbort = (): void => {
+    controller.abort(outer?.reason);
+  };
   controller.signal.addEventListener('abort', () => {
     queued = undefined;
     handle.close();
@@ -517,21 +524,21 @@ function storyToJSON(story: Story): string {
     }
   }
 
-  const obj: Record<string, unknown> = {
+  // Keys in the order the JSON output lists them; optional ones only when set.
+  const obj = {
     name: story.name,
+    ...(story.ifid ? { ifid: story.ifid } : {}),
+    ...(story.twine2.format ? { format: story.twine2.format } : {}),
+    ...(story.twine2.formatVersion ? { 'format-version': story.twine2.formatVersion } : {}),
+    ...(story.twine2.start ? { start: story.twine2.start } : {}),
+    ...(story.twine2.tagColors.size > 0 ? { 'tag-colors': Object.fromEntries(story.twine2.tagColors) } : {}),
+    ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
+    creator: CREATOR_NAME,
+    'creator-version': VERSION,
+    style: stylesheets.join('\n'),
+    script: scripts.join('\n'),
+    passages: storyPassages,
   };
-
-  if (story.ifid) obj.ifid = story.ifid;
-  if (story.twine2.format) obj.format = story.twine2.format;
-  if (story.twine2.formatVersion) obj['format-version'] = story.twine2.formatVersion;
-  if (story.twine2.start) obj.start = story.twine2.start;
-  if (story.twine2.tagColors.size > 0) obj['tag-colors'] = Object.fromEntries(story.twine2.tagColors);
-  if (story.twine2.zoom !== 1) obj.zoom = story.twine2.zoom;
-  obj.creator = CREATOR_NAME;
-  obj['creator-version'] = VERSION;
-  obj.style = stylesheets.join('\n');
-  obj.script = scripts.join('\n');
-  obj.passages = storyPassages;
 
   return JSON.stringify(obj, null, 2);
 }

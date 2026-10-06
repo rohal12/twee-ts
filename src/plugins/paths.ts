@@ -19,7 +19,7 @@ export interface OutputLocation {
  * directory, as the bundler resolves them. Undefined when the output names
  * neither, as for a bundle only generated in memory.
  */
-export function emittedFilePath(output: OutputLocation, fileName: string): string | undefined {
+function emittedFilePath(output: OutputLocation, fileName: string): string | undefined {
   const dir = output.dir ?? (output.file === undefined ? undefined : dirname(output.file));
   return dir === undefined ? undefined : resolve(dir, fileName);
 }

@@ -25,7 +25,9 @@ describe('toTwine2HTML without options', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-output-twine2-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('fills the story name and data and injects nothing', () => {
     const filename = join(dir, 'format.js');

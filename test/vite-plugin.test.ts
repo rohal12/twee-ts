@@ -420,13 +420,19 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     expect(story(out)).toContain('EXTRA_TEXT');
 
     writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'UPDATED_TEXT'));
-    await vi.waitFor(() => expect(story(out)).toContain('UPDATED_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('UPDATED_TEXT');
+    }, settled);
 
     writeFileSync(join(dir, 'story/parts/added.tw'), ':: Added\nADDED_TEXT\n');
-    await vi.waitFor(() => expect(story(out)).toContain('ADDED_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('ADDED_TEXT');
+    }, settled);
 
     unlinkSync(join(dir, 'story/parts/extra.tw'));
-    await vi.waitFor(() => expect(story(out)).not.toContain('EXTRA_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).not.toContain('EXTRA_TEXT');
+    }, settled);
     expect(story(out)).toContain('ADDED_TEXT');
   });
 
@@ -448,13 +454,19 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     expect(story(out)).toContain('window.modMarker = 1;');
 
     writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'UPDATED_TEXT'));
-    await vi.waitFor(() => expect(story(out)).toContain('UPDATED_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('UPDATED_TEXT');
+    }, settled);
 
     writeFileSync(join(dir, 'head.txt'), '<meta name="head-marker" content="two">');
-    await vi.waitFor(() => expect(story(out)).toContain('content="two"'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('content="two"');
+    }, settled);
 
     writeFileSync(join(dir, 'lib/mod.js'), 'window.modMarker = 2;');
-    await vi.waitFor(() => expect(story(out)).toContain('window.modMarker = 2;'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('window.modMarker = 2;');
+    }, settled);
   });
 
   it('neither loads nor watches its own HTML when it sits inside a source folder', async () => {
@@ -469,7 +481,9 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     );
 
     writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
-    await vi.waitFor(() => expect(story(out)).toContain('NEW_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('NEW_TEXT');
+    }, settled);
     expect(story(out)).not.toContain('OLD_TEXT');
     expect(hasDeletedPassage(story(out))).toBe(false);
 
@@ -477,7 +491,9 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     // check: the watcher reports changes in the order they happen, so once the save is
     // built, a change from writing the last build would have been reported before it.
     writeFileSync(join(dir, 'story/start.tw'), storyWith('LAST_TEXT'));
-    await vi.waitFor(() => expect(story(out)).toContain('LAST_TEXT'), settled);
+    await vi.waitFor(() => {
+      expect(story(out)).toContain('LAST_TEXT');
+    }, settled);
     expect(changes.map((id) => basename(id))).toContain('start.tw');
     expect(changes.filter((id) => isInside(id, outDir))).toEqual([]);
   });
@@ -548,10 +564,15 @@ describe(
       expect([...new Set(files)].sort()).toEqual([`${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`]);
 
       writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
-      await vi.waitFor(() => expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT'), {
-        timeout: 15_000,
-        interval: 100,
-      });
+      await vi.waitFor(
+        () => {
+          expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT');
+        },
+        {
+          timeout: 15_000,
+          interval: 100,
+        },
+      );
     });
   },
 );
@@ -598,7 +619,9 @@ async function freePort(): Promise<number> {
     const probe = createNetServer();
     probe.listen(0, '127.0.0.1', () => {
       const { port } = probe.address() as AddressInfo;
-      probe.close(() => done(port));
+      probe.close(() => {
+        done(port);
+      });
     });
   });
 }
@@ -660,20 +683,30 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(userScript(await page(url))).toContain('entry-ok');
     const send = vi.spyOn(server!.ws, 'send');
     writeFileSync(join(dir, 'main.ts'), ENTRY.replace('entry-ok', 'entry-saved'));
-    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-saved'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toContain('entry-saved');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
     // Each bundle of the entry loads the config file, which writes a temporary copy next to
     // it; a plugin that rebuilt for that copy would rebuild forever. The copy's events come
     // from the real watcher, so the test can't hold them back: a second save marks the end
     // of the check instead. A rebuild the copy started shows as a reload beyond the two saves'.
     // (A request compiles again by itself only for the story's files, not for the entry's.)
     writeFileSync(join(dir, 'main.ts'), ENTRY.replace('entry-ok', 'entry-saved-again'));
-    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-saved-again'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toContain('entry-saved-again');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
     expect(reloadsSent(send)).toBe(2);
   });
 
@@ -687,10 +720,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(await page(url)).not.toContain('Hello from the story.');
     mkdirSync(join(dir, 'shared'));
     writeFileSync(join(dir, 'shared/util.ts'), "export const mark = 'shared-ok';\n");
-    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('shared-ok'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toContain('shared-ok');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it("inlines the entry's fonts and images in dev too", async () => {
@@ -719,10 +757,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     writeFileSync(file, STORY.replace('Hello from the story.', 'Same-second save.'));
     utimesSync(file, coarse, coarse);
-    await vi.waitFor(async () => expect(await page(url)).toContain('Same-second save.'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('Same-second save.');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('keeps rebuilding after reporting an error fails', async () => {
@@ -742,12 +785,22 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir), undefined, { customLogger });
     const file = join(dir, 'story/start.tw');
     writeFileSync(file, `${STORY}\n:: Broken [unclosed\nText\n`);
-    await vi.waitFor(() => expect(broken).toBe(false), { timeout: 10_000, interval: 50 });
+    await vi.waitFor(
+      () => {
+        expect(broken).toBe(false);
+      },
+      { timeout: 10_000, interval: 50 },
+    );
     writeFileSync(file, STORY.replace('Hello from the story.', 'Recovered text.'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('Recovered text.'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('Recovered text.');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('runs no rebuild after the server closes, in middleware mode too', async () => {
@@ -846,10 +899,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     const send = vi.spyOn(server!.ws, 'send');
     writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Changed text.'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('Changed text.'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('Changed text.');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
     expect(send).toHaveBeenCalledWith({ type: 'full-reload' });
   });
 
@@ -857,10 +915,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
     writeFileSync(join(dir, 'app/style.css'), ':root { --entry-marker: 2; }\n');
-    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toMatch(/--entry-marker:\s*2/), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userStylesheet(await page(url))).toMatch(/--entry-marker:\s*2/);
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('rebundles when CSS reached through a nested @import changes', async () => {
@@ -873,10 +936,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*1/);
     writeFileSync(join(dir, 'app/styles/base.css'), ':root { --nested-marker: 2; }\n');
-    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*2/), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userStylesheet(await page(url))).toMatch(/--nested-marker:\s*2/);
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('rebundles when a file the entry CSS references with url() changes', async () => {
@@ -893,10 +961,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const encoded = (text: string): string => Buffer.from(text).toString('base64');
     expect(userStylesheet(await page(url))).toContain(encoded('first-image'));
     writeFileSync(image, Buffer.from('second-image'));
-    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toContain(encoded('second-image')), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userStylesheet(await page(url))).toContain(encoded('second-image'));
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it("leaves a shared plugin object's hooks alone across entry rebuilds, and still sees its watch files", async () => {
@@ -938,10 +1011,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
           join(dir, 'app/main.ts'),
           `(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v${n}';\n`,
         );
-        await vi.waitFor(async () => expect(userScript(await page(url))).toContain(`v${n}`), {
-          timeout: 10_000,
-          interval: 100,
-        });
+        await vi.waitFor(
+          async () => {
+            expect(userScript(await page(url))).toContain(`v${n}`);
+          },
+          {
+            timeout: 10_000,
+            interval: 100,
+          },
+        );
       }
       expect(Object.keys(shared)).toEqual(['name', 'transform', 'load']);
       expect(shared.transform).toBe(transform);
@@ -949,12 +1027,17 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       expect(Object.keys(shared.transform)).toEqual(['order', 'handler']);
       expect(shared.load).toBe(load);
       writeFileSync(extra, 'extra-two');
-      await vi.waitFor(async () => expect(userScript(await page(url))).toContain('extra-two'), {
-        timeout: 10_000,
-        interval: 100,
-      });
+      await vi.waitFor(
+        async () => {
+          expect(userScript(await page(url))).toContain('extra-two');
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+        },
+      );
     } finally {
-      delete (globalThis as Record<string, unknown>)[key];
+      Reflect.deleteProperty(globalThis, key);
     }
   });
 
@@ -995,12 +1078,17 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       const url = await start(dir, undefined, configFile);
       expect(userScript(await page(url))).toContain('env-one');
       writeFileSync(extra, 'env-two');
-      await vi.waitFor(async () => expect(userScript(await page(url))).toContain('env-two'), {
-        timeout: 10_000,
-        interval: 100,
-      });
+      await vi.waitFor(
+        async () => {
+          expect(userScript(await page(url))).toContain('env-two');
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+        },
+      );
     } finally {
-      delete (globalThis as Record<string, unknown>)[key];
+      Reflect.deleteProperty(globalThis, key);
     }
   });
 
@@ -1014,10 +1102,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     expect(userScript(await page(url))).toMatch(/--inline-marker:\s*1/);
     writeFileSync(join(dir, 'app/styles/index.css'), ':root { --inline-marker: 2; }\n');
-    await vi.waitFor(async () => expect(userScript(await page(url))).toMatch(/--inline-marker:\s*2/), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toMatch(/--inline-marker:\s*2/);
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('recompiles when the head file changes', async () => {
@@ -1030,10 +1123,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir, { compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') } }));
     expect(await page(url)).toContain('content="one"');
     writeFileSync(join(dir, 'head.html'), '<meta name="head-marker" content="two">');
-    await vi.waitFor(async () => expect(await page(url)).toContain('content="two"'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('content="two"');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('drops a deleted passage', async () => {
@@ -1046,10 +1144,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     expect(await page(url)).toContain('Extra passage text.');
     unlinkSync(join(dir, 'story/extra.tw'));
-    await vi.waitFor(async () => expect(await page(url)).not.toContain('Extra passage text.'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).not.toContain('Extra passage text.');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('coalesces rapid saves into one reload and ends on the latest content', async () => {
@@ -1103,14 +1206,25 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
       } finally {
         vi.useRealTimers();
       }
-      await vi.waitFor(() => expect(send.mock.calls.length).toBeGreaterThan(reported), {
-        timeout: 10_000,
-        interval: 20,
-      });
+      await vi.waitFor(
+        () => {
+          expect(send.mock.calls.length).toBeGreaterThan(reported);
+        },
+        {
+          timeout: 10_000,
+          interval: 20,
+        },
+      );
     };
-    await save('unlink', () => unlinkSync(file));
-    await save('add', () => writeFileSync(file, STORY.replace('Hello from the story.', 'First save.')));
-    await save('change', () => writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.')));
+    await save('unlink', () => {
+      unlinkSync(file);
+    });
+    await save('add', () => {
+      writeFileSync(file, STORY.replace('Hello from the story.', 'First save.'));
+    });
+    await save('change', () => {
+      writeFileSync(file, STORY.replace('Hello from the story.', 'Second save.'));
+    });
     expect(reloadsSent(send)).toBe(2); // the deleted Start passage is reported as an error
     expect(await page(url)).toContain('Second save.');
   });
@@ -1248,10 +1362,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     // The restarted server keeps the plugin instance; closing the old one must not stop it.
     await server!.restart();
     writeFileSync(join(dir, 'story/start.tw'), storyWith('AFTER_RESTART'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('AFTER_RESTART'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('AFTER_RESTART');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('keeps recompiling after a build with the same plugin instance ends (#179)', async () => {
@@ -1261,10 +1380,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(await page(url)).toContain('FIRST_TEXT');
     await buildProject(dir, shared);
     writeFileSync(join(dir, 'story/start.tw'), storyWith('AFTER_BUILD'));
-    await vi.waitFor(async () => expect(await page(url)).toContain('AFTER_BUILD'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(await page(url)).toContain('AFTER_BUILD');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('still recompiles for a module that an exclude glob also matches', async () => {
@@ -1308,10 +1432,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(html).not.toContain('Twine.image');
     expect(userStylesheet(html)).toContain(encoded('first-image'));
     writeFileSync(image, Buffer.from('second-image'));
-    await vi.waitFor(async () => expect(userStylesheet(await page(url))).toContain(encoded('second-image')), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userStylesheet(await page(url))).toContain(encoded('second-image'));
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('shows a malformed passage in the overlay and keeps serving the last good story', async () => {
@@ -1320,14 +1449,15 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const send = vi.spyOn(server!.ws, 'send');
     writeFileSync(join(dir, 'story/start.tw'), `${STORY}\n:: Broken [unclosed\nText\n`);
     await vi.waitFor(
-      () =>
+      () => {
         expect(send).toHaveBeenCalledWith({
           type: 'error',
           err: expect.objectContaining({
             message: expect.stringMatching(/Malformed twee source/),
             loc: expect.objectContaining({ file: expect.stringMatching(/start\.tw$/) }),
           }),
-        }),
+        });
+      },
       { timeout: 10_000, interval: 100 },
     );
     expect(await page(url)).toContain('Hello from the story.');
@@ -1338,15 +1468,25 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     const url = await start(dir, plugin(dir));
     const send = vi.spyOn(server!.ws, 'send');
     writeFileSync(join(dir, 'app/main.ts'), 'const = ;\n');
-    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' })), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      () => {
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
     writeFileSync(join(dir, 'app/main.ts'), ENTRY.replace('entry-ok', 'entry-fixed'));
-    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('entry-fixed'), {
-      timeout: 10_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      async () => {
+        expect(userScript(await page(url))).toContain('entry-fixed');
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+      },
+    );
   });
 
   it('serves a waiting page with the client when the first compile fails', async () => {

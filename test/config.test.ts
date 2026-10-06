@@ -12,6 +12,7 @@ import {
   CONFIG_FILENAME,
   CONFIG_KEYS,
 } from '../src/config.js';
+import { parseJsonObject } from './helpers/json.js';
 
 describe('validateConfig', () => {
   it('accepts a valid config', () => {
@@ -140,7 +141,9 @@ describe('loadConfig', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-config-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('returns null when no config file exists', () => {
     const config = loadConfig(dir);
@@ -169,7 +172,9 @@ describe('loading a config file with a BOM, CRLF line endings or another encodin
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-config-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   // UTF-8 with a BOM and CRLF, as Windows PowerShell 5 `Set-Content -Encoding UTF8` writes it.
   const WITH_BOM = '\uFEFF{\r\n  "sources": ["src/"],\r\n  "output": "story.html"\r\n}\r\n';
@@ -222,7 +227,9 @@ describe('unknown config keys', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-config-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('are not errors, so a config with a stray key keeps loading', () => {
     expect(validateConfig({ sources: ['src/'], formatID: 'harlowe-3', notes: 'x' })).toEqual([]);
@@ -282,19 +289,19 @@ describe('unknown config keys', () => {
 describe('scaffoldConfig', () => {
   it('returns valid JSON with $schema, sources, and output', () => {
     const json = scaffoldConfig();
-    const parsed = JSON.parse(json);
-    expect(parsed.$schema).toBe('https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json');
-    expect(parsed.sources).toEqual(['src/']);
-    expect(parsed.output).toBe('story.html');
+    const parsed = parseJsonObject(json);
+    expect(parsed['$schema']).toBe('https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json');
+    expect(parsed['sources']).toEqual(['src/']);
+    expect(parsed['output']).toBe('story.html');
   });
 });
 
 describe('JSON Schema', () => {
   it('is valid JSON and covers all TweeTsConfig fields', () => {
     const schemaPath = join(__dirname, '..', 'schemas', 'twee-ts.config.schema.json');
-    const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
+    const schema = parseJsonObject(readFileSync(schemaPath, 'utf-8'));
 
-    expect(schema.type).toBe('object');
+    expect(schema['type']).toBe('object');
 
     const expectedFields = [
       'sources',
@@ -319,16 +326,19 @@ describe('JSON Schema', () => {
     ];
 
     for (const field of expectedFields) {
-      expect(schema.properties).toHaveProperty(field);
+      expect(schema['properties']).toHaveProperty(field);
     }
   });
 
   it('defines exactly the keys the validator knows', () => {
     const schemaPath = join(__dirname, '..', 'schemas', 'twee-ts.config.schema.json');
-    const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
+    const schema = parseJsonObject(readFileSync(schemaPath, 'utf-8'));
 
-    expect(schema.additionalProperties).toBe(false);
-    expect(Object.keys(schema.properties).sort()).toEqual(['$schema', ...CONFIG_KEYS].sort());
+    expect(schema['additionalProperties']).toBe(false);
+    const properties = schema['properties'];
+    expect(properties).toBeTypeOf('object');
+    // Checked just above.
+    expect(Object.keys(properties as object).sort()).toEqual(['$schema', ...CONFIG_KEYS].sort());
   });
 
   it('accepts $schema field in config validation', () => {

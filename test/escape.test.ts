@@ -15,6 +15,7 @@ import {
   styleContentEscape,
   cssStringEscape,
 } from '../src/escape.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 describe('attrEscape', () => {
   it('escapes ampersands, quotes, and apostrophes', () => {
@@ -88,8 +89,8 @@ describe('jsStringEscape', () => {
   });
   it('keeps the value of a double- or single-quoted string literal', () => {
     const value = 'x</script>\\"\'\n\r\t\u2028\u2029<!--<script>--> é 😀';
-    expect(new Function(`return "${jsStringEscape(value)}";`)()).toBe(value);
-    expect(new Function(`return '${jsStringEscape(value)}';`)()).toBe(value);
+    expect(evaluateJavaScript(`return "${jsStringEscape(value)}";`)).toBe(value);
+    expect(evaluateJavaScript(`return '${jsStringEscape(value)}';`)).toBe(value);
   });
 });
 
@@ -380,7 +381,7 @@ describe('scriptContentEscape', () => {
   });
 
   it('keeps the values of JavaScript string, template, and regular expression literals', () => {
-    const evaluate = (code: string): unknown => new Function(`return ${code};`)();
+    const evaluate = (code: string): unknown => evaluateJavaScript(`return ${code};`);
     const sources = [
       '"</script>"',
       "'</SCRIPT >'",

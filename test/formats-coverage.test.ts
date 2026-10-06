@@ -3,13 +3,13 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  decodeFormatJSON,
   describeFormatRequest,
   discoverAllFormats,
   makeFormatId,
   readFormatSource,
   selectFormatCandidate,
 } from '../src/formats.js';
+import { decodeFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, StoryFormatInfo } from '../src/types.js';
 
 const isRoot = process.getuid?.() === 0;

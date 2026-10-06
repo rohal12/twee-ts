@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { tweeLexer, TweeLexer } from '../src/lexer.js';
 import { ItemType } from '../src/types.js';
+import type { LexerItem } from '../src/types.js';
 
 function collectItems(input: string) {
   return [...tweeLexer(input)];
@@ -121,7 +122,7 @@ describe('tweeLexer', () => {
 describe('TweeLexer class', () => {
   it('iterates via nextItem()', () => {
     const lexer = new TweeLexer(':: Start\nHello');
-    const items: import('../src/types.js').LexerItem[] = [];
+    const items: LexerItem[] = [];
     for (;;) {
       const { item, done } = lexer.nextItem();
       items.push(item);

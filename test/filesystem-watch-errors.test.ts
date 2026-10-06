@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
 import { watchFilesystem } from '../src/filesystem.js';
 import type { WatchHandle, WatchPathError } from '../src/filesystem.js';
+import type * as NodeFs from 'node:fs';
 
 /** A stand-in for an `fs.FSWatcher`, so a test can make the OS watcher fail. */
 class FakeWatcher extends EventEmitter {
@@ -18,7 +19,7 @@ class FakeWatcher extends EventEmitter {
 const watchers: FakeWatcher[] = [];
 
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   return {
     ...actual,
     watch: vi.fn(() => {

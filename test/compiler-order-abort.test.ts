@@ -59,14 +59,14 @@ describe('source order with inline sources mixed with files', () => {
     for (const result of builds) {
       const [setup, user] = positions(result.output, 'MARK_SETUP', 'MARK_CONSUMER');
       expect(setup).toBeGreaterThanOrEqual(0);
-      expect(setup).toBeLessThan(user as number);
+      expect(setup).toBeLessThan(user!);
     }
 
     const reversed = await buildAll([consumer, inline('setup.js', 'var MARK_SETUP = 42;'), story]);
     for (const result of reversed.builds) {
       const [setup, user] = positions(result.output, 'MARK_SETUP', 'MARK_CONSUMER');
       expect(user).toBeGreaterThanOrEqual(0);
-      expect(user).toBeLessThan(setup as number);
+      expect(user).toBeLessThan(setup!);
     }
   });
 

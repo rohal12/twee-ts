@@ -15,6 +15,7 @@ import {
   type ViteDevServer,
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
+import { compileJavaScript } from './helpers/javascript.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -48,7 +49,9 @@ async function freePort(): Promise<number> {
     const probe = createNetServer();
     probe.listen(0, '127.0.0.1', () => {
       const { port } = probe.address() as AddressInfo;
-      probe.close(() => done(port));
+      probe.close(() => {
+        done(port);
+      });
     });
   });
 }
@@ -152,11 +155,12 @@ describe('vite plugin: dev server details', { timeout: 30_000 }, () => {
     const socket = new WebSocket(url.replace('http', 'ws'), 'vite-hmr');
     try {
       await vi.waitFor(
-        () =>
+        () => {
           expect(send).toHaveBeenCalledWith({
             type: 'error',
             err: expect.objectContaining({ message: expect.stringMatching(/Malformed twee source/) }),
-          }),
+          });
+        },
         { timeout: 10_000, interval: 50 },
       );
     } finally {
@@ -334,7 +338,7 @@ describe('vite plugin: user configuration in the dev entry build', { timeout: 30
 describe('vite plugin: the client script in the served head', { timeout: 30_000 }, () => {
   function clientScripts(html: string) {
     return DomUtils.getElementsByTagName('script', parseDocument(html), true).filter(
-      (script) => script.attribs.src === '/@vite/client',
+      (script) => script.attribs['src'] === '/@vite/client',
     );
   }
 
@@ -367,7 +371,9 @@ describe('vite plugin: the client script in the served head', { timeout: 30_000 
     const inline = 'var s = "<head>"; var t = 1;';
     const html = await serveTemplate(`<!doctype html><html><script>${inline}</script><head></head>${BODY}`);
     expect(html).toContain(`<script>${inline}</script>`);
-    expect(() => new Function(inline)).not.toThrow();
+    expect(() => {
+      compileJavaScript(inline);
+    }).not.toThrow();
     const scripts = clientScripts(html);
     expect(scripts).toHaveLength(1);
     expect(scripts[0] && parentName(scripts[0])).toBe('head');

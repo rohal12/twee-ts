@@ -35,22 +35,20 @@ function stubFetch(routes: Readonly<Record<string, string>>): string[] {
   const calls: string[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string | URL | Request) => {
+    vi.fn((input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(url);
       const body = routes[url];
-      return body === undefined
-        ? new Response('missing', { status: 404, statusText: 'Not Found' })
-        : new Response(body);
+      return Promise.resolve(
+        body === undefined ? new Response('missing', { status: 404, statusText: 'Not Found' }) : new Response(body),
+      );
     }),
   );
   return calls;
 }
 
 function stubOffline(): ReturnType<typeof vi.fn> {
-  const fn = vi.fn(async () => {
-    throw new TypeError('offline');
-  });
+  const fn = vi.fn(() => Promise.reject(new TypeError('offline')));
   vi.stubGlobal('fetch', fn);
   return fn;
 }
@@ -342,7 +340,7 @@ describe('format files wrapped in comments with braces (#221)', () => {
     const result = await compile(
       options({ formatPaths: [formats], sources: story({ format: 'SugarCube', 'format-version': '2.37.3' }) }),
     );
-    expect(markerOf(result.output ?? '')).toBe('LOCALWRAP');
+    expect(markerOf(result.output)).toBe('LOCALWRAP');
   });
 
   it('downloads a wrapped format from a URL and compiles from the cache offline', async () => {
@@ -388,7 +386,7 @@ describe('format names and IDs match the same way everywhere (#156)', () => {
     });
   });
 
-  const requests: ReadonlyArray<readonly [string, Partial<CompileOptions>]> = [
+  const requests: readonly (readonly [string, Partial<CompileOptions>])[] = [
     ['StoryData "sugarcube" 2.36.1', { sources: story({ format: 'sugarcube', 'format-version': '2.36.1' }) }],
     ['StoryData "SUGARCUBE" 2.36.0', { sources: story({ format: 'SUGARCUBE', 'format-version': '2.36.0' }) }],
     ['formatId "SugarCube-2"', { formatId: 'SugarCube-2' }],
@@ -500,6 +498,7 @@ describe('format directory precedence (#163)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const [key, value] of Object.entries(saved)) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- unsetting an environment variable takes delete.
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
@@ -610,9 +609,8 @@ describe('formats that cannot be used are reported (#154, #164)', () => {
 
 describe('resolveStoryFormat', () => {
   it('goes online by default and warns with the text of a failure that is not an Error', async () => {
-    const fetchMock = vi.fn(async () => {
-      throw 'connection reset';
-    });
+    // A rejection with a string, not an Error.
+    const fetchMock = vi.fn().mockRejectedValue('connection reset');
     vi.stubGlobal('fetch', fetchMock);
     const diagnostics: Diagnostic[] = [];
     const found = await resolveStoryFormat(
