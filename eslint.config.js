@@ -1,6 +1,7 @@
 // @ts-check
 import tseslint from 'typescript-eslint';
 import vitest from '@vitest/eslint-plugin';
+import { HTML_STRUCTURE_RESTRICTIONS } from './scripts/html-structure-restrictions.mjs';
 
 /**
  * Objects built from untrusted keys must keep `__proto__` as an ordinary key (see CLAUDE.md), so
@@ -69,6 +70,13 @@ export default tseslint.config(
       // only-throw-error allows the same for `throw` by default.
       '@typescript-eslint/prefer-promise-reject-errors': ['error', { allowThrowingUnknown: true }],
       'no-restricted-syntax': ['error', ...PROTO_RESTRICTIONS],
+    },
+  },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/html-structure.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', ...PROTO_RESTRICTIONS, ...HTML_STRUCTURE_RESTRICTIONS],
     },
   },
   {

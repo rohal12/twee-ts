@@ -20,7 +20,7 @@ import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
 import type { BuildOutputs } from '../filesystem.js';
-import { findHeadStartEnd } from '../modules.js';
+import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
 import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
@@ -139,13 +139,9 @@ function mergeOutputs(a: BuildOutputs, b: BuildOutputs): BuildOutputs {
   return { files: [...a.files, ...b.files], dirs: [...a.dirs, ...b.dirs] };
 }
 
-/** Adds Vite's client to the page so reloads and the error overlay reach it. */
+/** Adds Vite's client to the page, first in its head, so reloads and the error overlay reach it. */
 function injectViteClient(html: string, base: string): string {
-  const tag = `<script type="module" src="${base}@vite/client"></script>`;
-  // The real head start tag: not one in a comment, a script or an attribute value.
-  const at = findHeadStartEnd(html);
-  if (at === undefined) return tag + html;
-  return html.slice(0, at) + tag + html.slice(at);
+  return insertViteClient(html, `${base}@vite/client`);
 }
 
 /** Whether a resolved config is a build of the client, the only build that carries the story. */

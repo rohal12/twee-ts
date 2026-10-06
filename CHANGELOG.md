@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fetchAndCacheFormat` is removed: it cached a download for every project by name and version. Use `formatIndices`, or `resolveRemoteFormat` with the index URL
 - `listCachedFormats`, `getCacheSize` and `clearCachedFormats` cover downloads from format URLs too, and `clearCachedFormats(name)` matches the format name without regard to letter case instead of a directory name (#248 F10). `discoverCachedFormats` keys its map by cache entry. `CachedFormatEntry` has new `source` and `origin` fields
 - An empty or relative `XDG_CACHE_HOME` is ignored, as the XDG Base Directory spec says (#248 F18)
+- Text that HTML cannot carry is an error in HTML output (so the CLI writes no file): U+0000 and lone surrogates in a passage name, tag or text or in the story name (the browser drops or replaces them, so links to such a passage break), and a tag that is empty or holds white space (it reads back as other tags). Remove those characters (#244 H14)
+- `{{STORY_NAME}}` is escaped for the place it is in the template, as the HTML parser reads it: in a JavaScript string or template literal, `\`, line breaks, U+2028 and U+2029 are escaped as well (so SugarCube's engine script stays valid for a title such as `Back\`), a URL attribute (`href`, `src`, …) gets the name percent-encoded, a JSON data block or CSS string gets JSON or CSS escaping instead of HTML escaping, and a place no escaping fits gets a warning. A format that relied on the HTML-escaped name in a URL, JSON or CSS needs no workaround any more (#244 H9)
+- Twine 1 obfuscation (`obfuscate:rot13`) follows the StorySettings passage the output carries: when it is `Twine.private` (or an alias of it), the story format cannot learn the setting, so the tiddlers are written unencoded, with a warning; untag StorySettings to obfuscate (#149)
+- Under `obfuscate:rot13`, a passage whose name ROT13 turns into `StorySettings`, or whose tag it turns into `Twine.image`, is an error: the story format would not decode it. Rename the passage or tag (#244 H15)
 
 - Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the config file's folder, not the working directory; `loadConfig()` and `loadConfigFile()` return them rebased onto the working directory. A config in the working directory is unaffected; for `-c dir/twee-ts.config.json`, drop the `dir/` prefix from its paths (FS-11, #247)
 - The CLI writes only the story (or a query's answer) to stdout: `--log-stats`, `--log-files` and watch mode's messages go to stderr, and `--log-files` also works when the story goes to stdout. Scripts that read the statistics from stdout read stderr instead (FS-01, #247)
@@ -65,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Twine 1 entries of a format index are downloaded (`header.html`, with `code.js` and `userlib.js` when listed) and used for a format ID (#248 F04)
 - What decoding leaves out of the story format a build uses (a function-valued property it skipped, a field of the wrong type it ignored) is a warning that names the format file, or the URL a downloaded format came from (#248)
 - A format ID also finds a local format by its name and major version, as it does in format URLs and indices, so `--format sugarcube-2` finds SugarCube 2.37.3 in a folder named `sugarcube-2.37` (#248 F14)
+- Warnings for head file content that does not stay in the head (text, body elements, or an unclosed comment, element or attribute), for a Twine 1 format with no store area for the IFID comment, for a carriage return in a script or stylesheet passage (the script element cannot carry it), and for a `</script`, `</style` or `<!--` in code where the backslash the compiler writes after the `<` changes the code (#244)
 
 ### Fixed
 
@@ -120,12 +125,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An unterminated tag block after an escaped line end is reported on the header's line (#246)
 - Parsing with `trim: false`, the word counts and Twee2 conversion take linear time on adversarial input (#246)
 - JSON output leaves out passage metadata entries with an empty value, as Twee output does (#246)
+- The structure of a story format template (the end and start of the head, the Twine 1 store area, the context of each placeholder) is found by parsing it as browsers do (parse5), not by scanning for tags. Modules, the head file and the Vite client are no longer injected into, or dropped because of, comments ending in `--!>`, `<!-->` or `<!--->`, bogus comments (`</ `, `</!`), double-escaped script text, `noscript`, `noframes`, `xmp`, `iframe`, `noembed` or `plaintext` text, template content, SVG CDATA, or attribute names holding `=` or quotes (#244 H1–H6, #223)
+- In a template without a head start tag, the Vite client goes into the head the browser creates, after the doctype, instead of before the doctype, where it put the dev page into quirks mode (#244 H7)
+- The Twine 1 IFID comment goes before the store area element the story format finds, written with any quotes, letter case or attribute order, not before a look-alike in a comment or script (#244 H8)
+- The Vite `base` is escaped in the client's `src` attribute (#244 H10)
+- Decompiling reads HTML as a browser does: the story is the one a story format finds (not a `tw-storydata` in template content or past a double-escaped script), passage text is the element's `textContent` (text in elements included), and line breaks and NUL are handled as the HTML parser does, also for `decompileHTML()` called with a string (#244 H11–H13)
+- A carriage return in a passage name, tag or text is written as `&#13;`, which keeps it, instead of raw, which the browser reads as a line feed (#244 H14)
 
 ### Changed
 
 - The published package is the tarball that CI packed and checked on Linux, macOS and Windows; the release job installs nothing and runs no package scripts (#250)
 - Loading the package through both `import` and `require()` in one process still loads the ESM and the CommonJS build separately (the dual package hazard); use one of the two (#250)
 - JavaScript (format.js files, story scripts, macro arguments) is read with acorn, which is bundled into the package; twee-ts still has no runtime dependencies and still runs no JavaScript it reads (#245)
+- HTML is parsed with parse5, which is bundled into the package in place of htmlparser2; twee-ts still has no runtime dependencies (#244)
+- In a template without a closing head tag that ends the head, the modules and head file go where the head ends (or where the browser creates the head), with a warning that names the line and column; they used to go before the body start tag, or nowhere when there was none (#244)
+- `{{STORY_DATA}}` and the Twine 1 `"STORY"` are replaced at their first occurrence where the browser reads the data as elements of the page; a look-alike in a comment, script or title before it is left alone. With no such occurrence, the first one is replaced, with an error (#244)
+- The round trip compile → decompile returns the story except for the documented cases: script and stylesheet passages come back joined, `</script`, `</style` and double-escaped `<!--` in them come back with the backslash the compiler writes (see the HTML decompiler in docs/api.md) (#244 H16)
+- The `CLOSING_HEAD_TAG` constant and the `scanHeadTags()` and `findHeadStartEnd()` scanners are removed from the (internal) modules (#244 H17)
 
 ## [1.18.2] - 2026-10-06
 

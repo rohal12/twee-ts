@@ -608,11 +608,11 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       break;
 
     case 'twine2-archive':
-      output = toTwine2Archive(story, startName, { sourceInfo });
+      output = toTwine2Archive(story, startName, { sourceInfo, diagnostics });
       break;
 
     case 'twine1-archive':
-      output = toTwine1Archive(story, startName);
+      output = toTwine1Archive(story, startName, { diagnostics });
       break;
 
     case 'json':

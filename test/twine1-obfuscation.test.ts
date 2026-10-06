@@ -6,12 +6,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseDocument } from 'htmlparser2';
+import { attr, elements } from './helpers/html.js';
+import type { HtmlElement } from './helpers/html.js';
 import { compile } from '../src/compiler.js';
 import { decompileHTML } from '../src/html-parser.js';
 
-type HtmlDocument = ReturnType<typeof parseDocument>;
-type HtmlNode = HtmlDocument['children'][number];
 type EnginePassage = readonly [name: string, tags: readonly string[], text: string];
 
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
@@ -30,14 +29,8 @@ function unescapeLineBreaks(s: string): string {
   return s.replace(/\\n/gm, '\n').replace(/\\t/gm, '\t').replace(/\\s/gm, '\\').replace(/\r/gm, '');
 }
 
-function tiddlerElements(html: string): HtmlNode[] {
-  const found: HtmlNode[] = [];
-  const visit = (node: HtmlNode): void => {
-    if ('attribs' in node && node.name === 'div' && 'tiddler' in node.attribs) found.push(node);
-    if ('children' in node) node.children.forEach(visit);
-  };
-  parseDocument(html).children.forEach(visit);
-  return found;
+function tiddlerElements(html: string): HtmlElement[] {
+  return elements(html, (node) => node.tagName === 'div' && attr(node, 'tiddler') !== undefined);
 }
 
 /**
@@ -47,10 +40,9 @@ function tiddlerElements(html: string): HtmlNode[] {
  */
 function readLikeEngine(html: string): EnginePassage[] {
   const tiddlers = tiddlerElements(html);
-  const attribute = (node: HtmlNode, name: string): string | undefined =>
-    'attribs' in node ? node.attribs[name] : undefined;
+  const attribute = attr;
   const settings = tiddlers.find((node) => attribute(node, 'tiddler') === 'StorySettings');
-  const settingsText = settings && 'children' in settings ? firstChildValue(settings) : '';
+  const settingsText = settings ? firstChildValue(settings) : '';
   const obfuscate = unescapeLineBreaks(settingsText)
     .split('\n')
     .some((line) => line.toLowerCase().replace(/\s/g, '') === 'obfuscate:rot13');
@@ -68,10 +60,11 @@ function readLikeEngine(html: string): EnginePassage[] {
 }
 
 /** engine.js: `b.firstChild ? b.firstChild.nodeValue : ""` (a comment's `nodeValue` is its text). */
-function firstChildValue(node: HtmlNode): string {
-  if (!('children' in node)) return '';
-  const first = node.children[0];
-  return first !== undefined && 'data' in first ? first.data : '';
+function firstChildValue(node: HtmlElement): string {
+  const first = node.childNodes[0];
+  if (first === undefined) return '';
+  if ('value' in first) return first.value;
+  return 'data' in first ? first.data : '';
 }
 
 function passages(story: { readonly passages: readonly { name: string; tags: readonly string[]; text: string }[] }) {
@@ -109,14 +102,12 @@ const OBFUSCATED = [
 describe('Twine 1 rot13 obfuscation output', () => {
   it('encodes the name, tags and text of each tiddler, as Twine 1.4 does', async () => {
     const result = await archive(OBFUSCATED);
-    const start = tiddlerElements(result.output).find(
-      (node) => 'attribs' in node && node.attribs['tiddler'] === 'Fgneg',
-    );
+    const start = tiddlerElements(result.output).find((node) => attr(node, 'tiddler') === 'Fgneg');
 
     expect(result.output).toMatch(
       /<div tiddler="Fgneg" tags="vageb Gjvar.cevingr-abg" [^>]*>Uryyb \[\[Arkg\]\]<\/div>/,
     );
-    expect(start && 'children' in start ? start.children.map((child) => child.type) : []).toEqual(['text']);
+    expect(start?.childNodes.map((child) => child.nodeName)).toEqual(['#text']);
     expect(result.output).toMatch(/<div tiddler="FgbelGvgyr" tags="" [^>]*>Zl Fgbel<\/div>/);
   });
 

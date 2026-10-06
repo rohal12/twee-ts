@@ -12,6 +12,7 @@ import type { FileCacheEntry } from '../types.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
 import type { BuildOutputs } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
+import { viteWaitingPage } from '../html-structure.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin } from './paths.js';
@@ -61,11 +62,7 @@ export function pathBelowBase(url: string, base: string): string | undefined {
 
 /** Served until the first successful compile, so the overlay has a page to appear on. */
 function waitingPage(base: string): string {
-  return (
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    `<script type="module" src="${base}@vite/client"></script>` +
-    '<title>twee-ts</title></head><body><p>The story has not compiled yet.</p></body></html>'
-  );
+  return viteWaitingPage(`${base}@vite/client`);
 }
 
 function toOverlayError(e: unknown): ErrorPayload['err'] {

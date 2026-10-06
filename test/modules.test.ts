@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import type { Diagnostic } from '../src/types.js';
 import { compile } from '../src/compiler.js';
-import { loadModules, modifyHead, scanHeadTags } from '../src/modules.js';
+import { loadModules, modifyHead } from '../src/modules.js';
 
 let tmpDir: string;
 
@@ -155,21 +155,25 @@ describe('modifyHead', () => {
     expect(diagnostics).toEqual([
       {
         level: 'warning',
-        message: 'The HTML has no closing head tag; the modules and head file were injected before its body start tag.',
+        message:
+          'The HTML has no closing head tag that ends its head; the modules and head file were injected where the ' +
+          'head ends, at line 1, column 23.',
       },
     ]);
   });
 
-  it('does not take <bodyx> or <tbody> for a body start tag', () => {
+  it('injects where the parser creates the head when there is no head or body tag (not at <bodyx> or <tbody>)', () => {
     const headFile = join(tmpDir, 'head.html');
     writeFileSync(headFile, '<meta>');
     const diagnostics: Diagnostic[] = [];
     const html = '<table><tbody></tbody></table><bodyx>';
-    expect(modifyHead(html, [], headFile, diagnostics)).toBe(html);
+    expect(modifyHead(html, [], headFile, diagnostics)).toBe(`<meta>\n${html}`);
     expect(diagnostics).toEqual([
       {
         level: 'warning',
-        message: 'The HTML has no closing head tag and no body start tag; the modules and head file were not injected.',
+        message:
+          'The HTML has no closing head tag that ends its head; the modules and head file were injected where the ' +
+          'head ends, at line 1, column 1.',
       },
     ]);
   });
@@ -203,42 +207,6 @@ describe('modifyHead', () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]!.level).toBe('warning');
     expect(diagnostics[0]!.message).toContain('Failed to read head file');
-  });
-});
-
-describe('scanHeadTags', () => {
-  const scan = (html: string) => scanHeadTags(html);
-
-  it('finds the first closing head tag and body start tag', () => {
-    const html = '<html><head></head><body></body></html>';
-    expect(scan(html)).toEqual({ closingHead: html.indexOf('</head>'), bodyStart: html.indexOf('<body>') });
-  });
-
-  it.each([
-    ['an inline script', '<script>var s = "</head><body>";</script>'],
-    ['an uppercase script', '<SCRIPT type="x">var s = "</head><body>";</SCRIPT >'],
-    ['a style element', '<style>/* </head><body> */</style>'],
-    ['a textarea', '<textarea></head><body></textarea>'],
-    ['a title', '<title></head><body></title>'],
-    ['a comment', '<!-- </head><body> -->'],
-    ['a double-quoted attribute', '<meta content="</head><body>">'],
-    ['a single-quoted attribute', "<meta content='</head><body>'>"],
-  ])('ignores tags in %s', (_label, context) => {
-    const html = `<html><head>${context}</head><body></body></html>`;
-    expect(scan(html)).toEqual({ closingHead: html.lastIndexOf('</head>'), bodyStart: html.lastIndexOf('<body>') });
-  });
-
-  it('finds nothing in an unterminated script or comment', () => {
-    expect(scan('<script></head><body>')).toEqual({ closingHead: undefined, bodyStart: undefined });
-    expect(scan('<!-- </head><body>')).toEqual({ closingHead: undefined, bodyStart: undefined });
-  });
-
-  it('does not end a script at </scripty>', () => {
-    expect(scan('<script></scripty></head><body></script>')).toEqual({ closingHead: undefined, bodyStart: undefined });
-  });
-
-  it('does not take <bodyx> for a body start tag', () => {
-    expect(scan('<bodyx><tbody>')).toEqual({ closingHead: undefined, bodyStart: undefined });
   });
 });
 
@@ -276,12 +244,12 @@ describe('modifyHead HTML context', () => {
     expect(diagnostics).toHaveLength(1);
   });
 
-  it('injects nothing, with a warning, when the only head and body tags are in a script or comment', () => {
+  it('injects at the end of the implied head, with a warning, when the only head and body tags are in a script or comment', () => {
     const diagnostics: Diagnostic[] = [];
     const html = '<script>"</head><body>"</script><!-- </head><body> -->';
-    expect(inject(html, diagnostics)).toBe(html);
+    expect(inject(html, diagnostics)).toBe(`${html}<meta>\n`);
     expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]!.message).toContain('no closing head tag and no body start tag');
+    expect(diagnostics[0]!.message).toContain('has no closing head tag that ends its head');
   });
 
   it('is not misled by an unterminated closing head tag in a script', () => {

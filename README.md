@@ -97,6 +97,6 @@ The twee-ts source code is free and unencumbered software released into the publ
 The published package is not entirely public domain:
 
 - twee-ts reimplements [Tweego](https://www.motoslave.net/tweego/) and ports parts of its Go source. Tweego is © Thomas Michael Edwards under the BSD 2-Clause licence.
-- The JavaScript in `dist/` bundles third-party packages (such as htmlparser2), which keep their own licences (MIT and BSD 2-Clause).
+- The JavaScript in `dist/` bundles third-party packages (such as parse5 and acorn), which keep their own licences (MIT and BSD 2-Clause).
 
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) lists every bundled package with its licence text, reproduces Tweego's notice, and ships in the npm package. The build regenerates it from what it actually bundled. If you redistribute twee-ts, or bundle it into your own build, keep that file with it.

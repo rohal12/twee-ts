@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { compile, compileIncremental, compileToFile, TweeTsError } from '../src/compiler.js';
 import type { CompileResult, Diagnostic, FileCacheEntry } from '../src/types.js';
 import { decompileHTML } from '../src/html-parser.js';
-import { Parser } from 'htmlparser2';
+import { scriptTexts } from './helpers/html.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
 import { parseJsonObject } from './helpers/json.js';
 
@@ -862,23 +862,7 @@ describe('format template placeholders', () => {
 
 /** The text of each script element in `html`, read as an HTML parser reads it. */
 function scriptElements(html: string): string[] {
-  const texts: string[] = [];
-  let current: string | undefined;
-  const parser = new Parser({
-    onopentag: (name) => {
-      if (name === 'script') current = '';
-    },
-    ontext: (text) => {
-      if (current !== undefined) current += text;
-    },
-    onclosetag: (name) => {
-      if (name === 'script' && current !== undefined) texts.push(current);
-      current = undefined;
-    },
-  });
-  parser.write(html);
-  parser.end();
-  return texts;
+  return scriptTexts(html);
 }
 
 describe('module and head file injection', () => {
@@ -982,8 +966,13 @@ describe('module and head file injection', () => {
     expect(story.passages.find((p) => p.tags.includes('script'))?.text).toBe(script);
   });
 
-  const NO_CLOSING_HEAD = 'has no closing head tag; the modules and head file were injected before its body start tag.';
-  const NOWHERE = 'has no closing head tag and no body start tag; the modules and head file were not injected.';
+  /** The warning for a template whose head ends without a closing head tag, injected at `line` and `column`. */
+  const noClosingHead = (owner: string, line: number, column: number) => ({
+    level: 'warning',
+    message:
+      `${owner} has no closing head tag that ends its head; the modules and head file were injected where the head ` +
+      `ends, at line ${line}, column ${column}.`,
+  });
 
   for (const body of ['<body>', '<BODY class="x">', '<Body\n>', '<body/>']) {
     it(`injects before a ${JSON.stringify(body)} start tag when a Twine 2 template has no closing head tag`, async () => {
@@ -995,9 +984,7 @@ describe('module and head file injection', () => {
       });
 
       expect(result.output).toContain(`<title>Head</title>${MODULE}\n${META}\n${body}<!-- UUID:`);
-      expect(result.diagnostics).toEqual([
-        { level: 'warning', message: `Story format "Custom" 1.0.0 ${NO_CLOSING_HEAD}` },
-      ]);
+      expect(result.diagnostics).toEqual([noClosingHead('Story format "Custom" 1.0.0', 1, 42)]);
     });
   }
 
@@ -1006,7 +993,7 @@ describe('module and head file injection', () => {
     const result = await compile({ ...options, ...headOptions(), sources: [{ filename: 'story.tw', content: STORY }] });
 
     expect(result.output).toContain(`<title>T</title>${MODULE}\n${META}\n<body><!-- UUID:`);
-    expect(result.diagnostics).toEqual([{ level: 'warning', message: `Story format "custom-1" ${NO_CLOSING_HEAD}` }]);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "custom-1"', 1, 23)]);
   });
 
   it('injects before the body start tag when a pre-1.4 Twine 1 header has no closing head tag', async () => {
@@ -1015,19 +1002,34 @@ describe('module and head file injection', () => {
 
     expect(result.output.startsWith(`<html><title>T</title>${MODULE}\n${META}\n<body><!--`)).toBe(true);
     expect(result.output).toMatch(/<\/div><\/div>\n<\/body>\n<\/html>\n$/);
-    expect(result.diagnostics).toEqual([{ level: 'warning', message: `Story format "custom-1" ${NO_CLOSING_HEAD}` }]);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "custom-1"', 1, 23)]);
   });
 
-  it('looks for the body start tag in the footer of a pre-1.4 Twine 1 format too', async () => {
-    const options = twine1Format('<div id="storeArea">');
-    writeFileSync(join(dir, 'formats', 'custom-1', 'footer.html'), '</div><body></body>');
+  it('looks for the closing head tag in the footer of a pre-1.4 Twine 1 format too', async () => {
+    const options = twine1Format('<html><head><title>T</title><body>');
+    writeFileSync(join(dir, 'formats', 'custom-1', 'footer.html'), '<div id="storeArea"></div></head></body>');
     const result = await compile({ ...options, ...headOptions(), sources: [{ filename: 'story.tw', content: STORY }] });
 
-    expect(result.output.endsWith(`</div></div>${MODULE}\n${META}\n<body></body>`)).toBe(true);
-    expect(result.diagnostics).toEqual([{ level: 'warning', message: `Story format "custom-1" ${NO_CLOSING_HEAD}` }]);
+    // The body start tag in the template ends the head, so the closing head tag in the footer is not it.
+    expect(result.output.startsWith(`<html><head><title>T</title>${MODULE}\n${META}\n<body><div tiddler=`)).toBe(true);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "custom-1"', 1, 29)]);
   });
 
-  it('warns and injects nothing when a Twine 2 template has neither a closing head tag nor a body start tag', async () => {
+  it('ends the head where the story data of a pre-1.4 Twine 1 format starts, before a closing head tag in the footer', async () => {
+    const options = twine1Format('<html><head><title>T</title>');
+    writeFileSync(join(dir, 'formats', 'custom-1', 'footer.html'), '</head><body><div id="storeArea"></div></body>');
+    const result = await compile({
+      ...options,
+      modules: headOptions().modules,
+      sources: [{ filename: 'story.tw', content: STORY }],
+    });
+
+    // The story data (tiddler divs) between template and footer is body content, so the head ends before it.
+    expect(result.output.startsWith(`<html><head><title>T</title>${MODULE}\n<div tiddler=`)).toBe(true);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "custom-1"', 1, 29)]);
+  });
+
+  it('injects at the end of an implied head, with a warning, when a Twine 2 template has no head or body tag', async () => {
     const options = twine2Format('<title>{{STORY_NAME}}</title>{{STORY_DATA}}');
     const script = 'window.tags = "</head><body>";';
     const sources = [
@@ -1035,19 +1037,17 @@ describe('module and head file injection', () => {
       { filename: 'tag.tw', content: `:: Code [script]\n${script}\n` },
     ];
     const result = await compile({ ...options, ...headOptions(), sources });
-    const plain = await compile({ ...options, sources });
 
-    expect(result.output).toBe(plain.output);
-    expect(result.diagnostics).toEqual([{ level: 'warning', message: `Story format "Custom" 1.0.0 ${NOWHERE}` }]);
+    expect(result.output.startsWith(`<title>Head</title>${MODULE}\n${META}\n<!-- UUID:`)).toBe(true);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "Custom" 1.0.0', 1, 30)]);
   });
 
-  it('warns and injects nothing when a Twine 1 header has neither a closing head tag nor a body start tag', async () => {
+  it('injects where the parser creates the head, with a warning, when a Twine 1 header has no head or body tag', async () => {
     const options = twine1Format('<div id="storeArea">"STORY"</div>');
     const result = await compile({ ...options, ...headOptions(), sources: [{ filename: 'story.tw', content: STORY }] });
 
-    expect(result.output).not.toContain(META);
-    expect(result.output).not.toContain(MODULE);
-    expect(result.diagnostics).toEqual([{ level: 'warning', message: `Story format "custom-1" ${NOWHERE}` }]);
+    expect(result.output.startsWith(`${MODULE}\n${META}\n<!-- UUID://`)).toBe(true);
+    expect(result.diagnostics).toEqual([noClosingHead('Story format "custom-1"', 1, 1)]);
   });
 
   it('reports nothing for a template without a closing head tag when there is nothing to inject', async () => {
@@ -1216,7 +1216,7 @@ describe('compile with sources that are not valid UTF-8', () => {
     mkdirSync(formatDir, { recursive: true });
     writeFileSync(
       join(formatDir, 'header.html'),
-      '<html><head></head><body><script>"ENGINE"</script>"STORY"</body></html>',
+      '<html><head></head><body><script>"ENGINE"</script><div id="storeArea">"STORY"</div></body></html>',
     );
     writeFileSync(engine, windows1252('var word = "café";'));
 

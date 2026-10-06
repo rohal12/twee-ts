@@ -62,6 +62,8 @@ Outputs a Twine 1-compatible archive with `<div tiddler>` elements. Each tiddler
 
 If a `StorySettings` passage contains `obfuscate:rot13`, each tiddler's `tiddler` name, tags and content are ROT13-encoded, except for `StorySettings` itself and `Twine.image` passages, as Twine 1.4 writes them and as its story formats (Sugarcane, Jonah, Responsive) decode them. The Twine 1 HTML output does the same, and decompiling Twine 1 HTML decodes these tiddlers again. (Tweego writes them unencoded, which those story formats then decode into the wrong names and text.)
 
+Only the `StorySettings` passage that is written tells the story format to decode: when it is tagged `Twine.private` (or an alias of it), the tiddlers are written unencoded, with a warning. A passage whose name ROT13 turns into `StorySettings`, or whose tag it turns into `Twine.image`, cannot be decoded by the story format, and is an error.
+
 ## JSON
 
 ```sh
