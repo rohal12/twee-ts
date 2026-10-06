@@ -52,11 +52,11 @@ It does not alter compiler sources, download real formats, or modify real storie
 The fixtures and caches are disposable. It requires the built `dist` artifacts
 and development dependencies, including TypeScript, Vite, and htmlparser2.
 
-For a regression comparison against the checked-in first run:
+For a regression comparison against the latest accepted run (v1.18.2):
 
 ```sh
 node validation/compiler-contracts.mjs \
-  --baseline validation/reports/2026-10-06.json \
+  --baseline validation/reports/2026-10-06-v1.18.2.json \
   --report /tmp/twee-ts-contracts-next.json
 ```
 
@@ -106,8 +106,9 @@ Keep one issue per independently fixable invariant violation. Each issue needs:
 - concrete closure checks and suggested permanent regression-test locations;
 - reviewed product commit and evidence commands.
 
-The six current issues are six independent implementation concerns, not six new
-umbrella issues. Their variants should extend their acceptance criteria. Closure
+The six originally tracked issues are six independent implementation concerns,
+resolved in v1.18.2 and verified in the release ledger below. New variants should
+extend their acceptance criteria when the same invariant fails again. Closure
 requires every assigned failing row to pass, the controls to remain green, and the
 full matrix to gain no regressions. A partial fix keeps the issue open.
 
@@ -121,6 +122,13 @@ use ticket count, line coverage, or a single successful story as a quality verdi
 The first run is recorded in `validation/reports/2026-10-06.json` and summarized in
 `validation/reports/2026-10-06.md`. Documentation and validation artifacts were
 added in the working tree; the compiler target remains the recorded product SHA.
+
+The release follow-up is recorded in `validation/reports/2026-10-06-v1.18.2.json`
+and summarized in `validation/reports/2026-10-06-v1.18.2.md`. On release commit
+`ab249c22d9c2c7c893e6e56839dcfa0e94d3ae7d`, the unchanged 59-case matrix has
+59 passing cases: all 16 original failures are fixed, all 43 controls still pass,
+and no cases are blocked. This is the latest accepted baseline for subsequent
+comparisons. Keep the initial failing baseline unchanged as historical evidence.
 
 ## Explicit limits
 
