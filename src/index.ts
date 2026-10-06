@@ -37,16 +37,15 @@ export {
 } from './config.js';
 
 // Remote formats
+export { resolveRemoteFormat } from './format-resolution.js';
+export { fetchDirectFormat } from './remote-formats.js';
 export {
-  resolveRemoteFormat,
-  fetchAndCacheFormat,
-  fetchDirectFormat,
   getCacheDir,
   discoverCachedFormats,
   listCachedFormats,
   clearCachedFormats,
   getCacheSize,
-} from './remote-formats.js';
+} from './format-cache.js';
 
 // Runtime values
 export { ItemType } from './types.js';
@@ -85,7 +84,7 @@ export type {
   PassageOmission,
   OmittingTag,
 } from './types.js';
-export type { CachedFormatEntry } from './remote-formats.js';
+export type { CachedFormatEntry } from './format-cache.js';
 export type { DecompileResult } from './html-parser.js';
 export type { StoryMap, BrokenLink } from './inspect.js';
 export type { LintResult } from './lint.js';

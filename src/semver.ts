@@ -1,35 +1,58 @@
 /**
- * SemVer parsing and precedence, shared by every story format lookup (local folders, the download
- * cache and remote indices).
+ * SemVer parsing and precedence, shared by every story format lookup (local folders, format URLs
+ * and format indices).
  *
- * Parsing follows Tweego's `semver.NewVersion` (Masterminds/semver): a leading `v` is allowed, and
- * `x` or `x.y` stand for `x.0.0` and `x.y.0`. Comparison follows SemVer 2.0.0 §11: a prerelease
- * ranks below its release, prerelease identifiers compare field by field, and build metadata is
- * ignored.
+ * Parsing follows SemVer 2.0.0 with two of Tweego's `semver.NewVersion` (Masterminds/semver)
+ * extensions: a leading `v` or `V` is allowed, and `x` or `x.y` stand for `x.0.0` and `x.y.0`.
+ * As SemVer 2.0.0 §2 and §9 require, a numeric identifier (major, minor, patch, or a numeric
+ * prerelease identifier) has no leading zero: `01.2.3` and `1.2.3-01` are not versions.
+ * Major, minor and patch must not exceed `Number.MAX_SAFE_INTEGER`, so that they compare exactly;
+ * a larger number is not accepted as a version. Numeric prerelease identifiers have no size limit.
+ *
+ * Comparison follows SemVer 2.0.0 §11: a prerelease ranks below its release, prerelease
+ * identifiers compare field by field (numeric ones by value and below alphanumeric ones, which
+ * compare in ASCII order), and build metadata is ignored.
  */
 import type { SemVer } from './types.js';
 
-const IDENTIFIERS = String.raw`[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*`;
-const VERSION = new RegExp(String.raw`^[vV]?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-(${IDENTIFIERS}))?(?:\+${IDENTIFIERS})?$`);
+const NUMBER = String.raw`0|[1-9]\d*`;
+/** A prerelease identifier: a number without leading zeros, or an alphanumeric one with at least one non-digit. */
+const PRERELEASE_ID = String.raw`(?:${NUMBER}|\d*[A-Za-z-][0-9A-Za-z-]*)`;
+const BUILD_ID = String.raw`[0-9A-Za-z-]+`;
+const VERSION = new RegExp(
+  String.raw`^[vV]?(${NUMBER})(?:\.(${NUMBER}))?(?:\.(${NUMBER}))?` +
+    String.raw`(?:-(${PRERELEASE_ID}(?:\.${PRERELEASE_ID})*))?(?:\+${BUILD_ID}(?:\.${BUILD_ID})*)?$`,
+);
 const NUMERIC = /^\d+$/;
 
-/** Parse a version string, or return null when it is not a version. */
+/** A version number part, or undefined when it is too large to compare exactly. */
+function versionNumber(digits: string | undefined): number | undefined {
+  const value = Number(digits ?? '0');
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/** Parse a version string, or return null when it is not a version (see the module comment). */
 export function parseVersion(text: string): SemVer | null {
   const m = VERSION.exec(text);
   if (!m) return null;
-  return {
-    major: Number(m[1]),
-    minor: Number(m[2] ?? 0),
-    patch: Number(m[3] ?? 0),
-    prerelease: m[4] === undefined ? [] : m[4].split('.'),
-  };
+  const major = versionNumber(m[1]);
+  const minor = versionNumber(m[2]);
+  const patch = versionNumber(m[3]);
+  if (major === undefined || minor === undefined || patch === undefined) return null;
+  return { major, minor, patch, prerelease: m[4] === undefined ? [] : m[4].split('.') };
 }
 
-/** Compare two prerelease identifiers: numeric ones numerically and below alphanumeric ones, which compare as ASCII. */
+/** Compare two digit strings without leading zeros by value, whatever their size. */
+function compareDigits(a: string, b: string): number {
+  if (a.length !== b.length) return Math.sign(a.length - b.length);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Compare two prerelease identifiers: numeric ones by value and below alphanumeric ones, which compare as ASCII. */
 function compareIdentifiers(a: string, b: string): number {
   const aNumeric = NUMERIC.test(a);
   const bNumeric = NUMERIC.test(b);
-  if (aNumeric && bNumeric) return Math.sign(Number(a) - Number(b));
+  if (aNumeric && bNumeric) return compareDigits(a, b);
   if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
   return a < b ? -1 : a > b ? 1 : 0;
 }

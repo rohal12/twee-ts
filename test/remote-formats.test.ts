@@ -1,52 +1,38 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-  rmSync,
-  symlinkSync,
-} from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import {
   getCacheDir,
-  findEntry,
-  verifySHA256,
   clearIndexCache,
   discoverCachedFormats,
   listCachedFormats,
   clearCachedFormats,
   getCacheSize,
-  fetchAndCacheFormat,
   fetchDirectFormat,
-  resolveRemoteFormat,
-  resolveRemoteFormatRequest,
   fetchIndex,
 } from '../src/remote-formats.js';
+import { cacheKey, readRecord } from '../src/format-cache.js';
+import { resolveRemoteFormat, resolveStoryFormat } from '../src/format-resolution.js';
+import { useCachedRecord } from '../src/remote-formats.js';
 import { compile } from '../src/compiler.js';
 import { parseFormatJSON } from '../src/format-decode.js';
-import type { CompileResult, SFAIndex, SFAIndexEntry } from '../src/types.js';
+import type { CompileResult, Diagnostic, FormatRequest, SFAIndexEntry, StoryFormatInfo } from '../src/types.js';
 import type * as NodeFs from 'node:fs';
+import { seedIndexDownload } from './helpers/format-cache.js';
 
-// lstatSync and writeFileSync pass through to the real ones unless a test stands in for
-// another process that acts between two steps of a cache write.
+// writeFileSync passes through to the real one unless a test stands in for another process that
+// reads the cache between two steps of a cache write.
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFs>();
-  return { ...actual, lstatSync: vi.fn(actual.lstatSync), writeFileSync: vi.fn(actual.writeFileSync) };
+  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
 });
 
 const realFs = await vi.importActual<typeof NodeFs>('node:fs');
-import { textOf } from './helpers/text.js';
-const mockedLstatSync = vi.mocked(fs.lstatSync);
 const mockedWriteFileSync = vi.mocked(fs.writeFileSync);
 
 afterEach(() => {
-  mockedLstatSync.mockReset();
-  mockedLstatSync.mockImplementation(realFs.lstatSync);
   mockedWriteFileSync.mockReset();
   mockedWriteFileSync.mockImplementation(realFs.writeFileSync);
 });
@@ -54,8 +40,8 @@ afterEach(() => {
 // Minimal format.js content for testing
 const MOCK_FORMAT_SOURCE = `window.storyFormat({"name":"MockFormat","version":"2.1.0","proofing":false,"source":"<html><body>{{STORY_DATA}}</body></html>"});`;
 
-function makeSFAIndex(entries: SFAIndexEntry[]): SFAIndex {
-  return { twine1: [], twine2: entries };
+function mockFormat(name: string, version: string): string {
+  return `window.storyFormat({"name":"${name}","version":"${version}","proofing":false,"source":"<html></html>"});`;
 }
 
 describe('getCacheDir', () => {
@@ -67,82 +53,25 @@ describe('getCacheDir', () => {
 
   it('respects XDG_CACHE_HOME', () => {
     const orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = '/tmp/xdg-test';
+    const xdg = join(tmpdir(), 'xdg-test');
+    process.env['XDG_CACHE_HOME'] = xdg;
     try {
-      const dir = getCacheDir();
-      expect(dir).toBe(join('/tmp/xdg-test', 'twee-ts', 'storyformats'));
+      expect(getCacheDir()).toBe(join(xdg, 'twee-ts', 'storyformats'));
     } finally {
-      if (orig !== undefined) {
-        process.env['XDG_CACHE_HOME'] = orig;
-      } else {
-        delete process.env['XDG_CACHE_HOME'];
-      }
+      if (orig !== undefined) process.env['XDG_CACHE_HOME'] = orig;
+      else delete process.env['XDG_CACHE_HOME'];
     }
   });
-});
 
-describe('findEntry', () => {
-  const entries: SFAIndexEntry[] = [
-    { name: 'SugarCube', version: '2.36.1', proofing: false, files: ['format.js'], checksums: {} },
-    { name: 'SugarCube', version: '2.37.3', proofing: false, files: ['format.js'], checksums: {} },
-    { name: 'SugarCube', version: '2.38.0', proofing: false, files: ['format.js'], checksums: {} },
-    { name: 'SugarCube', version: '1.0.0', proofing: false, files: ['format.js'], checksums: {} },
-    { name: 'Harlowe', version: '3.3.9', proofing: false, files: ['format.js'], checksums: {} },
-  ];
-  const index = makeSFAIndex(entries);
-
-  it('finds exact version match', () => {
-    const result = findEntry(index, 'SugarCube', '2.37.3');
-    expect(result?.entry.version).toBe('2.37.3');
-    expect(result?.formatType).toBe('twine2');
-  });
-
-  it('finds highest same-major version when exact not available', () => {
-    const result = findEntry(index, 'SugarCube', '2.35.0');
-    expect(result?.entry.version).toBe('2.38.0');
-  });
-
-  it('does not cross major versions', () => {
-    const result = findEntry(index, 'SugarCube', '3.0.0');
-    expect(result).toBeUndefined();
-  });
-
-  it('is case-insensitive on name', () => {
-    const result = findEntry(index, 'sugarcube', '2.37.3');
-    expect(result?.entry.version).toBe('2.37.3');
-  });
-
-  it('returns undefined for unknown format', () => {
-    const result = findEntry(index, 'Unknown', '1.0.0');
-    expect(result).toBeUndefined();
-  });
-
-  it('finds Harlowe', () => {
-    const result = findEntry(index, 'Harlowe', '3.3.9');
-    expect(result?.entry.version).toBe('3.3.9');
-  });
-});
-
-describe('verifySHA256', () => {
-  it('verifies correct checksum', async () => {
-    const data = new TextEncoder().encode('hello world');
-    // SHA-256 of "hello world"
-    const expected = 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
-    const result = await verifySHA256(data, expected);
-    expect(result).toBe(true);
-  });
-
-  it('rejects incorrect checksum', async () => {
-    const data = new TextEncoder().encode('hello world');
-    const result = await verifySHA256(data, '0000000000000000000000000000000000000000000000000000000000000000');
-    expect(result).toBe(false);
-  });
-
-  it('is case-insensitive on expected hex', async () => {
-    const data = new TextEncoder().encode('hello world');
-    const expected = 'B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9';
-    const result = await verifySHA256(data, expected);
-    expect(result).toBe(true);
+  it.each(['', 'relative-cache', './cache'])('ignores an XDG_CACHE_HOME of %j (F18)', (value) => {
+    const orig = process.env['XDG_CACHE_HOME'];
+    process.env['XDG_CACHE_HOME'] = value;
+    try {
+      expect(getCacheDir()).toBe(join(homedir(), '.cache', 'twee-ts', 'storyformats'));
+    } finally {
+      if (orig !== undefined) process.env['XDG_CACHE_HOME'] = orig;
+      else delete process.env['XDG_CACHE_HOME'];
+    }
   });
 });
 
@@ -154,227 +83,111 @@ describe('clearIndexCache', () => {
   });
 });
 
-describe('discoverCachedFormats', () => {
-  let cacheHome: string;
-
+/** Give each test its own XDG cache root under the OS temp dir. */
+function useTempCacheHome(): { readonly root: () => string } {
+  let root = '';
+  let orig: string | undefined;
   beforeEach(() => {
-    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-test-'));
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-cache-'));
+    orig = process.env['XDG_CACHE_HOME'];
+    process.env['XDG_CACHE_HOME'] = root;
+    clearIndexCache();
   });
-
   afterEach(() => {
-    rmSync(cacheHome, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    if (orig !== undefined) process.env['XDG_CACHE_HOME'] = orig;
+    else delete process.env['XDG_CACHE_HOME'];
+    rmSync(root, { recursive: true, force: true });
   });
+  return { root: () => root };
+}
+
+describe('discoverCachedFormats', () => {
+  const tmp = useTempCacheHome();
 
   it('discovers formats in cache directory', () => {
-    // Set XDG_CACHE_HOME to our tmp dir so getCacheDir uses it
-    const orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = cacheHome;
-    try {
-      const cacheDir = getCacheDir();
-      const formatDir = join(cacheDir, 'MockFormat', '2.1.0');
-      mkdirSync(formatDir, { recursive: true });
-      writeFileSync(join(formatDir, 'format.js'), MOCK_FORMAT_SOURCE);
-
-      const formats = discoverCachedFormats();
-      expect(formats.size).toBeGreaterThanOrEqual(1);
-
-      const values = [...formats.values()];
-      const mock = values.find((f) => f.name === 'MockFormat');
-      expect(mock).toBeDefined();
-      expect(mock!.version).toBe('2.1.0');
-    } finally {
-      if (orig !== undefined) {
-        process.env['XDG_CACHE_HOME'] = orig;
-      } else {
-        delete process.env['XDG_CACHE_HOME'];
-      }
-    }
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
+    const mock = [...discoverCachedFormats().values()].find((f) => f.name === 'MockFormat');
+    expect(mock?.version).toBe('2.1.0');
   });
 
   it('returns empty map when cache dir does not exist', () => {
-    const orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = join(cacheHome, 'nonexistent');
-    try {
-      const formats = discoverCachedFormats();
-      expect(formats.size).toBe(0);
-    } finally {
-      if (orig !== undefined) {
-        process.env['XDG_CACHE_HOME'] = orig;
-      } else {
-        delete process.env['XDG_CACHE_HOME'];
-      }
-    }
+    process.env['XDG_CACHE_HOME'] = join(tmp.root(), 'nonexistent');
+    expect(discoverCachedFormats().size).toBe(0);
   });
 });
 
-/** Helper: set XDG_CACHE_HOME for a test, restore afterward. */
-function withCacheHome(tmpDir: string, fn: () => void): void {
-  const orig = process.env['XDG_CACHE_HOME'];
-  process.env['XDG_CACHE_HOME'] = tmpDir;
-  try {
-    fn();
-  } finally {
-    if (orig !== undefined) {
-      process.env['XDG_CACHE_HOME'] = orig;
-    } else {
-      delete process.env['XDG_CACHE_HOME'];
-    }
-  }
-}
-
 describe('listCachedFormats', () => {
-  let cacheHome: string;
+  const tmp = useTempCacheHome();
 
-  beforeEach(() => {
-    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-list-'));
-  });
-
-  afterEach(() => {
-    rmSync(cacheHome, { recursive: true, force: true });
-  });
-
-  it('lists cached formats with size and date', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      const formatDir = join(cacheDir, 'MockFormat', '2.1.0');
-      mkdirSync(formatDir, { recursive: true });
-      writeFileSync(join(formatDir, 'format.js'), MOCK_FORMAT_SOURCE);
-
-      const entries = listCachedFormats();
-      expect(entries.length).toBe(1);
-      expect(entries[0]!.name).toBe('MockFormat');
-      expect(entries[0]!.version).toBe('2.1.0');
-      expect(entries[0]!.sizeBytes).toBeGreaterThan(0);
-      expect(entries[0]!.modifiedAt).toBeInstanceOf(Date);
+  it('lists cached formats with size, date and origin', () => {
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
+    const entries = listCachedFormats();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      name: 'MockFormat',
+      version: '2.1.0',
+      source: 'index',
+      sizeBytes: MOCK_FORMAT_SOURCE.length,
     });
+    expect(entries[0]?.modifiedAt).toBeInstanceOf(Date);
   });
 
   it('returns empty array when cache does not exist', () => {
-    withCacheHome(join(cacheHome, 'nonexistent'), () => {
-      expect(listCachedFormats()).toEqual([]);
-    });
+    process.env['XDG_CACHE_HOME'] = join(tmp.root(), 'nonexistent');
+    expect(listCachedFormats()).toEqual([]);
   });
 
   it('lists multiple formats', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      for (const [name, version] of [
-        ['FormatA', '1.0.0'],
-        ['FormatB', '3.2.1'],
-      ] as const) {
-        const dir = join(cacheDir, name, version);
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(
-          join(dir, 'format.js'),
-          `window.storyFormat({"name":"${name}","version":"${version}","proofing":false,"source":"<html></html>"});`,
-        );
-      }
-
-      const entries = listCachedFormats();
-      expect(entries.length).toBe(2);
-      const names = entries.map((e) => e.name).sort();
-      expect(names).toEqual(['FormatA', 'FormatB']);
-    });
+    seedIndexDownload('FormatA', '1.0.0', mockFormat('FormatA', '1.0.0'));
+    seedIndexDownload('FormatB', '3.2.1', mockFormat('FormatB', '3.2.1'));
+    expect(
+      listCachedFormats()
+        .map((e) => e.name)
+        .sort(),
+    ).toEqual(['FormatA', 'FormatB']);
   });
 });
 
 describe('clearCachedFormats', () => {
-  let cacheHome: string;
-
-  beforeEach(() => {
-    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-clear-'));
-  });
-
-  afterEach(() => {
-    rmSync(cacheHome, { recursive: true, force: true });
-  });
+  const tmp = useTempCacheHome();
 
   it('clears all cached formats', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      const dir = join(cacheDir, 'MockFormat', '2.1.0');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
-
-      const count = clearCachedFormats();
-      expect(count).toBe(1);
-      expect(listCachedFormats()).toEqual([]);
-    });
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
+    expect(clearCachedFormats()).toBe(1);
+    expect(listCachedFormats()).toEqual([]);
   });
 
-  it('clears formats by name', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      for (const [name, version] of [
-        ['FormatA', '1.0.0'],
-        ['FormatB', '3.2.1'],
-      ] as const) {
-        const dir = join(cacheDir, name, version);
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(
-          join(dir, 'format.js'),
-          `window.storyFormat({"name":"${name}","version":"${version}","proofing":false,"source":"<html></html>"});`,
-        );
-      }
-
-      const count = clearCachedFormats('FormatA');
-      expect(count).toBe(1);
-
-      const remaining = listCachedFormats();
-      expect(remaining.length).toBe(1);
-      expect(remaining[0]!.name).toBe('FormatB');
-    });
+  it('clears formats by name, without regard to letter case (F10)', () => {
+    seedIndexDownload('FormatA', '1.0.0', mockFormat('FormatA', '1.0.0'));
+    seedIndexDownload('FormatB', '3.2.1', mockFormat('FormatB', '3.2.1'));
+    expect(clearCachedFormats('formata')).toBe(1);
+    expect(listCachedFormats().map((e) => e.name)).toEqual(['FormatB']);
   });
 
   it('returns 0 when cache does not exist', () => {
-    withCacheHome(join(cacheHome, 'nonexistent'), () => {
-      expect(clearCachedFormats()).toBe(0);
-    });
+    process.env['XDG_CACHE_HOME'] = join(tmp.root(), 'nonexistent');
+    expect(clearCachedFormats()).toBe(0);
   });
 
   it('returns 0 when name does not match', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      const dir = join(cacheDir, 'MockFormat', '2.1.0');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
-
-      expect(clearCachedFormats('NonExistent')).toBe(0);
-      expect(listCachedFormats().length).toBe(1);
-    });
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
+    expect(clearCachedFormats('NonExistent')).toBe(0);
+    expect(listCachedFormats()).toHaveLength(1);
   });
 });
 
 describe('getCacheSize', () => {
-  let cacheHome: string;
-
-  beforeEach(() => {
-    cacheHome = mkdtempSync(join(tmpdir(), 'twee-ts-cache-size-'));
-  });
-
-  afterEach(() => {
-    rmSync(cacheHome, { recursive: true, force: true });
-  });
+  const tmp = useTempCacheHome();
 
   it('returns total size and count', () => {
-    withCacheHome(cacheHome, () => {
-      const cacheDir = getCacheDir();
-      const dir = join(cacheDir, 'MockFormat', '2.1.0');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
-
-      const { totalBytes, count } = getCacheSize();
-      expect(count).toBe(1);
-      expect(totalBytes).toBe(MOCK_FORMAT_SOURCE.length);
-    });
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
+    expect(getCacheSize()).toEqual({ totalBytes: MOCK_FORMAT_SOURCE.length, count: 1 });
   });
 
   it('returns zero for empty cache', () => {
-    withCacheHome(join(cacheHome, 'nonexistent'), () => {
-      const { totalBytes, count } = getCacheSize();
-      expect(totalBytes).toBe(0);
-      expect(count).toBe(0);
-    });
+    process.env['XDG_CACHE_HOME'] = join(tmp.root(), 'nonexistent');
+    expect(getCacheSize()).toEqual({ totalBytes: 0, count: 0 });
   });
 });
 
@@ -418,42 +231,30 @@ function stubOffline(): void {
   );
 }
 
-/** Give each test its own XDG cache root under the OS temp dir. */
-function useTempCacheHome(): { readonly root: () => string } {
-  let root = '';
-  let orig: string | undefined;
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'twee-ts-cache-'));
-    orig = process.env['XDG_CACHE_HOME'];
-    process.env['XDG_CACHE_HOME'] = root;
-    clearIndexCache();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    if (orig !== undefined) process.env['XDG_CACHE_HOME'] = orig;
-    else delete process.env['XDG_CACHE_HOME'];
-    rmSync(root, { recursive: true, force: true });
-  });
-  return { root: () => root };
+/** Every file under `root`, relative to it. */
+function filesUnder(root: string): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
+    .sort();
 }
 
-describe('clearCachedFormats containment', () => {
+describe('clearing the cache by name never leaves the cache (F10)', () => {
   const tmp = useTempCacheHome();
 
   function populate(): void {
-    const dir = join(getCacheDir(), 'MockFormat', '2.1.0');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'format.js'), MOCK_FORMAT_SOURCE);
+    seedIndexDownload('MockFormat', '2.1.0', MOCK_FORMAT_SOURCE);
     // Siblings of the storyformats directory that must survive any named clear.
-    writeFileSync(join(tmp.root(), 'twee-ts', 'keep.txt'), 'keep');
-    writeFileSync(join(tmp.root(), 'outside.txt'), 'keep');
+    realFs.writeFileSync(join(tmp.root(), 'twee-ts', 'keep.txt'), 'keep');
+    realFs.writeFileSync(join(tmp.root(), 'outside.txt'), 'keep');
   }
 
   it.each(['..', '../..', '.', 'MockFormat/..', 'MockFormat/2.1.0', '../twee-ts', 'a\\..\\..', '/'])(
-    'rejects %j without deleting anything',
+    'treats %j as a name that matches nothing, and deletes nothing',
     (name) => {
       populate();
-      expect(() => clearCachedFormats(name)).toThrow(/not a cached format name/);
+      expect(clearCachedFormats(name)).toBe(0);
       expect(existsSync(join(tmp.root(), 'twee-ts', 'keep.txt'))).toBe(true);
       expect(existsSync(join(tmp.root(), 'outside.txt'))).toBe(true);
       expect(listCachedFormats()).toHaveLength(1);
@@ -463,12 +264,16 @@ describe('clearCachedFormats containment', () => {
   it('does not follow a symlinked entry out of the cache', () => {
     populate();
     const outside = join(tmp.root(), 'elsewhere');
-    mkdirSync(join(outside, '1.0.0'), { recursive: true });
-    writeFileSync(join(outside, '1.0.0', 'format.js'), MOCK_FORMAT_SOURCE);
-    symlinkSync(outside, join(getCacheDir(), 'Linked'), 'dir');
+    const linked = seedIndexDownload('Linked', '1.0.0', mockFormat('Linked', '1.0.0'));
+    // Replace the entry's folder with a link to a copy elsewhere.
+    const entryDir = join(linked, '..', '..');
+    realFs.cpSync(entryDir, outside, { recursive: true });
+    rmSync(entryDir, { recursive: true });
+    symlinkSync(outside, entryDir, 'dir');
 
+    expect(listCachedFormats().map((e) => e.name)).toEqual(['MockFormat']);
     expect(clearCachedFormats('Linked')).toBe(0);
-    expect(existsSync(join(outside, '1.0.0', 'format.js'))).toBe(true);
+    expect(filesUnder(outside)).not.toEqual([]);
   });
 
   it('still clears a plain named entry', () => {
@@ -479,62 +284,66 @@ describe('clearCachedFormats containment', () => {
   });
 });
 
-describe('downloaded format metadata containment', () => {
+describe('downloaded format metadata never names a cache path (F15, #238)', () => {
   const tmp = useTempCacheHome();
 
   it.each([
-    ['a traversal name', '../../escaped', '1.0.0'],
-    ['a separator in the name', 'nested/escaped', '1.0.0'],
-    ['a traversal suffix on the version', 'Escaper', '1.0.0/../../../escaped'],
-  ])('fetchDirectFormat rejects %s', async (_label, name, version) => {
-    stubFetch({ 'https://example.test/format.js': formatJs(name, version) });
-    // A version with a path suffix is not a SemVer version, so it may already fail to parse.
-    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(/unsafe|parse/);
-    expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
-    expect(existsSync(join(tmp.root(), 'twee-ts', 'escaped'))).toBe(false);
-    expect(existsSync(join(getCacheDir(), 'nested'))).toBe(false);
+    ['a traversal name', '../../escaped'],
+    ['a separator in the name', 'nested/escaped'],
+    ['a name only unsafe as a path', 'AC/DC'],
+    ['a Windows device name', 'CON'],
+    ['a name with a trailing dot', 'Review.'],
+    ['a name with URL syntax', 'Review #?'],
+  ])('fetchDirectFormat caches a format with %s under a hash of its URL', async (_label, name) => {
+    stubFetch({ 'https://example.test/format.js': formatJs(name, '1.0.0') });
+    const info = await fetchDirectFormat('https://example.test/format.js');
+    expect(info.name).toBe(name);
+    expect(info.filename.startsWith(join(getCacheDir(), 'entries') + sep)).toBe(true);
+    expect(
+      filesUnder(tmp.root()).every((f) => /^twee-ts[/\\]storyformats[/\\]entries[/\\][0-9a-f]{64}[/\\]/.test(f)),
+    ).toBe(true);
   });
 
-  it('fetchAndCacheFormat rejects an unsafe index entry before downloading', async () => {
-    const calls = stubFetch({ 'https://example.test/format.js': formatJs('Escaper', '1.0.0') });
-    await expect(
-      fetchAndCacheFormat(sfaEntry('../../escaped', '1.0.0'), 'https://example.test/format.js'),
-    ).rejects.toThrow(/unsafe/);
-    expect(calls).toEqual([]);
-    expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
+  it('fetchDirectFormat rejects a version with a path suffix as not a version', async () => {
+    stubFetch({ 'https://example.test/format.js': formatJs('Escaper', '1.0.0/../../../escaped') });
+    await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(
+      /Failed to read the story format at https:\/\/example\.test\/format\.js: .*not a SemVer version/,
+    );
+    expect(filesUnder(tmp.root())).toEqual([]);
   });
 
-  it('resolveRemoteFormat writes nothing outside the cache for a malicious index entry', async () => {
-    stubFetch({
+  it('resolveRemoteFormat downloads an index entry with a traversal name inside the cache only', async () => {
+    const calls = stubFetch({
       [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('../../escaped', '1.0.0')] }),
-      [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
-      [`${OFFICIAL_BASE}/twine2/../../escaped/1.0.0/format.js`]: formatJs('Escaper', '1.0.0'),
+      [`${OFFICIAL_BASE}/twine2/..%2F..%2Fescaped/1.0.0/format.js`]: formatJs('../../escaped', '1.0.0'),
     });
-    await expect(resolveRemoteFormat('../../escaped', '1.0.0')).rejects.toThrow(/unsafe/);
+    const info = await resolveRemoteFormat('../../escaped', '1.0.0');
+    expect(info?.name).toBe('../../escaped');
+    expect(calls).toContain(`${OFFICIAL_BASE}/twine2/..%2F..%2Fescaped/1.0.0/format.js`);
     expect(existsSync(join(tmp.root(), 'escaped'))).toBe(false);
+    expect(filesUnder(tmp.root()).every((f) => f.startsWith(join('twee-ts', 'storyformats', 'entries')))).toBe(true);
   });
 
   it('refuses to write through a symlink planted in the cache', async () => {
+    const url = 'https://example.test/format.js';
     const outside = join(tmp.root(), 'elsewhere');
     mkdirSync(outside, { recursive: true });
-    mkdirSync(getCacheDir(), { recursive: true });
-    symlinkSync(outside, join(getCacheDir(), 'Linked'), 'dir');
-    stubFetch({ 'https://example.test/format.js': formatJs('Linked', '1.0.0') });
+    mkdirSync(join(getCacheDir(), 'entries'), { recursive: true });
+    symlinkSync(outside, join(getCacheDir(), 'entries', cacheKey({ kind: 'url', url })), 'dir');
+    stubFetch({ [url]: formatJs('Linked', '1.0.0') });
 
-    await expect(fetchAndCacheFormat(sfaEntry('Linked', '1.0.0'), 'https://example.test/format.js')).rejects.toThrow(
-      /outside/,
-    );
-    expect(existsSync(join(outside, '1.0.0', 'format.js'))).toBe(false);
+    await expect(fetchDirectFormat(url)).rejects.toThrow(/outside the cache directory/);
+    expect(filesUnder(outside)).toEqual([]);
   });
 
-  it('caches a direct download by its URL, apart from the downloads shared by name and version', async () => {
+  it('caches a direct download under its URL', async () => {
     stubFetch({ 'https://example.test/format.js': formatJs('Good Format', '1.2.3') });
     const info = await fetchDirectFormat('https://example.test/format.js');
     expect(info.id).toBe('good-format-1');
     expect(readFileSync(info.filename, 'utf-8')).toBe(formatJs('Good Format', '1.2.3'));
-    expect(info.filename.startsWith(getCacheDir())).toBe(false);
-    expect(discoverCachedFormats().size).toBe(0);
-    expect(existsSync(join(getCacheDir(), 'Good Format'))).toBe(false);
+    expect(listCachedFormats()).toEqual([
+      expect.objectContaining({ name: 'Good Format', source: 'url', origin: 'https://example.test/format.js' }),
+    ]);
   });
 });
 
@@ -563,8 +372,33 @@ describe('fetchDirectFormat with wrapper comments (#221)', () => {
   });
 });
 
-describe('resolveRemoteFormatRequest with format IDs', () => {
-  useTempCacheHome();
+/** A temporary cache and home folder per test, so no format installed on the machine can answer. */
+function useTempHome(): { readonly root: () => string } {
+  const tmp = useTempCacheHome();
+  let origHome: string | undefined;
+  beforeEach(() => {
+    origHome = process.env['HOME'];
+    process.env['HOME'] = tmp.root();
+  });
+  afterEach(() => {
+    if (origHome !== undefined) process.env['HOME'] = origHome;
+    else delete process.env['HOME'];
+  });
+  return tmp;
+}
+
+/** Resolve a request as a compile does, with no local formats. */
+async function resolveRequest(
+  request: FormatRequest,
+  extra: { readonly formatUrls?: string[]; readonly noRemote?: boolean } = {},
+): Promise<{ readonly info: StoryFormatInfo | undefined; readonly diagnostics: Diagnostic[] }> {
+  const diagnostics: Diagnostic[] = [];
+  const info = await resolveStoryFormat(request, { formatPaths: [], useTweegoPath: false, ...extra }, diagnostics);
+  return { info, diagnostics };
+}
+
+describe('format IDs against indices and format URLs', () => {
+  useTempHome();
 
   it('resolves a directory-style ID against index names', async () => {
     stubFetch({
@@ -574,7 +408,7 @@ describe('resolveRemoteFormatRequest with format IDs', () => {
       }),
       [`${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`]: formatJs('SugarCube', '2.37.3'),
     });
-    const info = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
+    const { info } = await resolveRequest({ kind: 'id', id: 'sugarcube-2' });
     expect(info?.name).toBe('SugarCube');
     expect(info?.version).toBe('2.37.3');
   });
@@ -584,22 +418,23 @@ describe('resolveRemoteFormatRequest with format IDs', () => {
       [OFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [sfaEntry('SugarCube', '1.0.35')] }),
       [UNOFFICIAL_INDEX]: JSON.stringify({ twine1: [], twine2: [] }),
     });
-    await expect(resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' })).resolves.toBeUndefined();
+    const { info, diagnostics } = await resolveRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(info).toBeUndefined();
+    expect(diagnostics.at(-1)?.message).toContain('another major version');
   });
 
   it('matches a direct URL by ID', async () => {
     stubFetch({ 'https://example.test/format.js': formatJs('SugarCube', '2.37.3') });
-    const info = await resolveRemoteFormatRequest(
+    const { info } = await resolveRequest(
       { kind: 'id', id: 'sugarcube-2' },
-      [],
-      ['https://example.test/format.js'],
+      { formatUrls: ['https://example.test/format.js'] },
     );
     expect(info?.version).toBe('2.37.3');
   });
 });
 
 describe('resolveRemoteFormat with a download cache and no network', () => {
-  useTempCacheHome();
+  useTempHome();
 
   async function cacheSugarCube(): Promise<void> {
     stubFetch({
@@ -612,7 +447,7 @@ describe('resolveRemoteFormat with a download cache and no network', () => {
     vi.unstubAllGlobals();
   }
 
-  it('uses an exactly matching cached format without fetching', async () => {
+  it('uses an exactly matching cached format when the index cannot be reached', async () => {
     await cacheSugarCube();
     stubOffline();
     const info = await resolveRemoteFormat('SugarCube', '2.37.3');
@@ -622,10 +457,14 @@ describe('resolveRemoteFormat with a download cache and no network', () => {
   it('falls back to a compatible cached format when the network fails', async () => {
     await cacheSugarCube();
     stubOffline();
-    const byName = await resolveRemoteFormat('SugarCube', '2.30.0');
-    expect(byName?.version).toBe('2.37.3');
-    const byId = await resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' });
-    expect(byId?.version).toBe('2.37.3');
+    expect((await resolveRemoteFormat('SugarCube', '2.30.0'))?.version).toBe('2.37.3');
+    const byId = await resolveRequest({ kind: 'id', id: 'sugarcube-2' });
+    expect(byId.info?.version).toBe('2.37.3');
+    expect(byId.diagnostics.map((d) => d.message)).toContainEqual(
+      expect.stringContaining(
+        `Failed to fetch format index from ${OFFICIAL_INDEX}: offline; using the formats downloaded from it before`,
+      ),
+    );
   });
 
   it('still reports the network error when nothing is cached', async () => {
@@ -657,7 +496,7 @@ const OFFICIAL_ROUTES: Readonly<Record<string, string>> = {
   [SUGARCUBE_URL]: taggedSugarCube('OFFICIAL'),
 };
 
-/** Compiles the inline story with no local formats, so only the download cache and the network can answer. */
+/** Compiles the inline story with no local formats, so only format URLs and indices can answer. */
 function compileStory(options: { formatUrls?: string[]; noRemote?: boolean; signal?: AbortSignal } = {}) {
   return compile({ sources: INLINE_STORY, useTweegoPath: false, ...options });
 }
@@ -733,84 +572,38 @@ function aborted(signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
-/** Every file under `root`, relative to it. */
-function filesUnder(root: string): string[] {
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
-    .sort();
-}
-
-/** A temporary cache and home folder per test, so no format installed on the machine can answer. */
-function useTempHome(): { readonly root: () => string } {
-  const tmp = useTempCacheHome();
-  let origHome: string | undefined;
-  beforeEach(() => {
-    origHome = process.env['HOME'];
-    process.env['HOME'] = tmp.root();
-  });
-  afterEach(() => {
-    if (origHome !== undefined) process.env['HOME'] = origHome;
-    else delete process.env['HOME'];
-  });
-  return tmp;
-}
-
 describe('format cache writes racing another process', () => {
   useTempCacheHome();
 
-  it('accepts a format folder another process creates between its check and its mkdir', async () => {
-    const raced = join(getCacheDir(), 'SugarCube');
-    mockedLstatSync.mockImplementation((path: fs.PathLike, options?: fs.StatOptions) => {
-      const stat = realFs.lstatSync(path, options);
-      if (stat === undefined && String(path) === raced) mkdirSync(raced, { recursive: true });
-      return stat;
-    });
-    stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
-
-    const info = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
-    expect(readFileSync(info.filename, 'utf-8')).toBe(formatJs('SugarCube', '2.37.3'));
+  it('accepts an entry folder another process created first', async () => {
+    mkdirSync(join(getCacheDir(), 'entries', cacheKey({ kind: 'url', url: FORK_URL })), { recursive: true });
+    stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
+    const info = await fetchDirectFormat(FORK_URL);
+    expect(readFileSync(info.filename, 'utf-8')).toBe(taggedSugarCube('FORK'));
   });
 
-  it('still refuses a symlink another process puts there instead', async () => {
-    const raced = join(getCacheDir(), 'SugarCube');
-    const outside = mkdtempSync(join(tmpdir(), 'twee-ts-outside-'));
-    try {
-      mockedLstatSync.mockImplementation((path: fs.PathLike, options?: fs.StatOptions) => {
-        const stat = realFs.lstatSync(path, options);
-        if (stat === undefined && String(path) === raced) symlinkSync(outside, raced, 'dir');
-        return stat;
-      });
-      mkdirSync(getCacheDir(), { recursive: true });
-      stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
-
-      await expect(fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL)).rejects.toThrow(/outside/);
-      expect(filesUnder(outside)).toEqual([]);
-    } finally {
-      rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
-  it('never shows a reader a partial format.js while it rewrites a cache entry', async () => {
-    stubFetch({ [SUGARCUBE_URL]: taggedSugarCube('FIRST') });
-    const first = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
+  it('never shows a reader a partial or mixed entry while it rewrites a cache entry', async () => {
+    stubFetch({ [FORK_URL]: taggedSugarCube('FIRST') });
+    await fetchDirectFormat(FORK_URL);
 
     // Another process reads the entry while this one is part way through writing the new copy.
     const seen: unknown[] = [];
-    mockedWriteFileSync.mockImplementationOnce((file, data) => {
-      realFs.writeFileSync(file, textOf(data).slice(0, 40));
-      seen.push(parseFormatJSON(readFileSync(first.filename, 'utf-8'))?.source);
-      realFs.writeFileSync(file, data);
+    mockedWriteFileSync.mockImplementationOnce((file, data, options) => {
+      realFs.writeFileSync(file, data, options);
+      const record = readRecord({ kind: 'url', url: FORK_URL });
+      seen.push(record && parseFormatJSON(realFs.readFileSync(useCachedRecord(record).filename, 'utf-8'))?.source);
     });
     vi.unstubAllGlobals();
-    stubFetch({ [SUGARCUBE_URL]: taggedSugarCube('SECOND') });
-    const second = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
+    stubFetch({ [FORK_URL]: taggedSugarCube('SECOND') });
+    const second = await fetchDirectFormat(FORK_URL);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('FIRST');
     expect(readFileSync(second.filename, 'utf-8')).toBe(taggedSugarCube('SECOND'));
-    expect(filesUnder(getCacheDir())).toEqual([join('SugarCube', '2.37.3', 'format.js')]);
+    // The first copy's folder is gone; the entry holds its record and the second copy.
+    const files = filesUnder(join(getCacheDir(), 'entries'));
+    expect(files).toHaveLength(2);
+    expect(files.filter((f) => f.endsWith('format.js'))).toHaveLength(1);
   });
 });
 
@@ -836,7 +629,7 @@ describe('concurrent lookups in one process', () => {
   });
 });
 
-describe('downloads from format URLs and the shared download cache', () => {
+describe('downloads from format URLs and from indices', () => {
   const tmp = useTempHome();
 
   it('never give another project the copy downloaded from a format URL', async () => {
@@ -857,16 +650,25 @@ describe('downloads from format URLs and the shared download cache', () => {
     expect(calls).toEqual([FORK_URL]);
   });
 
-  it('reuse the cached copy of a format URL without the network, and with remote fetching off', async () => {
+  it('use the cached copy of a format URL that cannot be reached, with a warning, and with remote fetching off', async () => {
     stubFetch({ [FORK_URL]: taggedSugarCube('FORK') });
     await compileStory({ formatUrls: [FORK_URL] });
     vi.unstubAllGlobals();
     stubOffline();
 
-    const offline = await compileStory({ formatUrls: [FORK_URL] });
+    const unreachable = await compileStory({ formatUrls: [FORK_URL] });
+    expect(titleOf(unreachable)).toBe('FORK');
+    expect(unreachable.diagnostics.map((d) => d.message)).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `Failed to download format from ${FORK_URL.replace(/\./g, '\\.')}: offline; using the copy downloaded on `,
+        ),
+      ),
+    ]);
+    vi.mocked(fetch).mockClear();
+    const offline = await compileStory({ formatUrls: [FORK_URL], noRemote: true });
     expect(titleOf(offline)).toBe('FORK');
     expect(offline.diagnostics).toEqual([]);
-    expect(titleOf(await compileStory({ formatUrls: [FORK_URL], noRemote: true }))).toBe('FORK');
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
@@ -875,7 +677,7 @@ describe('downloads from format URLs and the shared download cache', () => {
     stubFetch({ [FORK_URL]: taggedSugarCube('FORK'), [OTHER_URL]: taggedSugarCube('OTHER') });
     expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
     expect(titleOf(await compileStory({ formatUrls: [OTHER_URL] }))).toBe('OTHER');
-    expect(titleOf(await compileStory({ formatUrls: [FORK_URL] }))).toBe('FORK');
+    expect(titleOf(await compileStory({ formatUrls: [FORK_URL], noRemote: true }))).toBe('FORK');
   });
 
   it('are all removed by clearing the cache', async () => {
@@ -976,7 +778,7 @@ describe('cancelling and timing out format downloads', () => {
   it('writes nothing to the cache when the signal aborts after the download', async () => {
     const network = stubStalledFetch();
     const controller = new AbortController();
-    const pending = fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL, { signal: controller.signal });
+    const pending = fetchDirectFormat(FORK_URL, { signal: controller.signal });
     const request = await network.next();
     // The body arrives, and the caller gives up before it is written.
     request.answer(taggedSugarCube('LATE'));
@@ -989,9 +791,7 @@ describe('cancelling and timing out format downloads', () => {
   it('tries no further source after the signal aborts', async () => {
     const network = stubStalledFetch();
     const controller = new AbortController();
-    const pending = resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' }, [], [FORK_URL], {
-      signal: controller.signal,
-    });
+    const pending = resolveRemoteFormat('SugarCube', '2.0.0', [], [FORK_URL], { signal: controller.signal });
     await network.next();
     controller.abort();
 
@@ -1046,7 +846,7 @@ describe('cancelling and timing out format downloads', () => {
 
   it('moves on to the next source after a request times out', async () => {
     const network = stubStalledFetch();
-    const pending = resolveRemoteFormatRequest({ kind: 'id', id: 'sugarcube-2' }, [], [FORK_URL], { timeout: 20 });
+    const pending = resolveRemoteFormat('SugarCube', '2.0.0', [], [FORK_URL], { timeout: 20 });
     await network.next(); // the format URL, which never answers
     const index = await network.next(); // its timeout has passed: on to the official index
     expect(index.url).toBe(OFFICIAL_INDEX);
@@ -1077,5 +877,6 @@ describe('cancelling and timing out format downloads', () => {
     await expect(compile({ sources: INLINE_STORY, formatFetchTimeout: Number.NaN })).rejects.toThrow(
       /formatFetchTimeout/,
     );
+    await expect(resolveRemoteFormat('SugarCube', '2.0.0', [], [], { timeout: -1 })).rejects.toThrow(RangeError);
   });
 });

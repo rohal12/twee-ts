@@ -1,142 +1,92 @@
 /**
- * Remote story format fetching, caching, and checksum verification.
- * Uses the Story Formats Archive (SFA) as the default source.
+ * Story formats from the network: format URLs and format indices (the Story Formats Archive by
+ * default), with request sharing, time and size limits, checksum and identity checks, and the
+ * provenance-keyed cache in format-cache.ts.
  *
- * Two caches hold downloads. Formats found through an index are shared by name and version
- * (`<cache>/<name>/<version>/format.js`). A format downloaded from a direct URL is kept under
- * that URL instead, so one project's copy never answers another project's request.
- * Cache files are replaced atomically, so another process never reads a partly written one.
+ * Every URL is parsed once, at the boundary, with the WHATWG URL parser ({@link checkRemoteUrl}),
+ * and every URL derived from it is resolved with `new URL(relative, base)`.
  */
-import { createHash } from 'node:crypto';
-import { mkdirSync, existsSync, readdirSync, statSync, rmSync, lstatSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { homedir } from 'node:os';
-import type {
-  FormatRequest,
-  RemoteFetchOptions,
-  SFAIndex,
-  SFAIndexEntry,
-  StoryFormatInfo,
-  Twine2FormatJSON,
-} from './types.js';
-import { parseFormatJSON, UNNAMED_FORMAT_NAME } from './format-decode.js';
-import { parseSemver, makeFormatId, selectFormatCandidate } from './formats.js';
-import type { SelectFormatOptions } from './formats.js';
-import { sameVersion } from './semver.js';
-import { decodeText, readUTF8 } from './util.js';
-import { writeFileAtomic } from './atomic-write.js';
+import type { RemoteFetchOptions, StoryFormatInfo } from './types.js';
+import { decodeFormatJSON, UNNAMED_FORMAT_NAME } from './format-decode.js';
+import { errorText, formatNameKey, withFormatBytes } from './formats.js';
+import { parseVersion, sameVersion } from './semver.js';
+import { decodeText } from './util.js';
+import type { CacheOrigin, CacheRecord, FormatMetadata, NewRecord, TwineKind } from './format-cache.js';
+import { getCacheDir, loadEntry, readRecord, recordFormatInfo, sha256Hex, writeEntry } from './format-cache.js';
 
-const DEFAULT_SFA_INDICES = [
+export {
+  getCacheDir,
+  discoverCachedFormats,
+  listCachedFormats,
+  clearCachedFormats,
+  getCacheSize,
+} from './format-cache.js';
+
+/** The Story Formats Archive indices, consulted after a project's own format indices. */
+export const DEFAULT_SFA_INDICES: readonly string[] = [
   'https://videlais.github.io/story-formats-archive/official/index.json',
   'https://videlais.github.io/story-formats-archive/unofficial/index.json',
 ];
 
-/** How long one story format request (an index or a format.js) may take by default, in milliseconds. */
+/** How long one story format request (an index or a format file) may take by default, in milliseconds. */
 const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
 
 /** The longest delay a timer accepts; a longer timeout means no limit. */
 const MAX_TIMER_DELAY = 2_147_483_647;
 
-/** Get the cache directory for downloaded story formats. */
-export function getCacheDir(): string {
-  const xdg = process.env['XDG_CACHE_HOME'];
-  // An empty XDG_CACHE_HOME counts as unset, as the XDG Base Directory spec says.
-  const base = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.cache');
-  return join(base, 'twee-ts', 'storyformats');
-}
+/** The largest response accepted for an index or a format file, in bytes (32 MiB). */
+export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
-/** The cache directory for formats downloaded from direct URLs, beside {@link getCacheDir}. */
-function getUrlCacheDir(): string {
-  return join(dirname(getCacheDir()), 'storyformat-urls');
-}
+// --- URLs ---
 
-/** The name of one direct URL's cache entry: a hash of the URL, so each URL has its own. */
-function urlCacheKey(url: string): string {
-  return createHash('sha256').update(url).digest('hex');
+/** The URL schemes twee-ts fetches from. */
+const FETCHABLE_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
+
+/** A configured URL, parsed: its normalized form, or why it cannot be used. */
+export type UrlCheck = { readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: string };
+
+/**
+ * Parse a configured format URL or format index URL. Only absolute `http:` and `https:` URLs
+ * without credentials are accepted; a local file belongs in a folder listed in `formatPaths`. The
+ * fragment is dropped (it is never sent); the query is kept.
+ */
+export function checkRemoteUrl(text: string): UrlCheck {
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(text)} is not an absolute URL (for a local format, use formatPaths)`,
+    };
+  }
+  if (url.protocol === 'file:') {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(text)}: file: URLs are not supported; put the format in a folder listed in formatPaths`,
+    };
+  }
+  if (!FETCHABLE_PROTOCOLS.has(url.protocol)) {
+    return { ok: false, reason: `${JSON.stringify(text)}: only http: and https: URLs are supported` };
+  }
+  if (url.username !== '' || url.password !== '') {
+    return { ok: false, reason: `${JSON.stringify(text)}: URLs with a user name or password are not supported` };
+  }
+  url.hash = '';
+  return { ok: true, url: url.href };
 }
 
 /**
- * Whether a string can serve as one directory name inside the cache: not empty, not `.` or `..`,
- * and free of path separators. Format names and versions come from downloaded metadata, so they
- * are untrusted path input.
+ * The URL of one file of an index entry: `<twine1|twine2>/<name>/<version>/<file>`, each segment
+ * percent-encoded, resolved against the URL the index was finally served from (after redirects).
+ * As with any relative reference, the index URL's file name, query and fragment do not carry over.
  */
-function isSafeSegment(segment: string): boolean {
-  return segment !== '' && segment !== '.' && segment !== '..' && !/[/\\\0]/.test(segment);
+function indexFileUrl(indexResponseUrl: string, entry: IndexEntry, file: string): string {
+  const path = [entry.twine, entry.name, entry.version, file].map(encodeURIComponent).join('/');
+  return new URL(path, indexResponseUrl).href;
 }
 
-/** Whether absolute path `target` lies strictly inside absolute path `root`. */
-function isInside(root: string, target: string): boolean {
-  const rel = relative(root, target);
-  return rel !== '' && !isAbsolute(rel) && rel.split(sep)[0] !== '..';
-}
-
-/** The cache directory for one format version. Throws when the name or version could leave the cache. */
-function cachedFormatDir(name: string, version: string): string {
-  if (!isSafeSegment(name)) {
-    throw new Error(`Refusing to cache a story format with an unsafe name: ${JSON.stringify(name)}`);
-  }
-  if (!isSafeSegment(version) || !parseSemver(version)) {
-    throw new Error(`Refusing to cache story format "${name}" with an unsafe version: ${JSON.stringify(version)}`);
-  }
-  const root = resolve(getCacheDir());
-  const dir = resolve(root, name, version);
-  if (!isInside(root, dir)) {
-    throw new Error(`Refusing to cache a story format outside the cache directory ${root}: ${dir}`);
-  }
-  return dir;
-}
-
-/** Whether `e` is a Node.js system error with the given code. */
-function hasErrorCode(e: unknown, code: string): boolean {
-  return e instanceof Error && 'code' in e && e.code === code;
-}
-
-/**
- * Create `dir` as a plain directory, or check that it already is one (a symlink could lead out of the cache).
- * A directory another process creates between the check and the mkdir is fine.
- */
-function ensurePlainDirectory(dir: string): void {
-  if (lstatSync(dir, { throwIfNoEntry: false }) === undefined) {
-    try {
-      mkdirSync(dir);
-      return;
-    } catch (e) {
-      if (!hasErrorCode(e, 'EEXIST')) throw e;
-    }
-  }
-  const stat = lstatSync(dir, { throwIfNoEntry: false });
-  if (stat === undefined || stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Refusing to write a story format outside the cache directory: ${dir} is not a plain directory`);
-  }
-}
-
-/**
- * Write a downloaded format.js to `<root>/<...segments>/format.js`, replacing any earlier copy
- * atomically, and return its path. Every directory below `root` must be a plain one.
- */
-function writeCacheEntry(root: string, segments: readonly string[], text: string): string {
-  mkdirSync(root, { recursive: true });
-  const dir = segments.reduce((parent, segment) => {
-    const child = join(parent, segment);
-    ensurePlainDirectory(child);
-    return child;
-  }, root);
-
-  const formatPath = join(dir, 'format.js');
-  if (lstatSync(formatPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
-    throw new Error(`Refusing to write a story format outside the cache directory: ${formatPath} is a symlink`);
-  }
-  writeFileAtomic(formatPath, text);
-  return formatPath;
-}
-
-/** In-memory index cache, keyed by URL. Cleared each compile. */
-const indexCache = new Map<string, SFAIndex>();
-
-/** Clear the in-memory index cache. */
-export function clearIndexCache(): void {
-  indexCache.clear();
-}
+// --- Requests ---
 
 /** One network request with everyone in this process who waits on its result. */
 interface SharedRequest<T> {
@@ -174,6 +124,7 @@ function shareRequest<T>(
     const reason: unknown = signal.reason;
     return Promise.reject(reason);
   }
+  // The map holds requests of several result types; `key` names what this one fetches, so its type is T.
   const request = (sharedRequests.get(key) as SharedRequest<T> | undefined) ?? startSharedRequest(key, start);
   request.waiters++;
 
@@ -228,8 +179,8 @@ function startSharedRequest<T>(key: string, start: (signal: AbortSignal) => Prom
   return request;
 }
 
-/** The time limit for each request, from the caller's options. */
-function requestTimeout(options: RemoteFetchOptions): number {
+/** The time limit for each request, from the caller's options. Throws a RangeError for an invalid one. */
+export function requestTimeout(options: RemoteFetchOptions): number {
   const timeout = options.timeout ?? DEFAULT_FORMAT_FETCH_TIMEOUT;
   if (!(timeout >= 0)) {
     throw new RangeError(`A story format request timeout must be 0 or more milliseconds, not ${timeout}`);
@@ -247,541 +198,484 @@ function waitOptions(options: RemoteFetchOptions, what: string, url: string): Wa
   };
 }
 
+/** Validators of a cached copy, sent so that an unchanged resource is not downloaded again. */
+interface Validators {
+  readonly etag?: string | undefined;
+  readonly lastModified?: string | undefined;
+}
+
+/** A response: its bytes (none for 304 Not Modified), the URL it came from after redirects, and its validators. */
+interface Fetched extends Validators {
+  readonly notModified: boolean;
+  readonly bytes: Uint8Array<ArrayBuffer>;
+  readonly url: string;
+}
+
+/** A short description of why `fetch` failed: its message and the system error code underneath. */
+function describeFetchError(e: unknown): string {
+  const cause: unknown = e instanceof Error ? e.cause : undefined;
+  if (!(cause instanceof Error)) return errorText(e);
+  const code = 'code' in cause && typeof cause.code === 'string' ? cause.code : cause.message;
+  return `${errorText(e)} (${code})`;
+}
+
 /**
- * Fetch `url` as bytes, aborting when `signal` does. `what` names the request in errors, as in
- * "Failed to <what> from <url>". The bytes are returned undecoded, so checksums cover what was served.
+ * Read a response body, stopping as soon as it grows past {@link MAX_RESPONSE_BYTES}: undefined
+ * then. A body that breaks off rejects with the stream's error.
  */
-async function fetchBytes(url: string, what: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
-  const res = await fetch(url, { signal });
-  if (!res.ok) {
-    throw new Error(`Failed to ${what} from ${url}: ${res.status} ${res.statusText}`);
+async function readLimited(res: Response): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  if (Number(res.headers.get('content-length') ?? '0') > MAX_RESPONSE_BYTES) {
+    await res.body?.cancel();
+    return undefined;
   }
-  return new Uint8Array(await res.arrayBuffer());
+  if (!res.body) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    // A fetch response body is a byte stream; the type says `any`.
+    const value: unknown = result.value;
+    if (!(value instanceof Uint8Array)) throw new TypeError('the response body is not a byte stream');
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
-/** Download a format.js once for every caller in this process that asks for `url` meanwhile. */
-function shareDownload(url: string, options: RemoteFetchOptions): Promise<Uint8Array<ArrayBuffer>> {
-  return shareRequest(`download\0${url}`, waitOptions(options, 'download format', url), (signal) =>
-    fetchBytes(url, 'download format', signal),
-  );
+/**
+ * Fetch `url`, aborting when `signal` does. `what` names the request in errors, as in "Failed to
+ * <what> from <url>: <cause>". The bytes are returned undecoded, so checksums cover what was served.
+ * A redirect must stay on http: or https:, and never go from https: to http:.
+ */
+async function fetchBytes(url: string, what: string, signal: AbortSignal, validators: Validators): Promise<Fetched> {
+  const fail = (reason: string, cause?: unknown): Error =>
+    new Error(`Failed to ${what} from ${url}: ${reason}`, cause === undefined ? undefined : { cause });
+  const headers = new Headers();
+  if (validators.etag !== undefined) headers.set('if-none-match', validators.etag);
+  if (validators.lastModified !== undefined) headers.set('if-modified-since', validators.lastModified);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal, headers });
+  } catch (e) {
+    throw fail(describeFetchError(e), e);
+  }
+  const finalUrl = res.url === '' ? url : res.url;
+  const finalProtocol = new URL(finalUrl).protocol;
+  if (!FETCHABLE_PROTOCOLS.has(finalProtocol) || (new URL(url).protocol === 'https:' && finalProtocol === 'http:')) {
+    await res.body?.cancel();
+    throw fail(`redirected to ${finalUrl}, which is not allowed (only http: and https:, never from https: to http:)`);
+  }
+  const fromHeaders = {
+    etag: res.headers.get('etag') ?? undefined,
+    lastModified: res.headers.get('last-modified') ?? undefined,
+  };
+  if (res.status === 304 && (validators.etag !== undefined || validators.lastModified !== undefined)) {
+    await res.body?.cancel();
+    return { notModified: true, bytes: new Uint8Array(0), url: finalUrl, ...fromHeaders };
+  }
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw fail(`${res.status} ${res.statusText}`.trim());
+  }
+  let bytes: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    bytes = await readLimited(res);
+  } catch (e) {
+    throw fail(describeFetchError(e), e);
+  }
+  if (bytes === undefined) throw fail(`the response is larger than the limit of ${MAX_RESPONSE_BYTES} bytes`);
+  return { notModified: false, bytes, url: finalUrl, ...fromHeaders };
 }
 
-/** Decode a downloaded format.js as local ones are (UTF-8, else Windows-1252), without a leading BOM. */
+/** Fetch `url` once for every caller in this process that asks for it (with the same validators) meanwhile. */
+function sharedFetch(
+  url: string,
+  what: string,
+  options: RemoteFetchOptions,
+  validators: Validators = {},
+): Promise<Fetched> {
+  const key = JSON.stringify([what, url, validators.etag ?? null, validators.lastModified ?? null]);
+  return shareRequest(key, waitOptions(options, what, url), (signal) => fetchBytes(url, what, signal, validators));
+}
+
+/** Decode downloaded text as local files are (UTF-8, else Windows-1252), without a leading BOM. */
 function decodeDownload(bytes: Uint8Array, url: string): string {
   const { text } = decodeText(bytes, url);
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
-/** Validate that a JSON value is a valid SFAIndexEntry. */
-function isValidEntry(val: unknown): val is SFAIndexEntry {
-  if (typeof val !== 'object' || val === null || Array.isArray(val)) return false;
-  const obj = val as Record<string, unknown>;
-  return (
-    typeof obj['name'] === 'string' &&
-    typeof obj['version'] === 'string' &&
-    typeof obj['checksums'] === 'object' &&
-    obj['checksums'] !== null &&
-    !Array.isArray(obj['checksums'])
-  );
+// --- Format indices ---
+
+/** One usable entry of a format index. */
+export interface IndexEntry {
+  readonly twine: TwineKind;
+  readonly name: string;
+  readonly version: string;
+  readonly proofing: boolean;
+  /** The entry's files, when it lists them. */
+  readonly files: readonly string[] | undefined;
+  /** SHA-256 checksums by exact file name, lower-case hex. */
+  readonly checksums: ReadonlyMap<string, string>;
 }
 
-/** Validate that a JSON value conforms to the SFAIndex shape. */
-function validateSFAIndex(json: unknown): SFAIndex {
-  if (typeof json !== 'object' || json === null) {
-    throw new Error('SFA index is not an object');
+/** An index entry that cannot be used, and why. */
+interface SkippedIndexEntry {
+  readonly twine: TwineKind;
+  /** The entry's position in its list, from 0. */
+  readonly position: number;
+  /** Its name, when it has one. */
+  readonly name: string | undefined;
+  readonly reason: string;
+}
+
+/** A format index as fetched and checked. */
+export interface FormatIndex {
+  /** The index URL as configured. */
+  readonly url: string;
+  /** The URL the index was finally served from, which its file URLs are resolved against. */
+  readonly responseUrl: string;
+  readonly entries: readonly IndexEntry[];
+  readonly skipped: readonly SkippedIndexEntry[];
+}
+
+/** A SHA-256 digest in lower-case hex, as checksums are kept. */
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isList(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
+/** Check one index entry; a string is the reason it cannot be used. */
+function parseIndexEntry(twine: TwineKind, raw: unknown): IndexEntry | string {
+  if (!isPlainObject(raw)) return 'it is not an object';
+  const { name, version, proofing, files, checksums } = raw;
+  if (typeof name !== 'string' || name === '' || name === '.' || name === '..') return 'it has no usable "name"';
+  if (typeof version !== 'string') return 'it has no "version"';
+  if (!parseVersion(version)) return `its version ${JSON.stringify(version)} is not a SemVer version`;
+  const fileNames = isList(files) ? files.filter((f): f is string => typeof f === 'string') : undefined;
+  if (files !== undefined && (!isList(files) || fileNames?.length !== files.length)) {
+    return '"files" is not a list of file names';
   }
-  const obj = json as Record<string, unknown>;
-  const twine1 = Array.isArray(obj['twine1']) ? (obj['twine1'] as unknown[]).filter(isValidEntry) : [];
-  const twine2 = Array.isArray(obj['twine2']) ? (obj['twine2'] as unknown[]).filter(isValidEntry) : [];
-  return { twine1, twine2 };
+  const sums = new Map<string, string>();
+  if (checksums !== undefined) {
+    if (!isPlainObject(checksums)) return '"checksums" is not an object';
+    for (const [file, sum] of Object.entries(checksums)) {
+      // A malformed digest only matters for a file twee-ts downloads; it is refused there.
+      if (typeof sum !== 'string') return `its checksum for ${JSON.stringify(file)} is not a string`;
+      sums.set(file, sum.toLowerCase());
+    }
+  }
+  return {
+    twine,
+    name,
+    version,
+    proofing: proofing === true,
+    files: fileNames,
+    checksums: sums,
+  };
 }
 
-/** Fetch and parse an SFA index.json, with in-memory caching. Concurrent calls for one URL share a request. */
-export async function fetchIndex(url: string, options: RemoteFetchOptions = {}): Promise<SFAIndex> {
+/**
+ * Check a parsed index.json: an object whose optional `twine1` and `twine2` fields are lists of
+ * entries. Each entry needs a name and a SemVer version; `files` and `checksums` are optional,
+ * but when present must be a list of names and an object of SHA-256 hex digests. Entries that are
+ * not usable are kept in `skipped` with the reason. Throws when the value is not an index.
+ */
+export function parseFormatIndex(json: unknown, url: string, responseUrl: string): FormatIndex {
+  if (!isPlainObject(json)) throw new Error('it is not a format index (an object with "twine1" and "twine2" lists)');
+  const entries: IndexEntry[] = [];
+  const skipped: SkippedIndexEntry[] = [];
+  // Twine 2 entries first, so they come first among equals.
+  for (const twine of ['twine2', 'twine1'] as const) {
+    const list = json[twine];
+    if (list === undefined) continue;
+    if (!isList(list)) throw new Error(`its "${twine}" field is not a list`);
+    list.forEach((raw, position) => {
+      const entry = parseIndexEntry(twine, raw);
+      if (typeof entry !== 'string') {
+        entries.push(entry);
+        return;
+      }
+      const name = isPlainObject(raw) && typeof raw['name'] === 'string' ? raw['name'] : undefined;
+      skipped.push({ twine, position, name, reason: entry });
+    });
+  }
+  return { url, responseUrl, entries, skipped };
+}
+
+/** Indices fetched during this compile, by URL. Cleared each compile. */
+const indexCache = new Map<string, FormatIndex>();
+
+/** Clear the in-memory index cache. */
+export function clearIndexCache(): void {
+  indexCache.clear();
+}
+
+/**
+ * Fetch and check a format index ({@link parseFormatIndex}), at most once per compile. Concurrent
+ * calls for one URL share a request. `url` must have passed {@link checkRemoteUrl}.
+ */
+export async function fetchIndex(url: string, options: RemoteFetchOptions = {}): Promise<FormatIndex> {
   options.signal?.throwIfAborted();
+  requestTimeout(options);
   const cached = indexCache.get(url);
   if (cached) return cached;
+  const fetched = await sharedFetch(url, 'fetch format index', options);
+  let json: unknown;
+  try {
+    json = JSON.parse(decodeDownload(fetched.bytes, url));
+    const index = parseFormatIndex(json, url, fetched.url);
+    indexCache.set(url, index);
+    return index;
+  } catch (e) {
+    throw new Error(`Failed to read format index ${url}: ${errorText(e)}`, { cause: e });
+  }
+}
 
-  return shareRequest(`index\0${url}`, waitOptions(options, 'fetch format index', url), async (signal) => {
-    const text = decodeDownload(await fetchBytes(url, 'fetch format index', signal), url);
-    const data = validateSFAIndex(JSON.parse(text));
-    indexCache.set(url, data);
-    return data;
+// --- Obtaining formats ---
+
+/** A format ready to use, and warnings about how it was obtained (an unverified file, a cache that could not be written). */
+export interface Obtained {
+  readonly info: StoryFormatInfo;
+  readonly warnings: readonly string[];
+}
+
+/** The main file of an index entry: format.js for Twine 2, header.html for Twine 1. */
+function mainFile(twine: TwineKind): string {
+  return twine === 'twine2' ? 'format.js' : 'header.html';
+}
+
+/**
+ * The files of an index entry that twee-ts downloads besides its main file: for Twine 1, the
+ * format's own scripts that its header includes (`code.js`, `userlib.js`) when the entry lists them.
+ */
+function componentFiles(entry: IndexEntry): readonly string[] {
+  return entry.twine === 'twine2' ? [] : ['code.js', 'userlib.js'].filter((file) => entry.files?.includes(file));
+}
+
+/** The cache origin of an index entry. */
+function indexEntryOrigin(index: Pick<FormatIndex, 'url'>, entry: IndexEntry): CacheOrigin {
+  return { kind: 'index', index: index.url, twine: entry.twine, name: entry.name, version: entry.version };
+}
+
+/** Save a download to the cache; when that fails, warn and keep it for this build only (at its URL). */
+function saveDownload(
+  record: NewRecord,
+  files: ReadonlyMap<string, Uint8Array>,
+  options: RemoteFetchOptions,
+): { readonly path: string; readonly warnings: readonly string[] } {
+  // This caller gave up meanwhile: leave the cache as it was.
+  options.signal?.throwIfAborted();
+  try {
+    return { path: writeEntry(record, files), warnings: [] };
+  } catch (e) {
+    const reason = errorText(e);
+    return {
+      path: record.downloadUrl,
+      warnings: [
+        `Could not save ${record.name} ${record.version} from ${record.downloadUrl} to the format cache ` +
+          `(${getCacheDir()}): ${reason}. It is used for this build only.`,
+      ],
+    };
+  }
+}
+
+/** The info of a format with its bytes kept in memory (see {@link withFormatBytes}). */
+function formatWithBytes(
+  record: Pick<CacheRecord, 'name' | 'version' | 'isTwine2' | 'metadata' | 'main'>,
+  path: string,
+  files: ReadonlyMap<string, Uint8Array>,
+): StoryFormatInfo {
+  return withFormatBytes(recordFormatInfo(record, path), files.get(record.main) ?? new Uint8Array(0));
+}
+
+/**
+ * A cached entry as a format, after checking its files against its record. Throws, naming the
+ * entry and the reason, when the entry is damaged.
+ */
+export function useCachedRecord(record: CacheRecord): StoryFormatInfo {
+  const loaded = loadEntry(record);
+  if ('error' in loaded) {
+    throw new Error(`The cached copy of ${record.name} ${record.version} cannot be used: ${loaded.error}`);
+  }
+  return formatWithBytes(record, loaded.path, loaded.files);
+}
+
+/** Whether a cached entry holds every file `files` names, with the checksums the index lists now. */
+function cachedEntryMatches(record: CacheRecord, entry: IndexEntry, files: readonly string[]): boolean {
+  return files.every((file) => {
+    const have = record.files.get(file);
+    const listed = entry.checksums.get(file);
+    return have !== undefined && (listed === undefined || listed === have);
   });
 }
 
-interface FindEntryResult {
-  entry: SFAIndexEntry;
-  formatType: 'twine1' | 'twine2';
-}
-
-/**
- * Find the best matching entry in an SFA index.
- * Exact version preferred, then highest version with same major.
- */
-export function findEntry(index: Partial<SFAIndex>, name: string, version: string): FindEntryResult | undefined {
-  return findEntryForRequest(index, { kind: 'name', name, version });
-}
-
-/** Find the best matching entry in an SFA index for a name or ID request (twine2 entries first). */
-function findEntryForRequest(index: Partial<SFAIndex>, request: FormatRequest): FindEntryResult | undefined {
-  const candidates: FindEntryResult[] = [
-    ...(index.twine2 ?? []).map((entry) => ({ entry, formatType: 'twine2' as const })),
-    ...(index.twine1 ?? []).map((entry) => ({ entry, formatType: 'twine1' as const })),
-  ];
-  return selectFormatCandidate(request, candidates, (c) => c.entry);
-}
-
-/** Verify SHA-256 checksum using Web Crypto API (Node 22 built-in). */
-export async function verifySHA256(content: Uint8Array<ArrayBuffer>, expectedHex: string): Promise<boolean> {
-  const digest = await crypto.subtle.digest('SHA-256', content);
-  const hex = Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return hex === expectedHex.toLowerCase();
-}
-
-/** Derive the download URL for a format.js from the index URL and entry. */
-function getDownloadUrl(indexUrl: string, entry: SFAIndexEntry, formatType: 'twine1' | 'twine2'): string {
-  const base = indexUrl.replace(/\/index\.json$/, '');
-  return `${base}/${formatType}/${entry.name}/${entry.version}/format.js`;
-}
-
-/** The StoryFormatInfo of a Twine 2 format.js cached at `filename`. */
-function cachedFormatInfo(
-  id: string,
-  filename: string,
-  data: { readonly name: string; readonly version: string; readonly proofing?: boolean },
-): StoryFormatInfo {
-  return { id, filename, isTwine2: true, name: data.name, version: data.version, proofing: data.proofing ?? false };
-}
-
-/**
- * Check that a downloaded format is the one the index entry promised. The name matches without
- * regard to case, as format requests do, and the version by SemVer precedence, so "1.0" and "v1.0.0"
- * agree. A format.js that names no format ({@link UNNAMED_FORMAT_NAME}) is allowed: such formats
- * exist, and the index entry then supplies the name it is cached under.
- */
-function checkFormatIdentity(
-  entry: Pick<SFAIndexEntry, 'name' | 'version'>,
-  data: Twine2FormatJSON,
-  downloadUrl: string,
+/** Check that a downloaded format.js is the format the index entry names; nameless formats take the entry's name. */
+function checkEntryIdentity(
+  entry: IndexEntry,
+  data: { readonly name: string; readonly version: string },
+  url: string,
 ): void {
-  const nameMatches = data.name === UNNAMED_FORMAT_NAME || data.name.toLowerCase() === entry.name.toLowerCase();
+  const nameMatches = data.name === UNNAMED_FORMAT_NAME || formatNameKey(data.name) === formatNameKey(entry.name);
   if (nameMatches && sameVersion(data.version, entry.version)) return;
   throw new Error(
-    `Story format mismatch for ${downloadUrl}: the index lists ${entry.name} ${entry.version}, ` +
+    `Story format mismatch for ${url}: the index lists ${entry.name} ${entry.version}, ` +
       `but the download is ${data.name} ${data.version}`,
   );
 }
 
-/**
- * Download a format, verify its checksum, check that it is the format the entry names, write it to
- * the cache shared by name and version, and return its StoryFormatInfo. Concurrent calls for one
- * download URL share one request for the bytes; each call then verifies them against its own
- * entry, within its own timeout.
- */
-export async function fetchAndCacheFormat(
-  // The parts of an index entry a download uses; an entry without checksums is downloaded unchecked.
-  entry: Pick<SFAIndexEntry, 'name' | 'version'> & {
-    readonly checksums?: Readonly<Record<string, string>> | undefined;
-  },
-  downloadUrl: string,
-  options: RemoteFetchOptions = {},
-): Promise<StoryFormatInfo> {
-  // Index metadata is untrusted: reject a name or version that would leave the cache before downloading.
-  cachedFormatDir(entry.name, entry.version);
-  const bytes = await shareDownload(downloadUrl, options);
+/** Read a downloaded format.js's metadata, or throw with the URL and the reason. */
+function decodeDownloadedFormat(
+  bytes: Uint8Array,
+  url: string,
+): { readonly name: string; readonly version: string } & FormatMetadata {
+  const decoded = decodeFormatJSON(decodeDownload(bytes, url));
+  if (!decoded.ok) throw new Error(`Failed to read the story format at ${url}: ${decoded.reason}`);
+  const { data } = decoded;
+  return { ...data, proofing: data.proofing === true };
+}
 
-  // Verify the checksum against the bytes as served, if the entry has one.
-  const checksums = entry.checksums ?? {};
-  const checksumKey = Object.keys(checksums).find((k) => k.endsWith('format.js'));
-  if (checksumKey) {
-    const expected = checksums[checksumKey];
-    if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
-    if (!(await verifySHA256(bytes, expected))) {
-      throw new Error(`Checksum verification failed for ${entry.name} ${entry.version}`);
-    }
-  }
-
-  // Parse format JSON to extract name/version/source
-  const text = decodeDownload(bytes, downloadUrl);
-  const id = makeFormatId(entry.name, entry.version);
-  const data = parseFormatJSON(text, id);
-  if (!data) {
-    throw new Error(`Failed to parse format JSON from ${downloadUrl}`);
-  }
-  checkFormatIdentity(entry, data, downloadUrl);
-
-  // This caller gave up meanwhile: leave the cache as it was.
-  options.signal?.throwIfAborted();
-  const formatPath = writeCacheEntry(resolve(getCacheDir()), [entry.name, entry.version], text);
-  return cachedFormatInfo(id, formatPath, data);
+/** The metadata fields of a decoded format, without its name and version. */
+function metadataOf(data: FormatMetadata): FormatMetadata {
+  return {
+    proofing: data.proofing,
+    author: data.author,
+    description: data.description,
+    image: data.image,
+    url: data.url,
+    license: data.license,
+  };
 }
 
 /**
- * Download a direct format.js URL, parse its JSON, cache it under that URL (apart from the
- * downloads shared by name and version), and return its StoryFormatInfo. Concurrent calls for
- * one URL share one request.
+ * Obtain the format an index entry names: its cached copy when that is from the same index entry
+ * and matches the checksums the index lists, else a download of its files, each checked against
+ * the index's checksum, and (Twine 2) checked to be the format the entry names. The download is
+ * then cached under the entry's origin.
+ */
+export async function obtainIndexEntry(
+  index: FormatIndex,
+  entry: IndexEntry,
+  options: RemoteFetchOptions = {},
+): Promise<Obtained> {
+  const origin = indexEntryOrigin(index, entry);
+  const main = mainFile(entry.twine);
+  const files = [main, ...componentFiles(entry)];
+  const warnings: string[] = [];
+  const cached = readRecord(origin);
+  if (cached && cachedEntryMatches(cached, entry, files)) {
+    try {
+      return { info: useCachedRecord(cached), warnings };
+    } catch (e) {
+      warnings.push(`${errorText(e)}; downloading it again.`);
+    }
+  }
+
+  /** Download one of the entry's files and check it against the checksum the index lists. */
+  const download = async (file: string): Promise<Uint8Array<ArrayBuffer>> => {
+    const url = indexFileUrl(index.responseUrl, entry, file);
+    const { bytes } = await sharedFetch(url, 'download format', options);
+    const listed = entry.checksums.get(file);
+    const actual = sha256Hex(bytes);
+    if (listed === undefined) {
+      warnings.push(`The format index ${index.url} lists no checksum for ${url}; it was used unverified.`);
+    } else if (!SHA256_HEX.test(listed)) {
+      throw new Error(
+        `The format index ${index.url} lists ${JSON.stringify(listed)} as the checksum of ${url}, which is not a SHA-256 hex digest`,
+      );
+    } else if (listed !== actual) {
+      throw new Error(
+        `Checksum mismatch for ${url}: the format index ${index.url} lists SHA-256 ${listed}, but the download has ${actual}`,
+      );
+    }
+    return bytes;
+  };
+  const mainBytes = await download(main);
+  const downloaded = new Map([[main, mainBytes]]);
+  for (const file of componentFiles(entry)) downloaded.set(file, await download(file));
+
+  const mainUrl = indexFileUrl(index.responseUrl, entry, main);
+  let identity: { readonly name: string; readonly version: string; readonly metadata: FormatMetadata };
+  if (entry.twine === 'twine2') {
+    const data = decodeDownloadedFormat(mainBytes, mainUrl);
+    checkEntryIdentity(entry, data, mainUrl);
+    // A format.js that names no format is known by the name its index entry gives it.
+    const name = data.name === UNNAMED_FORMAT_NAME ? entry.name : data.name;
+    identity = { name, version: data.version, metadata: metadataOf(data) };
+  } else {
+    identity = { name: entry.name, version: entry.version, metadata: { proofing: false } };
+  }
+  const record: NewRecord = {
+    origin,
+    ...identity,
+    isTwine2: entry.twine === 'twine2',
+    main,
+    fetchedAt: new Date().toISOString(),
+    downloadUrl: mainUrl,
+  };
+  const saved = saveDownload(record, downloaded, options);
+  return { info: formatWithBytes(record, saved.path, downloaded), warnings: [...warnings, ...saved.warnings] };
+}
+
+/** The cached copy of a format URL, if it has one. `url` must have passed {@link checkRemoteUrl}. */
+export function cachedUrlRecord(url: string): CacheRecord | undefined {
+  return readRecord({ kind: 'url', url });
+}
+
+/**
+ * Obtain the format at a format URL, online. A cached copy is checked again with a conditional
+ * request (ETag or Last-Modified) and used when the server says it has not changed; otherwise the
+ * new download replaces it. `url` must have passed {@link checkRemoteUrl}.
+ */
+export async function obtainUrlFormat(url: string, options: RemoteFetchOptions = {}): Promise<Obtained> {
+  const cached = cachedUrlRecord(url);
+  const intact = cached && 'record' in loadEntry(cached) ? cached : undefined;
+  const fetched = await sharedFetch(url, 'download format', options, intact ?? {});
+  if (fetched.notModified && intact) return { info: useCachedRecord(intact), warnings: [] };
+
+  const data = decodeDownloadedFormat(fetched.bytes, url);
+  const record: NewRecord = {
+    origin: { kind: 'url', url },
+    name: data.name,
+    version: data.version,
+    isTwine2: true,
+    metadata: metadataOf(data),
+    main: 'format.js',
+    fetchedAt: new Date().toISOString(),
+    downloadUrl: url,
+    etag: fetched.etag,
+    lastModified: fetched.lastModified,
+  };
+  const files = new Map([['format.js', fetched.bytes]]);
+  const saved = saveDownload(record, files, options);
+  return { info: formatWithBytes(record, saved.path, files), warnings: saved.warnings };
+}
+
+/**
+ * Download a direct format.js URL (or confirm that its cached copy is current), cache it under
+ * that URL, and return its StoryFormatInfo. Concurrent calls for one URL share one request.
+ * Throws when the URL is not usable, the download fails, or the cache cannot be written.
  */
 export async function fetchDirectFormat(url: string, options: RemoteFetchOptions = {}): Promise<StoryFormatInfo> {
-  const bytes = await shareDownload(url, options);
-  const text = decodeDownload(bytes, url);
-
-  const data = parseFormatJSON(text);
-  if (!data) {
-    throw new Error(`Failed to parse format JSON from ${url}`);
-  }
-  // The metadata is untrusted: refuse what could not be cached by name and version either.
-  cachedFormatDir(data.name, data.version);
-
-  // This caller gave up meanwhile: leave the cache as it was.
-  options.signal?.throwIfAborted();
-  const formatPath = writeCacheEntry(getUrlCacheDir(), [urlCacheKey(url)], text);
-  return cachedFormatInfo(makeFormatId(data.name, data.version), formatPath, data);
-}
-
-/** The copy of a direct format URL in the download cache, if it has been downloaded before. */
-function getCachedDirectFormat(url: string): StoryFormatInfo | undefined {
-  const formatPath = join(getUrlCacheDir(), urlCacheKey(url), 'format.js');
-  try {
-    if (!existsSync(formatPath)) return undefined;
-    const data = parseFormatJSON(readUTF8(formatPath));
-    if (!data) return undefined;
-    return cachedFormatInfo(makeFormatId(data.name, data.version), formatPath, data);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Options for {@link resolveFormatUrls}. */
-export interface ResolveFormatUrlsOptions extends RemoteFetchOptions {
-  /** Use only the URLs downloaded before; fetch nothing. */
-  readonly offline?: boolean;
-}
-
-/**
- * Look a request up among direct format URLs, in order, and return the first format that
- * answers it. A URL downloaded before is answered by its cached copy without the network;
- * any other is downloaded (unless `offline`). When none answers and a download failed, the
- * last failure is thrown. An aborted signal rejects with its reason and tries no further URL.
- *
- * Internal, for format resolution; not part of the public API.
- */
-export async function resolveFormatUrls(
-  request: FormatRequest,
-  urls: readonly string[],
-  options: ResolveFormatUrlsOptions = {},
-): Promise<StoryFormatInfo | undefined> {
-  let lastError: Error | undefined;
-  for (const url of urls) {
-    const cached = getCachedDirectFormat(url);
-    if (cached) {
-      if (answers(request, cached)) return cached;
-      continue;
-    }
-    if (options.offline) continue;
-    try {
-      const info = await fetchDirectFormat(url, options);
-      if (answers(request, info)) return info;
-    } catch (e) {
-      if (options.signal?.aborted) throw options.signal.reason;
-      lastError = toError(e);
-    }
-  }
-  if (lastError) throw lastError;
-  return undefined;
-}
-
-/**
- * Find the best format among the cached copies of direct format URLs, without network access.
- * Matching follows {@link selectFormatCandidate}, so `allowOlder` admits a same-major older version.
- * Each URL keeps its own copy; the shared name and version downloads are never consulted.
- *
- * Internal, for format resolution; not part of the public API.
- */
-export function findCachedUrlFormat(
-  request: FormatRequest,
-  urls: readonly string[],
-  options: SelectFormatOptions = {},
-): StoryFormatInfo | undefined {
-  const cached = urls.flatMap((url) => getCachedDirectFormat(url) ?? []);
-  return selectFormatCandidate(request, cached, (f) => f, options);
-}
-
-/** Whether `info` is a format the request accepts. */
-function answers(request: FormatRequest, info: StoryFormatInfo): boolean {
-  return selectFormatCandidate(request, [info], (f) => f) !== undefined;
-}
-
-function toError(e: unknown): Error {
-  return e instanceof Error ? e : new Error(String(e));
-}
-
-/**
- * Try to resolve a remote story format by name and version.
- * 1. Try direct format URLs (each one's cached copy, else a download)
- * 2. Use an exactly matching download from the shared cache, without touching the network
- * 3. Try custom index URLs, then the default SFA indices
- * 4. Fall back to a compatible download from the shared cache (e.g. when offline)
- *
- * `options.signal` aborts the lookup, which then rejects with the signal's reason;
- * `options.timeout` limits each request (default 30000 ms).
- */
-export async function resolveRemoteFormat(
-  name: string,
-  version: string,
-  indices?: readonly string[],
-  urls?: readonly string[],
-  options: RemoteFetchOptions = {},
-): Promise<StoryFormatInfo | undefined> {
-  return resolveRemoteFormatRequest({ kind: 'name', name, version }, indices, urls, options);
-}
-
-/**
- * Resolve a story format request remotely, in the same order as {@link resolveRemoteFormat}.
- * An ID request such as 'sugarcube-2' matches the format whose name and major version build that ID
- * (SugarCube 2.x), taking the greatest version available.
- */
-export async function resolveRemoteFormatRequest(
-  request: FormatRequest,
-  indices?: readonly string[],
-  urls?: readonly string[],
-  options: RemoteFetchOptions = {},
-): Promise<StoryFormatInfo | undefined> {
-  options.signal?.throwIfAborted();
-  let lastError: Error | undefined;
-
-  // 1. The caller's own format URLs come before anything shared by name and version.
-  try {
-    const direct = await resolveFormatUrls(request, urls ?? [], options);
-    if (direct) return direct;
-  } catch (e) {
-    if (options.signal?.aborted) throw options.signal.reason;
-    lastError = toError(e);
-  }
-
-  // 2. An exact version already downloaded needs no network access.
-  const cached = findCachedFormat(request);
-  if (cached && request.kind === 'name' && sameVersion(cached.version, request.version)) return cached;
-
-  // 3. Try custom indices, then default SFA indices
-  const allIndices = [...(indices ?? []), ...DEFAULT_SFA_INDICES];
-  for (const indexUrl of allIndices) {
-    try {
-      const index = await fetchIndex(indexUrl, options);
-      const result = findEntryForRequest(index, request);
-      if (result) {
-        // Check cache first
-        const hit = getCachedFormat(result.entry.name, result.entry.version);
-        if (hit) return hit;
-
-        const downloadUrl = getDownloadUrl(indexUrl, result.entry, result.formatType);
-        return await fetchAndCacheFormat(result.entry, downloadUrl, options);
-      }
-    } catch (e) {
-      if (options.signal?.aborted) throw options.signal.reason;
-      lastError = toError(e);
-    }
-  }
-
-  // 4. No source had it (or none could be reached): a compatible cached download still answers the request.
-  if (cached) return cached;
-
-  // If all sources failed with errors, propagate the last one
-  if (lastError) throw lastError;
-  return undefined;
-}
-
-/**
- * Find the cached download that best answers a format request, without network access.
- * Only the downloads shared by name and version are searched, not those from direct URLs.
- * Matching follows {@link selectFormatCandidate}.
- */
-export function findCachedFormat(
-  request: FormatRequest,
-  options: SelectFormatOptions = {},
-): StoryFormatInfo | undefined {
-  return selectFormatCandidate(request, [...discoverCachedFormats().values()], (f) => f, options);
-}
-
-/** Check if a format is already in the local cache. */
-function getCachedFormat(name: string, version: string): StoryFormatInfo | undefined {
-  if (!isSafeSegment(name) || !isSafeSegment(version)) return undefined;
-  const formatPath = join(getCacheDir(), name, version, 'format.js');
-  try {
-    if (!existsSync(formatPath)) return undefined;
-    const source = readUTF8(formatPath);
-    const id = makeFormatId(name, version);
-    const data = parseFormatJSON(source, id);
-    if (!data) return undefined;
-    return cachedFormatInfo(id, formatPath, data);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Discover all cached remote formats. Returns a Map like discoverFormats(). */
-export function discoverCachedFormats(): Map<string, StoryFormatInfo> {
-  const formats = new Map<string, StoryFormatInfo>();
-  const cacheDir = getCacheDir();
-
-  try {
-    if (!existsSync(cacheDir)) return formats;
-  } catch {
-    return formats;
-  }
-
-  let names: string[];
-  try {
-    names = readdirSync(cacheDir);
-  } catch {
-    return formats;
-  }
-
-  for (const name of names) {
-    const nameDir = join(cacheDir, name);
-    try {
-      if (!statSync(nameDir).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    let versions: string[];
-    try {
-      versions = readdirSync(nameDir);
-    } catch {
-      continue;
-    }
-
-    for (const version of versions) {
-      const info = getCachedFormat(name, version);
-      if (info) {
-        formats.set(`${info.id}-${version}`, info);
-      }
-    }
-  }
-
-  return formats;
-}
-
-/** Info about a cached format entry with size and modification date. */
-export interface CachedFormatEntry {
-  readonly name: string;
-  readonly version: string;
-  readonly sizeBytes: number;
-  readonly modifiedAt: Date;
-}
-
-/** List all cached formats with size and modification date. */
-export function listCachedFormats(): readonly CachedFormatEntry[] {
-  const cacheDir = getCacheDir();
-  const entries: CachedFormatEntry[] = [];
-
-  try {
-    if (!existsSync(cacheDir)) return entries;
-  } catch {
-    return entries;
-  }
-
-  let names: string[];
-  try {
-    names = readdirSync(cacheDir);
-  } catch {
-    return entries;
-  }
-
-  for (const name of names) {
-    const nameDir = join(cacheDir, name);
-    try {
-      if (!statSync(nameDir).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    let versions: string[];
-    try {
-      versions = readdirSync(nameDir);
-    } catch {
-      continue;
-    }
-
-    for (const version of versions) {
-      const formatPath = join(nameDir, version, 'format.js');
-      try {
-        const stat = statSync(formatPath);
-        entries.push({
-          name,
-          version,
-          sizeBytes: stat.size,
-          modifiedAt: stat.mtime,
-        });
-      } catch {
-        // Skip entries without a valid format.js
-      }
-    }
-  }
-
-  return entries;
-}
-
-/**
- * Clear all cached formats, or only those matching a given name. Returns the number of entries removed.
- * Clearing all also removes the downloads from direct format URLs; a name clears only the
- * downloads shared by name and version.
- * A name must be a single cache entry name (as `listCachedFormats()` reports it); anything with a
- * path separator or `.`/`..` throws instead of deleting outside the format's own directory.
- */
-export function clearCachedFormats(name?: string): number {
-  if (name && !isSafeSegment(name)) {
-    throw new Error(
-      `Refusing to clear ${JSON.stringify(name)}: it is not a cached format name. Use a name as "cache list" shows it.`,
-    );
-  }
-
-  const cacheDir = getCacheDir();
-
-  if (!name) {
-    const count = listCachedFormats().length + countUrlCacheEntries();
-    rmSync(cacheDir, { recursive: true, force: true });
-    rmSync(getUrlCacheDir(), { recursive: true, force: true });
-    return count;
-  }
-
-  if (!existsSync(cacheDir)) return 0;
-
-  const root = resolve(cacheDir);
-  const nameDir = resolve(root, name);
-  if (!isInside(root, nameDir)) {
-    throw new Error(`Refusing to clear ${JSON.stringify(name)}: it is not a cached format name.`);
-  }
-  // lstat, so a symlinked entry is never followed out of the cache: only plain directories are entries.
-  if (!lstatSync(nameDir, { throwIfNoEntry: false })?.isDirectory()) return 0;
-
-  let versions: string[];
-  try {
-    versions = readdirSync(nameDir);
-  } catch {
-    return 0;
-  }
-  const count = versions.length;
-  rmSync(nameDir, { recursive: true, force: true });
-  return count;
-}
-
-/** The number of direct format URLs with a download in the cache. */
-function countUrlCacheEntries(): number {
-  const dir = getUrlCacheDir();
-  try {
-    return readdirSync(dir).filter((key) => existsSync(join(dir, key, 'format.js'))).length;
-  } catch {
-    return 0;
-  }
-}
-
-/** Get total cache size in bytes and format count. */
-export function getCacheSize(): { totalBytes: number; count: number } {
-  const entries = listCachedFormats();
-  const totalBytes = entries.reduce((sum, e) => sum + e.sizeBytes, 0);
-  return { totalBytes, count: entries.length };
+  const checked = checkRemoteUrl(url);
+  if (!checked.ok) throw new Error(`Cannot download a format from ${checked.reason}`);
+  const { info, warnings } = await obtainUrlFormat(checked.url, options);
+  if (warnings.length > 0) throw new Error(warnings.join(' '));
+  return info;
 }

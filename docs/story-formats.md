@@ -4,14 +4,13 @@ A story format provides the HTML template that turns your Twee source into a pla
 
 ## Format Discovery
 
-twee-ts looks for the requested format in these sources, in order, and uses the first that has it:
+A build asks for one story format (see [Format Selection](#format-selection)) and looks for it in these sources, in this order:
 
-1. **Local format directories** — see [Search order](#search-order) below
-2. **`formatUrls`** — the project's direct `format.js` URLs: each URL's own cached copy, else a download (unless `noRemote: true`). See [Custom Remote Sources](#custom-remote-sources)
-3. **Download cache** — formats downloaded earlier from format indices (see [Remote Format Fetching](#remote-format-fetching)); used even with `noRemote: true` and without a network connection
-4. **Remote** — fetched from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) or custom indices (unless `noRemote: true`)
+1. **Local format directories** (see [Search Order](#search-order))
+2. **`formatUrls`**, each in the order given (see [Custom Remote Sources](#custom-remote-sources))
+3. **`formatIndices`**, each in the order given, then the [Story Formats Archive](https://videlais.github.io/story-formats-archive/) (its official, then its unofficial index)
 
-A format that a local directory has is used without looking in the cache or on the network.
+The first source that has a format answering the request is used, and later sources are not consulted, so a format that a local directory has is used without the network. [How a Format Is Chosen](#how-a-format-is-chosen) gives the exact rules. With `noRemote: true` (or when a source cannot be reached), each format URL and format index answers from what was downloaded from it before; see [The Download Cache](#the-download-cache).
 
 ### Search Order
 
@@ -48,7 +47,7 @@ Cached remote formats:
   sugarcube-2: SugarCube 2.37.3 (also cached: 2.36.1)
 ```
 
-Every ID listed is one `--format` accepts. Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached format is listed under the ID of its name and major version; when several versions are cached, `--format` takes the greatest.
+Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version. `--format` accepts every local ID; it uses a cached download when the build consults the format URL or format index it came from (see [The Download Cache](#the-download-cache)), which is always so for the Story Formats Archive.
 
 ## Format Directory Structure
 
@@ -66,7 +65,7 @@ storyformats/
 
 The directory name serves as the **format ID** (e.g. `sugarcube-2`). Use this ID with `--format` or `formatId`. An ID request always uses that folder, even when another folder holds a newer version of the same format (see [SemVer Version Pruning](#semver-version-pruning)).
 
-IDs and format names match without regard to letter case, in local directories, the download cache and remote indices alike: `--format SugarCube-2` finds the `sugarcube-2` folder, and a StoryData format of `sugarcube` finds SugarCube. When two formats differ only in case, the one whose case matches exactly is used.
+IDs and format names match without regard to letter case, in every source: `--format SugarCube-2` finds the `sugarcube-2` folder, and a StoryData format of `sugarcube` finds SugarCube. An ID also finds a format by its name and major version, so `--format sugarcube-2` finds SugarCube 2.37.3 in a folder named `sugarcube-2.37` too. When two formats differ only in case and have the same version, the one whose case matches exactly is used (see [How a Format Is Chosen](#how-a-format-is-chosen)).
 
 ### Format Metadata
 
@@ -94,7 +93,7 @@ Twine 2 runs `format.js` as a classic script, so twee-ts reads it as JavaScript 
 
 An optional field of the wrong type, such as a numeric `name`, is ignored.
 
-The `version` is read as Tweego reads it: a SemVer version such as `2.37.3` or `2.0.0-beta.1`, optionally with a leading `v`, and with `1.0` or `1` standing for `1.0.0`. The version is kept as written.
+The `version` must be a [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) version such as `2.37.3` or `2.0.0-beta.1`. As in Tweego, a leading `v` is allowed, and `1.0` or `1` stand for `1.0.0`. As SemVer requires, numbers have no leading zeros (`01.2.3` and `1.0.0-01` are not versions), and the major, minor and patch numbers must be at most 9007199254740991 (2<sup>53</sup> − 1), so that they compare exactly; numeric prerelease parts may be any size. The version is kept as written.
 
 ### SemVer Version Pruning
 
@@ -110,15 +109,9 @@ Twine 1 format directories (containing `header.html` instead of `format.js`) use
 
 ## Remote Format Fetching
 
-When a format is not found locally, twee-ts automatically downloads it from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/). Downloaded formats are cached at:
+When no local format answers, twee-ts downloads the format from the project's format URLs or format indices, and finally from the [Story Formats Archive](https://videlais.github.io/story-formats-archive/).
 
-```
-~/.cache/twee-ts/storyformats/
-```
-
-(`$XDG_CACHE_HOME/twee-ts/storyformats/` when `XDG_CACHE_HOME` is set.) The cache is shared by every project on the machine, and by twee-ts processes running at the same time: each cached file is written to a temporary file and then renamed into place, so a process never reads a half-written format, and concurrent compiles in one process download each format once.
-
-Each request (an index or a `format.js`) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` key of the [config file](./configuration#story-format), or the option of the same name in the [API](./api#compile-options), changes the limit. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
+Each request (an index or a format file) may take 30 seconds. One that takes longer fails with a warning, and the next source is tried. The `formatFetchTimeout` key of the [config file](./configuration#story-format), or the option of the same name in the [API](./api#compile-options), changes the limit. A response larger than 32 MiB is refused, also with a warning. Aborting a compile's `signal`, or a `watch()` controller, cancels requests still in progress, and nothing from them is written to the cache.
 
 ### Custom Remote Sources
 
@@ -141,9 +134,42 @@ Or in the config file:
 }
 ```
 
-A remote lookup by format ID translates the ID to a name and major version: `sugarcube-2` finds the greatest SugarCube 2.x in an index, or a direct URL whose `format.js` names SugarCube 2.x.
+Only absolute `http:` and `https:` URLs are accepted, without a user name or password; anything else is an error. To use a format file from disk, put its `format.js` in a folder (named like a format ID, e.g. `my-format-1/format.js`) and list the folder's parent in `formatPaths`: `file:` URLs are not supported. A fragment (`#…`) is ignored. A redirect must stay on `http:` or `https:`, and never go from `https:` to `http:`.
 
-A format downloaded from a direct URL is cached under that URL (in `~/.cache/twee-ts/storyformat-urls/`), not under its name and version, and a project's `formatUrls` are looked up before the formats downloaded from indices. So a patched copy of a format, served from your own URL, is used only by projects that list that URL, and never stands in for the official format with the same name and version in another project. Once a URL has been downloaded, its cached copy is used without the network. `twee-ts cache clear` removes these copies too; `cache list`, `cache size` and `cache clear <name>` cover only the formats downloaded from indices.
+A format URL's `format.js` names the format and version it offers. A build that reaches a format URL downloads it every time; when a copy is cached, the request is conditional (`If-None-Match` / `If-Modified-Since`), so an unchanged file is not downloaded again.
+
+### Format Indices
+
+A format index is an `index.json` in the layout of the [Story Formats Archive](https://videlais.github.io/story-formats-archive/): an object with a `twine2` list and a `twine1` list of entries. Each entry needs a `name` and a SemVer `version`; `files` (a list of file names) and `checksums` (an object mapping a file name to its SHA-256 as a hex string) are optional. An entry without this shape is skipped; when no format answers a request, the error lists the skipped entries with the requested name and why each was skipped. An index that is not an object, or whose `twine1` or `twine2` field is not a list, fails with a warning naming its URL.
+
+An entry's files are downloaded from `twine2/<name>/<version>/<file>` (or `twine1/…`), resolved against the URL the index was served from after any redirects, with each part percent-encoded. As with any relative URL, the index's own file name and query string do not carry over: for `https://example.com/archive/formats.json?rev=3`, SugarCube 2.37.3's `format.js` is `https://example.com/archive/twine2/SugarCube/2.37.3/format.js`.
+
+Each downloaded file is checked against the checksum the index lists for that exact file name; on a mismatch (or when the listed checksum is not a SHA-256 hex digest) a warning names the URL and both hashes, and the entry is not used. Checksums of files twee-ts does not download (`LICENSE`, icons) are not looked at. A file the index lists no checksum for is used, with a warning that it was not verified. A Twine 2 `format.js` must also be the format the entry names (the same name without regard to case, the same version by SemVer precedence); a `format.js` that names no format is known by the entry's name.
+
+For a Twine 1 entry, `header.html` is downloaded, with `code.js` and `userlib.js` when the entry lists them. Most Twine 1 headers (Jonah, Sugarcane, Responsive) also include Twine 1's own `engine.js`, which no index provides, so such a format fails at build time with `Required format component not found: …/engine.js`. Install those formats locally, with Twine 1's files, instead. SugarCube's Twine 1 build needs nothing else.
+
+### The Download Cache
+
+Downloads are cached at:
+
+```
+~/.cache/twee-ts/storyformats/
+```
+
+(`$XDG_CACHE_HOME/twee-ts/storyformats/` when `XDG_CACHE_HOME` is set to an absolute path; an empty or relative value is ignored, as the XDG Base Directory spec says.)
+
+Each download is cached for where it came from:
+
+- A download from a format index is kept for that index URL and that entry (its Twine version, name and version as listed). A build uses it only when it consults the same index, and only while it matches the checksums that index lists then. An index entry is otherwise treated as unchanging: it is not downloaded again.
+- A download from a format URL is kept for that URL. A build that reaches the URL online checks it again (see above); offline it uses the cached copy.
+
+So a patched copy of a format, served from your own URL or index, is used only by projects that list that URL or index, and never stands in for the format with the same name and version in another project. Online, the format chosen never depends on what the cache holds: the cache only saves downloads.
+
+Offline (`noRemote: true`, or when a URL or index cannot be reached), each format URL answers with its cached copy, and each format index with the formats downloaded from it before, by the same rules as online. When a source cannot be reached, a warning says so and which cached copy is used.
+
+Every cached file is stored with its SHA-256 and checked when it is read; a copy that does not match is not used (online, it is downloaded again, with a warning). Files are written under a temporary name and renamed into place, so a twee-ts process never reads a half-written format, and concurrent compiles in one process download each format once. When the cache cannot be written (a read-only home directory, for example), the download is used for that build only, with a warning.
+
+`twee-ts cache list`, `cache size` and `cache clear [name]` cover every download; `cache clear <name>` matches the format name without regard to case. The cache directories of twee-ts 1.x (`storyformats/<name>/<version>/` and `storyformat-urls/`) are not read; `twee-ts cache clear` removes them.
 
 ### Disabling Remote Fetching
 
@@ -157,21 +183,60 @@ twee-ts --no-remote
 }
 ```
 
-Formats already in the download cache are still used.
+Formats downloaded before from the configured format URLs and indices, and from the Story Formats Archive, are still used.
 
 ## Format Selection
 
 The format is selected in this order of precedence:
 
-1. `--format` CLI flag / `formatId` config key
-2. The `format` and `formatVersion` fields in the `StoryData` passage
-3. Default: `sugarcube-2`
+1. `--format` CLI flag / `formatId` config key: a **format ID**
+2. The `format` and `format-version` fields in the `StoryData` passage: a **name and version**
+3. Default: the format ID `sugarcube-2`
 
-The first of these that is set is the format twee-ts looks for, in every source above. If it can't be found, the build fails with an error naming it; twee-ts never swaps in a different story format.
-
-When the `StoryData` passage specifies a format by name and version, twee-ts matches it against available formats using semantic versioning: the same major version, at or above the requested version. In the download cache and remote indices, the exact version wins when it is there; a prerelease is never taken as the exact match for its release. If only an older version of the same major is available, twee-ts uses it and warns.
+The first of these that is set is the request twee-ts looks for, in every source above. If it can't be found, the build fails with an error naming it, the local formats found, and the candidates with the requested name with why each one does not answer; twee-ts never swaps in a different story format.
 
 The compiled HTML's `<tw-storydata>` element records the format and version it was built with. Archive output (`twine2-archive`) keeps the `StoryData` values as written.
+
+### How a Format Is Chosen
+
+This is the whole policy, and it is the same for every source.
+
+**Identity.** Format names match without regard to letter case (`sugarcube` finds `SugarCube`). A format ID matches a format when it is the format's local folder name (without regard to case), or the format's name in lower case with each run of whitespace replaced by `-`, followed by `-` and its major version (SugarCube 2.37.3 is `sugarcube-2`). A name-and-version request matches only Twine 2 formats; an ID can also name a Twine 1 format.
+
+**Versions** compare by [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) precedence (see [Format Metadata](#format-metadata) for what counts as a version): a prerelease ranks below its release (`2.1.0-rc.1` is older than `2.1.0`), and build metadata is ignored (`2.1.0+b7` is `2.1.0`). Prereleases are otherwise ordinary versions: as in Tweego, `2.38.0-beta.1` is the greatest SugarCube 2 when a source has it. Name an exact version in `StoryData` to avoid that.
+
+**Tiers.** A candidate answers a request in one of these tiers, best first:
+
+| Tier   | Request          | Candidate                                                |
+| ------ | ---------------- | -------------------------------------------------------- |
+| pinned | ID               | its local folder is the ID                               |
+| exact  | name and version | the requested version                                    |
+| newer  | name and version | the requested major version, above the requested version |
+| any    | name, no version | any version (see below)                                  |
+| id     | ID               | its name and major version give the ID                   |
+| older  | name and version | the requested major version, below the requested version |
+
+A candidate with another name, another major version, or no SemVer version does not answer.
+
+**Choosing.** Among the candidates that answer in any tier but `older`, the one from the earliest source wins: local folders, then each format URL in order, then each format index in order. Within one source, the better tier wins (an exact version beats a newer one), then the greater version, then a name in the request's exact letter case, then (local folders) the higher-ranked search directory. Only when no source has such a candidate is an `older` one used, chosen in the same order, with a warning:
+
+```
+warning: Story format "SugarCube" at version "2.38.0" is not available; using SugarCube 2.37.3 instead.
+```
+
+As the earliest source wins, sources are consulted one at a time, and later ones are not contacted once one answers.
+
+**Local folders, as in Tweego.** For a name request, only the greatest version of each name and major version among the local folders is a candidate ([SemVer Version Pruning](#semver-version-pruning)), so `StoryData` SugarCube 2.36.1 uses a local 2.37.3 even when a local 2.36.1 exists. For an ID request, every folder is a candidate, so a pinned folder is used as it is.
+
+**A missing or unparseable `format-version`** takes the greatest version of any major version, with Tweego's warning:
+
+```
+warning: format "SugarCube": Auto-selecting greatest version; Could not parse version "2.x".
+```
+
+**An ID that matches formats with different names** (`Sugar Cube` and `sugar-cube` both give `sugar-cube-2`) takes the best by the rules above, with a warning naming them.
+
+**Failures.** When the chosen candidate cannot be downloaded or fails a check (checksum, identity, a damaged cached copy), a warning names the URL and the cause, and the choice is made again without it. A source that cannot be reached is a warning too, whether or not a later source then answers.
 
 ## Special Passages
 
