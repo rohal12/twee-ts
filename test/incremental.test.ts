@@ -442,6 +442,18 @@ describe('incremental cache and Twine 2 HTML', () => {
 describe('incremental cache and explicitly changed files', () => {
   const STAMP_MS = 1_700_000_000_000;
 
+  // These name files relative to the working directory, which needs a working directory on the
+  // temporary folder's drive: on Windows the checkout and the temporary folder can sit on different
+  // drives, where no relative path between them exists.
+  let savedCwd = '';
+  beforeEach(() => {
+    savedCwd = process.cwd();
+    process.chdir(tmpdir());
+  });
+  afterEach(() => {
+    process.chdir(savedCwd);
+  });
+
   const twine2HTML = (text: string): string =>
     `<tw-storydata name="Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
 <tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">${text}</tw-passagedata>

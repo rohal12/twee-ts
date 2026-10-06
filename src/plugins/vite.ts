@@ -24,7 +24,7 @@ import { getFilenames, isExcluded, outputPaths, realPathOf, walkedEntry } from '
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { mediaTypeFromFilename } from '../media-types.js';
 import { findHeadStartEnd } from '../modules.js';
-import { createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
+import { canonicalPath, createOutputRecord, isInside, isViteConfigTemp, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 
 export interface TweeTsVitePluginOptions {
@@ -154,7 +154,7 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
     if (item.type === 'chunk') {
       if (item.isEntry) {
         entry.script = dropFileSourceMapComment(item.code);
-        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(fileOfId(id));
+        for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(canonicalPath(fileOfId(id)));
       }
       removeFromBundle(bundle, fileName);
     } else if (fileName.endsWith('.css')) {
@@ -260,14 +260,14 @@ function buildWatchTargets(inputs: readonly string[], skip: (file: string) => bo
       entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
       if (entry === undefined || outputs.isFile(entry.real)) return;
       if (!entry.stat.isDirectory()) {
-        if (!skip(path)) targets.push(path);
+        if (!skip(path)) targets.push(toPosix(entry.real));
         return;
       }
       names = readdirSync(path);
     } catch {
       return; // Missing or unreadable: the compile reports it.
     }
-    if (!outputs.holds(entry.real)) targets.push(path);
+    if (!outputs.holds(entry.real)) targets.push(toPosix(entry.real));
     for (const name of names) walk(`${path}/${name}`, join(entry.real, name), false);
   };
   for (const input of inputs) walk(input, realPathOf(input), true);
@@ -286,11 +286,10 @@ function inputFiles(
 ): Map<string, string> {
   const files = new Map<string, string>();
   for (const filename of getFilenames(inputs, outputs).filenames) {
-    const file = toPosix(resolve(filename));
-    if (skip(file)) continue;
+    if (skip(toPosix(resolve(filename)))) continue;
     try {
       const stat = statSync(filename);
-      files.set(file, `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
+      files.set(canonicalPath(filename), `${stat.mtimeMs}:${stat.size}:${stat.ino}`);
     } catch {
       // Deleted since the walk found it; it counts as gone.
     }
@@ -402,7 +401,7 @@ function recordingContext(context: object, files: Set<string>): object {
       const bound: unknown = value.bind(target);
       if (key !== 'addWatchFile') return bound;
       return (id: string): unknown => {
-        if (!id.startsWith('\0')) files.add(fileOfId(resolve(id)));
+        if (!id.startsWith('\0')) files.add(canonicalPath(fileOfId(id)));
         const result: unknown = value.call(target, id);
         return result;
       };
@@ -582,8 +581,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // unchanged (coarse file-system timestamps); forget a file that changed.
     watchChange(id) {
       if (innerBuild) return;
-      const changed = toPosix(resolve(id));
-      for (const key of [...cache.keys()]) if (toPosix(resolve(key)) === changed) cache.delete(key);
+      const changed = canonicalPath(id);
+      for (const key of [...cache.keys()]) if (canonicalPath(key) === changed) cache.delete(key);
     },
 
     resolveId(id) {
@@ -642,7 +641,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const excludedGlob = excludedByGlob(options);
       const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
       const entryPath = options.entry ? resolve(options.entry) : undefined;
-      const root = toPosix(server.config.root);
+      const root = canonicalPath(server.config.root);
+      // Watched as given; compared by canonical path (see canonicalPath).
+      const canonicalInputs = inputs.map(canonicalPath);
       server.watcher.add(inputs);
 
       let html = '';
@@ -687,7 +688,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         compiledInputs = inputFiles(inputs, excludedGlob, outputs);
         // The compile cache trusts modification times, which a quick save may leave
         // unchanged (coarse file-system timestamps); forget the files that changed.
-        for (const key of [...cache.keys()]) if (changed.has(toPosix(resolve(key)))) cache.delete(key);
+        for (const key of [...cache.keys()]) if (changed.has(canonicalPath(key))) cache.delete(key);
         try {
           if (entryPath && (entryStale || [...changed].some(touchesEntry))) {
             entryStale = true;
@@ -720,11 +721,13 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
       server.watcher.on('all', (event, file) => {
         if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
-        const changed = toPosix(resolve(file));
+        const reported = toPosix(resolve(file));
         // Loading the config for the entry build writes and deletes one of these;
         // reacting to it would bundle again, and again.
-        if (isViteConfigTemp(changed)) return;
-        if ((!isInside(changed, inputs) || excluded(changed)) && !touchesEntry(changed)) return;
+        if (isViteConfigTemp(reported)) return;
+        // Globs match the path as reported (relative to the working directory); identity uses the canonical path.
+        const changed = canonicalPath(file);
+        if ((!isInside(changed, canonicalInputs) || excluded(reported)) && !touchesEntry(changed)) return;
         pending.add(changed);
         clearTimeout(timer);
         timer = setTimeout(() => {

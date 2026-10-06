@@ -7,13 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- Node.js 22.12 or newer is required (`engines`), the first Node 22 release that loads ES modules through `require()` without a flag; CI now tests 22.12.0 as well as the latest Node 22 and 24 (#250)
+
 ### Added
 
 - `Twine1Metadata` and `Twine2Metadata`, the types of `Story.twine1` and `Story.twine2`, are exported (#250)
+- CommonJS builds of `@rohal12/twee-ts/vite` and `@rohal12/twee-ts/rollup`; `require()` of either no longer fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` (#250)
+- `@rohal12/twee-ts/package.json` and `@rohal12/twee-ts/schemas/*.json` are exported, so `require.resolve()` and `import.meta.resolve()` find them (#250)
+- `THIRD_PARTY_NOTICES` and `UNLICENSE` ship in the package. The notices reproduce Tweego's BSD licence and the licence of every package bundled into `dist/`; the build regenerates them from what it bundled (#250)
 
 ### Fixed
 
 - The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)
+- TypeScript projects that compile to CommonJS (`module: node16`/`nodenext` in a `.cts` file or a CommonJS package) get the CommonJS declarations instead of TS1479; every entry point has `types` per `import`/`require` condition (#250)
+- `moduleResolution: node10` finds the types of `@rohal12/twee-ts` and `@rohal12/twee-ts/rollup` (`main`, `types`, `typesVersions`). `@rohal12/twee-ts/vite` still needs `node16`, `nodenext` or `bundler`, because Vite's own types do (#250)
+- The compiler is bundled once per format and shared by every entry point, so `TweeTsError` and module state such as the format caches are the same objects whether loaded through `@rohal12/twee-ts`, `/vite` or `/rollup`; the unpacked package shrinks from 4.0 MB to 2.4 MB (#250)
+- The Vite plugin compares and watches its sources, head file, modules and the entry's dependencies by real path, so `vite build --watch` rebuilds and the dev server sees changes on macOS (`/var` is `/private/var`), on Windows (8.3 short names such as `RUNNER~1`) and in projects reached through a symbolic link (#250)
+- On case-insensitive file systems (macOS, Windows), a story format folder that both `storyformats` and `storyFormats` reach is searched once, at the rank of its first name, so format precedence matches Linux (#250)
+- Builds from a git checkout (tests, git dependencies, `pnpm link`) report the version `0.0.0-development` in `--version` and `creator-version` instead of the stale `1.2.0`; published packages report the released version (#250)
+
+### Changed
+
+- The published package is the tarball that CI packed and checked on Linux, macOS and Windows; the release job installs nothing and runs no package scripts (#250)
+- Loading the package through both `import` and `require()` in one process still loads the ESM and the CommonJS build separately (the dual package hazard); use one of the two (#250)
 
 ## [1.18.2] - 2026-10-06
 

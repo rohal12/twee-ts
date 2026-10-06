@@ -5,7 +5,7 @@
  * graph, and a failing story or an unreadable folder is easier to set up by hand.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
@@ -143,7 +143,26 @@ describe('vite plugin hooks: build --watch targets', () => {
   it('registers a source file, and skips a source that does not exist', () => {
     const dir = makeProject({ 'one.tw': STORY });
     const hooks = hooksOf({ sources: [join(dir, 'one.tw'), join(dir, 'missing')], compileOptions: COMPILE });
-    expect(watchTargets(hooks, resolvedConfig(dir))).toEqual([join(dir, 'one.tw').replace(/\\/g, '/')]);
+    expect(watchTargets(hooks, resolvedConfig(dir))).toEqual([
+      realpathSync.native(join(dir, 'one.tw')).replace(/\\/g, '/'),
+    ]);
+  });
+
+  // The bundler's watcher reports real paths (macOS FSEvents gives /private/var/… for /var/…), so it
+  // must watch real paths: a target named through a link never matches an event, and nothing rebuilds.
+  it('registers sources reached through a symbolic link by their real path', () => {
+    const real = makeProject({ 'story/start.tw': STORY, 'story/parts/more.tw': STORY });
+    const holder = makeProject({});
+    const link = join(holder, 'project');
+    symlinkSync(real, link, 'junction');
+    const hooks = hooksOf({ sources: [join(link, 'story')], compileOptions: COMPILE });
+    const story = realpathSync.native(join(real, 'story')).replace(/\\/g, '/');
+    expect(watchTargets(hooks, resolvedConfig(link))).toEqual([
+      story,
+      `${story}/parts`,
+      `${story}/parts/more.tw`,
+      `${story}/start.tw`,
+    ]);
   });
 
   it.skipIf(process.platform === 'win32')('skips a link to a file the build writes', () => {

@@ -31,6 +31,16 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** The device and inode of the folder at `path` (the same however the folder is named), or undefined for no folder. */
+function directoryIdentity(path: string): string | undefined {
+  try {
+    const stat = statSync(path, { bigint: true });
+    return stat.isDirectory() ? `${stat.dev}:${stat.ino}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function isFile(path: string): boolean {
   try {
     return statSync(path).isFile();
@@ -197,7 +207,18 @@ export function getFormatSearchDirs(extraPaths: readonly string[] = [], useTweeg
   // Working directory
   basePaths.add(process.cwd());
 
-  const dirs = [...basePaths].flatMap((base) => subdirNames.map((sub) => join(base, sub))).filter(isDirectory);
+  // On a case-insensitive file system (macOS and Windows by default) `storyformats` and
+  // `storyFormats` name one folder, as do two names that reach it through a link. Each folder
+  // is searched once, at the rank of the first name found for it, on every platform.
+  const seen = new Set<string>();
+  const dirs = [...basePaths]
+    .flatMap((base) => subdirNames.map((sub) => join(base, sub)))
+    .filter((dir) => {
+      const identity = directoryIdentity(dir);
+      if (identity === undefined || seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
 
   // TWEEGO_PATH environment variable
   const tweegoPath = useTweegoPath ? process.env['TWEEGO_PATH'] : undefined;

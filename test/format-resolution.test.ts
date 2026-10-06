@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
@@ -523,6 +523,21 @@ describe('format directory precedence (#163)', () => {
       tweegoPath,
       projectFormats,
     ]);
+  });
+
+  // On a case-insensitive file system (macOS and Windows by default) storyformats and storyFormats
+  // are one folder; a link gives a folder a second name on every platform.
+  it('searches a folder once, at the rank of its first name, when two of the names it tries reach it', async () => {
+    const formats = join(cwd, 'storyformats');
+    mkdirSync(formats, { recursive: true });
+    const alias = join(cwd, 'storyFormats');
+    if (!existsSync(alias)) symlinkSync(formats, alias, 'junction');
+    expect(getFormatSearchDirs([])).toEqual([formats, tweegoPath]);
+
+    // story-formats ranks above storyformats, whatever else names the folder.
+    writeFormat(formats, 'fixture-1', 'Fixture', '1.0.0', 'STORYFORMATS');
+    writeFormat(join(cwd, 'story-formats'), 'fixture-1', 'Fixture', '1.0.0', 'STORY-FORMATS');
+    expect(await build([])).toBe('STORY-FORMATS');
   });
 
   it('lets formatPaths outrank TWEEGO_PATH for the same folder name', async () => {
