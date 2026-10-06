@@ -144,6 +144,14 @@ describe('vite plugin: dev server requests and connections', { timeout: 30_000 }
     const dir = makeProject({ 'story/start.tw': STORY });
     const url = await serve(dir, [tweeTsPlugin(plain(dir))], createLogger('silent'));
     const send = vi.spyOn(server!.ws, 'send');
+    // Connection listeners run in the order they were added, the plugin's (added when the server was
+    // configured) before this one: once this one has run, the plugin has sent whatever it sends to a new
+    // page (#250 TEST-2: no fixed wait).
+    const handled = new Promise<void>((done) => {
+      server!.ws.on('connection', () => {
+        done();
+      });
+    });
     const socket = new WebSocket(url.replace('http', 'ws'), 'vite-hmr');
     try {
       await new Promise<void>((done, fail) => {
@@ -154,7 +162,7 @@ describe('vite plugin: dev server requests and connections', { timeout: 30_000 }
           fail(new Error('websocket failed'));
         });
       });
-      await new Promise((r) => setTimeout(r, 100));
+      await handled;
       expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
     } finally {
       socket.close();

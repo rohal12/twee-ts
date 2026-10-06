@@ -98,5 +98,8 @@ describe('reading format source', () => {
       proofing: false,
     };
     expect(() => readFormatSource(format)).toThrow('Cannot parse format mock-1 JSON');
+    expect(() => readFormatSource(format)).toThrow(
+      expect.objectContaining({ name: 'TweeTsError', code: 'FORMAT_UNAVAILABLE' }),
+    );
   });
 });

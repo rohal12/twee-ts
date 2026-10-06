@@ -7,7 +7,7 @@
  */
 import { resolve } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
-import { TweeTsError } from '../compiler.js';
+import { TweeTsError } from '../errors.js';
 import { isExcluded } from '../filesystem.js';
 import { isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
@@ -22,9 +22,12 @@ export type PluginCompileOptions = Omit<Partial<CompileOptions>, 'sources' | 'fo
 
 /** The options both plugins take. */
 export interface SharedPluginOptions {
-  /** Source directories/files to compile, relative to the working directory. */
-  sources: string[];
-  /** Story format ID. */
+  /**
+   * Source directories/files to compile, relative to the working directory. The plugins take paths only: a
+   * bundler watches files, so the inline sources `compile()` accepts are not supported here.
+   */
+  sources: readonly string[];
+  /** Story format ID (`formatId` in the compile options). */
   format?: string | undefined;
   /**
    * Output file name, relative to the output folder: names separated by forward

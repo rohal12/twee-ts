@@ -362,12 +362,10 @@ function toFormatJSON(fields: ReadonlyMap<string, unknown>, notes: string[]): Fo
 }
 
 /**
- * Parse the Twine 2 format.js JSON chunk; null when it cannot be used ({@link decodeFormatJSON}
- * gives the reason).
- *
- * @param _formatId No longer used; kept so existing callers keep compiling.
+ * Read the format object of a Twine 2 `format.js` (the object literal passed to its `storyFormat()` call);
+ * null when the file holds no usable format. Compiling reports why a format cannot be used.
  */
-export function parseFormatJSON(source: string, _formatId?: string): Twine2FormatJSON | null {
+export function parseFormatJSON(source: string): Twine2FormatJSON | null {
   const result = decodeFormatJSON(source);
   return result.ok ? result.data : null;
 }

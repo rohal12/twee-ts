@@ -25,6 +25,12 @@ describe('plugin types', () => {
     expect(plugin.name).toBe('twee-ts');
   });
 
+  it('both plugins take a readonly list of sources (#250 API-2)', () => {
+    const sources = ['story', 'chapters'] as const;
+    expect(tweeTsVitePlugin({ sources }).name).toBe('twee-ts');
+    expect(tweeTsRollupPlugin({ sources }).name).toBe('twee-ts');
+  });
+
   it('the Vite plugin is a Vite Plugin and fits a typed Vite config', () => {
     const plugin: VitePlugin = tweeTsVitePlugin({ sources: ['story'] });
     const config = defineViteConfig({ plugins: [tweeTsVitePlugin({ sources: ['story'] })] });

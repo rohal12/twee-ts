@@ -17,6 +17,7 @@ import { cssContexts, javaScriptContexts } from './code-context.js';
 import type { InContext, SourceRange } from './code-context.js';
 import { attrEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
+import { TweeTsError } from './errors.js';
 
 type HtmlDocument = DefaultTreeAdapterTypes.Document;
 /** An element of a parsed document. */
@@ -456,7 +457,7 @@ function makeMarkers(html: string, occurrences: readonly PlaceholderOccurrence[]
   }
   const filler = free.pop();
   if (filler === undefined || free.length < occurrences.length) {
-    throw new Error('Too many placeholders to analyze in this template.');
+    throw new TweeTsError('Too many placeholders to analyze in this template.', [], { code: 'FORMAT_UNAVAILABLE' });
   }
   return occurrences.map((o, i) => (free[i] ?? '') + filler.repeat(o.innerEnd - o.innerStart - 1));
 }

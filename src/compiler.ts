@@ -17,7 +17,6 @@ import type {
   OutputMode,
   InlineSource,
   FileCacheEntry,
-  TweeTsErrorCode,
 } from './types.js';
 import { createStory, storyHas, getStoryStats, snapshot } from './story.js';
 import {
@@ -46,29 +45,14 @@ import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.
 import type { InputFailure, InputProblem } from './input-policy.js';
 import { readUTF8 } from './util.js';
 import { VERSION } from './version.js';
+import { TweeTsError } from './errors.js';
+
+export { TweeTsError };
 
 const CREATOR_NAME = 'Twee-ts';
 
 const DEFAULT_FORMAT_ID = 'sugarcube-2';
 const DEFAULT_START_NAME = 'Start';
-
-/**
- * A build that could not run: nothing was built or written. `code` says why (see TweeTsErrorCode),
- * `diagnostics` holds what the build reported before it stopped, and `cause` the error behind it, if any.
- */
-export class TweeTsError extends Error {
-  readonly code: TweeTsErrorCode;
-
-  constructor(
-    message: string,
-    public diagnostics: Diagnostic[] = [],
-    options: { readonly code?: TweeTsErrorCode; readonly cause?: unknown } = {},
-  ) {
-    super(message, 'cause' in options ? { cause: options.cause } : undefined);
-    this.name = 'TweeTsError';
-    this.code = options.code ?? 'BUILD_FAILED';
-  }
-}
 
 /** Whether `error` is one no change to the sources can fix: a watch stops on it. */
 function isConfigurationError(error: unknown): error is TweeTsError {

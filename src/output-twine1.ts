@@ -14,6 +14,7 @@ import { htmlCommentSanitize, rot13 } from './escape.js';
 import { unrepresentableTextDiagnostics } from './html-output-check.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { VERSION } from './version.js';
+import { TweeTsError } from './errors.js';
 
 const CREATOR_NAME = 'twee-ts';
 
@@ -171,8 +172,10 @@ function tryReplaceComponent(
     return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) {
-      throw new Error(
+      throw new TweeTsError(
         `Required format component not found: ${componentPath}: ${e instanceof Error ? e.message : String(e)}`,
+        [],
+        { code: 'FORMAT_UNAVAILABLE', cause: e },
       );
     }
     return template;

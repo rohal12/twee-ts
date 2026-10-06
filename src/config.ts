@@ -12,7 +12,7 @@ import { readUTF8 } from './util.js';
 import { identify } from './path-identity.js';
 import { failureOfError, inputProblem } from './input-policy.js';
 import type { InputDiscovery } from './input-policy.js';
-import { TweeTsError } from './compiler.js';
+import { TweeTsError } from './errors.js';
 import { JsonObject, field, formatJsonPath, ownRecord, parseJSON, readObject } from './json-decode.js';
 import type { Decoder, DecodeIssue, FieldReader, JsonPath, JsonValue } from './json-decode.js';
 
@@ -249,7 +249,7 @@ export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConf
  *
  * The paths in it (`sources`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder
  * that holds the config file, and so are the `exclude` globs: the config is returned with them rebased onto
- * the working directory (see {@link rebaseConfigPaths}).
+ * the working directory (or absolute, when that folder is outside it).
  *
  * @param diagnostics Receives warnings that do not stop the config from loading: keys the config does not
  *   define, and a file that is not valid UTF-8 (it is read as Windows-1252).

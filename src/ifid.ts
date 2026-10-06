@@ -12,7 +12,8 @@ export function generateIFID(): IFID {
 
 /**
  * Validate and brand an IFID string. Throws on invalid input.
- * Returns the IFID in its stored form (see `normalizeIFID`).
+ * Returns the IFID in the form the story model stores: the uppercase bare UUID (a `UUID://…//` wrapper is
+ * removed).
  */
 export function createIFID(value: string): IFID {
   const err = validateIFID(value);

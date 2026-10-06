@@ -33,7 +33,7 @@ export interface StoryMap {
    * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
    * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
    * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
-   * (see `sugarcube-macros.ts`). Links and calls in comments are not read. A script passage is
+   * (see Story Inspection in docs/api.md). Links and calls in comments are not read. A script passage is
    * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
    * CSS and links to nothing. With a `target` (see `InspectOptions`), a passage that output leaves
    * out links to nothing, except a script passage, which Twine 2 output runs.

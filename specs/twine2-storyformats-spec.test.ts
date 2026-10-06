@@ -12,15 +12,9 @@ import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 
 import { compile, TweeTsError } from '../src/compiler.js';
-import {
-  discoverFormats,
-  getFormatIdByName,
-  getFormatIdByNameAndVersion,
-  parseSemver,
-  readFormatSource,
-  semverCompare,
-} from '../src/formats.js';
+import { discoverFormats, getFormatIdByName, getFormatIdByNameAndVersion, readFormatSource } from '../src/formats.js';
 import { parseFormatJSON } from '../src/format-decode.js';
+import { compareVersions, parseVersion } from '../src/semver.js';
 import type { StoryFormatInfo } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
@@ -1124,7 +1118,7 @@ describe('Twine 2 Story Formats Spec -- SemVer Version Management', () => {
 describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
   it('extracts name, version, source, and proofing from valid JSON', () => {
     const input = 'window.storyFormat({"name":"TestFmt","version":"1.2.3","source":"<html></html>","proofing":true});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.name).toBe('TestFmt');
@@ -1134,7 +1128,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
   });
 
   it('returns null when JSON has no opening brace', () => {
-    const result = parseFormatJSON('window.storyFormat();', 'test');
+    const result = parseFormatJSON('window.storyFormat();');
     expect(result).toBeNull();
   });
 
@@ -1142,25 +1136,22 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
     // Spec: "name: (string) Optional. The name of the story format.
     // (Omitting the name will lead to an Untitled Story Format.)"
     // parseFormatJSON should still return a valid result with a default name.
-    const result = parseFormatJSON('window.storyFormat({"version":"1.0.0","source":"<html></html>"});', 'test');
+    const result = parseFormatJSON('window.storyFormat({"version":"1.0.0","source":"<html></html>"});');
     expect(result?.name).toBe('Untitled Story Format');
   });
 
   it('returns null when version is missing', () => {
-    const result = parseFormatJSON('window.storyFormat({"name":"X","source":"<html></html>"});', 'test');
+    const result = parseFormatJSON('window.storyFormat({"name":"X","source":"<html></html>"});');
     expect(result).toBeNull();
   });
 
   it('returns null when source is missing', () => {
-    const result = parseFormatJSON('window.storyFormat({"name":"X","version":"1.0.0"});', 'test');
+    const result = parseFormatJSON('window.storyFormat({"name":"X","version":"1.0.0"});');
     expect(result).toBeNull();
   });
 
   it('proofing defaults to false when not specified', () => {
-    const result = parseFormatJSON(
-      'window.storyFormat({"name":"X","version":"1.0.0","source":"<html></html>"});',
-      'test',
-    );
+    const result = parseFormatJSON('window.storyFormat({"name":"X","version":"1.0.0","source":"<html></html>"});');
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.proofing).toBe(false);
@@ -1171,7 +1162,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
     // Since the spec explicitly mentions this, compilers MUST handle it.
     const input =
       'window.storyFormat({"name":"Harlowe","version":"3.3.9","source":"<html></html>","setup": function(){}});';
-    const result = parseFormatJSON(input, 'harlowe-3');
+    const result = parseFormatJSON(input);
     // Must parse successfully -- Harlowe's setup function is a known pattern
     expect(result).toMatchObject({ name: 'Harlowe', version: '3.3.9' });
   });
@@ -1181,7 +1172,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
     // the full HTML output of the story format"
     const input =
       'window.storyFormat({"name":"SourceTest","version":"1.0.0","source":"<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>"});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.source).toBe('<html><head><title>{{STORY_NAME}}</title></head><body>{{STORY_DATA}}</body></html>');
@@ -1189,7 +1180,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
 
   it('proofing=true is correctly parsed', () => {
     const input = 'window.storyFormat({"name":"Proof","version":"1.0.0","source":"<html></html>","proofing":true});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.proofing).toBe(true);
@@ -1197,7 +1188,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
 
   it('proofing=false is correctly parsed', () => {
     const input = 'window.storyFormat({"name":"Play","version":"1.0.0","source":"<html></html>","proofing":false});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.proofing).toBe(false);
@@ -1207,7 +1198,7 @@ describe('Twine 2 Story Formats Spec -- parseFormatJSON', () => {
     // Spec says format objects may contain keys like setup, codeMirrorSyntax, editorToolbar, etc.
     const input =
       'window.storyFormat({"name":"Extra","version":"1.0.0","source":"<html></html>","customKey":"value","anotherKey":42});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     expect(result).not.toBeNull();
     if (!result) throw new Error('expected result');
     expect(result.name).toBe('Extra');
@@ -1631,86 +1622,65 @@ describe('Twine 2 Story Formats Spec -- Twee3 Input', () => {
 // Spec Section: SemVer Utilities
 // "semantic version-style formatting (x.y.z, e.g., 1.2.1) of the version
 // is also required."
-// Tests for parseSemver and semverCompare which implement the SemVer logic
-// underlying format version management.
+// Tests for parseVersion and compareVersions, the public SemVer functions that format version
+// management uses.
 // =============================================================================
 describe('Twine 2 Story Formats Spec -- SemVer Utilities', () => {
-  describe('parseSemver', () => {
+  describe('parseVersion', () => {
     it('parses a standard x.y.z version string', () => {
-      const result = parseSemver('1.2.3');
-      expect(result).toEqual([1, 2, 3]);
+      expect(parseVersion('1.2.3')).toEqual({ major: 1, minor: 2, patch: 3, prerelease: [] });
     });
 
     it('parses a version with zero components', () => {
-      const result = parseSemver('0.0.0');
-      expect(result).toEqual([0, 0, 0]);
+      expect(parseVersion('0.0.0')).toEqual({ major: 0, minor: 0, patch: 0, prerelease: [] });
     });
 
     it('parses a version with large numbers', () => {
-      const result = parseSemver('10.20.30');
-      expect(result).toEqual([10, 20, 30]);
+      expect(parseVersion('10.20.30')).toEqual({ major: 10, minor: 20, patch: 30, prerelease: [] });
     });
 
-    it('parses a version with pre-release suffix (ignoring suffix)', () => {
-      const result = parseSemver('2.0.0-beta.1');
-      expect(result).not.toBeNull();
-      if (!result) throw new Error('expected result');
-      expect(result[0]).toBe(2);
-      expect(result[1]).toBe(0);
-      expect(result[2]).toBe(0);
+    it('keeps the pre-release identifiers', () => {
+      expect(parseVersion('2.0.0-beta.1')).toEqual({ major: 2, minor: 0, patch: 0, prerelease: ['beta', '1'] });
     });
 
-    it('parses a version with build metadata suffix (ignoring suffix)', () => {
-      const result = parseSemver('1.0.0+build.123');
-      expect(result).not.toBeNull();
-      if (!result) throw new Error('expected result');
-      expect(result[0]).toBe(1);
-      expect(result[1]).toBe(0);
-      expect(result[2]).toBe(0);
+    it('ignores build metadata', () => {
+      expect(parseVersion('1.0.0+build.123')).toEqual({ major: 1, minor: 0, patch: 0, prerelease: [] });
     });
 
     it('returns null for non-semver string', () => {
-      const result = parseSemver('not-a-version');
-      expect(result).toBeNull();
+      expect(parseVersion('not-a-version')).toBeNull();
     });
 
     it('coerces an incomplete version (missing patch) to x.y.0, as Tweego does (#164)', () => {
-      expect(parseSemver('1.0')).toEqual([1, 0, 0]);
+      expect(parseVersion('1.0')).toEqual({ major: 1, minor: 0, patch: 0, prerelease: [] });
     });
 
     it('returns null for empty string', () => {
-      const result = parseSemver('');
-      expect(result).toBeNull();
+      expect(parseVersion('')).toBeNull();
     });
   });
 
-  describe('semverCompare', () => {
+  describe('compareVersions', () => {
+    const compare = (a: string, b: string): number => {
+      const left = parseVersion(a);
+      const right = parseVersion(b);
+      if (left === null || right === null) throw new Error(`not versions: ${a}, ${b}`);
+      return compareVersions(left, right);
+    };
+
     it('returns 0 for equal versions', () => {
-      expect(semverCompare([1, 2, 3], [1, 2, 3])).toBe(0);
+      expect(compare('1.2.3', '1.2.3')).toBe(0);
     });
 
-    it('returns positive when first version is greater (major)', () => {
-      expect(semverCompare([2, 0, 0], [1, 0, 0])).toBeGreaterThan(0);
-    });
-
-    it('returns negative when first version is lesser (major)', () => {
-      expect(semverCompare([1, 0, 0], [2, 0, 0])).toBeLessThan(0);
-    });
-
-    it('returns positive when first version is greater (minor)', () => {
-      expect(semverCompare([1, 2, 0], [1, 1, 0])).toBeGreaterThan(0);
-    });
-
-    it('returns negative when first version is lesser (minor)', () => {
-      expect(semverCompare([1, 1, 0], [1, 2, 0])).toBeLessThan(0);
-    });
-
-    it('returns positive when first version is greater (patch)', () => {
-      expect(semverCompare([1, 0, 2], [1, 0, 1])).toBeGreaterThan(0);
-    });
-
-    it('returns negative when first version is lesser (patch)', () => {
-      expect(semverCompare([1, 0, 1], [1, 0, 2])).toBeLessThan(0);
+    it.each([
+      ['2.0.0', '1.0.0'],
+      ['1.2.0', '1.1.0'],
+      ['1.0.2', '1.0.1'],
+      ['1.0.0', '1.0.0-rc.1'],
+      ['1.0.0-rc.2', '1.0.0-rc.1'],
+    ])('ranks %s above %s, and not the other way round', (higher, lower) => {
+      expect(compare(higher, lower)).toBeGreaterThan(0);
+      expect(compare(lower, higher)).toBeLessThan(0);
     });
   });
 });
@@ -1869,7 +1839,7 @@ describe('Twine 2 Story Formats Spec -- Name Key Strictness', () => {
     // The parser MUST NOT require a name key. A format with version and source but no name
     // MUST be parseable.
     const input = 'window.storyFormat({"version":"1.0.0","source":"<html></html>"});';
-    const result = parseFormatJSON(input, 'test');
+    const result = parseFormatJSON(input);
     // Strict assertion: MUST return a non-null result
     expect(result).not.toBeNull();
   });

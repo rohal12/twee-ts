@@ -39,7 +39,7 @@ import {
   useCachedRecord,
 } from './remote-formats.js';
 import { parseVersion } from './semver.js';
-import { TweeTsError } from './compiler.js';
+import { TweeTsError } from './errors.js';
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {

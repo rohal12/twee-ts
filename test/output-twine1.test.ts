@@ -69,6 +69,10 @@ describe('toTwine1HTML library components', () => {
     expect(() => toTwine1HTML(story([['modernizr', 'on']]), format(HEADER), 'Start')).toThrow(
       /Required format component not found: .*modernizr\.js/,
     );
+    // A TweeTsError with a code, as every error a build stops with (#250 API-3).
+    expect(() => toTwine1HTML(story([['jquery', 'on']]), format(HEADER), 'Start')).toThrow(
+      expect.objectContaining({ name: 'TweeTsError', code: 'FORMAT_UNAVAILABLE', cause: expect.any(Error) }),
+    );
   });
 
   it('keeps the placeholder of a missing user library, which is optional', () => {

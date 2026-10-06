@@ -466,9 +466,18 @@ describe('a stopped watch leaves nothing behind', { timeout: 30_000 }, () => {
     );
     writeFileSync(join(src, 'a.tw'), passage('a', 'B'));
     w.controller.abort();
-    await new Promise((r) => setTimeout(r, 50));
-    const after = handles();
-    expect(after['FSEventWrap'] ?? 0).toBe(before['FSEventWrap'] ?? 0);
-    expect(after['Timeout'] ?? 0).toBeLessThanOrEqual(before['Timeout'] ?? 0);
+    // Watchers close as their 'close' events arrive: poll for it rather than wait a fixed time.
+    const released = (): boolean => {
+      const after = handles();
+      return (
+        (after['FSEventWrap'] ?? 0) === (before['FSEventWrap'] ?? 0) &&
+        (after['Timeout'] ?? 0) <= (before['Timeout'] ?? 0)
+      );
+    };
+    await eventually(
+      released,
+      () => `handles still open: ${JSON.stringify(handles())} (before: ${JSON.stringify(before)})`,
+    );
+    expect(released()).toBe(true);
   });
 });

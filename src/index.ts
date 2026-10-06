@@ -4,7 +4,9 @@
  */
 
 // Primary API
-export { compile, compileIncremental, compileToFile, watch, TweeTsError } from './compiler.js';
+export { compile, compileIncremental, compileToFile, watch } from './compiler.js';
+export { TweeTsError } from './errors.js';
+export { WatchPathError } from './filesystem.js';
 
 // Story inspection, and the story model builder
 export { storyInspect } from './inspect.js';
@@ -22,7 +24,8 @@ export { applyTagAliases } from './passage.js';
 // Lower-level exports
 export { TweeLexer, tweeLexer } from './lexer.js';
 export { parseTwee } from './parser.js';
-export { discoverFormats, getFormatSearchDirs, parseSemver, semverCompare } from './formats.js';
+export { discoverFormats, getFormatSearchDirs } from './formats.js';
+export { parseVersion, compareVersions } from './semver.js';
 export { parseFormatJSON } from './format-decode.js';
 export { generateIFID, validateIFID, createIFID } from './ifid.js';
 
@@ -73,6 +76,8 @@ export type {
   ReadonlyStory,
   ReadonlyPassage,
   SFAIndex,
+  SemVer,
+  Twine2FormatJSON,
   SFAIndexEntry,
   RemoteFetchOptions,
   RemoteResolveOptions,
@@ -88,5 +93,6 @@ export type {
 } from './types.js';
 export type { CachedFormatEntry } from './format-cache.js';
 export type { DecompileResult } from './html-parser.js';
+export type { ParseOptions, ParseResult } from './parser.js';
 export type { StoryMap, BrokenLink } from './inspect.js';
 export type { LintResult } from './lint.js';
