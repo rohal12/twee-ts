@@ -11,6 +11,15 @@ export function isRecord(value: unknown): value is Readonly<Record<string, unkno
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The known key that `key` most likely stands for: one that differs from it only in letter case, `-` or `_`
+ * (`formatID`, `output-mode`), or undefined.
+ */
+export function similarKey(key: string, known: readonly string[]): string | undefined {
+  const fold = (k: string): string => k.toLowerCase().replace(/[-_]/g, '');
+  return known.find((candidate) => fold(candidate) === fold(key));
+}
+
 /** Text decoded from bytes, with the warning when the bytes were not valid UTF-8. */
 export interface DecodedText {
   readonly text: string;

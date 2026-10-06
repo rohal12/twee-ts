@@ -82,6 +82,11 @@ export async function lintForOutputFile(
   };
 }
 
+/** `n` and a noun, plural unless `n` is 1: `1 file`, `2 files`, `1,234 words`. */
+function counted(n: number, noun: string): string {
+  return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+}
+
 /**
  * Format a lint result as a human-readable report string.
  */
@@ -94,7 +99,7 @@ export function formatLintReport(result: LintResult): string {
     : 'unknown';
   lines.push(`Format: ${formatStr}`);
   lines.push(
-    `Passages: ${result.passages} total (${result.storyPassages} story, ${result.infoPassages} info), ${result.stats.words.toLocaleString()} words, ${result.stats.files.length} files`,
+    `Passages: ${result.passages} total (${result.storyPassages} story, ${result.infoPassages} info), ${counted(result.stats.words, 'word')}, ${counted(result.stats.files.length, 'file')}`,
   );
   lines.push(`Start: ${result.start}`);
 

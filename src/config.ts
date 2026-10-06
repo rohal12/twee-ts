@@ -8,7 +8,8 @@
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
-import { readUTF8 } from './util.js';
+import { readUTF8, similarKey } from './util.js';
+import { VERSION } from './version.js';
 import { identify } from './path-identity.js';
 import { failureOfError, inputProblem } from './input-policy.js';
 import type { InputDiscovery } from './input-policy.js';
@@ -217,9 +218,6 @@ export const CONFIG_KEYS: readonly (keyof TweeTsConfig)[] = Object.keys(CONFIG_S
 /** The key that only references the JSON schema, for editors. */
 const SCHEMA_KEY = '$schema';
 
-/** A key folded so that spellings differing only in letter case, `-` or `_` compare equal. */
-const foldKey = (key: string): string => key.toLowerCase().replace(/[-_]/g, '');
-
 /** Why a tag alias can't be used, or undefined when it can. The CLI's --tag-alias checks the same. */
 export function tagAliasProblem(alias: string, target: string): string | undefined {
   if (!TAG_RE.test(alias)) return `the alias "${alias}" must be a non-empty tag name without whitespace`;
@@ -316,7 +314,7 @@ function toJsonValue(value: unknown): JsonValue {
 
 /** The warning for a key the config does not define, with the key it may stand for. */
 function unknownKeyWarning(key: string): string {
-  const suggestion = CONFIG_KEYS.find((known) => foldKey(known) === foldKey(key));
+  const suggestion = similarKey(key, CONFIG_KEYS);
   const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
   return `Unknown config key "${key}"${hint}; it is ignored.`;
 }
@@ -412,7 +410,7 @@ function fieldSchema(spec: FieldSpec): Record<string, unknown> {
 export function configJsonSchema(): Record<string, unknown> {
   return {
     $schema: 'http://json-schema.org/draft-07/schema#',
-    $id: 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
+    $id: SCHEMA_URL,
     title: 'twee-ts Configuration',
     description: 'Configuration file for twee-ts, a TypeScript Twee-to-HTML compiler.',
     type: 'object',
@@ -454,10 +452,23 @@ export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): Twe
   };
 }
 
-/** Return a default config JSON string for --init scaffolding. */
-export function scaffoldConfig(): string {
+/** Where the schema of the newest release is published; also the schema's `$id`. */
+const SCHEMA_URL = 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json';
+
+/**
+ * The schema URL a new config names: the schema of `version`, so that an editor checks the config against the
+ * keys the installed twee-ts reads, not those of a later release (#250). A build from a checkout reports
+ * `0.0.0-development`, which is never published, and names the newest schema.
+ */
+function schemaUrlFor(version: string): string {
+  const published = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version) && !version.startsWith('0.0.0-');
+  return published ? SCHEMA_URL.replace('/twee-ts/', `/twee-ts@${version}/`) : SCHEMA_URL;
+}
+
+/** Return a default config JSON string for --init scaffolding, naming the schema of `version` (this twee-ts). */
+export function scaffoldConfig(version: string = VERSION): string {
   const config = {
-    $schema: 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
+    $schema: schemaUrlFor(version),
     sources: ['src/'],
     output: 'story.html',
   };

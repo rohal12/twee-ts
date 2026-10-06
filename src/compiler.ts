@@ -43,7 +43,7 @@ import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputFailure, InputProblem } from './input-policy.js';
-import { readUTF8 } from './util.js';
+import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
 
@@ -313,6 +313,59 @@ function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+/**
+ * Every option compile(), compileToFile() and watch() read. `satisfies` keeps the list complete: an option
+ * added to the types and not here, or listed here and not in the types, is a compile error.
+ */
+const OPTION_KEYS: readonly string[] = Object.keys({
+  sources: true,
+  exclude: true,
+  outputMode: true,
+  formatId: true,
+  startPassage: true,
+  formatPaths: true,
+  useTweegoPath: true,
+  modules: true,
+  headFile: true,
+  trim: true,
+  twee2Compat: true,
+  testMode: true,
+  formatIndices: true,
+  formatUrls: true,
+  noRemote: true,
+  signal: true,
+  formatFetchTimeout: true,
+  formatResolutionTimeout: true,
+  useDefaultFormatIndices: true,
+  tagAliases: true,
+  sourceInfo: true,
+  wordCountMethod: true,
+  outFile: true,
+  onBuild: true,
+  onError: true,
+} satisfies Record<keyof WatchOptions, true>);
+
+/** What the options of the plugins and the config file are called in the compile options. */
+const OTHER_NAMES: ReadonlyMap<string, string> = new Map([
+  ['format', 'formatId'],
+  ['output', 'outFile'],
+]);
+
+/**
+ * A warning for each option the build does not read, as for a key a config file does not define: called from
+ * JavaScript, or with a spread config object, a misspelt option (`format` for `formatId`) would otherwise be
+ * left at its default without a word.
+ */
+function unknownOptionWarnings(options: CompileOptions): Diagnostic[] {
+  return Object.keys(options)
+    .filter((key) => !OPTION_KEYS.includes(key))
+    .map((key): Diagnostic => {
+      const suggestion = OTHER_NAMES.get(key) ?? similarKey(key, OPTION_KEYS);
+      const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
+      return { level: 'warning', message: `Unknown compile option "${key}"${hint}; it is ignored.` };
+    });
+}
+
 /** Throws a TweeTsError (`INVALID_OPTIONS`) for an option out of range, before anything is read. */
 function validateOptions(options: CompileOptions): void {
   const timeouts = [
@@ -489,6 +542,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   options.signal?.throwIfAborted();
   validateOptions(options);
+  diagnostics.push(...unknownOptionWarnings(options));
   checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
   // Clear per-compile index cache

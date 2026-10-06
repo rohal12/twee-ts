@@ -39,3 +39,15 @@ describe('formatLintReport diagnostics and format line', () => {
     expect(formatLintReport(BASE)).toMatch(/^Format: unknown$/m);
   });
 });
+
+describe('formatLintReport counts (#250 CLI-3)', () => {
+  it.each([
+    [0, [], '0 words, 0 files'],
+    [1, ['a.tw'], '1 word, 1 file'],
+    [2, ['a.tw', 'b.tw'], '2 words, 2 files'],
+    [1234, ['a.tw'], `${(1234).toLocaleString()} words, 1 file`],
+  ])('writes %d words and %j as "%s"', (words, files, expected) => {
+    const report = formatLintReport({ ...BASE, stats: { ...BASE.stats, words, files } });
+    expect(report).toContain(`info), ${expected}\n`);
+  });
+});
