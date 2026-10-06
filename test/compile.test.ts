@@ -183,6 +183,41 @@ describe('compile', () => {
     expect(result.output).not.toContain('name="MyLib"');
   });
 
+  it('gives chained aliases the same output directly and after a Twee round trip (#282)', async () => {
+    const story = [
+      ':: StoryData',
+      '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}',
+      '',
+      ':: StoryTitle',
+      'Chain',
+      '',
+      ':: Start',
+      'Hello',
+      '',
+      ':: Library [library]',
+      'window.chained = true;',
+      '',
+    ].join('\n');
+    const options = {
+      formatId: 'test-format-1',
+      formatPaths: [FORMAT_DIR],
+      useTweegoPath: false,
+      tagAliases: { library: 'script', script: 'Twine.private' },
+    };
+    const twee = await compile({ ...options, sources: [{ filename: 's.tw', content: story }], outputMode: 'twee3' });
+    const archive = { ...options, outputMode: 'twine2-archive' } as const;
+    const direct = await compile({ ...archive, sources: [{ filename: 's.tw', content: story }] });
+    const again = await compile({ ...archive, sources: [{ filename: 's.tw', content: twee.output }] });
+    // The chain makes the passage private, so neither build writes it.
+    expect(direct.output).not.toContain('window.chained');
+    expect(again.output).toBe(direct.output);
+    expect(again.story.passages.find((p) => p.name === 'Library')?.tags).toEqual([
+      'library',
+      'script',
+      'Twine.private',
+    ]);
+  });
+
   it('treats aliased tag as stylesheet in Twine 2 HTML', async () => {
     const result = await compile({
       sources: [

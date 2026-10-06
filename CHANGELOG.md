@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Saving a verified download over a damaged content directory of the format cache writes the damaged or missing files again, so the next offline build finds the format (#275)
 - A cache writer's cleanup removes the content directory its record replaced, and any other that no record names once it is older than ten minutes, and it reads the published record when it cleans up: it no longer removes the content another writer's record names or is still writing (#276)
 - A Twine 1 format downloaded from an index builds from its verified `code.js` and `userlib.js` when the cache cannot be written, and from the cached copy's verified bytes otherwise (#277)
+- Each redirect of a format download is checked before it is followed: the endpoint of a hop from `https:` to `http:` (or from an `https:` hop back to `http:`) is never contacted, so an HTTPS → HTTP → HTTPS chain is refused, and a chain is cut off after 20 redirects (#279)
+- Text HTML cannot carry (U+0000, a lone surrogate) in a script or style module is an error, as in a source, and no longer reaches the page changed without a word (#280)
+- A named source or module whose parent folder cannot be searched is an `unreadable` error, and one beneath a regular file is a missing-path warning, as the input policy says, instead of a raw `EACCES` or `ENOTDIR` exception; the other inputs are still checked (#281)
+- Tag aliases that chain (`{ library: 'script', script: 'Twine.private' }`) give every tag they reach on the first application, so compiling to Twee and compiling that again with the same aliases gives the same story. Applying the aliases again adds nothing (#282)
+- The Vite dev server reloads when a file under a source folder link's new target changes after the link is retargeted: the source folders' identities are read for each change, not once at startup (#283)
 
 ## [2.0.0] - 2026-10-06
 

@@ -18,6 +18,19 @@ import { splitTweeFields } from './twee-syntax.js';
 /** Matches a code point HTML cannot carry: U+0000 or a lone surrogate. */
 const UNREPRESENTABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/** An error when `text` (named `what` in the message) holds a code point HTML cannot carry, else `undefined`. */
+export function unrepresentableTextDiagnostic(what: string, text: string): Diagnostic | undefined {
+  const match = UNREPRESENTABLE.exec(text);
+  if (match === null) return undefined;
+  const codePoint = `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+  return {
+    level: 'error',
+    message:
+      `${what} contains ${codePoint}, which HTML cannot carry: ` +
+      'the browser drops it or reads it as U+FFFD. Remove it.',
+  };
+}
+
 /**
  * Errors for the text of `story` and of the passages it writes (`passages`) that HTML cannot carry: names, tags,
  * passage text, the layout metadata the output mode writes (`layout`: Twine 2 writes `position` and `size`, Twine 1
@@ -30,15 +43,8 @@ export function unrepresentableTextDiagnostics(
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const check = (what: string, text: string): void => {
-    const match = UNREPRESENTABLE.exec(text);
-    if (match === null) return;
-    const codePoint = `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
-    diagnostics.push({
-      level: 'error',
-      message:
-        `${what} contains ${codePoint}, which HTML cannot carry: ` +
-        'the browser drops it or reads it as U+FFFD. Remove it.',
-    });
+    const diagnostic = unrepresentableTextDiagnostic(what, text);
+    if (diagnostic !== undefined) diagnostics.push(diagnostic);
   };
   check('The story name', story.name);
   check('The story tags', story.twine2.tags);

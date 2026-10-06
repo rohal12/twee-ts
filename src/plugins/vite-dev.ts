@@ -156,7 +156,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const entryPath = options.entry;
   // Files and folders are compared by identity key (see paths.ts); the inputs are watched as given.
   const root = fileKey(config.root);
-  const inputKeys = inputs.map(fileKey);
+  // A source folder may be a symbolic link that is retargeted while the server runs, so its identity is read
+  // when it is needed, never kept from startup.
+  const inputKeys = (): string[] => inputs.map(fileKey);
 
   // What a build writes, which `vite build` may have left inside a source folder:
   // the story, chunks and assets, and the copies of the public files.
@@ -211,7 +213,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // Watches the entry's files outside the root, and stops watching those it no longer uses.
   const watchEntryFiles = (files: TrackedFiles): void => {
     const added = [...files].filter(
-      ([key]) => !keyWithin(key, [root]) && !keyWithin(key, inputKeys) && !watchedForEntry.has(key),
+      ([key]) => !keyWithin(key, [root]) && !keyWithin(key, inputKeys()) && !watchedForEntry.has(key),
     );
     const dropped = [...watchedForEntry].filter(([key]) => !files.has(key));
     for (const [key] of dropped) watchedForEntry.delete(key);
@@ -283,7 +285,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // reacting to it would bundle again, and again.
     if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
-    if ((!keyWithin(changed, inputKeys) || excluded(path)) && !touchesEntry(changed)) return;
+    if ((!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed)) return;
     pending.add(changed);
     clearTimeout(timer);
     timer = setTimeout(() => {

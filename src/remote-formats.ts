@@ -62,6 +62,9 @@ export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 /** The URL schemes twee-ts fetches from. */
 const FETCHABLE_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
 
+/** Redirects followed for one download before giving up (as browsers and curl do, a bounded chain). */
+const MAX_REDIRECTS = 20;
+
 /** A configured URL, parsed: its normalized form, or why it cannot be used. */
 export type UrlCheck = { readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: string };
 
@@ -293,16 +296,31 @@ async function fetchBytes(url: string, what: string, signal: AbortSignal, valida
   if (validators.etag !== undefined) headers.set('if-none-match', validators.etag);
   if (validators.lastModified !== undefined) headers.set('if-modified-since', validators.lastModified);
   let res: Response;
-  try {
-    res = await fetch(url, { signal, headers });
-  } catch (e) {
-    throw fail(describeFetchError(e), e);
-  }
-  const finalUrl = res.url === '' ? url : res.url;
-  const finalProtocol = new URL(finalUrl).protocol;
-  if (!FETCHABLE_PROTOCOLS.has(finalProtocol) || (new URL(url).protocol === 'https:' && finalProtocol === 'http:')) {
+  let finalUrl = url;
+  let sawHttps = new URL(url).protocol === 'https:';
+  for (let hops = 0; ; hops++) {
+    try {
+      res = await fetch(finalUrl, { signal, headers, redirect: 'manual' });
+    } catch (e) {
+      throw fail(describeFetchError(e), e);
+    }
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    if (location === null) break;
     await res.body?.cancel();
-    throw fail(`redirected to ${finalUrl}, which is not allowed (only http: and https:, never from https: to http:)`);
+    if (hops >= MAX_REDIRECTS) throw fail(`more than ${MAX_REDIRECTS} redirects`);
+    let next: URL;
+    try {
+      next = new URL(location, finalUrl);
+    } catch (e) {
+      throw fail(`redirected to ${location}, which is not a valid URL`, e);
+    }
+    if (!FETCHABLE_PROTOCOLS.has(next.protocol) || (sawHttps && next.protocol === 'http:')) {
+      throw fail(
+        `redirected to ${next.href}, which is not allowed (only http: and https:, never from https: to http:)`,
+      );
+    }
+    sawHttps ||= next.protocol === 'https:';
+    finalUrl = next.href;
   }
   const fromHeaders = {
     etag: res.headers.get('etag') ?? undefined,

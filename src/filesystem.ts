@@ -17,7 +17,7 @@ import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:p
 import { isKnownFileType, normalizedFileExt } from './media-types.js';
 import { identify, isKeyInside, matchesExclude } from './path-identity.js';
 import type { PathIdentity } from './path-identity.js';
-import { inputProblem, problemDiagnostic } from './input-policy.js';
+import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
 import type { Diagnostic } from './types.js';
 import { attributeOf, documentTextContains, findStoreArea, findStoryData, parseHtml } from './html-structure.js';
@@ -278,9 +278,8 @@ export function getFilenames(
     try {
       stat = statSync(pathname);
     } catch (e) {
-      const link = lstatSync(pathname, { throwIfNoEntry: false });
-      if (link?.isSymbolicLink() === true) problem('named', 'dangling-link', pathname, readLinkText(pathname));
-      else problem('named', 'missing', pathname, e);
+      if (isSymbolicLink(pathname)) problem('named', 'dangling-link', pathname, readLinkText(pathname));
+      else problem('named', failureOfError(e), pathname, e);
       continue;
     }
     if (stat.isFile()) {
@@ -294,6 +293,15 @@ export function getFilenames(
   }
 
   return { filenames: files.map((f) => f.path), files, diagnostics, outputSources, skippedOutputs };
+}
+
+/** Whether `path` is itself a symbolic link; false when it can't be looked at (the caller already has that cause). */
+function isSymbolicLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /** The target a link holds, for a message; undefined when it can't be read. */

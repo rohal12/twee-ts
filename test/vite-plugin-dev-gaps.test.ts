@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { attr, elements, parentTag } from './helpers/html.js';
@@ -72,6 +72,52 @@ function recordingLogger(): { logger: Logger; warnings: string[]; errors: string
 }
 
 describe('vite plugin: dev server details', { timeout: 30_000 }, () => {
+  it.skipIf(process.platform === 'win32')(
+    'reloads after a source folder link is retargeted, for each new target (#283)',
+    async () => {
+      const dir = makeProject({
+        'a/start.tw': STORY.replace('Hello from the story.', 'a-first'),
+        'b/start.tw': STORY.replace('Hello from the story.', 'b-first'),
+        'c/start.tw': STORY.replace('Hello from the story.', 'c-first'),
+      });
+      symlinkSync(join(dir, 'a'), join(dir, 'current'), 'dir');
+      const url = await start(dir, {
+        sources: [join(dir, 'current')],
+        format: 'test-format-1',
+        compileOptions: COMPILE,
+      });
+      const reloads: unknown[] = [];
+      const send = server!.ws.send.bind(server!.ws);
+      Object.assign(server!.ws, {
+        send: (...args: Parameters<typeof send>) => {
+          reloads.push(args[0]);
+          send(...args);
+        },
+      });
+      expect(await (await fetch(url)).text()).toContain('a-first');
+
+      for (const target of ['b', 'c']) {
+        unlinkSync(join(dir, 'current'));
+        symlinkSync(join(dir, target), join(dir, 'current'), 'dir');
+        reloads.length = 0;
+        // Retargeting may itself be reported (or not); only an edit of the new target must reload.
+        await new Promise((r) => setTimeout(r, 500));
+        reloads.length = 0;
+        writeFileSync(join(dir, target, 'start.tw'), STORY.replace('Hello from the story.', `${target}-second`));
+        await vi.waitFor(
+          () => {
+            expect(reloads).toContainEqual(expect.objectContaining({ type: 'full-reload' }));
+          },
+          {
+            timeout: 10_000,
+          },
+        );
+        const html = await (await fetch(url)).text();
+        expect(html).toContain(`${target}-second`);
+      }
+    },
+  );
+
   it('serves the client first when the story format has no <head>', async () => {
     const dir = makeProject({
       'story/start.tw': STORY.replace(':: StoryTitle\nGaps\n\n', ''),

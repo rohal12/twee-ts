@@ -36,6 +36,54 @@ describe('loadModules', () => {
     expect(result).toContain('id="script-module-app"');
   });
 
+  it.each([
+    ['script', 'js', (pos: number) => `globalThis.out="${'a'.repeat(pos)}\0b";`],
+    ['style', 'css', (pos: number) => `a::before { content: "${'a'.repeat(pos)}\0b"; }`],
+  ] as const)('reports U+0000 in a %s module as an error, wherever it is', (_kind, ext, make) => {
+    for (const pos of [0, 1, 40]) {
+      const file = join(tmpDir, `nul${pos}.${ext}`);
+      writeFileSync(file, make(pos));
+      const diagnostics: Diagnostic[] = [];
+      loadModules([file], diagnostics);
+      expect(diagnostics).toEqual([
+        {
+          level: 'error',
+          message: `The module "${file}" contains U+0000, which HTML cannot carry: the browser drops it or reads it as U+FFFD. Remove it.`,
+        },
+      ]);
+    }
+  });
+
+  it('reports a lone surrogate in a module, and nothing for ordinary text', () => {
+    const lone = join(tmpDir, 'lone.js');
+    writeFileSync(lone, Buffer.from([0xed, 0xa0, 0x80]));
+    const fine = join(tmpDir, 'fine.js');
+    writeFileSync(fine, 'globalThis.out="ab \u{1F600}";');
+    const diagnostics: Diagnostic[] = [];
+    loadModules([fine], diagnostics);
+    expect(diagnostics).toEqual([]);
+    const loneDiagnostics: Diagnostic[] = [];
+    loadModules([lone], loneDiagnostics);
+    expect(loneDiagnostics.map((d) => d.level)).toContain('warning');
+  });
+
+  it('fails compile() on a module with U+0000, as the same file loaded as a source does', async () => {
+    const file = join(tmpDir, 'module.js');
+    writeFileSync(file, 'globalThis.out="a\0b";');
+    const story =
+      ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: StoryTitle\nProbe\n\n:: Start\nHello.\n';
+    const common = {
+      formatId: 'test-format-1',
+      formatPaths: ['test/fixtures/storyformats'],
+      useTweegoPath: false,
+      noRemote: true,
+    };
+    const asModule = await compile({ ...common, sources: [{ filename: 's.tw', content: story }], modules: [file] });
+    expect(asModule.diagnostics.filter((d) => d.level === 'error').map((d) => d.message)).toEqual([
+      expect.stringContaining('contains U+0000'),
+    ]);
+  });
+
   it('escapes closing script tags in JS files', () => {
     const file = join(tmpDir, 'tags.js');
     writeFileSync(file, 'document.write("<script src=x.js></SCRIPT >");');

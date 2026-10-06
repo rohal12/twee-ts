@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import { applyTagAliases, countWords } from '../src/passage.js';
 import type { Passage } from '../src/types.js';
 
@@ -33,6 +34,44 @@ describe('applyTagAliases', () => {
     const first = applyTagAliases(passages, aliases);
     const second = applyTagAliases(first, aliases);
     expect(second[0]!.tags).toEqual(['library', 'script']);
+  });
+
+  it.each([
+    ['a chain', { library: 'script', script: 'Twine.private' }, ['library'], ['library', 'script', 'Twine.private']],
+    [
+      'a chain in reversed map order',
+      { script: 'Twine.private', library: 'script' },
+      ['library'],
+      ['library', 'script', 'Twine.private'],
+    ],
+    ['a cycle', { a: 'b', b: 'a' }, ['a'], ['a', 'b']],
+    ['a self-mapping', { script: 'script' }, ['script'], ['script']],
+    [
+      'a chain entered in the middle',
+      { library: 'script', script: 'Twine.private' },
+      ['script'],
+      ['script', 'Twine.private'],
+    ],
+    ['a chain onto an authored tag', { a: 'b', b: 'c' }, ['a', 'c'], ['a', 'c', 'b']],
+  ] as const)('is stable after one application of %s', (_name, aliases, tags, expected) => {
+    const once = applyTagAliases([mkPassage('P', [...tags])], aliases);
+    expect(once[0]!.tags).toEqual(expected);
+    expect(applyTagAliases(once, aliases)[0]).toBe(once[0]);
+  });
+
+  it('is idempotent for any mapping, never duplicates, and keeps the authored tags first', () => {
+    const tag = fc.constantFrom('a', 'b', 'c', 'd', 'script', 'Twine.private', '__proto__');
+    fc.assert(
+      fc.property(fc.array(fc.tuple(tag, tag), { maxLength: 6 }), fc.array(tag, { maxLength: 4 }), (pairs, tags) => {
+        const aliases = Object.fromEntries(pairs);
+        const authored = [...new Set(tags)];
+        const once = applyTagAliases([mkPassage('P', authored)], aliases)[0]!;
+        const twice = applyTagAliases([once], aliases)[0]!;
+        expect(twice.tags).toEqual(once.tags);
+        expect(new Set(once.tags).size).toBe(once.tags.length);
+        expect(once.tags.slice(0, authored.length)).toEqual(authored);
+      }),
+    );
   });
 
   it('does not mutate original passages', () => {

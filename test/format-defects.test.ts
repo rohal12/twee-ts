@@ -642,18 +642,75 @@ describe('F17: format URLs and indices are checked at the boundary', () => {
     });
   });
 
-  it('refuses a redirect from https to http', async () => {
-    const server = await startFormatServer({ '/format.js': formatJs('Review', '1.0.0') });
-    guardNetwork();
-    const realFetch = vi.mocked(globalThis.fetch);
-    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-      const response = await realFetch(`${server.origin}/format.js`, init);
-      // As if https://secure.test/format.js had redirected to the plain-http server.
-      Object.defineProperty(response, 'url', { value: `${server.origin}/format.js` });
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      return url.startsWith('https://secure.test') ? response : realFetch(input, init);
+  describe('redirects are validated before they are followed', () => {
+    /** Stub fetch with a table of redirects (`Location` per URL); every other URL answers with `format.js`. */
+    function stubRedirects(redirects: Readonly<Record<string, string>>, code: string): string[] {
+      guardNetwork();
+      const requested: string[] = [];
+      vi.stubGlobal('fetch', (input: string | URL | Request) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (/^[a-z]+:\/\/[ab]\.test\//.test(url)) requested.push(url);
+        const location = redirects[url];
+        return Promise.resolve(
+          location === undefined
+            ? new Response(code, { status: 200 })
+            : new Response(null, { status: 302, headers: { location } }),
+        );
+      });
+      return requested;
+    }
+    const code = formatJs('Review', '1.0.0');
+
+    it.each([
+      [
+        'a direct downgrade',
+        'https://a.test/f.js',
+        { 'https://a.test/f.js': 'http://b.test/f.js' },
+        ['https://a.test/f.js'],
+      ],
+      [
+        'a downgrade that returns to https',
+        'https://a.test/f.js',
+        { 'https://a.test/f.js': 'http://b.test/bounce', 'http://b.test/bounce': 'https://a.test/ok.js' },
+        ['https://a.test/f.js'],
+      ],
+      [
+        'an upgrade that downgrades again',
+        'http://a.test/f.js',
+        { 'http://a.test/f.js': 'https://a.test/g.js', 'https://a.test/g.js': 'http://b.test/h.js' },
+        ['http://a.test/f.js', 'https://a.test/g.js'],
+      ],
+      [
+        'a redirect to another scheme',
+        'https://a.test/f.js',
+        { 'https://a.test/f.js': 'ftp://a.test/f.js' },
+        ['https://a.test/f.js'],
+      ],
+    ] as const)('refuses %s without contacting the forbidden endpoint', async (_name, start, redirects, expected) => {
+      const requested = stubRedirects(redirects, code);
+      const result = await build({ ...story('Review', '1.0.0'), formatUrls: [start] });
+      expect(result.warnings.join('\n')).toContain('which is not allowed');
+      expect(requested).toEqual(expected);
+      expect(result.format).toBeUndefined();
     });
-    const result = await build({ ...story('Review', '1.0.0'), formatUrls: ['https://secure.test/format.js'] });
-    expect(result.warnings).toContainEqual(expect.stringContaining('never from https: to http:'));
+
+    it('follows https to https, resolves relative locations and upgrades http to https', async () => {
+      const requested = stubRedirects(
+        { 'https://a.test/dir/f.js': '../moved/f.js', 'http://a.test/f.js': 'https://a.test/f.js' },
+        code,
+      );
+      const secure = await build({ ...story('Review', '1.0.0'), formatUrls: ['https://a.test/dir/f.js'] });
+      expect(secure.format).toBe('Review 1.0.0');
+      expect(requested).toEqual(['https://a.test/dir/f.js', 'https://a.test/moved/f.js']);
+    });
+
+    it('gives up after too many redirects', async () => {
+      const loop: Record<string, string> = {};
+      for (let i = 0; i < 30; i++) loop[`https://a.test/${i}`] = `https://a.test/${i + 1}`;
+      const requested = stubRedirects(loop, code);
+      const result = await build({ ...story('Review', '1.0.0'), formatUrls: ['https://a.test/0'] });
+      expect(result.warnings.join('\n')).toContain('more than 20 redirects');
+      expect(requested).toHaveLength(21);
+    });
   });
 });

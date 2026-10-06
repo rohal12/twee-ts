@@ -488,11 +488,7 @@ describe('requests', () => {
   });
 
   it('refuses a redirect to another scheme', async () => {
-    answer(() => {
-      const response = new Response(formatJs('Review', '1.0.0'));
-      Object.defineProperty(response, 'url', { value: 'ftp://example.test/format.js' });
-      return response;
-    });
+    answer(() => new Response(null, { status: 302, headers: { location: 'ftp://example.test/format.js' } }));
     await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(
       'redirected to ftp://example.test/format.js, which is not allowed',
     );
