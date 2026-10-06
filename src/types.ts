@@ -270,9 +270,14 @@ export interface Twine2FormatJSON {
   license?: string;
 }
 
-/** The result of reading a format.js: its metadata, or why it cannot be used. */
+/**
+ * The result of reading a format.js: its metadata, with notes on what was left out (a
+ * function-valued property such as Harlowe's `setup`, a field of the wrong type), or why it cannot
+ * be used.
+ */
 export type FormatDecodeResult =
-  { readonly ok: true; readonly data: Twine2FormatJSON } | { readonly ok: false; readonly reason: string };
+  | { readonly ok: true; readonly data: Twine2FormatJSON; readonly notes: readonly string[] }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * A parsed SemVer version. Build metadata is dropped, since it takes no part in precedence.

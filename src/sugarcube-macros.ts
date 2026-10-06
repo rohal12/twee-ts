@@ -8,11 +8,19 @@
  * - `parseMacroArgs` splits the text after the macro name into arguments (`parseArgs`);
  * - quoted arguments are evaluated as strict-mode JavaScript strings (`evalStringLiteral`).
  *
+ * The scanners below copy SugarCube's own regular expressions, so they follow SugarCube's grammar
+ * rather than ECMAScript's; where a pattern's `.` stops at a line terminator, the shared
+ * ECMAScript set from `js-chars.ts` is used. JavaScript itself (scripts, `<script>` elements,
+ * `<<script>>` bodies, TwineScript arguments, quoted strings) is read with acorn, through
+ * `javascript-strings.ts`.
+ *
  * Link and image markup is read as `parseSquareBracketedMarkup` reads it (see `link-markup.ts`).
  * Of the rest of the wikifier, only comments, `<script>` elements and `<<script>>` bodies are
  * told apart; other markup, such as verbatim text, is read as markup (see `findPassageLinks`).
  */
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from './javascript-strings.js';
+import type { ScriptMode } from './javascript-strings.js';
+import { LINE_TERMINATORS, isLineTerminator } from './js-chars.js';
 import { readSquareBracketedMarkup } from './link-markup.js';
 
 /** A macro tag: `<<name args>>`, or a closing tag `<</name>>`. */
@@ -65,7 +73,8 @@ export interface ScannedTag {
 // SugarCube's `Patterns.macroName`, preceded by the optional `/` of a closing tag.
 const NAME_RE = /\/?[A-Za-z][\w-]*|[=-]/y;
 const SPACES_RE = /\s*/y;
-const LINE_TERMINATOR_RE = /[\n\r\u2028\u2029]/g;
+// What a SugarCube pattern's `.` does not match.
+const LINE_TERMINATOR_RE = new RegExp(`[${LINE_TERMINATORS}]`, 'g');
 const SQUARE_BRACKET_OPEN_RE = /\[(?:[<>]?[Ii][Mm][Gg])?\[/y;
 
 // SugarCube's `Patterns.space` and `Patterns.notSpace`: JavaScript's `\s` plus U+180E, which
@@ -311,7 +320,7 @@ function scanQuoted(text: string, pos: number, quote: string): ArgumentPartScan 
     }
     if (ch === '\\') {
       const next = text[i + 1];
-      if (next === undefined || '\n\r\u2028\u2029'.includes(next)) {
+      if (next === undefined || isLineTerminator(next)) {
         return { end: undefined, stop: i };
       }
       i += 2;
@@ -621,7 +630,7 @@ function markupArgumentLinks(raw: string): PassageLink[] {
  */
 function tagPassageLinks(tag: MacroTag, context: ReadContext): PassageLink[] {
   if (RAW_ARGUMENT_MACROS.has(tag.name)) {
-    return javaScriptPassageLinks(tag.args, context);
+    return javaScriptPassageLinks(tag.args, context, 'strict');
   }
   const lexed = lexMacroArgs(tag.args);
   if (lexed === undefined) {
@@ -634,7 +643,7 @@ function tagPassageLinks(tag: MacroTag, context: ReadContext): PassageLink[] {
       case 'string':
         return markupPassageLinks(arg.value, deeper(context));
       case 'expression':
-        return javaScriptPassageLinks(arg.code, context);
+        return javaScriptPassageLinks(arg.code, context, 'strict');
       case 'markup':
         return markupArgumentLinks(arg.text);
       case 'word':
@@ -955,7 +964,8 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
           // SugarCube reads the opener and nothing more; the content is markup.
           return element.openerEnd;
         }
-        append(links, javaScriptPassageLinks(text.slice(element.openerEnd, element.close), context));
+        // The browser runs a `<script>` element as a classic, sloppy-mode script.
+        append(links, javaScriptPassageLinks(text.slice(element.openerEnd, element.close), context, 'sloppy'));
         return element.close + 9;
       }
       default: {
@@ -1002,7 +1012,7 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
       findScriptCloser ??= scriptBodyCloser(text, context.budget);
       const closer = findScriptCloser(tag);
       if (closer !== undefined) {
-        append(links, javaScriptPassageLinks(text.slice(tag.end, closer.start), context));
+        append(links, javaScriptPassageLinks(text.slice(tag.end, closer.start), context, 'strict'));
         pos = closer.end;
       }
     }
@@ -1016,28 +1026,33 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
  * `'<<goto "' + target + '">>'`, names no passage here, nor does an array of arrays (`[[0, 1]]`).
  */
 export function findJavaScriptPassageLinks(source: string): PassageLink[] {
-  return javaScriptPassageLinks(source, readContext(source));
+  return javaScriptPassageLinks(source, readContext(source), 'strict');
 }
 
 /**
  * What JavaScript source must contain for one of its string or template literals to hold a call
  * or link markup that is read. A value holding `<<`: each `<` in it is written as `<`, `\<`,
- * `\x3c`, `\u003c` or `\u{…}`, two can be next to each other with only line continuations
- * between, and the first is `<` or `\<` (then the source holds `<<` or `<\`) or one of the others.
- * A value holding `[[`, likewise: the source holds `[[`, a `[` before `\[` or a line continuation,
- * `\x5b`, `\u005b` or `\u{`. Or a value holding a `<script>` element, whose own strings can make
- * `<<` or `[[` from escapes the outer string encodes.
+ * `\x3c`, `\u003c`, `\u{…}` or, in sloppy mode, the octal `\74` or `\074`; two can be next to
+ * each other with only line continuations between, and the first is `<` or `\<` (then the source
+ * holds `<<` or `<\`) or one of the others. A value holding `[[`, likewise: the source holds `[[`,
+ * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. Or a
+ * value holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the
+ * outer string encodes.
  */
-const MAY_HOLD_LINK_RE = /<<|<\\|\\x3c|\\u003c|\\u\{|<script|\[\[|\[\\[[\n\r\u2028\u2029]|\\x5b|\\u005b/i;
+const MAY_HOLD_LINK_RE = new RegExp(
+  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133`,
+  'i',
+);
 
-function javaScriptPassageLinks(source: string, context: ReadContext): PassageLink[] {
+/** The passages named in the strings of JavaScript `source`, evaluated in the given mode. */
+function javaScriptPassageLinks(source: string, context: ReadContext, mode: ScriptMode): PassageLink[] {
   if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_LINK_RE.test(source)) {
     // No string in it can hold a link or a macro call.
     return [];
   }
   const inner = deeper(context);
   const links: PassageLink[] = [];
-  for (const value of javaScriptStrings(source)) {
+  for (const value of javaScriptStrings(source, mode)) {
     append(links, markupPassageLinks(value, inner));
   }
   return links;

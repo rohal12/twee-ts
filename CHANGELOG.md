@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Names, tags and the text of passages, StoryTitle and StorySettings are trimmed and split at Go's white space, as in Tweego: U+0085 is white space, U+FEFF is not (#246)
 - `storyInspect()` and lint list as orphans the story passages that no chain of links reaches from the start passage or an info passage, so a passage that links only to itself, or a group that links only among itself, is listed (#246)
 - With `trim: false`, a passage whose content is only white space is empty (trailing blank lines are dropped) (#246)
+- A `format.js` must be valid JavaScript: one that is not, such as a file with an unterminated comment after the `storyFormat()` call, is skipped with the parser's message and position. Fix the file; a browser cannot load it either (#245)
+- The format object is the object literal passed to the file's one `storyFormat()` call, or the whole file when it is nothing but an object literal. A file whose object was found only as the first `{` of other code, or that calls `storyFormat()` more than once, is skipped. Write the object as `window.storyFormat({…})` (#245)
+- Format objects are read by a stated subset of JavaScript literals (see the story formats guide). Values outside it, which were partly accepted before, are errors that name the property and its line and column: for example a signed property key (`{-1: 1}`, a syntax error in JavaScript) or a `__proto__` key, which sets the prototype in JavaScript (#245)
 
 ### Added
 
@@ -32,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `format.js` files are parsed as JavaScript, so a regular expression literal holding a quote or `/*`, an HTML-like comment (`<!--`, `-->`), or an identifier that ends in `storyFormat` (`éstoryFormat`) before the call no longer hides the format or picks the wrong object, in local discovery, downloads and the download cache alike (#245)
+- A line comment ended by CR, U+2028 or U+2029 before the `storyFormat()` call no longer hides the format (#221)
+- A function-valued property such as Harlowe's `setup` is left out wherever it is in the format object and however it is written (`setup() {}`, `setup: () => {}`), and the properties after it, such as `proofing`, are kept (#245)
+- Numbers in format objects get JavaScript's values: a legacy octal `010` is 8, as are keys such as `{010: 1}`; numeric separators, `- 1` and template literals without substitutions are read (#245)
+- Positions in format.js errors count CR, CR LF, U+2028 and U+2029 as line breaks, also in downloaded files (#245)
+- The link check reads JavaScript with a JavaScript parser, so a regular expression after `if (…)`, `while (…)`, a block or a function declaration no longer hides a broken link or reports a phantom one, and a division after a variable named `of` or after `1.` is read as one (#245)
+- Strings in `<script>` elements are read as sloppy-mode JavaScript, so a link written with octal escapes (`'\74\74goto "Room">>'`) is checked (#245)
 - The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)
 - TypeScript projects that compile to CommonJS (`module: node16`/`nodenext` in a `.cts` file or a CommonJS package) get the CommonJS declarations instead of TS1479; every entry point has `types` per `import`/`require` condition (#250)
 - `moduleResolution: node10` finds the types of `@rohal12/twee-ts` and `@rohal12/twee-ts/rollup` (`main`, `types`, `typesVersions`). `@rohal12/twee-ts/vite` still needs `node16`, `nodenext` or `bundler`, because Vite's own types do (#250)
@@ -53,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The published package is the tarball that CI packed and checked on Linux, macOS and Windows; the release job installs nothing and runs no package scripts (#250)
 - Loading the package through both `import` and `require()` in one process still loads the ESM and the CommonJS build separately (the dual package hazard); use one of the two (#250)
+- JavaScript (format.js files, story scripts, macro arguments) is read with acorn, which is bundled into the package; twee-ts still has no runtime dependencies and still runs no JavaScript it reads (#245)
 
 ## [1.18.2] - 2026-10-06
 
