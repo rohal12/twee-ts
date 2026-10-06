@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
@@ -56,6 +57,20 @@ export function makeProject(files: Record<string, string>): string {
     writeFileSync(path, content, 'utf-8');
   }
   return dir;
+}
+
+/**
+ * A project reached through a symbolic link to its folder (a junction on Windows,
+ * which needs no privilege), as a project under macOS's /var (really /private/var)
+ * is. Watchers and bundlers report its files under the real path.
+ */
+export function makeLinkedProject(files: Record<string, string>): string {
+  const real = makeProject(files);
+  const holder = mkdtempSync(join(tmpdir(), 'twee-ts-vite-link-'));
+  dirs.push(holder);
+  const link = join(holder, 'project');
+  symlinkSync(real, link, 'junction');
+  return link;
 }
 
 export function userScript(html: string): string {
@@ -523,7 +538,8 @@ describe(
 
     it('watches neither the story it writes nor a folder that holds it, and rebuilds for an edit', async () => {
       const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT'), 'story/parts/more.tw': ':: More\nMore\n' });
-      const story = toPosix(join(dir, 'story'));
+      // The bundler watches real paths (macOS FSEvents reports nothing else).
+      const story = toPosix(realpathSync.native(join(dir, 'story')));
       const preview = join(dir, 'story', 'preview');
       const out = join(preview, 'index.html');
       const files: string[] = [];
@@ -956,6 +972,35 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     } finally {
       delete (globalThis as Record<string, unknown>)[key];
     }
+  });
+
+  it('sees the watch files of a plugin in a project reached through a symbolic link', async () => {
+    const dir = makeLinkedProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA';\n",
+      'app/extra.txt': 'link-one',
+    });
+    const extra = join(dir, 'app/extra.txt');
+    const watching = {
+      name: 'watching-plugin',
+      transform(this: { addWatchFile(id: string): void }, code: string, id: string) {
+        if (!id.endsWith('main.ts')) return null;
+        this.addWatchFile(extra);
+        return code.replace('EXTRA', readFileSync(extra, 'utf-8'));
+      },
+    };
+    const url = await start(dir, undefined, undefined, { plugins: [watching, plugin(dir)] });
+    expect(userScript(await page(url))).toContain('link-one');
+    writeFileSync(extra, 'link-two');
+    await vi.waitFor(async () => expect(userScript(await page(url))).toContain('link-two'), {
+      timeout: 10_000,
+      interval: 100,
+    });
+    writeFileSync(join(dir, 'story/start.tw'), STORY.replace('Hello from the story.', 'Linked change.'));
+    await vi.waitFor(async () => expect(await page(url)).toContain('Linked change.'), {
+      timeout: 10_000,
+      interval: 100,
+    });
   });
 
   it('sees the watch files of a plugin that applyToEnvironment returns', async () => {
