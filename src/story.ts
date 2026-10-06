@@ -20,7 +20,14 @@ import type {
   Twine2Metadata,
 } from './types.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
-import { isStoryPassage, countWords, derivePassage, generatedNameOf, withGeneratedName } from './passage.js';
+import {
+  isStoryPassage,
+  countWords,
+  derivePassage,
+  freezePassage,
+  generatedNameOf,
+  withGeneratedName,
+} from './passage.js';
 import type { GeneratedName } from './passage.js';
 import { trimTweeSpace } from './twee-syntax.js';
 import type { DecodeIssue, DecodeIssueKind, TextDecodeResult } from './json-decode.js';
@@ -637,11 +644,7 @@ function copyPassage(p: ReadonlyPassage): Passage {
 }
 
 function frozenPassage(p: ReadonlyPassage): ReadonlyPassage {
-  const copy = copyPassage(p);
-  Object.freeze(copy.tags);
-  if (copy.metadata !== undefined) Object.freeze(copy.metadata);
-  if (copy.source !== undefined) Object.freeze(copy.source);
-  return Object.freeze(copy);
+  return freezePassage(copyPassage(p));
 }
 
 /** A frozen copy of the story: later changes to it do not reach the copy, and the copy cannot be changed. */
