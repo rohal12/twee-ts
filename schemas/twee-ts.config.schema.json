@@ -12,17 +12,24 @@
     },
     "sources": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Files or directories to compile."
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Files or directories to compile, relative to the config file."
     },
     "exclude": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Glob patterns for files to leave out of sources, matched against each file's path relative to the working directory (e.g. \"**/*.png\", \"src/art/**\")."
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Glob patterns for files to leave out of sources, relative to the config file (e.g. \"**/*.png\", \"src/art/**\")."
     },
     "output": {
       "type": "string",
-      "description": "Output file path."
+      "minLength": 1,
+      "description": "Output file path, relative to the config file; \"-\" for standard output."
     },
     "outputMode": {
       "type": "string",
@@ -36,22 +43,31 @@
     },
     "startPassage": {
       "type": "string",
-      "description": "Name of the starting passage.",
-      "default": "Start"
+      "default": "Start",
+      "description": "Name of the starting passage."
     },
     "formatPaths": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Extra directories to search for story formats."
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Extra directories to search for story formats, relative to the config file."
     },
     "formatIndices": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "URLs to SFA-compatible index.json files for remote format lookup."
     },
     "formatUrls": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "Direct URLs to format.js files."
     },
     "useTweegoPath": {
@@ -61,12 +77,15 @@
     },
     "modules": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Module files to inject into <head>."
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Module files to inject into <head>, relative to the config file."
     },
     "headFile": {
       "type": "string",
-      "description": "Raw HTML file to append to <head>."
+      "description": "Raw HTML file to append to <head>, relative to the config file; \"\" for none."
     },
     "trim": {
       "type": "boolean",
@@ -96,8 +115,14 @@
     },
     "tagAliases": {
       "type": "object",
-      "additionalProperties": { "type": "string" },
-      "description": "Map alias tags to canonical special tags (e.g. { \"library\": \"script\" })."
+      "propertyNames": {
+        "pattern": "^\\S+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^\\S+$"
+      },
+      "description": "Map alias tags to canonical special tags (e.g. { \"library\": \"script\" }). Tags are non-empty and hold no whitespace."
     },
     "sourceInfo": {
       "type": "boolean",

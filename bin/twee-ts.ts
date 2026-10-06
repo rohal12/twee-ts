@@ -1,279 +1,246 @@
 /**
  * twee-ts CLI entry point.
- * Uses node:util.parseArgs() for argument parsing.
+ *
+ * The command line is parsed completely into a request first (src/cli-request.ts), then run. Standard
+ * output carries only what was asked for: the story when it goes there, or the answer of a query command
+ * (--help, --version, --list-formats, cache, --lint's report, --init's report). Diagnostics, logs, --log-stats
+ * and --log-files go to standard error. Exit status: 0 success, 1 build or lint errors, 2 usage errors.
  */
-import { parseArgs } from 'node:util';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { compileForOutputFile, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
+import type { ExtraInput } from '../src/compiler.js';
 import { WatchPathError } from '../src/filesystem.js';
 import { writeFileAtomic } from '../src/atomic-write.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
 import { discoverAllFormats, getFormatSearchDirs, makeFormatId, pruneFormats } from '../src/formats.js';
 import { loadConfig, loadConfigFile, scaffoldConfig, CONFIG_FILENAME } from '../src/config.js';
 import {
-  discoverCachedFormats,
+  CACHE_USAGE,
+  CliUsageError,
+  looksLikeCharset,
+  parseCliArgs,
+  resolveBuild,
+  usageText,
+} from '../src/cli-request.js';
+import type { BuildRequest, CacheAction, ConfigChoice, ResolvedBuild } from '../src/cli-request.js';
+import { listRecords, loadEntry } from '../src/format-cache.js';
+import {
+  cachedUrlRecord,
+  checkRemoteUrl,
+  DEFAULT_SFA_INDICES,
   getCacheDir,
   listCachedFormats,
   clearCachedFormats,
   getCacheSize,
 } from '../src/remote-formats.js';
-import type {
-  CompileResult,
-  Diagnostic,
-  StoryFormatInfo,
-  TweeTsConfig,
-  OutputMode,
-  WordCountMethod,
-} from '../src/types.js';
+import type { CompileResult, Diagnostic, TweeTsConfig, WatchOptions } from '../src/types.js';
 import { compareVersions, parseVersion } from '../src/semver.js';
 
 import { VERSION } from '../src/version.js';
 
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    output: { type: 'string', short: 'o' },
-    format: { type: 'string', short: 'f' },
-    start: { type: 'string', short: 's' },
-    module: { type: 'string', short: 'm', multiple: true },
-    head: { type: 'string' },
-    'decompile-twee3': { type: 'boolean', short: 'd' },
-    'decompile-twee1': { type: 'boolean' },
-    'archive-twine2': { type: 'boolean', short: 'a' },
-    'archive-twine1': { type: 'boolean' },
-    'twee2-compat': { type: 'boolean' },
-    'no-trim': { type: 'boolean' },
-    lint: { type: 'boolean' },
-    test: { type: 'boolean', short: 't' },
-    watch: { type: 'boolean', short: 'w' },
-    'log-stats': { type: 'boolean', short: 'l' },
-    'log-files': { type: 'boolean' },
-    'list-formats': { type: 'boolean' },
-    json: { type: 'boolean' },
-    init: { type: 'boolean' },
-    help: { type: 'boolean', short: 'h' },
-    version: { type: 'boolean', short: 'v' },
-    // New flags
-    'format-index': { type: 'string', multiple: true },
-    'format-url': { type: 'string', multiple: true },
-    'no-remote': { type: 'boolean' },
-    'tag-alias': { type: 'string', multiple: true },
-    exclude: { type: 'string', multiple: true },
-    'source-info': { type: 'boolean' },
-    'word-count-method': { type: 'string' },
-    config: { type: 'string', short: 'c' },
-    'no-config': { type: 'boolean' },
-  },
-});
+/** Exit statuses. */
+const EXIT_OK = 0;
+const EXIT_FAILED = 1;
+const EXIT_USAGE = 2;
 
-async function main(): Promise<void> {
-  if (values.version) {
-    console.log(`twee-ts v${VERSION}`);
-    return;
-  }
+/** Writes to standard output: only the story, or a query command's answer. */
+function out(text: string): void {
+  process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+}
 
-  if (values.help) {
-    printUsage();
-    return;
-  }
+/** Writes a line to standard error: everything else. */
+function log(text: string): void {
+  process.stderr.write(`${text}\n`);
+}
 
-  if (values.init) {
-    runInit();
-    return;
-  }
+/**
+ * A reader that goes away (`twee-ts … | head`) closes the pipe: the rest of the output is dropped
+ * quietly, as other command-line tools do, instead of ending in an unhandled EPIPE error.
+ */
+function quietOnClosedPipe(stream: NodeJS.WriteStream): void {
+  stream.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code === 'EPIPE' || e.code === 'ERR_STREAM_DESTROYED') return;
+    throw e;
+  });
+}
 
-  if (positionals[0] === 'cache') {
-    runCache(positionals.slice(1));
-    return;
-  }
-
-  // Load config file (unless --no-config)
-  let config: TweeTsConfig | null = null;
-  if (!values['no-config']) {
-    // Warnings, such as unknown keys, which leave the config usable.
-    const configDiagnostics: Diagnostic[] = [];
-    if (values.config) {
-      config = loadConfigFile(values.config, configDiagnostics);
-    } else {
-      config = loadConfig(undefined, configDiagnostics);
+async function main(argv: readonly string[]): Promise<number> {
+  const parsed = parseCliArgs(argv);
+  if (!parsed.ok) return usageError(parsed.error);
+  const { request } = parsed;
+  switch (request.kind) {
+    case 'help':
+      out(usageText(VERSION, CONFIG_FILENAME));
+      return EXIT_OK;
+    case 'version':
+      out(`twee-ts v${VERSION}`);
+      return EXIT_OK;
+    case 'init':
+      runInit();
+      return EXIT_OK;
+    case 'cache-help':
+      out(CACHE_USAGE);
+      return EXIT_OK;
+    case 'cache':
+      runCache(request.action);
+      return EXIT_OK;
+    case 'cache-clear':
+      runCacheClear(request.name);
+      return EXIT_OK;
+    case 'list-formats': {
+      const config = readConfig(request.config);
+      // Listed after the config is read, so the list shows what --format can select in this project.
+      listFormats(config.config);
+      return EXIT_OK;
     }
-    logDiagnostics(configDiagnostics);
+    case 'build':
+      return runBuild(request);
+    default: {
+      const _exhaustive: never = request;
+      throw new Error(`unhandled request: ${JSON.stringify(_exhaustive)}`);
+    }
   }
+}
 
-  // Listed after the config is read, so the list shows what --format can select in this project.
-  if (values['list-formats']) {
-    listFormats(config?.formatPaths ?? [], config?.useTweegoPath ?? true);
-    return;
-  }
+function usageError(error: CliUsageError): number {
+  log(`error: ${error.message}`);
+  log('Run "twee-ts --help" for usage.');
+  return EXIT_USAGE;
+}
 
-  // Merge sources: positionals > config.sources
-  const sources = positionals.length > 0 ? positionals : config?.sources;
-  if (!sources || sources.length === 0) {
-    console.error('Error: No input sources specified.');
-    printUsage();
-    process.exit(1);
-  }
-
-  // Determine output mode: CLI flag > config > default
-  let outputMode: OutputMode = config?.outputMode ?? 'html';
-  if (values['decompile-twee3']) outputMode = 'twee3';
-  else if (values['decompile-twee1']) outputMode = 'twee1';
-  else if (values['archive-twine2']) outputMode = 'twine2-archive';
-  else if (values['archive-twine1']) outputMode = 'twine1-archive';
-  else if (values.json) outputMode = 'json';
-
-  // Parse --tag-alias flags (format: alias=target)
-  let tagAliases: Record<string, string> | undefined;
-  if (values['tag-alias'] || config?.tagAliases) {
-    tagAliases = { ...config?.tagAliases };
-    for (const pair of values['tag-alias'] ?? []) {
-      const eq = pair.indexOf('=');
-      if (eq < 1) {
-        console.error(`Error: Invalid --tag-alias "${pair}". Expected format: alias=target`);
-        process.exit(1);
+/** The config the request asks for, and its path (an input the output must not overwrite). */
+function readConfig(choice: ConfigChoice): { readonly config: TweeTsConfig | null; readonly path?: string } {
+  // Warnings, such as unknown keys, which leave the config usable.
+  const diagnostics: Diagnostic[] = [];
+  let result: { readonly config: TweeTsConfig | null; readonly path?: string };
+  switch (choice.kind) {
+    case 'none':
+      return { config: null };
+    case 'file':
+      try {
+        result = { config: loadConfigFile(choice.path, diagnostics), path: choice.path };
+      } catch (e) {
+        // Tweego's -c is --charset: say so when the "config file" is a charset name.
+        if (e instanceof TweeTsError && e.code === 'INPUT_UNAVAILABLE' && looksLikeCharset(choice.path)) {
+          const note = `-c is --config in twee-ts, not Tweego's --charset; twee-ts reads UTF-8 (or UTF-16 after a byte order mark) and falls back to Windows-1252.`;
+          throw new TweeTsError(`${e.message}\nnote: ${note}`, e.diagnostics, { code: e.code, cause: e });
+        }
+        throw e;
       }
-      tagAliases[pair.slice(0, eq)] = pair.slice(eq + 1);
+      break;
+    case 'auto': {
+      const config = loadConfig(undefined, diagnostics);
+      result = config === null ? { config } : { config, path: CONFIG_FILENAME };
+      break;
+    }
+    default: {
+      const _exhaustive: never = choice;
+      throw new Error(`unhandled config choice: ${JSON.stringify(_exhaustive)}`);
     }
   }
+  logDiagnostics(diagnostics);
+  return result;
+}
 
-  // Word count method: CLI flag > config > default
-  const VALID_WORD_COUNT_METHODS: WordCountMethod[] = ['tweego', 'whitespace'];
-  const wordCountMethod: WordCountMethod | undefined = (() => {
-    const raw = values['word-count-method'] ?? config?.wordCountMethod;
-    if (raw === undefined) return undefined;
-    if (!VALID_WORD_COUNT_METHODS.includes(raw as WordCountMethod)) {
-      console.error(`Error: Invalid --word-count-method "${raw}". Expected: ${VALID_WORD_COUNT_METHODS.join(', ')}`);
-      process.exit(1);
-    }
-    return raw as WordCountMethod;
-  })();
-
-  const outFile = values.output ?? config?.output ?? '-';
+async function runBuild(request: BuildRequest): Promise<number> {
+  const config = readConfig(request.config);
+  let build: ResolvedBuild;
+  try {
+    build = resolveBuild(request, config.config);
+  } catch (e) {
+    if (e instanceof CliUsageError) return usageError(e);
+    throw e;
+  }
+  const compileOptions = { ...build.options, sources: build.sources };
   // The output file, which every build (and lint) leaves out of the sources and modules,
   // so an earlier build inside a source folder is never read back as a source.
-  const outPath = outFile === '-' ? undefined : outFile;
+  const outPath = build.output === '-' ? undefined : build.output;
+  const extraInputs: ExtraInput[] = config.path === undefined ? [] : [{ role: 'config', path: config.path }];
 
-  // Lint mode: compile + inspect, no output
-  if (values.lint) {
-    const lintResult = await lintForOutputFile(
-      {
-        sources,
-        exclude: values.exclude ?? config?.exclude,
-        formatId: values.format ?? config?.formatId,
-        startPassage: values.start ?? config?.startPassage,
-        formatPaths: config?.formatPaths,
-        modules: values.module ?? config?.modules,
-        headFile: values.head ?? config?.headFile,
-        trim: values['no-trim'] ? false : (config?.trim ?? true),
-        twee2Compat: values['twee2-compat'] ?? config?.twee2Compat ?? false,
-        testMode: values.test ?? config?.testMode ?? false,
-        formatIndices: values['format-index'] ?? config?.formatIndices,
-        formatUrls: values['format-url'] ?? config?.formatUrls,
-        noRemote: values['no-remote'] ?? config?.noRemote ?? false,
-        formatFetchTimeout: config?.formatFetchTimeout,
-        tagAliases,
-        sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
-        wordCountMethod,
-      },
-      outPath,
-    );
-    console.log(formatLintReport(lintResult));
-    const hasErrors = lintResult.brokenLinks.length > 0 || lintResult.diagnostics.some((d) => d.level === 'error');
-    process.exit(hasErrors ? 1 : 0);
-  }
-
-  const compileOptions = {
-    sources,
-    exclude: values.exclude ?? config?.exclude,
-    outputMode,
-    formatId: values.format ?? config?.formatId,
-    startPassage: values.start ?? config?.startPassage,
-    formatPaths: config?.formatPaths,
-    modules: values.module ?? config?.modules,
-    headFile: values.head ?? config?.headFile,
-    trim: values['no-trim'] ? false : (config?.trim ?? true),
-    twee2Compat: values['twee2-compat'] ?? config?.twee2Compat ?? false,
-    testMode: values.test ?? config?.testMode ?? false,
-    useTweegoPath: config?.useTweegoPath,
-    formatIndices: values['format-index'] ?? config?.formatIndices,
-    formatUrls: values['format-url'] ?? config?.formatUrls,
-    noRemote: values['no-remote'] ?? config?.noRemote ?? false,
-    formatFetchTimeout: config?.formatFetchTimeout,
-    tagAliases,
-    sourceInfo: values['source-info'] ?? config?.sourceInfo ?? false,
-    wordCountMethod,
-  };
-
-  // The file list is left out when the story itself goes to stdout.
-  const log: BuildLogOptions = {
-    files: outPath !== undefined && (values['log-files'] ?? false),
-    stats: values['log-stats'] ?? false,
-  };
-
-  if (values.watch) {
-    if (outPath === undefined) {
-      console.error('Error: Watch mode requires an output file (-o).');
-      process.exit(1);
+  switch (build.action) {
+    case 'lint': {
+      const lintResult = await lintForOutputFile(compileOptions, outPath);
+      out(formatLintReport(lintResult));
+      const hasErrors = lintResult.brokenLinks.length > 0 || lintResult.diagnostics.some((d) => d.level === 'error');
+      return hasErrors ? EXIT_FAILED : EXIT_OK;
     }
-    console.log('Watch mode started. Press CTRL+C to stop.');
-    // As in a one-shot build, a build with errors is not written: the output file keeps
-    // the last good build until a save fixes the errors.
-    watchWithWriteFilter(
-      {
-        ...compileOptions,
-        outFile: outPath,
-        onBuild(result) {
-          console.log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
-          logDiagnostics(result.diagnostics);
-          // A failed build must not stop the watcher: report it and wait for the next change.
-          const errors = countErrors(result.diagnostics);
-          if (errors > 0) {
-            console.error(`Build has ${pluralize(errors, 'error')}; output not written. Still watching for changes.`);
-          }
-          logBuild(result, log);
-        },
-        onError(error) {
-          if (error instanceof WatchPathError) {
-            // The other paths are still watched; with nothing left to watch, the process exits with status 1.
-            console.error(`error: ${error.message}`);
-            process.exitCode = 1;
-          } else {
-            logErrorDiagnostics(error);
-            console.error(`Build error: ${error.message}`);
-          }
-        },
-      },
-      (result) => countErrors(result.diagnostics) === 0,
-    );
-  } else {
-    const result = await compileForOutputFile(compileOptions, outPath);
-    logDiagnostics(result.diagnostics);
-
-    // Like Tweego, a build with errors produces no output: the output file (or stdout)
-    // is left untouched and the exit status is 1, so scripts and CI can detect it.
-    const errors = countErrors(result.diagnostics);
-    if (errors > 0) {
-      console.error(`Compilation failed with ${pluralize(errors, 'error')}; output not written.`);
-      process.exitCode = 1;
-    } else if (outPath === undefined) {
-      process.stdout.write(result.output);
-    } else {
-      writeFileAtomic(outPath, result.output);
+    case 'watch':
+      // resolveBuild() refuses watch mode without an output file.
+      return startWatch(compileOptions, outPath ?? build.output, request.log, extraInputs);
+    case 'once': {
+      const result = await compileForOutputFile(compileOptions, outPath, undefined, extraInputs);
+      logDiagnostics(result.diagnostics);
+      // Like Tweego, a build with errors produces no output: the output file (or stdout)
+      // is left untouched and the exit status is 1, so scripts and CI can detect it.
+      const errors = countErrors(result.diagnostics);
+      let status = EXIT_OK;
+      if (errors > 0) {
+        log(`Compilation failed with ${pluralize(errors, 'error')}; output not written.`);
+        status = EXIT_FAILED;
+      } else if (outPath === undefined) {
+        process.stdout.write(result.output);
+      } else {
+        writeFileAtomic(outPath, result.output);
+      }
+      logBuild(result, request.log);
+      return status;
     }
-
-    logBuild(result, log);
+    default: {
+      const _exhaustive: never = build.action;
+      throw new Error(`unhandled build action: ${String(_exhaustive)}`);
+    }
   }
 }
 
-/** What --log-files and --log-stats print after a build, one-shot or in watch mode. */
-interface BuildLogOptions {
-  readonly files: boolean;
-  readonly stats: boolean;
+/** Starts watch mode; the process keeps running until it is stopped, or the watch stops on its own. */
+function startWatch(
+  options: Omit<WatchOptions, 'outFile'>,
+  outFile: string,
+  logOptions: BuildRequest['log'],
+  extraInputs: readonly ExtraInput[],
+): number {
+  log('Watch mode started. Press CTRL+C to stop.');
+  // As in a one-shot build, a build with errors is not written: the output file keeps
+  // the last good build until a save fixes the errors.
+  watchWithWriteFilter(
+    {
+      ...options,
+      outFile,
+      onBuild(result) {
+        log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
+        logDiagnostics(result.diagnostics);
+        // A failed build must not stop the watcher: report it and wait for the next change.
+        const errors = countErrors(result.diagnostics);
+        if (errors > 0) {
+          log(`Build has ${pluralize(errors, 'error')}; output not written. Still watching for changes.`);
+        }
+        logBuild(result, logOptions);
+      },
+      onError(error) {
+        process.exitCode = EXIT_FAILED;
+        if (error instanceof WatchPathError) {
+          // The other paths are still watched; with nothing left to watch, the process exits with status 1.
+          log(`error: ${error.message}`);
+        } else {
+          logErrorDiagnostics(error);
+          log(`Build error: ${error.message}`);
+        }
+      },
+    },
+    (result) => countErrors(result.diagnostics) === 0,
+    { extraInputs },
+  );
+  // Until the watch ends; the status is set by onError if it fails.
+  return EXIT_OK;
 }
 
-function logBuild(result: CompileResult, log: BuildLogOptions): void {
-  if (log.files) console.log(`\nFiles: ${result.stats.files.join(', ')}`);
-  if (log.stats) logStats(result);
+function logBuild(result: CompileResult, logOptions: BuildRequest['log']): void {
+  if (logOptions.files) {
+    log(`\nFiles: ${result.stats.files.join(', ')}`);
+    const external = result.stats.externalFiles ?? [];
+    if (external.length > 0) log(`External files: ${external.join(', ')}`);
+  }
+  if (logOptions.stats) logStats(result);
 }
 
 function countErrors(diagnostics: readonly Diagnostic[]): number {
@@ -292,43 +259,75 @@ function byVersionDescending(a: string, b: string): number {
   return compareVersions(right, left);
 }
 
-/** Print the formats --format can select: local folders (pruned by SemVer) and cached downloads, by ID. */
-function listFormats(formatPaths: readonly string[], useTweegoPath: boolean): void {
+/**
+ * The cached downloads a build with these settings would consider, as resolution considers them (see
+ * format-resolution.ts): the cached copy of each configured format URL, and what was downloaded from each
+ * configured format index and from the Story Formats Archive, each under the name and version its source
+ * lists. A download from a URL or index the project doesn't configure is never used, so it isn't listed;
+ * neither is an entry whose files are damaged. `cache list` lists every download.
+ */
+function consideredDownloads(
+  formatUrls: readonly string[],
+  formatIndices: readonly string[],
+  diagnostics: Diagnostic[],
+): { readonly name: string; readonly version: string }[] {
+  const checked = (urls: readonly string[], option: string): string[] =>
+    urls.flatMap((text) => {
+      const result = checkRemoteUrl(text);
+      if (result.ok) return [result.url];
+      diagnostics.push({ level: 'warning', message: `${option}: ${result.reason}` });
+      return [];
+    });
+  const indices = new Set([...checked(formatIndices, 'formatIndices'), ...DEFAULT_SFA_INDICES]);
+  const fromUrls = checked(formatUrls, 'formatUrls').flatMap((url) => cachedUrlRecord(url) ?? []);
+  const fromIndices = listRecords().filter((r) => r.origin.kind === 'index' && indices.has(r.origin.index));
+  return [...fromUrls, ...fromIndices]
+    .filter((record) => 'record' in loadEntry(record))
+    .map((record) => (record.origin.kind === 'index' ? record.origin : record));
+}
+
+/**
+ * Print the formats --format can select: local folders (pruned by SemVer), and the cached downloads a
+ * build would consider (see consideredDownloads), by ID.
+ */
+function listFormats(config: TweeTsConfig | null): void {
   const diagnostics: Diagnostic[] = [];
-  const formats = pruneFormats(discoverAllFormats(getFormatSearchDirs(formatPaths, useTweegoPath), diagnostics));
+  const searchDirs = getFormatSearchDirs(config?.formatPaths ?? [], config?.useTweegoPath ?? true);
+  const formats = pruneFormats(discoverAllFormats(searchDirs, diagnostics));
+  const downloads = consideredDownloads(config?.formatUrls ?? [], config?.formatIndices ?? [], diagnostics);
   logDiagnostics(diagnostics);
 
-  console.log('Local story formats:');
+  out('Local story formats:');
   if (formats.size === 0) {
-    console.log('  (none)');
+    out('  (none)');
   } else {
     for (const [id, f] of formats) {
       const type = f.isTwine2 ? 'Twine 2' : 'Twine 1';
-      console.log(`  ${id}: ${f.name || id} ${f.version} (${type})`);
+      out(`  ${id}: ${f.name || id} ${f.version} (${type})`);
     }
   }
 
   // Cached downloads answer an ID request by name and major version, taking the greatest version.
-  const cachedById = new Map<string, StoryFormatInfo[]>();
-  for (const f of discoverCachedFormats().values()) {
+  const cachedById = new Map<string, { readonly name: string; readonly version: string }[]>();
+  for (const f of downloads) {
     const id = makeFormatId(f.name, f.version);
     cachedById.set(id, [...(cachedById.get(id) ?? []), f]);
   }
   if (cachedById.size > 0) {
-    console.log('\nCached remote formats:');
+    out('\nCached remote formats:');
     for (const [id, versions] of [...cachedById].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
       const [newest, ...older] = [...versions].sort((a, b) => byVersionDescending(a.version, b.version));
       if (!newest) continue;
       const also = older.length > 0 ? ` (also cached: ${older.map((f) => f.version).join(', ')})` : '';
-      console.log(`  ${id}: ${newest.name} ${newest.version}${also}`);
+      out(`  ${id}: ${newest.name} ${newest.version}${also}`);
     }
   }
 }
 
 function logDiagnostics(diagnostics: readonly { readonly level: string; readonly message: string }[]): void {
   for (const d of diagnostics) {
-    if (d.level === 'error') console.error(`error: ${d.message}`);
-    else console.warn(`warning: ${d.message}`);
+    if (d.level === 'error') log(`error: ${d.message}`);
+    else log(`warning: ${d.message}`);
   }
 }
 
@@ -337,14 +336,12 @@ function logErrorDiagnostics(error: unknown): void {
   if (error instanceof TweeTsError) logDiagnostics(error.diagnostics);
 }
 
-function logStats(result: {
-  stats: { passages: number; storyPassages?: number; words: number; files: string[] };
-}): void {
+function logStats(result: CompileResult): void {
   const s = result.stats;
-  console.log(`\nStatistics:`);
-  console.log(`  Passages: ${s.passages}`);
-  console.log(`  Words: ${s.words}`);
-  console.log(`  Files: ${s.files.length}`);
+  log(`\nStatistics:`);
+  log(`  Passages: ${s.passages}`);
+  log(`  Words: ${s.words}`);
+  log(`  Files: ${s.files.length}`);
 }
 
 interface ScaffoldFile {
@@ -388,7 +385,7 @@ function writeNewFile(path: string, content: string): boolean {
 }
 
 function runInit(): void {
-  console.log('Initializing new twee-ts project...');
+  out('Initializing new twee-ts project...');
   mkdirSync('src', { recursive: true });
 
   // Existing files are kept as they are: --init never overwrites a story, its IFID, or a config.
@@ -397,11 +394,11 @@ function runInit(): void {
   const skipped = results.filter((r) => !r.created).map((r) => r.path);
 
   if (created.length > 0) {
-    console.log('Created:');
-    for (const path of created) console.log(`  ${path}`);
+    out('Created:');
+    for (const path of created) out(`  ${path}`);
   }
-  for (const path of skipped) console.log(`Skipped (already exists): ${path}`);
-  console.log('\nRun: npx @rohal12/twee-ts');
+  for (const path of skipped) out(`Skipped (already exists): ${path}`);
+  out('\nRun: npx @rohal12/twee-ts');
 }
 
 function formatBytes(bytes: number): string {
@@ -412,104 +409,67 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(1)}M`;
 }
 
-function runCache(args: string[]): void {
-  const subcommand = args[0];
-
-  switch (subcommand) {
+function runCache(action: CacheAction): void {
+  switch (action) {
     case 'list': {
       const entries = listCachedFormats();
       if (entries.length === 0) {
-        console.log('No cached formats.');
+        out('No cached formats.');
         return;
       }
       for (const e of entries) {
         const date = e.modifiedAt.toISOString().slice(0, 10);
-        console.log(`${e.name.padEnd(16)} ${e.version.padEnd(10)} ${formatBytes(e.sizeBytes).padStart(6)}   ${date}`);
-      }
-      return;
-    }
-    case 'clear': {
-      const name = args[1];
-      const count = clearCachedFormats(name);
-      if (count === 0) {
-        console.log(name ? `No cached formats matching "${name}".` : 'Cache is already empty.');
-      } else {
-        console.log(`Cleared ${count} cached format${count === 1 ? '' : 's'}.`);
+        out(`${e.name.padEnd(16)} ${e.version.padEnd(10)} ${formatBytes(e.sizeBytes).padStart(6)}   ${date}`);
       }
       return;
     }
     case 'size': {
       const { totalBytes, count } = getCacheSize();
-      if (count === 0) {
-        console.log('Cache is empty.');
-      } else {
-        console.log(`Total: ${formatBytes(totalBytes)} (${count} format${count === 1 ? '' : 's'})`);
-      }
+      out(
+        count === 0
+          ? 'Cache is empty.'
+          : `Total: ${formatBytes(totalBytes)} (${count} format${count === 1 ? '' : 's'})`,
+      );
       return;
     }
-    case 'path': {
-      console.log(getCacheDir());
+    case 'path':
+      out(getCacheDir());
       return;
-    }
     default: {
-      console.error(`Usage: twee-ts cache <list|clear|size|path>
-
-  list          List cached formats with name, version, size
-  clear         Delete all cached formats
-  clear <name>  Delete cached formats matching name
-  size          Show total cache size
-  path          Print cache directory path`);
-      process.exit(subcommand ? 1 : 0);
+      const _exhaustive: never = action;
+      throw new Error(`unhandled cache action: ${String(_exhaustive)}`);
     }
   }
 }
 
-function printUsage(): void {
-  console.log(`twee-ts v${VERSION} — TypeScript Twee-to-HTML compiler
-
-Usage: twee-ts [options] <sources...>
-
-Options:
-  -o, --output <file>       Output file (default: stdout)
-  -f, --format <id>         Story format ID (default: sugarcube-2)
-  -s, --start <name>        Starting passage (default: Start)
-  -m, --module <file>       Module file to inject into <head> (repeatable)
-  --head <file>             Raw HTML file to append to <head>
-  -d, --decompile-twee3     Output as Twee 3 source
-  --decompile-twee1         Output as Twee 1 source
-  -a, --archive-twine2      Output as Twine 2 archive
-  --archive-twine1          Output as Twine 1 archive
-  --json                    Output as JSON
-  --twee2-compat            Enable Twee2 syntax compatibility
-  --lint                    Lint story structure (broken links, dead ends, orphans)
-  --no-trim                 Don't trim passage whitespace
-  -t, --test                Enable test/debug mode
-  -w, --watch               Watch for changes and rebuild
-  -l, --log-stats           Log compilation statistics
-  --log-files               Log input file list
-  --list-formats            List available story formats
-  --init                    Initialize a new project
-  --format-index <url>      SFA-compatible format index URL (repeatable)
-  --format-url <url>        Direct format.js URL (repeatable)
-  --tag-alias <alias=target> Map a tag to a special tag (repeatable)
-  --exclude <glob>          Leave out source files matching a glob (repeatable)
-  --source-info             Emit source file/line as data- attributes on passages
-  --word-count-method <m>   Word counting method: tweego (default), whitespace
-  --no-remote               Disable remote format fetching
-  -c, --config <file>       Config file path (default: ${CONFIG_FILENAME})
-  --no-config               Skip config file loading
-  -h, --help                Show this help
-  -v, --version             Show version
-
-Subcommands:
-  cache list                List cached remote formats
-  cache clear [name]        Clear cached formats (all or by name)
-  cache size                Show total cache size
-  cache path                Print cache directory path`);
+function runCacheClear(name: string | undefined): void {
+  const count = clearCachedFormats(name);
+  if (count === 0) {
+    out(name ? `No cached formats matching "${name}".` : 'Cache is already empty.');
+  } else {
+    out(`Cleared ${count} cached format${count === 1 ? '' : 's'}.`);
+  }
 }
 
-main().catch((err: unknown) => {
-  logErrorDiagnostics(err);
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+quietOnClosedPipe(process.stdout);
+quietOnClosedPipe(process.stderr);
+
+// Node 22 before 22.14 flags path.matchesGlob, which exclude globs use, as experimental; that warning tells a
+// twee-ts user nothing. Other warnings are printed as Node prints them.
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'ExperimentalWarning' && warning.message.startsWith('glob is an experimental feature')) return;
+  log(`(node:${process.pid}) ${warning.name}: ${warning.message}`);
 });
+
+main(process.argv.slice(2)).then(
+  (status) => {
+    // process.exitCode, not process.exit(): output still being written to a pipe is not cut off.
+    if (process.exitCode === undefined || status !== EXIT_OK) process.exitCode = status;
+  },
+  (err: unknown) => {
+    logErrorDiagnostics(err);
+    log(`error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = EXIT_FAILED;
+  },
+);

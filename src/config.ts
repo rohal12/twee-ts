@@ -1,42 +1,118 @@
 /**
  * Config file loading and validation for twee-ts.
+ *
+ * One table, CONFIG_SPEC, says what each key may hold. validateConfig() checks a config against it, and
+ * configJsonSchema() renders it as the JSON Schema shipped in schemas/twee-ts.config.schema.json; a test
+ * keeps the two equal, so the schema an editor checks with and the checks twee-ts makes cannot drift apart.
  */
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import type { Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
 import { readUTF8 } from './util.js';
+import { identify } from './path-identity.js';
+import { failureOfError, inputProblem } from './input-policy.js';
+import type { InputDiscovery } from './input-policy.js';
+import { TweeTsError } from './compiler.js';
+import { JsonObject, field, formatJsonPath, ownRecord, parseJSON, readObject } from './json-decode.js';
+import type { Decoder, DecodeIssue, FieldReader, JsonPath, JsonValue } from './json-decode.js';
 
 export const CONFIG_FILENAME = 'twee-ts.config.json';
 
-const VALID_OUTPUT_MODES: OutputMode[] = ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json'];
-const VALID_WORD_COUNT_METHODS: WordCountMethod[] = ['tweego', 'whitespace'];
+const VALID_OUTPUT_MODES: readonly OutputMode[] = [
+  'html',
+  'twee3',
+  'twee1',
+  'twine2-archive',
+  'twine1-archive',
+  'json',
+];
+const VALID_WORD_COUNT_METHODS: readonly WordCountMethod[] = ['tweego', 'whitespace'];
 
-/** One entry per {@link TweeTsConfig} key: the compiler rejects a missing or an extra key here. */
-const CONFIG_KEY_SET: Readonly<Record<keyof TweeTsConfig, true>> = {
-  sources: true,
-  exclude: true,
-  output: true,
-  outputMode: true,
-  formatId: true,
-  startPassage: true,
-  formatPaths: true,
-  formatIndices: true,
-  formatUrls: true,
-  useTweegoPath: true,
-  modules: true,
-  headFile: true,
-  trim: true,
-  twee2Compat: true,
-  testMode: true,
-  noRemote: true,
-  formatFetchTimeout: true,
-  tagAliases: true,
-  sourceInfo: true,
-  wordCountMethod: true,
+/** A tag name: at least one character and no whitespace, since Twee separates tags with spaces. */
+const TAG_PATTERN = '^\\S+$';
+const TAG_RE = new RegExp(TAG_PATTERN, 'u');
+
+/** What one config key may hold. */
+type FieldSpec = { readonly description: string; readonly default?: unknown } & (
+  | { readonly kind: 'string'; readonly minLength?: number }
+  | { readonly kind: 'boolean' }
+  | { readonly kind: 'number'; readonly minimum: number }
+  | { readonly kind: 'enum'; readonly values: readonly string[] }
+  | { readonly kind: 'string-array' }
+  | { readonly kind: 'tag-map' }
+);
+
+/** Every config key, with what it may hold. The JSON schema is generated from this (configJsonSchema()). */
+export const CONFIG_SPEC: Readonly<Record<keyof TweeTsConfig, FieldSpec>> = {
+  sources: {
+    kind: 'string-array',
+    description: 'Files or directories to compile, relative to the config file.',
+  },
+  exclude: {
+    kind: 'string-array',
+    description:
+      'Glob patterns for files to leave out of sources, relative to the config file (e.g. "**/*.png", "src/art/**").',
+  },
+  output: {
+    kind: 'string',
+    minLength: 1,
+    description: 'Output file path, relative to the config file; "-" for standard output.',
+  },
+  outputMode: { kind: 'enum', values: VALID_OUTPUT_MODES, default: 'html', description: 'Output mode.' },
+  formatId: { kind: 'string', description: "Story format directory ID (e.g. 'sugarcube-2')." },
+  startPassage: { kind: 'string', default: 'Start', description: 'Name of the starting passage.' },
+  formatPaths: {
+    kind: 'string-array',
+    description: 'Extra directories to search for story formats, relative to the config file.',
+  },
+  formatIndices: {
+    kind: 'string-array',
+    description: 'URLs to SFA-compatible index.json files for remote format lookup.',
+  },
+  formatUrls: { kind: 'string-array', description: 'Direct URLs to format.js files.' },
+  useTweegoPath: { kind: 'boolean', default: true, description: 'Also search TWEEGO_PATH env for formats.' },
+  modules: {
+    kind: 'string-array',
+    description: 'Module files to inject into <head>, relative to the config file.',
+  },
+  headFile: {
+    kind: 'string',
+    description: 'Raw HTML file to append to <head>, relative to the config file; "" for none.',
+  },
+  trim: { kind: 'boolean', default: true, description: 'Trim passage whitespace.' },
+  twee2Compat: { kind: 'boolean', default: false, description: 'Twee2 compatibility mode.' },
+  testMode: { kind: 'boolean', default: false, description: 'Enable debug/test mode option.' },
+  noRemote: { kind: 'boolean', default: false, description: 'Disable remote format fetching.' },
+  formatFetchTimeout: {
+    kind: 'number',
+    minimum: 0,
+    default: 30000,
+    description:
+      'Milliseconds each story format request (an index or a format.js) may take before it fails with a warning and the next source is tried. 0 turns the limit off.',
+  },
+  tagAliases: {
+    kind: 'tag-map',
+    description:
+      'Map alias tags to canonical special tags (e.g. { "library": "script" }). Tags are non-empty and hold no whitespace.',
+  },
+  sourceInfo: {
+    kind: 'boolean',
+    default: false,
+    description: 'Emit source file and line as data- attributes on passage elements.',
+  },
+  wordCountMethod: {
+    kind: 'enum',
+    values: VALID_WORD_COUNT_METHODS,
+    default: 'tweego',
+    description:
+      "Word counting method. 'tweego': NFKD normalize, divide chars by 5 (matches Tweego). 'whitespace': split on whitespace after stripping comments and markup.",
+  },
 };
 
 /** The keys a config file may hold besides `$schema`; the JSON schema's `properties` list the same keys. */
-export const CONFIG_KEYS: readonly (keyof TweeTsConfig)[] = Object.keys(CONFIG_KEY_SET) as (keyof TweeTsConfig)[];
+export const CONFIG_KEYS: readonly (keyof TweeTsConfig)[] = Object.keys(CONFIG_SPEC).filter(
+  (key): key is keyof TweeTsConfig => Object.hasOwn(CONFIG_SPEC, key),
+);
 
 /** The key that only references the JSON schema, for editors. */
 const SCHEMA_KEY = '$schema';
@@ -44,12 +120,20 @@ const SCHEMA_KEY = '$schema';
 /** A key folded so that spellings differing only in letter case, `-` or `_` compare equal. */
 const foldKey = (key: string): string => key.toLowerCase().replace(/[-_]/g, '');
 
+/** Why a tag alias can't be used, or undefined when it can. The CLI's --tag-alias checks the same. */
+export function tagAliasProblem(alias: string, target: string): string | undefined {
+  if (!TAG_RE.test(alias)) return `the alias "${alias}" must be a non-empty tag name without whitespace`;
+  if (!TAG_RE.test(target))
+    return `the target "${target}" of alias "${alias}" must be a non-empty tag name without whitespace`;
+  return undefined;
+}
+
 /**
  * Load a config file from the given directory (default: cwd). Returns null if not found.
  *
  * @param diagnostics Receives warnings that do not stop the config from loading: keys the config does not
  *   define, and a file that is not valid UTF-8 (it is read as Windows-1252).
- * @throws When the file exists but cannot be read, is not valid JSON or fails {@link validateConfig}.
+ * @throws A TweeTsError when the file exists but cannot be read, is not valid JSON or fails {@link validateConfig}.
  */
 export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConfig | null {
   const base = dir ?? process.cwd();
@@ -57,55 +141,181 @@ export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConf
 
   if (!existsSync(configPath)) return null;
 
-  return loadConfigFile(configPath, diagnostics);
+  return readConfig(configPath, 'found', diagnostics);
 }
 
 /**
  * Load a config from a specific file path.
  *
+ * The paths in it (`sources`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder
+ * that holds the config file, and so are the `exclude` globs: the config is returned with them rebased onto
+ * the working directory (see {@link rebaseConfigPaths}).
+ *
  * @param diagnostics Receives warnings that do not stop the config from loading: keys the config does not
  *   define, and a file that is not valid UTF-8 (it is read as Windows-1252).
- * @throws When the file cannot be read, is not valid JSON or fails {@link validateConfig}.
+ * @throws A TweeTsError when the file cannot be read, is not valid JSON or fails {@link validateConfig}.
  */
 export function loadConfigFile(filePath: string, diagnostics?: Diagnostic[]): TweeTsConfig {
+  return readConfig(filePath, 'named', diagnostics);
+}
+
+function readConfig(filePath: string, discovery: InputDiscovery, diagnostics: Diagnostic[] | undefined): TweeTsConfig {
   const readDiagnostics: Diagnostic[] = [];
   let raw: string;
   try {
     raw = readUTF8(filePath, readDiagnostics);
   } catch (e) {
-    throw new Error(`Cannot read config file ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+    const problem = inputProblem('config', discovery, failureOfError(e), filePath, e);
+    throw new TweeTsError(`Cannot read config file ${filePath}: ${problem.reason}`, [], {
+      code: 'INPUT_UNAVAILABLE',
+      cause: e,
+    });
   }
 
   const config = parseConfig(raw, filePath, readDiagnostics);
   diagnostics?.push(...readDiagnostics);
-  return config;
+  return rebaseConfigPaths(config, filePath);
 }
 
 /**
- * Parse and validate the text of the config file at `path`. Unknown keys are added to `diagnostics` as
- * warnings, so a config with a stray key keeps loading.
+ * Parse and validate the text of the config file at `path` (strict JSON, see json-decode.ts). Unknown and
+ * repeated keys are added to `diagnostics` as warnings, so a config with a stray key keeps loading.
  */
 function parseConfig(raw: string, path: string, diagnostics: Diagnostic[]): TweeTsConfig {
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch (e) {
-    throw new Error(`Invalid JSON in ${path}: ${e instanceof Error ? e.message : String(e)}`);
+  const parsed = parseJSON(raw);
+  if (!parsed.ok) {
+    throw new TweeTsError(`Invalid JSON in ${path}: ${parsed.error.message}`, [], { code: 'INVALID_OPTIONS' });
   }
-
-  const errors = validateConfig(data);
-  if (errors.length > 0) {
-    throw new Error(`Invalid config in ${path}:\n  ${errors.join('\n  ')}`);
+  const decoded = decodeConfig(parsed.value);
+  if (decoded.errors.length > 0) {
+    throw new TweeTsError(`Invalid config in ${path}:\n  ${decoded.errors.join('\n  ')}`, [], {
+      code: 'INVALID_OPTIONS',
+    });
   }
-
   diagnostics.push(
-    ...unknownConfigKeyWarnings(data).map((message): Diagnostic => ({
+    ...decoded.warnings.map((message): Diagnostic => ({
       level: 'warning',
       message: `${path}: ${message}`,
       file: path,
     })),
   );
-  return data as TweeTsConfig;
+  return decoded.config;
+}
+
+/** A config value as JSON: what `JSON.parse` would give back, a value JSON can't hold read as `null`. */
+function toJsonValue(value: unknown): JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(toJsonValue);
+  if (typeof value === 'object') {
+    return new JsonObject(Object.entries(value).map(([key, item]) => ({ key, value: toJsonValue(item) })));
+  }
+  return null;
+}
+
+/** Records a config error and rejects the value. */
+function invalid(issues: DecodeIssue[], path: JsonPath, message: string): { readonly ok: false } {
+  issues.push({ kind: 'type', path, message });
+  return { ok: false };
+}
+
+/** The decoder for one config key: its value, or an error worded for the config file. */
+function decoderFor(key: string, spec: FieldSpec): Decoder<unknown> {
+  const label = `"${key}"`;
+  switch (spec.kind) {
+    case 'string':
+      return (value, path, issues) => {
+        if (typeof value !== 'string') return invalid(issues, path, `${label} must be a string.`);
+        if (spec.minLength !== undefined && value.length < spec.minLength) {
+          return invalid(issues, path, `${label} must not be empty.`);
+        }
+        return { ok: true, value };
+      };
+    case 'boolean':
+      return (value, path, issues) =>
+        typeof value === 'boolean' ? { ok: true, value } : invalid(issues, path, `${label} must be a boolean.`);
+    case 'number':
+      return (value, path, issues) =>
+        typeof value === 'number' && Number.isFinite(value) && value >= spec.minimum
+          ? { ok: true, value }
+          : invalid(issues, path, `${label} must be a number of milliseconds, ${spec.minimum} or more.`);
+    case 'enum':
+      return (value, path, issues) =>
+        typeof value === 'string' && spec.values.includes(value)
+          ? { ok: true, value }
+          : invalid(issues, path, `${label} must be one of: ${spec.values.join(', ')}.`);
+    case 'string-array':
+      return (value, path, issues) => {
+        if (!Array.isArray(value)) return invalid(issues, path, `${label} must be an array.`);
+        const items: readonly JsonValue[] = value;
+        const strings = items.filter((item): item is string => typeof item === 'string');
+        if (strings.length !== items.length) return invalid(issues, path, `${label} must be an array of strings.`);
+        if (strings.includes('')) return invalid(issues, path, `${label} must not hold an empty string.`);
+        return { ok: true, value: strings };
+      };
+    case 'tag-map':
+      return (value, path, issues) => {
+        if (!(value instanceof JsonObject)) return invalid(issues, path, `${label} must be an object.`);
+        const entries: [string, string][] = [];
+        for (const { key: alias, value: target } of value.members) {
+          if (typeof target !== 'string')
+            return invalid(issues, [...path, alias], `"${key}.${alias}" must be a string.`);
+          const problem = tagAliasProblem(alias, target);
+          if (problem !== undefined) return invalid(issues, [...path, alias], `${label}: ${problem}.`);
+          entries.push([alias, target]);
+        }
+        // Own properties, so an alias `__proto__` is kept (#241).
+        return { ok: true, value: ownRecord(entries) };
+      };
+    default: {
+      const _exhaustive: never = spec;
+      throw new Error(`unhandled config field kind: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
+
+/** The warning for a key the config does not define, with the key it may stand for. */
+function unknownKeyWarning(key: string): string {
+  const suggestion = CONFIG_KEYS.find((known) => foldKey(known) === foldKey(key));
+  const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
+  return `Unknown config key "${key}"${hint}; it is ignored.`;
+}
+
+/** A config read from JSON: what it sets, the errors that make it unusable, and the warnings. */
+interface DecodedConfig {
+  readonly config: TweeTsConfig;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+/** Reads a config with the decoders of json-decode.ts, every key checked as CONFIG_SPEC says. */
+function decodeConfig(value: JsonValue): DecodedConfig {
+  const issues: DecodeIssue[] = [];
+  const warnings: string[] = [];
+  const read = new Map<string, unknown>();
+  const fields: Record<string, FieldReader> = ownRecord([
+    // `$schema` is only checked: it names the schema for editors and sets nothing.
+    [SCHEMA_KEY, field(decoderFor(SCHEMA_KEY, { kind: 'string', description: '' }), () => undefined)],
+    ...CONFIG_KEYS.map((key): [string, FieldReader] => [
+      key,
+      field(decoderFor(key, CONFIG_SPEC[key]), (v) => read.set(key, v)),
+    ]),
+  ]);
+  const isObject = readObject(value, [], issues, {
+    fields,
+    keys: 'exact',
+    unknown: (member) => warnings.push(unknownKeyWarning(member.key)),
+  });
+  if (!isObject) return { config: {}, errors: ['Config must be a JSON object.'], warnings: [] };
+  for (const issue of issues) {
+    if (issue.kind === 'duplicate-key') {
+      warnings.push(`${formatJsonPath(issue.path)} is given more than once; the last one is used.`);
+    }
+  }
+  // Unavoidable cast: each value was read by the decoder CONFIG_SPEC gives its key, of the type TweeTsConfig names.
+  const config = ownRecord(read) as TweeTsConfig;
+  return { config, errors: issues.filter((i) => i.kind === 'type').map((i) => i.message), warnings };
 }
 
 /**
@@ -113,80 +323,7 @@ function parseConfig(raw: string, path: string, diagnostics: Diagnostic[]): Twee
  * Keys the config does not define are not errors; {@link unknownConfigKeyWarnings} reports them.
  */
 export function validateConfig(data: unknown): string[] {
-  const errors: string[] = [];
-
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    errors.push('Config must be a JSON object.');
-    return errors;
-  }
-
-  const obj = data as Record<string, unknown>;
-
-  // String fields
-  for (const key of ['output', 'formatId', 'startPassage', 'headFile'] as const) {
-    if (key in obj && typeof obj[key] !== 'string') {
-      errors.push(`"${key}" must be a string.`);
-    }
-  }
-
-  // Boolean fields
-  for (const key of ['useTweegoPath', 'trim', 'twee2Compat', 'testMode', 'noRemote', 'sourceInfo'] as const) {
-    if (key in obj && typeof obj[key] !== 'boolean') {
-      errors.push(`"${key}" must be a boolean.`);
-    }
-  }
-
-  // String array fields
-  for (const key of ['sources', 'exclude', 'formatPaths', 'formatIndices', 'formatUrls', 'modules'] as const) {
-    if (key in obj) {
-      if (!Array.isArray(obj[key])) {
-        errors.push(`"${key}" must be an array.`);
-      } else if (!(obj[key] as unknown[]).every((v) => typeof v === 'string')) {
-        errors.push(`"${key}" must be an array of strings.`);
-      }
-    }
-  }
-
-  // Non-negative number fields
-  if ('formatFetchTimeout' in obj) {
-    const timeout = obj['formatFetchTimeout'];
-    if (typeof timeout !== 'number' || !(timeout >= 0)) {
-      errors.push('"formatFetchTimeout" must be a number of milliseconds, 0 or more.');
-    }
-  }
-
-  // tagAliases validation
-  if ('tagAliases' in obj) {
-    if (typeof obj['tagAliases'] !== 'object' || obj['tagAliases'] === null || Array.isArray(obj['tagAliases'])) {
-      errors.push('"tagAliases" must be an object.');
-    } else {
-      const aliases = obj['tagAliases'] as Record<string, unknown>;
-      for (const [key, val] of Object.entries(aliases)) {
-        if (typeof val !== 'string') {
-          errors.push(`"tagAliases.${key}" must be a string.`);
-        }
-      }
-    }
-  }
-
-  // OutputMode validation
-  if ('outputMode' in obj) {
-    if (typeof obj['outputMode'] !== 'string' || !VALID_OUTPUT_MODES.includes(obj['outputMode'] as OutputMode)) {
-      errors.push(`"outputMode" must be one of: ${VALID_OUTPUT_MODES.join(', ')}.`);
-    }
-  }
-
-  // WordCountMethod validation
-  if ('wordCountMethod' in obj) {
-    if (
-      typeof obj['wordCountMethod'] !== 'string' ||
-      !VALID_WORD_COUNT_METHODS.includes(obj['wordCountMethod'] as WordCountMethod)
-    ) {
-      errors.push(`"wordCountMethod" must be one of: ${VALID_WORD_COUNT_METHODS.join(', ')}.`);
-    }
-  }
-
-  return errors;
+  return [...decodeConfig(toJsonValue(data)).errors];
 }
 
 /**
@@ -197,14 +334,82 @@ export function validateConfig(data: unknown): string[] {
  * an object, which {@link validateConfig} reports.
  */
 export function unknownConfigKeyWarnings(data: unknown): string[] {
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return [];
-  return Object.keys(data)
-    .filter((key) => key !== SCHEMA_KEY && !Object.hasOwn(CONFIG_KEY_SET, key))
-    .map((key) => {
-      const suggestion = CONFIG_KEYS.find((known) => foldKey(known) === foldKey(key));
-      const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
-      return `Unknown config key "${key}"${hint}; it is ignored.`;
-    });
+  return [...decodeConfig(toJsonValue(data)).warnings];
+}
+
+/** The JSON Schema of one field. */
+function fieldSchema(spec: FieldSpec): Record<string, unknown> {
+  const base = (() => {
+    switch (spec.kind) {
+      case 'string':
+        return { type: 'string', ...(spec.minLength === undefined ? {} : { minLength: spec.minLength }) };
+      case 'boolean':
+        return { type: 'boolean' };
+      case 'number':
+        return { type: 'number', minimum: spec.minimum };
+      case 'enum':
+        return { type: 'string', enum: [...spec.values] };
+      case 'string-array':
+        return { type: 'array', items: { type: 'string', minLength: 1 } };
+      case 'tag-map':
+        return {
+          type: 'object',
+          propertyNames: { pattern: TAG_PATTERN },
+          additionalProperties: { type: 'string', pattern: TAG_PATTERN },
+        };
+      default: {
+        const _exhaustive: never = spec;
+        throw new Error(`unhandled config field kind: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  })();
+  return { ...base, ...('default' in spec ? { default: spec.default } : {}), description: spec.description };
+}
+
+/** The JSON Schema for config files, as schemas/twee-ts.config.schema.json holds it. */
+export function configJsonSchema(): Record<string, unknown> {
+  return {
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json',
+    title: 'twee-ts Configuration',
+    description: 'Configuration file for twee-ts, a TypeScript Twee-to-HTML compiler.',
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      [SCHEMA_KEY]: { type: 'string', description: 'JSON Schema reference for editor support.' },
+      ...Object.fromEntries(CONFIG_KEYS.map((key) => [key, fieldSchema(CONFIG_SPEC[key])])),
+    },
+  };
+}
+
+/** A glob relative to the folder `dir` (as reported, relative to the working directory or absolute). */
+function rebaseGlob(dir: string, glob: string): string {
+  const pattern = glob.replace(/^\.[/\\]/, '');
+  if (isAbsolute(pattern)) return pattern;
+  return `${dir.replace(/\\/g, '/').replace(/\/$/, '')}/${pattern}`;
+}
+
+/**
+ * The config with the paths in it, which are relative to the folder holding the config file at
+ * `configPath`, made relative to the working directory (or absolute, when that folder is outside it).
+ * Absolute paths, `"-"` (standard output) and an empty `headFile` stay as they are. A config file in the
+ * working directory is returned unchanged.
+ */
+export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): TweeTsConfig {
+  const folder = identify(dirname(configPath));
+  if (folder.key === identify('.').key) return config;
+  const dir = folder.display;
+  const rebase = (path: string): string => (path === '' || path === '-' || isAbsolute(path) ? path : join(dir, path));
+  const { sources, exclude, output, modules, headFile, formatPaths } = config;
+  return {
+    ...config,
+    ...(sources === undefined ? {} : { sources: sources.map(rebase) }),
+    ...(exclude === undefined ? {} : { exclude: exclude.map((glob) => rebaseGlob(dir, glob)) }),
+    ...(output === undefined ? {} : { output: rebase(output) }),
+    ...(modules === undefined ? {} : { modules: modules.map(rebase) }),
+    ...(headFile === undefined ? {} : { headFile: rebase(headFile) }),
+    ...(formatPaths === undefined ? {} : { formatPaths: formatPaths.map(rebase) }),
+  };
 }
 
 /** Return a default config JSON string for --init scaffolding. */

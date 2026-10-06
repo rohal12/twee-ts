@@ -83,7 +83,10 @@ export interface CompileToFileOptions extends CompileOptions {
   /**
    * Output file path. It is never read as a source, even inside a source folder or
    * reached through a symbolic link. Naming it as a source, a module or the head
-   * file is a TweeTsError, and nothing is written.
+   * file (in any output mode, by any spelling, or as a hard link) is a TweeTsError
+   * (`OUTPUT_IS_INPUT`), and nothing is written. So is an existing file of a source
+   * type inside a source folder that is not an earlier twee-ts build. How it is
+   * written depends on what is there: see docs/cli.md, "Output safety".
    */
   outFile: string;
 }
@@ -98,7 +101,8 @@ export interface WatchOptions extends CompileToFileOptions {
   /**
    * Called when a build fails with a fatal error (nothing is written), when `onBuild` throws,
    * and when a watched path can't be watched (the other paths are still watched). An exception
-   * thrown here is reported to the console, and watching goes on.
+   * thrown here is reported to the console, and watching goes on. A TweeTsError no edit to the
+   * sources can fix (`OUTPUT_IS_INPUT`, `INVALID_OPTIONS`) also stops watching.
    */
   onError?: ((error: Error) => void) | undefined;
 }
@@ -126,8 +130,21 @@ export interface CompileStats {
   passages: number;
   storyPassages: number;
   words: number;
+  /** The source files loaded, in order, as paths relative to the working directory when inside it. */
   files: string[];
+  /** The module files and the head file the build injected (HTML output only), as Tweego's "External files". */
+  externalFiles?: string[];
 }
+
+/**
+ * Why a TweeTsError stopped a build:
+ * - `OUTPUT_IS_INPUT`: the output would overwrite an input (a source, module, head file, config file or story
+ *   format), or a source file of the output's type found in a source folder.
+ * - `INPUT_UNAVAILABLE`: an input the input policy makes fatal (the head file, the config file) can't be used.
+ * - `INVALID_OPTIONS`: an option is out of range, or needs a newer Node.js.
+ * - `BUILD_FAILED`: anything else (no story format for HTML output, say).
+ */
+export type TweeTsErrorCode = 'OUTPUT_IS_INPUT' | 'INPUT_UNAVAILABLE' | 'INVALID_OPTIONS' | 'BUILD_FAILED';
 
 // --- Passage ---
 
@@ -347,6 +364,13 @@ export interface FileCacheEntry {
    * and reparsed. The value is opaque: leave it to twee-ts to set.
    */
   readonly parseOptionsKey?: string;
+  /**
+   * What else identifies the file's contents besides `mtimeMs` (its size, inode and status-change
+   * time), so a write that keeps the modification time is still seen. An entry is reused only when
+   * this matches too; an entry without it is treated as stale. The value is opaque: leave it to
+   * twee-ts to set.
+   */
+  readonly signature?: string;
   readonly passages: readonly Passage[];
   readonly diagnostics: readonly Diagnostic[];
 }

@@ -283,10 +283,10 @@ describe('CLI exit status', () => {
     try {
       // stdout and stderr arrive separately: wait for the build line and its report.
       await waitFor(
-        () => (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+        () => (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
         'the first build',
       );
-      expect(cli.stdout()).toContain('Built:');
+      expect(cli.stderr()).toContain('Built:');
       expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
       expect(cli.stderr()).toContain('output not written');
       expect(existsSync(join(dir, 'out.html'))).toBe(false);
@@ -294,7 +294,7 @@ describe('CLI exit status', () => {
       write('broken.tw', VALID_STORY);
       await waitFor(
         () =>
-          (existsSync(join(dir, 'out.html')) && countOf(cli.stdout(), 'Built:') >= 2) || cli.child.exitCode !== null,
+          (existsSync(join(dir, 'out.html')) && countOf(cli.stderr(), 'Built:') >= 2) || cli.child.exitCode !== null,
         'the rebuild of the corrected save',
       );
       expect(cli.child.exitCode).toBeNull();
@@ -309,7 +309,7 @@ describe('CLI exit status', () => {
     const cli = startCli(dir, [...baseArgs, '-w', 'later', '-o', 'out.html']);
     try {
       await waitFor(
-        () => (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+        () => (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
         'the first build',
       );
       expect(cli.stderr()).toMatch(/warning: path later: ENOENT/);
@@ -338,7 +338,7 @@ describe('CLI exit status', () => {
       try {
         await waitFor(
           () =>
-            (cli.stdout().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+            (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
           'the first build',
         );
         expect(cli.stderr()).toMatch(/error: Cannot watch locked: EACCES/);
@@ -359,7 +359,7 @@ describe('CLI exit status', () => {
     const out = join(dir, 'out.html');
     const src = write('story.tw', VALID_STORY.replace('Hello.', 'KNOWN_GOOD'));
     const cli = startCli(dir, [...baseArgs, '-w', src, '-o', 'out.html']);
-    const builds = (): number => countOf(cli.stdout(), 'Built:');
+    const builds = (): number => countOf(cli.stderr(), 'Built:');
     try {
       await waitFor(() => builds() >= 1, 'the first build');
       const good = readFileSync(out);
@@ -388,17 +388,17 @@ describe('CLI exit status', () => {
     const src = write('story.tw', VALID_STORY);
     const cli = startCli(dir, [...baseArgs, '-w', '--log-files', '--log-stats', src, '-o', 'out.html']);
     // The statistics end each build's report.
-    const reports = (): number => countOf(cli.stdout(), '\nStatistics:\n');
-    const complete = (n: number): boolean => reports() >= n && cli.stdout().trimEnd().endsWith('Files: 1');
+    const reports = (): number => countOf(cli.stderr(), '\nStatistics:\n');
+    const complete = (n: number): boolean => reports() >= n && cli.stderr().trimEnd().endsWith('Files: 1');
     try {
       await waitFor(() => complete(1) || cli.child.exitCode !== null, 'the first build');
-      expect(cli.stdout()).toContain('\nFiles: story.tw\n');
-      expect(cli.stdout()).toContain('\nStatistics:\n  Passages: 3\n  Words: 2\n  Files: 1\n');
+      expect(cli.stderr()).toContain('\nFiles: story.tw\n');
+      expect(cli.stderr()).toContain('\nStatistics:\n  Passages: 3\n  Words: 2\n  Files: 1\n');
 
       write('story.tw', `${VALID_STORY}\n:: Second\nTwo more.\n`);
       await waitFor(() => complete(2) || cli.child.exitCode !== null, 'the rebuild');
-      expect(countOf(cli.stdout(), '\nFiles: story.tw\n')).toBe(2);
-      expect(cli.stdout()).toContain('\nStatistics:\n  Passages: 4\n  Words: 4\n  Files: 1\n');
+      expect(countOf(cli.stderr(), '\nFiles: story.tw\n')).toBe(2);
+      expect(cli.stderr()).toContain('\nStatistics:\n  Passages: 4\n  Words: 4\n  Files: 1\n');
       expect(cli.child.exitCode).toBeNull();
     } finally {
       cli.child.kill();
@@ -424,13 +424,14 @@ describe('CLI output inside a source folder', () => {
 
     writeFileSync(join(dir, source), EDITED);
     const r = runCli(dir, args);
-    expect(r.stderr).toBe('');
+    // The file list is a log: standard error, and nothing else there (FS-01).
+    expect(r.stderr).toBe(`\nFiles: ${source}\n`);
+    expect(r.stdout).toBe('');
     expect(r.status).toBe(0);
     const html = readFileSync(join(dir, output), 'utf-8');
     expect(html).toContain('UPDATED_CONTENT');
     expect(html).not.toContain('ORIGINAL_CONTENT');
     expect(html).not.toContain('SOON_DELETED');
-    expect(r.stdout).toContain(`Files: ${source}\n`);
   });
 
   it('--lint leaves the configured output file out of the sources', () => {
@@ -609,8 +610,9 @@ describe.skipIf(process.platform === 'win32')('CLI in a symlinked project folder
     writeFileSync(start, VALID_STORY.replace('Hello.', 'UPDATED_CONTENT'));
     const second = build();
     expect(second.status).toBe(0);
-    expect(second.stderr).toBe('');
-    expect(second.stdout).toContain(`Files: ${join('..', 'link', 'story', 'a.tw')}\n`);
+    // Reported relative to the working directory, though it is reached through the link (FS-06).
+    expect(second.stderr).toBe(`\nFiles: ${join('story', 'a.tw')}\n`);
+    expect(second.stdout).toBe('');
     const html = readFileSync(join(base, 'real', 'story', 'z.html'), 'utf-8');
     expect(html).toContain('UPDATED_CONTENT');
     expect(html).not.toContain('SOON_DELETED');

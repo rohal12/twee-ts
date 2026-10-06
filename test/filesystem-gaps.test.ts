@@ -3,9 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
-import { isExcluded, watchFilesystem } from '../src/filesystem.js';
+import { watchFilesystem } from '../src/filesystem.js';
 import type * as NodeFs from 'node:fs';
-import type * as NodePath from 'node:path';
 
 type Listener = (event: string, filename: string | null) => void;
 
@@ -23,25 +22,9 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-// A path module without matchesGlob, as Node.js 22.0 to 22.4 has it.
-vi.mock('node:path', async (importOriginal) => {
-  const actual = await importOriginal<typeof NodePath>();
-  return { ...actual, matchesGlob: undefined };
-});
-
 afterEach(() => {
   fake.listeners.length = 0;
   vi.useRealTimers();
-});
-
-describe('isExcluded on a Node.js without path.matchesGlob', () => {
-  it('names the Node.js version the exclude option needs', () => {
-    expect(() => isExcluded('a.tw', ['*.png'])).toThrow(/needs Node\.js 22\.5 or newer/);
-  });
-
-  it('excludes nothing, and needs no glob support, without exclude patterns', () => {
-    expect(isExcluded('a.tw', [])).toBe(false);
-  });
 });
 
 describe('watchFilesystem and an event without a file name', () => {

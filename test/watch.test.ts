@@ -1310,21 +1310,148 @@ describe('watch with a named source that is the output (#157)', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('reports the error and leaves the file unchanged', async () => {
+  it('rejects before watching anything and leaves the file unchanged (FS-13)', async () => {
     const file = join(root, 'a.tw');
     writeFileSync(file, STORY);
     const built: CompileResult[] = [];
-    let failed: (error: Error) => void = () => {};
-    const failure = new Promise<Error>((done) => (failed = done));
-    controller = await watch({
+    const failure = watch({
       sources: [file],
       outputMode: 'twee3',
       outFile: file,
       onBuild: (result) => built.push(result),
-      onError: failed,
     });
-    expect((await failure).message).toBe(`path ${file}: Output file cannot be an input source.`);
+    await expect(failure).rejects.toThrow(`path ${file}: Output file cannot be an input source.`);
+    await expect(failure).rejects.toMatchObject({ code: 'OUTPUT_IS_INPUT' });
     expect(built).toEqual([]);
     expect(readFileSync(file, 'utf-8')).toBe(STORY);
+  });
+});
+
+describe('watchFilesystem events and timing (#247)', () => {
+  let root: string;
+  let story: string;
+  let builds: (ReadonlySet<string> | undefined)[];
+  let handle: WatchHandle | undefined;
+
+  beforeEach(() => {
+    vi.useFakeTimers(FAKE_TIMERS);
+    // The real path, so the macOS link /var adds no watch of its own.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-watch-events-')));
+    story = join(root, 'story');
+    mkdirSync(story);
+    writeFileSync(join(story, 'a.tw'), ':: A\nOne\n');
+    builds = [];
+  });
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const rel = (filename: string): string => relative(process.cwd(), filename);
+
+  function start(paths: string[], timing = {}): WatchHandle {
+    handle = watchFilesystem(
+      paths,
+      join(root, 'out.html'),
+      (files) => builds.push(files),
+      () => false,
+      () => {},
+      timing,
+    );
+    builds.length = 0;
+    return handle;
+  }
+
+  it('builds within the maximum wait while events keep coming (FS-12)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    start([story]);
+    emit(story, 'a.tw');
+    for (let t = 0; t < 10; t++) {
+      vi.advanceTimersByTime(300);
+      emit(story, 'style.css');
+    }
+    // A trailing-only debounce would still be waiting; the maximum wait (2 × 500 ms) built twice by now.
+    expect(builds.length).toBeGreaterThanOrEqual(2);
+    expect(builds[0]).toEqual(new Set([rel(join(story, 'a.tw')), rel(join(story, 'style.css'))]));
+  });
+
+  it('takes its timing from the caller', () => {
+    start([story], { debounceMs: 50, maxWaitMs: 60 });
+    emit(story, 'a.tw');
+    vi.advanceTimersByTime(49);
+    expect(builds).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(builds).toEqual([new Set([rel(join(story, 'a.tw'))])]);
+  });
+
+  for (const name of ['sub', 'chapter.v2', 'art.png']) {
+    it(`rebuilds in full when a folder named "${name}" is moved out or renamed (FS-04)`, () => {
+      mkdirSync(join(story, name));
+      writeFileSync(join(story, name, 'side.tw'), ':: Side\nx\n');
+      start([story]);
+      renameSync(join(story, name), join(root, name));
+      emit(story, name);
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([undefined]);
+      // Moved back in: a folder appears, so the walk runs again.
+      renameSync(join(root, name), join(story, name));
+      emit(story, name);
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([undefined, undefined]);
+    });
+  }
+
+  it('builds nothing for a file of an unknown type, or a folder it never saw that is gone', () => {
+    start([story]);
+    emit(story, 'notes.txt');
+    emit(story, 'gone-folder');
+    vi.advanceTimersByTime(500);
+    expect(builds).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'builds nothing for an editor lock link, unless the last build read a file through it (FS-15)',
+    () => {
+      const h = start([story]);
+      symlinkSync('user@host.1:2', join(story, '.#a.tw'));
+      emit(story, '.#a.tw');
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([]);
+      symlinkSync(join(root, 'gone.tw'), join(story, 'was-read.tw'));
+      h.track([{ path: rel(join(story, 'was-read.tw')), link: true }]);
+      emit(story, 'was-read.tw');
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([undefined]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'watches a tracked file outside the watched folders, and stops when told',
+    () => {
+      mkdirSync(join(root, 'outside'));
+      writeFileSync(join(root, 'outside', 'x.tw'), ':: X\n1\n');
+      symlinkSync(join(root, 'outside', 'x.tw'), join(story, 'x.tw'));
+      const h = start([story]);
+      h.track([{ path: rel(join(story, 'x.tw')), link: true }, { path: rel(join(story, 'a.tw')) }]);
+      expect(liveWatchers(join(root, 'outside'))).toHaveLength(1);
+      emit(join(root, 'outside'), 'x.tw');
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([new Set([rel(join(story, 'x.tw'))])]);
+      // No longer an input, though still there: its watches close.
+      h.track([{ path: rel(join(story, 'a.tw')) }]);
+      expect(liveWatchers(join(root, 'outside'))).toEqual([]);
+      h.close();
+      h.track([{ path: rel(join(story, 'x.tw')), link: true }]);
+      expect(liveWatchers(join(root, 'outside'))).toEqual([]);
+    },
+  );
+
+  it('ignores an event for the output file', () => {
+    start([root]);
+    emit(root, 'out.html');
+    vi.advanceTimersByTime(500);
+    expect(builds).toEqual([]);
   });
 });

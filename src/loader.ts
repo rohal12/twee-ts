@@ -2,9 +2,12 @@
  * File loading: dispatch by file extension.
  * Ported from storyload.go.
  */
-import { basename, resolve } from 'node:path';
+import { basename } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from './types.js';
+import type { DiscoveredFile } from './filesystem.js';
+import { identify } from './path-identity.js';
+import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
 import { storyAdd, storyHas, storyPrepend, withGeneratedName } from './story.js';
 import { parseTwee } from './parser.js';
@@ -20,96 +23,90 @@ interface LoadOptions {
 }
 
 /**
- * Load all source files into a story.
+ * A source file to load: a DiscoveredFile from getFilenames, or a bare path (treated as found in a folder,
+ * so a file of an unknown type is skipped without a word).
+ */
+export type SourceFile = string | DiscoveredFile;
+
+function toDiscovered(file: SourceFile): DiscoveredFile {
+  return typeof file === 'string' ? { path: file, key: identify(file).key, discovery: 'found' } : file;
+}
+
+/**
+ * The identity keys of the files a build has loaded, next to the paths in its `processedFiles` set (which
+ * the caller owns and reports as `stats.files`), so the same file reached by two spellings is loaded once.
+ */
+const processedKeys = new WeakMap<Set<string>, Map<string, string>>();
+
+/** The earlier spelling of `file` the build already loaded, if any; records `file` as loaded otherwise. */
+function alreadyLoaded(processedFiles: Set<string>, file: DiscoveredFile): string | undefined {
+  let keys = processedKeys.get(processedFiles);
+  if (keys === undefined) {
+    keys = new Map([...processedFiles].map((path) => [identify(path).key, path]));
+    processedKeys.set(processedFiles, keys);
+  }
+  return keys.get(file.key);
+}
+
+function markLoaded(processedFiles: Set<string>, file: DiscoveredFile): void {
+  processedFiles.add(file.path);
+  processedKeys.get(processedFiles)?.set(file.key, file.path);
+}
+
+/** The warning for a file loaded already, under this or another spelling. */
+function duplicateWarning(file: DiscoveredFile, earlier: string): Diagnostic {
+  const same = earlier === file.path ? '' : ` (the same file as ${earlier})`;
+  return { level: 'warning', message: `load ${file.path}: Skipping duplicate${same}.` };
+}
+
+/** The diagnostic the input policy gives a source file that failed to load (see input-policy.ts). */
+function loadFailure(file: DiscoveredFile, e: unknown): Diagnostic | undefined {
+  return problemDiagnostic(inputProblem('source', file.discovery, failureOfError(e), file.path, e));
+}
+
+/** The diagnostic for a file of a type sources don't load: a warning for a file named directly (FS-17). */
+function unsupportedType(file: DiscoveredFile): Diagnostic | undefined {
+  return problemDiagnostic(inputProblem('source', file.discovery, 'unsupported-type', file.path, undefined));
+}
+
+/**
+ * Load all source files into a story. A file that fails to load is reported as the input policy says
+ * (an error, or a warning for a file found in a folder that went away since the walk), and the others are
+ * still loaded, so one build reports every problem.
  */
 export function loadSources(
   story: Story,
-  filenames: string[],
+  filenames: readonly SourceFile[],
   opts: LoadOptions,
   diagnostics: Diagnostic[],
   processedFiles: Set<string>,
 ): void {
-  for (const filename of filenames) {
-    if (processedFiles.has(filename)) {
-      diagnostics.push({ level: 'warning', message: `load ${filename}: Skipping duplicate.` });
+  for (const file of filenames.map(toDiscovered)) {
+    const filename = file.path;
+    const earlier = alreadyLoaded(processedFiles, file);
+    if (earlier !== undefined) {
+      diagnostics.push(duplicateWarning(file, earlier));
       continue;
     }
 
-    const ext = normalizedFileExt(filename);
+    let result: ParseResult | undefined;
     try {
-      switch (ext) {
-        case 'tw':
-        case 'twee':
-          loadTwee(story, filename, opts, diagnostics);
-          break;
-        case 'tw2':
-        case 'twee2':
-          loadTwee(story, filename, { ...opts, twee2Compat: true }, diagnostics);
-          break;
-        case 'htm':
-        case 'html':
-          loadHTML(story, filename, opts, diagnostics);
-          break;
-        case 'css':
-          loadTagged(story, 'stylesheet', filename, diagnostics);
-          break;
-        case 'js':
-          loadTagged(story, 'script', filename, diagnostics);
-          break;
-        case 'otf':
-        case 'ttf':
-        case 'woff':
-        case 'woff2':
-          loadFont(story, filename, diagnostics);
-          break;
-        case 'gif':
-        case 'jpeg':
-        case 'jpg':
-        case 'png':
-        case 'svg':
-        case 'tif':
-        case 'tiff':
-        case 'webp':
-          loadMedia(story, 'Twine.image', filename, diagnostics);
-          break;
-        case 'aac':
-        case 'flac':
-        case 'm4a':
-        case 'mp3':
-        case 'oga':
-        case 'ogg':
-        case 'opus':
-        case 'wav':
-        case 'wave':
-        case 'weba':
-          loadMedia(story, 'Twine.audio', filename, diagnostics);
-          break;
-        case 'mp4':
-        case 'ogv':
-        case 'webm':
-          loadMedia(story, 'Twine.video', filename, diagnostics);
-          break;
-        case 'vtt':
-          loadMedia(story, 'Twine.vtt', filename, diagnostics);
-          break;
-        default:
-          continue;
-      }
+      result = parseFile(filename, opts);
     } catch (e) {
-      diagnostics.push({
-        level: 'error',
-        message: `load ${filename}: ${e instanceof Error ? e.message : String(e)}`,
-        file: filename,
-      });
+      const failure = loadFailure(file, e);
+      if (failure) diagnostics.push(failure);
       continue;
     }
-    processedFiles.add(filename);
+    if (result === undefined) {
+      const unsupported = unsupportedType(file);
+      if (unsupported) diagnostics.push(unsupported);
+      continue;
+    }
+    addParsed(story, result, diagnostics);
+    markLoaded(processedFiles, file);
   }
 
-  // Prepend StoryTitle if we have a name but no StoryTitle passage.
-  if (story.name !== '' && !story.passages.some((p) => p.name === 'StoryTitle')) {
-    storyPrepend(story, { name: 'StoryTitle', tags: [], text: story.name }, diagnostics);
-  }
+  prependStoryTitle(story, diagnostics);
 }
 
 /**
@@ -127,10 +124,17 @@ export function loadInlineSources(
       continue;
     }
     // Decode and normalize like readUTF8() does for files, so in-memory and on-disk sources load the same.
-    const decoded: DecodedText =
-      typeof source.content === 'string'
-        ? { text: source.content, diagnostics: [] }
-        : decodeText(source.content, source.filename);
+    let decoded: DecodedText;
+    try {
+      decoded =
+        typeof source.content === 'string'
+          ? { text: source.content, diagnostics: [] }
+          : decodeText(source.content, source.filename);
+    } catch (e) {
+      const failure = loadFailure({ path: source.filename, key: '', discovery: 'named' }, e);
+      if (failure) diagnostics.push(failure);
+      continue;
+    }
     diagnostics.push(...decoded.diagnostics);
     const content = normalizeSourceText(decoded.text);
 
@@ -313,51 +317,44 @@ function parseFile(filename: string, opts: LoadOptions): ParseResult | undefined
   }
 }
 
-function loadHTML(story: Story, filename: string, opts: LoadOptions, diagnostics: Diagnostic[]): void {
-  const result = parseHTMLFile(filename, opts);
+/** Adds a parsed file's passages to the story, after its diagnostics. */
+function addParsed(
+  story: Story,
+  result: { readonly passages: readonly Passage[]; readonly diagnostics: readonly Diagnostic[] },
+  diagnostics: Diagnostic[],
+): void {
   diagnostics.push(...result.diagnostics);
   for (const p of result.passages) {
     storyAdd(story, p, diagnostics);
   }
 }
 
-function loadTwee(story: Story, filename: string, opts: LoadOptions, diagnostics: Diagnostic[]): void {
-  const result = parseTweeFile(filename, opts);
-  diagnostics.push(...result.diagnostics);
-  for (const p of result.passages) {
-    storyAdd(story, p, diagnostics);
-  }
-}
-
-function loadTagged(story: Story, tag: string, filename: string, diagnostics: Diagnostic[]): void {
-  const result = parseTaggedFile(tag, filename);
-  diagnostics.push(...result.diagnostics);
-  for (const p of result.passages) {
-    storyAdd(story, p, diagnostics);
-  }
-}
-
-function loadMedia(story: Story, tag: string, filename: string, diagnostics: Diagnostic[]): void {
-  const result = parseMediaFile(tag, filename);
-  for (const p of result.passages) {
-    storyAdd(story, p, diagnostics);
-  }
-}
-
-function loadFont(story: Story, filename: string, diagnostics: Diagnostic[]): void {
-  const result = parseFontFile(filename);
-  for (const p of result.passages) {
-    storyAdd(story, p, diagnostics);
+/** Prepends a StoryTitle passage when the story has a name but no such passage. */
+function prependStoryTitle(story: Story, diagnostics: Diagnostic[]): void {
+  if (story.name !== '' && !story.passages.some((p) => p.name === 'StoryTitle')) {
+    storyPrepend(story, { name: 'StoryTitle', tags: [], text: story.name }, diagnostics);
   }
 }
 
 /**
- * Load sources with mtime-based caching for incremental rebuilds.
- * Always creates a fresh Story; cached passages are replayed via storyAdd().
+ * What a change to a file alters besides its modification time: its size, its inode (a file replaced by
+ * another), and its status-change time, which a write updates even when it puts the modification time
+ * back (`cp -p`, `rsync -t`, `tar x`, `touch -r`).
+ */
+function fileSignature(stats: { size: number; ino: number; dev: number; ctimeMs: number }): string {
+  return `${stats.size}:${stats.dev}:${stats.ino}:${stats.ctimeMs}`;
+}
+
+/**
+ * Load sources with caching for incremental rebuilds: a cached file is reused while its modification
+ * time and its signature (size, inode, status-change time) are unchanged. Cache entries are keyed by the
+ * path the file is loaded under; `changedFiles` may name a file in any spelling (absolute, `./`-prefixed,
+ * relative to the working directory, or through a link) and is matched to the files by identity (see
+ * path-identity.ts). Always creates a fresh Story; cached passages are replayed via storyAdd().
  */
 export function loadSourcesCached(
   story: Story,
-  filenames: string[],
+  filenames: readonly SourceFile[],
   opts: LoadOptions,
   diagnostics: Diagnostic[],
   processedFiles: Set<string>,
@@ -366,13 +363,13 @@ export function loadSourcesCached(
   buildFiles?: ReadonlySet<string>,
 ): void {
   const currentFiles = new Set<string>(buildFiles);
-  // changedFiles may name a file in any form (absolute, `./`-prefixed or relative to the working
-  // directory); it is matched to `filenames`, whatever their form, by resolved path.
-  const changedPaths = changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => resolve(f)));
+  const changedKeys = changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => identify(f).key));
 
-  for (const filename of filenames) {
-    if (processedFiles.has(filename)) {
-      diagnostics.push({ level: 'warning', message: `load ${filename}: Skipping duplicate.` });
+  for (const file of filenames.map(toDiscovered)) {
+    const filename = file.path;
+    const earlier = alreadyLoaded(processedFiles, file);
+    if (earlier !== undefined) {
+      diagnostics.push(duplicateWarning(file, earlier));
       continue;
     }
 
@@ -383,67 +380,64 @@ export function loadSourcesCached(
     const cached = entry?.parseOptionsKey === optionsKey ? entry : undefined;
     // A file changedFiles names is always reparsed: a save can keep the modification time
     // (a timestamp-preserving write, or a filesystem with coarse timestamps).
-    const changed = changedPaths?.has(resolve(filename)) ?? false;
+    const changed = changedKeys?.has(file.key) ?? false;
 
     // If changedFiles is provided and this file isn't changed and we have a cache hit, skip stat
-    if (changedPaths && cached && !changed) {
-      diagnostics.push(...cached.diagnostics);
-      for (const p of cached.passages) {
-        storyAdd(story, p, diagnostics);
-      }
-      processedFiles.add(filename);
+    if (changedKeys && cached && !changed) {
+      addParsed(story, cached, diagnostics);
+      markLoaded(processedFiles, file);
       continue;
     }
 
-    // stat the file to check mtime
     let mtimeMs: number;
+    let signature: string;
     try {
-      mtimeMs = statSync(filename).mtimeMs;
-    } catch {
-      // File may have been deleted between getFilenames and here. Its entry goes too, so a
-      // later build that doesn't name it in changedFiles can't replay its old passages.
+      const stats = statSync(filename);
+      mtimeMs = stats.mtimeMs;
+      signature = fileSignature(stats);
+    } catch (e) {
+      // Deleted (or made unreadable) between getFilenames and here. Its entry goes too, so a later
+      // build that doesn't name it in changedFiles can't replay its old passages.
       cache.delete(filename);
+      const failure = loadFailure(file, e);
+      if (failure) diagnostics.push(failure);
       continue;
     }
 
-    // Cache hit with matching mtime, for a file not known to have changed: replay
-    if (cached && !changed && cached.mtimeMs === mtimeMs) {
-      diagnostics.push(...cached.diagnostics);
-      for (const p of cached.passages) {
-        storyAdd(story, p, diagnostics);
-      }
-      processedFiles.add(filename);
+    // Cache hit with matching mtime and signature, for a file not known to have changed: replay
+    if (cached && !changed && cached.mtimeMs === mtimeMs && cached.signature === signature) {
+      addParsed(story, cached, diagnostics);
+      markLoaded(processedFiles, file);
       continue;
     }
 
     // Cache miss: parse and store
     try {
       const result = parseFile(filename, opts);
-      if (!result) continue;
+      if (!result) {
+        const unsupported = unsupportedType(file);
+        if (unsupported) diagnostics.push(unsupported);
+        continue;
+      }
 
       cache.set(filename, {
         mtimeMs,
+        signature,
         parseOptionsKey: optionsKey,
         passages: result.passages,
         diagnostics: result.diagnostics,
       });
 
-      diagnostics.push(...result.diagnostics);
-      for (const p of result.passages) {
-        storyAdd(story, p, diagnostics);
-      }
+      addParsed(story, result, diagnostics);
     } catch (e) {
       // A file that fails to load keeps no entry: the next build tries it again, and reports
       // the error again while it persists, rather than replaying its old passages.
       cache.delete(filename);
-      diagnostics.push({
-        level: 'error',
-        message: `load ${filename}: ${e instanceof Error ? e.message : String(e)}`,
-        file: filename,
-      });
+      const failure = loadFailure(file, e);
+      if (failure) diagnostics.push(failure);
       continue;
     }
-    processedFiles.add(filename);
+    markLoaded(processedFiles, file);
   }
 
   // Purge cache entries for deleted files
@@ -453,8 +447,5 @@ export function loadSourcesCached(
     }
   }
 
-  // Prepend StoryTitle if we have a name but no StoryTitle passage.
-  if (story.name !== '' && !story.passages.some((p) => p.name === 'StoryTitle')) {
-    storyPrepend(story, { name: 'StoryTitle', tags: [], text: story.name }, diagnostics);
-  }
+  prependStoryTitle(story, diagnostics);
 }

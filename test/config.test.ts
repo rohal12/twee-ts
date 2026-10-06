@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { identify } from '../src/path-identity.js';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import type { Diagnostic } from '../src/types.js';
 import {
@@ -153,7 +154,8 @@ describe('loadConfig', () => {
   it('loads a valid config file', () => {
     writeFileSync(join(dir, CONFIG_FILENAME), JSON.stringify({ sources: ['src/'] }));
     const config = loadConfig(dir);
-    expect(config).toEqual({ sources: ['src/'] });
+    // Paths in a config file are relative to its folder (FS-11).
+    expect(config).toEqual({ sources: [join(identify(dir).display, 'src/')] });
   });
 
   it('throws on invalid JSON', () => {
@@ -176,12 +178,15 @@ describe('loading a config file with a BOM, CRLF line endings or another encodin
     rmSync(dir, { recursive: true, force: true });
   });
 
+  /** A path relative to the config's folder, as loading rebases it. */
+  const inDir = (path: string): string => join(identify(dir).display, path);
+
   // UTF-8 with a BOM and CRLF, as Windows PowerShell 5 `Set-Content -Encoding UTF8` writes it.
   const WITH_BOM = '\uFEFF{\r\n  "sources": ["src/"],\r\n  "output": "story.html"\r\n}\r\n';
 
   it('loads through loadConfig()', () => {
     writeFileSync(join(dir, CONFIG_FILENAME), WITH_BOM);
-    expect(loadConfig(dir)).toEqual({ sources: ['src/'], output: 'story.html' });
+    expect(loadConfig(dir)).toEqual({ sources: [inDir('src/')], output: inDir('story.html') });
   });
 
   it('looks in the working directory when no directory is given', () => {
@@ -208,14 +213,14 @@ describe('loading a config file with a BOM, CRLF line endings or another encodin
   it('loads through loadConfigFile()', () => {
     const file = join(dir, 'custom.json');
     writeFileSync(file, WITH_BOM);
-    expect(loadConfigFile(file)).toEqual({ sources: ['src/'], output: 'story.html' });
+    expect(loadConfigFile(file)).toEqual({ sources: [inDir('src/')], output: inDir('story.html') });
   });
 
   it('reads a Windows-1252 config as Windows-1252 and warns', () => {
     const file = join(dir, CONFIG_FILENAME);
     writeFileSync(file, Buffer.from('{"output": "café.html"}', 'latin1'));
     const diagnostics: Diagnostic[] = [];
-    expect(loadConfig(dir, diagnostics)).toEqual({ output: 'café.html' });
+    expect(loadConfig(dir, diagnostics)).toEqual({ output: inDir('café.html') });
     expect(diagnostics).toEqual([
       { level: 'warning', message: `read ${file}: Invalid UTF-8; assuming charset is windows-1252.`, file },
     ]);
@@ -276,12 +281,14 @@ describe('unknown config keys', () => {
       file,
     };
 
+    // The unknown key is left out of the config returned.
+    const sources = [join(identify(dir).display, 'src/')];
     const fromDir: Diagnostic[] = [];
-    expect(loadConfig(dir, fromDir)).toEqual({ sources: ['src/'], formatID: 'harlowe-3' });
+    expect(loadConfig(dir, fromDir)).toEqual({ sources });
     expect(fromDir).toEqual([expected]);
 
     const fromFile: Diagnostic[] = [];
-    expect(loadConfigFile(file, fromFile)).toEqual({ sources: ['src/'], formatID: 'harlowe-3' });
+    expect(loadConfigFile(file, fromFile)).toEqual({ sources });
     expect(fromFile).toEqual([expected]);
   });
 });

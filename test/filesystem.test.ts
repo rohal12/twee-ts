@@ -64,7 +64,11 @@ describe('getFilenames', () => {
     const { filenames, diagnostics } = getFilenames([missing]);
     expect(filenames).toEqual([]);
     expect(diagnostics).toEqual([
-      { level: 'warning', message: expect.stringContaining(`path ${missing}: ENOENT: no such file or directory`) },
+      {
+        level: 'warning',
+        message: expect.stringContaining(`path ${missing}: ENOENT: no such file or directory`),
+        file: missing,
+      },
     ]);
   });
 
@@ -86,7 +90,9 @@ describe('getFilenames', () => {
       try {
         const { filenames, diagnostics } = getFilenames([locked]);
         expect(filenames).toEqual([]);
-        expect(diagnostics).toEqual([{ level: 'warning', message: expect.stringContaining(`path ${locked}: EACCES`) }]);
+        expect(diagnostics).toEqual([
+          { level: 'warning', message: expect.stringContaining(`path ${locked}: EACCES`), file: locked },
+        ]);
       } finally {
         chmodSync(locked, 0o755);
       }
@@ -94,7 +100,13 @@ describe('getFilenames', () => {
   );
 
   it('handles empty input', () => {
-    expect(getFilenames([])).toEqual({ filenames: [], diagnostics: [], outputSources: [] });
+    expect(getFilenames([])).toEqual({
+      filenames: [],
+      files: [],
+      diagnostics: [],
+      outputSources: [],
+      skippedOutputs: [],
+    });
   });
 
   describe('with exclude globs', () => {
@@ -187,7 +199,7 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
   describe('does not follow links to folders inside a source folder (#160)', () => {
     it('reads each file once with a link back to its own folder', () => {
       symlinkSync('.', join(story, 's1'));
-      expect(getFilenames([story])).toEqual({
+      expect(getFilenames([story])).toMatchObject({
         filenames: [relative(process.cwd(), join(story, 'a.tw'))],
         diagnostics: [],
         outputSources: [],
@@ -225,18 +237,32 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
       ]);
     });
 
-    it('warns about a link whose target is missing', () => {
+    it('skips a link whose target is missing without a word, as Tweego does (FS-15, an editor lock file)', () => {
+      symlinkSync('user@host.123:1700000000', join(story, '.#a.tw'));
       symlinkSync('missing.tw', join(story, 'dangling.tw'));
       const { filenames, diagnostics } = getFilenames([story]);
       expect(names(filenames)).toEqual([join('story', 'a.tw')]);
-      expect(diagnostics).toEqual([{ level: 'warning', message: expect.stringContaining('ENOENT') }]);
+      expect(diagnostics).toEqual([]);
+    });
+
+    it('warns about a named link whose target is missing, naming the target', () => {
+      symlinkSync('missing.tw', join(story, 'dangling.tw'));
+      const { filenames, diagnostics } = getFilenames([join(story, 'dangling.tw')]);
+      expect(filenames).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          level: 'warning',
+          message: `path ${join(story, 'dangling.tw')}: Symbolic link to a missing target (missing.tw).`,
+          file: join(story, 'dangling.tw'),
+        },
+      ]);
     });
   });
 
   describe('a named source that is an output (#157)', () => {
     it('is listed in outputSources, not read', () => {
       const file = join(story, 'a.tw');
-      expect(getFilenames([file], file)).toEqual({ filenames: [], diagnostics: [], outputSources: [file] });
+      expect(getFilenames([file], file)).toMatchObject({ filenames: [], diagnostics: [], outputSources: [file] });
     });
 
     it('is found through a link too', () => {
@@ -247,10 +273,11 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
 
     it('is not an output found while walking a folder, which is skipped silently', () => {
       writeFileSync(join(story, 'z.html'), 'last build');
-      expect(getFilenames([story], join(story, 'z.html'))).toEqual({
+      expect(getFilenames([story], join(story, 'z.html'))).toMatchObject({
         filenames: [relative(process.cwd(), join(story, 'a.tw'))],
         diagnostics: [],
         outputSources: [],
+        skippedOutputs: [{ path: relative(process.cwd(), join(story, 'z.html')), folder: story }],
       });
     });
   });
