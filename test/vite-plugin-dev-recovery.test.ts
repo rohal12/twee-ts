@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'vite';
-import type { ViteDevServer } from 'vite';
+import type { Plugin, ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { makeProject, cleanUp, serverUrl, watcherReady, STORY, storyWith, COMPILE } from './helpers/plugins.js';
 
@@ -88,5 +88,82 @@ describe('vite plugin dev: a timestamp-preserving edit with no watcher (#270)', 
     expect(await page(url)).toContain('RECOVERED');
     replaceKeepingTime(entry, FIXED.replace('RECOVERED', 'REPLACEDX'));
     expect(await page(url)).toContain('REPLACEDX');
+  });
+});
+
+describe('vite plugin dev: an entry file edited while it is bundled, with no watcher (#286)', () => {
+  /** A plugin that, the first time it sees `file` loaded, writes `text` to `target` (an editor save during the build). */
+  function editDuring(file: string, target: string, text: string): Plugin {
+    let done = false;
+    return {
+      name: 'edit-during-bundle',
+      transform(_code: string, id: string) {
+        if (id === file && !done) {
+          done = true;
+          writeFileSync(target, text);
+        }
+        return null;
+      },
+    };
+  }
+
+  async function startWith(root: string, entry: string, extra: Plugin[]): Promise<string> {
+    server = await createServer({
+      configFile: false,
+      root,
+      logLevel: 'silent',
+      server: { host: '127.0.0.1', port: 0, watch: null },
+      plugins: [
+        ...extra,
+        tweeTsPlugin({ sources: [join(root, 'story')], format: 'test-format-1', entry, compileOptions: COMPILE }),
+      ],
+    });
+    await server.listen();
+    return `${serverUrl(server)}/`;
+  }
+
+  it('serves the edited entry on the next request after the first bundle', async () => {
+    const root = makeProject({ 'story/start.tw': STORY, 'app/main.js': 'globalThis.probe = "BEFORE";\n' });
+    const entry = join(root, 'app/main.js');
+    const url = await startWith(root, entry, [editDuring(entry, entry, 'globalThis.probe = "AFTER";\n')]);
+    expect(await page(url)).toContain('AFTER');
+    // An ordinary edit after the bundle is still seen.
+    writeFileSync(entry, 'globalThis.probe = "CONTROL";\n');
+    expect(await page(url)).toContain('CONTROL');
+  });
+
+  it('serves the edited entry after a later bundle, too', async () => {
+    const root = makeProject({ 'story/start.tw': STORY, 'app/main.js': 'globalThis.probe = "ONE";\n' });
+    const entry = join(root, 'app/main.js');
+    let armed = false;
+    const plugin: Plugin = {
+      name: 'edit-during-later-bundle',
+      transform(_code: string, id: string) {
+        if (id === entry && armed) {
+          armed = false;
+          writeFileSync(entry, 'globalThis.probe = "THREE";\n');
+        }
+        return null;
+      },
+    };
+    const url = await startWith(root, entry, [plugin]);
+    expect(await page(url)).toContain('ONE');
+    armed = true;
+    writeFileSync(entry, 'globalThis.probe = "TWO";\n');
+    // This request's bundle read TWO before the edit; the next request must notice the edit it missed.
+    expect(await page(url)).toContain('TWO');
+    expect(await page(url)).toContain('THREE');
+  });
+
+  it('serves an import edited while the bundle is made, found by that bundle itself', async () => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      'app/main.js': 'import { value } from "./dep.js"; globalThis.probe = value;\n',
+      'app/dep.js': 'export const value = "BEFORE";\n',
+    });
+    const entry = join(root, 'app/main.js');
+    const dep = join(root, 'app/dep.js');
+    const url = await startWith(root, entry, [editDuring(dep, dep, 'export const value = "AFTER";\n')]);
+    expect(await page(url)).toContain('AFTER');
   });
 });

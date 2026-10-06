@@ -132,6 +132,33 @@ function fileStates(files: TrackedFiles): Map<string, string> {
   return states;
 }
 
+/** Whether a file was modified after `time` (milliseconds since the epoch); false when it can't be looked at. */
+function modifiedAfter(path: string, time: number): boolean {
+  try {
+    const stat = statSync(path);
+    return stat.mtimeMs > time || stat.ctimeMs > time;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The states to compare later changes with, for the files a bundle was made from. A file known before the
+ * bundle keeps the state it had then (`before`), so an edit while the bundle was made counts as a change. A
+ * file the bundle found itself has no earlier state: when it was modified after `started`, it may have been
+ * read before that edit, so it gets a state no later check matches and the next request makes the bundle again.
+ */
+function settledStates(files: TrackedFiles, before: ReadonlyMap<string, string>, started: number): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const [key, path] of files) {
+    const known = before.get(key);
+    const state = known ?? fileState(path);
+    if (state === undefined) continue;
+    states.set(key, known === undefined && modifiedAfter(path, started) ? `${state}:changed during the bundle` : state);
+  }
+  return states;
+}
+
 /** The keys of the files added, removed or changed between two `fileStates` results. */
 function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): Set<string> {
   const changed = new Set<string>();
@@ -232,11 +259,15 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       entryStates = fileStates(entryFiles);
       watchEntryFiles(entryFiles);
     }
+    // The files known so far, as they are before the bundle reads them: a file edited while the bundle is
+    // made then differs from this afterwards, which is what the catch-up looks for.
+    const before = fileStates(entryFiles);
+    const started = Date.now();
     const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename);
     entry = next;
     entryStale = false;
     entryFiles = tracked(next.files);
-    entryStates = fileStates(entryFiles);
+    entryStates = settledStates(entryFiles, before, started);
     watchEntryFiles(entryFiles);
   };
 
