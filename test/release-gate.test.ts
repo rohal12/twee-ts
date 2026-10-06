@@ -404,7 +404,8 @@ describe('the review areas', () => {
 });
 
 describe('the release workflow', () => {
-  const workflow = readFileSync(join(REPO, '.github/workflows/release.yml'), 'utf8');
+  // A Windows checkout may end its lines with CRLF.
+  const workflow = readFileSync(join(REPO, '.github/workflows/release.yml'), 'utf8').replaceAll('\r\n', '\n');
   /** The text of one job: from its `  name:` line to the next job. */
   const job = (name: string): string => {
     const start = workflow.indexOf(`\n  ${name}:\n`);

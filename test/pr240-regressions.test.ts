@@ -129,6 +129,12 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
   interface Watching {
     readonly events: () => number;
     readonly built: (text: string) => Promise<void>;
+    /**
+     * Waits until the OS watcher reports changes to `file`, rewriting it with its content until a build
+     * follows: macOS's FSEvents stream starts some time after fs.watch() returns, and misses a change made
+     * before (as in watch-equivalence.test.ts).
+     */
+    readonly primed: (file: string) => Promise<void>;
   }
 
   async function startWatch(link: string): Promise<Watching> {
@@ -148,6 +154,17 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
       built: async (text) => {
         await expect.poll(() => builds.at(-1)?.output, { timeout: 10_000, interval: 30 }).toContain(text);
       },
+      primed: async (file) => {
+        const content = readFileSync(file);
+        const before = builds.length;
+        await vi.waitFor(
+          () => {
+            writeFileSync(file, content);
+            expect(builds.length).toBeGreaterThan(before);
+          },
+          { timeout: 10_000, interval: 500 },
+        );
+      },
     };
   }
 
@@ -159,6 +176,7 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
     symlinkSync('actual.tw', link);
     const w = await startWatch(link);
     await w.built('BEFORE');
+    await w.primed(target);
     writeFileSync(target, story('EDITED'));
     await w.built('EDITED');
     writeFileSync(join(root, 'replacement.tw'), story('REPLACED'));
@@ -192,6 +210,7 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
     symlinkSync(middle, link);
     const w = await startWatch(link);
     await w.built('CHAIN_BEFORE');
+    await w.primed(first);
     writeFileSync(first, story('CHAIN_EDIT'));
     await w.built('CHAIN_EDIT');
     rmSync(middle);
