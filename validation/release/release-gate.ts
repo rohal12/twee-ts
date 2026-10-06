@@ -173,6 +173,12 @@ async function main(): Promise<number> {
     const counts = SEVERITIES.map((s) => `${s} ${String(total[s])} (${String(open[s])} open)`);
     console.log(`- ${review.method} sweep by ${review.reviewer}: ${counts.join(', ')}`);
   }
+  for (const item of record.informational) {
+    console.log(
+      `- informational, not judged: ${item.source}: ${item.summary}${item.url === undefined ? '' : ` (${item.url})`}`,
+    );
+  }
+
   if (problems.length > 0) {
     console.error(`RELEASE BLOCKED:\n- ${problems.join('\n- ')}`);
     return 1;

@@ -113,6 +113,7 @@ function record(overrides: Partial<EvidenceRecord> = {}): EvidenceRecord {
       review({ method: 'adversarial-integration' }, 2),
       review({ method: 'compatibility-distribution' }, 3),
     ],
+    informational: [],
     ...overrides,
   };
 }
@@ -182,6 +183,28 @@ describe('parseEvidenceRecord', () => {
       'record.reviews[2].findings[0].status must be one of open, rejected',
       'record.reviews[3].findings[0].reason must be a non-empty string',
     ]);
+  });
+
+  it('reads informational evidence, and leaves it out when absent', () => {
+    const mutation = {
+      source: 'mutation:summary',
+      summary: 'total 91.0 (baseline 93.7)',
+      url: 'https://example.com/run',
+    };
+    const json: unknown = JSON.parse(
+      JSON.stringify(record({ informational: [mutation, { source: 's', summary: 't' }] })),
+    );
+    expect(parseEvidenceRecord(json)).toEqual({
+      ok: true,
+      value: record({ informational: [mutation, { source: 's', summary: 't' }] }),
+    });
+    expect(parseEvidenceRecord({ ...record(), informational: [{ source: '' }] })).toEqual({
+      ok: false,
+      problems: [
+        'record.informational[0].source must be a non-empty string',
+        'record.informational[0].summary must be a non-empty string',
+      ],
+    });
   });
 
   it('rejects what is not an object', () => {
@@ -265,6 +288,11 @@ describe('checkProblems', () => {
 describe('releaseProblems', () => {
   it('lets complete evidence through', () => {
     expect(releaseProblems(input())).toEqual([]);
+  });
+
+  it('never judges informational evidence, such as a mutation score below its baseline', () => {
+    const informational = [{ source: 'mutation:summary', summary: 'total 80.0, below the baseline 93.7' }];
+    expect(releaseProblems(input({ record: record({ informational }) }))).toEqual([]);
   });
 
   it('refuses a record for another revision, or a frozen commit that is not that revision', () => {

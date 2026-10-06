@@ -11,7 +11,8 @@ Three layers of evidence back a release:
    stable ID, run against the build in `dist/` the way a user's project imports it.
 3. **Continuous integration**: the tests on Linux, macOS and Windows with every supported Node.js, the packed
    tarball checked as consumers install it, the plugins against every supported Vite and Rollup, coverage floors
-   and the duplication budget.
+   and the duplication budget. Mutation testing of the core modules (`pnpm run mutation`, weekly in CI) is
+   informational: its scores against `mutation-baseline.json` go into the evidence record, but never block.
 
 The **release gate** then refuses to publish unless a committed evidence record shows that all of that passed for
 the exact revision being released, and that three independent full review sweeps of that revision left no P1 or
@@ -179,11 +180,22 @@ What the gate does guarantee is that no release goes out without that record, fo
            { "id": "S1-2", "severity": "P2", "title": "…", "status": "rejected", "reason": "…why it is not a defect" }
          ]
        }
+     ],
+     "informational": [
+       {
+         "source": "mutation testing (pnpm run mutation:summary)",
+         "summary": "total 93.5 against the baseline 93.7; src/story.ts 86.0 against 87.1",
+         "url": "<the mutation workflow run>"
+       }
      ]
    }
    ```
 
-   with one entry in `reviews` for each sweep.
+   with one entry in `reviews` for each sweep. `informational` is optional: evidence the gate shows in its log but
+   never judges. Record the mutation scores of the frozen commit there: run the Mutation testing workflow on it
+   (or `pnpm run mutation` and `pnpm run mutation:summary` locally), and note how they compare with
+   `mutation-baseline.json`. A lower score is no reason to refuse a release, but the sweeps should look at the
+   modules whose score fell.
 
 6. Commit the record, the reports and the changelog on top of the frozen commit, and nothing else. Check the
    evidence as the release workflow will:

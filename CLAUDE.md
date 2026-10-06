@@ -150,6 +150,7 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run knip` — unused files, exports and dependencies (`knip.jsonc`); exports of the package entry points count as used
 - `pnpm run build` — production build (ESM + CJS via tsdown); also regenerates `THIRD_PARTY_NOTICES`
 - `pnpm run check:package` — build, pack, and check the tarball as consumers use it (`scripts/check-package.mjs`)
+- `pnpm run mutation` — mutation testing of the core modules with StrykerJS (`stryker.config.mjs`, a few minutes); `pnpm run mutation:summary` compares the scores with `mutation-baseline.json` (`--update` rewrites it). Informational: never a gate
 - `pnpm run test:contracts` — build, then run the compiler contract matrix (`validation/contracts/`) against `dist/`
 - `pnpm run release:gate` — the release gate; `--always` checks the evidence for HEAD, `--fingerprint [commit]` and `--checks <commit>` print what a record needs (docs/compiler-validation.md)
 - `pnpm run format:check` — check formatting

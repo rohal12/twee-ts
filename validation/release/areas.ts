@@ -17,7 +17,7 @@ export const REVIEW_AREAS: readonly ReviewArea[] = [
   {
     id: 'api',
     contract: 'The public API and types, compile orchestration, incremental equivalence, cancellation, diagnostics',
-    paths: ['src/index.ts', 'src/types.ts', 'src/compiler.ts', 'src/version.ts'],
+    paths: ['src/index.ts', 'src/types.ts', 'src/compiler.ts', 'src/errors.ts', 'src/build-time.ts', 'src/version.ts'],
   },
   {
     id: 'syntax',

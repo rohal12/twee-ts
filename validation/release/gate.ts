@@ -131,6 +131,18 @@ export interface EvidenceRecord {
   /** The names of the required checks that passed on `commit`. */
   readonly checks: readonly string[];
   readonly reviews: readonly Review[];
+  /**
+   * Evidence the gate shows but never judges, such as the mutation scores of the frozen commit
+   * against mutation-baseline.json (`pnpm run mutation:summary`). Optional in the JSON.
+   */
+  readonly informational: readonly InformationalEvidence[];
+}
+
+/** One informational source: what it is, what it said, and where to see it. */
+interface InformationalEvidence {
+  readonly source: string;
+  readonly summary: string;
+  readonly url?: string;
 }
 
 type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly problems: string[] };
@@ -221,6 +233,13 @@ function readFinding(fields: FieldReader): Finding | undefined {
   }
 }
 
+function readInformational(fields: FieldReader): InformationalEvidence {
+  const source = fields.string('source');
+  const summary = fields.string('summary');
+  const url = fields.optionalString('url');
+  return url === undefined ? { source, summary } : { source, summary, url };
+}
+
 function readReview(fields: FieldReader): Review | undefined {
   const reviewer = fields.string('reviewer');
   const method = fields.oneOf('method', REVIEW_METHODS);
@@ -248,6 +267,7 @@ export function parseEvidenceRecord(json: unknown): Parsed<EvidenceRecord> {
     fingerprint: fields.string('fingerprint', SHA256),
     checks: fields.strings('checks'),
     reviews: fields.objects('reviews', readReview),
+    informational: json['informational'] === undefined ? [] : fields.objects('informational', readInformational),
   };
   return problems.length === 0 ? { ok: true, value: record } : { ok: false, problems };
 }
