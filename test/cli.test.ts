@@ -43,8 +43,28 @@ interface RunningCli {
   readonly stderr: () => string;
 }
 
+// Watch-mode CLIs still running. Each test's afterEach waits for them to exit before it deletes
+// their folder: Windows refuses to delete a process's working directory while the process lives.
+const running = new Set<ChildProcessWithoutNullStreams>();
+
+/** Ends every CLI still running and waits until each has exited. */
+async function stopRunningClis(): Promise<void> {
+  await Promise.all(
+    [...running].map(
+      (child) =>
+        new Promise<void>((done) => {
+          if (child.exitCode !== null || child.signalCode !== null) return done();
+          child.once('exit', () => done());
+          child.kill();
+        }),
+    ),
+  );
+  running.clear();
+}
+
 function startCli(cwd: string, args: readonly string[]): RunningCli {
   const child = spawn(process.execPath, [...NODE_ARGS, ...args], { cwd });
+  running.add(child);
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
@@ -72,10 +92,13 @@ const WARNING_STORY = `${VALID_STORY}\n:: Start\nHello again.\n`;
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'twee-ts-cli-'));
+  // The real path: the CLI reports paths under its working directory, which the OS gives as a
+  // real path (on macOS, /private/var/… for the temporary folder under /var/…).
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-cli-')));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await stopRunningClis();
   rmSync(dir, { recursive: true, force: true });
 });
 

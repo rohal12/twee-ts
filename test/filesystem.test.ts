@@ -416,6 +416,10 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     const builds = watchBuilds([story, head]);
     await builds.next();
     writeFileSync(head, '<meta name="b">');
-    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), head)]));
+    const changed = [...((await builds.next()) ?? [])];
+    expect(changed).toContain(relative(process.cwd(), head));
+    // macOS FSEvents may still deliver the setup's own write of start.tw (made just before the
+    // watch began) with this change; nothing else may be reported.
+    expect(changed.filter((f) => f !== relative(process.cwd(), start))).toEqual([relative(process.cwd(), head)]);
   });
 });

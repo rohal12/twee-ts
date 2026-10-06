@@ -68,7 +68,7 @@ describe('getCacheDir', () => {
     process.env['XDG_CACHE_HOME'] = '/tmp/xdg-test';
     try {
       const dir = getCacheDir();
-      expect(dir).toBe('/tmp/xdg-test/twee-ts/storyformats');
+      expect(dir).toBe(join('/tmp/xdg-test', 'twee-ts', 'storyformats'));
     } finally {
       if (orig !== undefined) {
         process.env['XDG_CACHE_HOME'] = orig;
