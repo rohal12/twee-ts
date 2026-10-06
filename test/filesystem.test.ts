@@ -361,8 +361,20 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  /** Starts watching `paths`; `next()` waits (up to 10 s) for the next rebuild's changed files. */
-  function watchBuilds(paths: string[]): { next: () => Promise<ReadonlySet<string> | undefined> } {
+  interface Builds {
+    /** Waits (up to `timeoutMs`) for the next rebuild's changed files. */
+    next(timeoutMs?: number): Promise<ReadonlySet<string> | undefined>;
+    /**
+     * Makes the first change after the initial build with `write(attempt)`, repeating it until
+     * the watcher reports a rebuild, and returns that rebuild's changed files. macOS starts its
+     * file-system event stream a moment after fs.watch returns, and a change made before then is
+     * never reported; there is no event for "the watch is live" to wait for instead.
+     */
+    firstChange(write: (attempt: number) => void): Promise<ReadonlySet<string> | undefined>;
+  }
+
+  /** Starts watching `paths`. */
+  function watchBuilds(paths: string[]): Builds {
     const ready: (ReadonlySet<string> | undefined)[] = [];
     const waiting: ((files: ReadonlySet<string> | undefined) => void)[] = [];
     handle = watchFilesystem(paths, outFile, (files) => {
@@ -370,34 +382,49 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
       if (waiter) waiter(files);
       else ready.push(files);
     });
-    return {
-      next: () =>
-        ready.length > 0
-          ? Promise.resolve(ready.shift())
-          : new Promise((done, fail) => {
-              const timer = setTimeout(() => fail(new Error('no rebuild within 10 s')), 10_000);
-              waiting.push((files) => {
-                clearTimeout(timer);
-                done(files);
-              });
-            }),
+    const next = (timeoutMs = 10_000): Promise<ReadonlySet<string> | undefined> =>
+      ready.length > 0
+        ? Promise.resolve(ready.shift())
+        : new Promise((done, fail) => {
+            const waiter = (files: ReadonlySet<string> | undefined): void => {
+              clearTimeout(timer);
+              done(files);
+            };
+            const timer = setTimeout(() => {
+              waiting.splice(waiting.indexOf(waiter), 1);
+              fail(new Error(`no rebuild within ${timeoutMs} ms`));
+            }, timeoutMs);
+            waiting.push(waiter);
+          });
+    const firstChange = async (write: (attempt: number) => void): Promise<ReadonlySet<string> | undefined> => {
+      for (let attempt = 0; ; attempt++) {
+        write(attempt);
+        try {
+          return await next(attempt < 9 ? 1_000 : 10_000);
+        } catch (e) {
+          if (attempt >= 9) throw e;
+        }
+      }
     };
+    return { next, firstChange };
   }
 
   it('reports a change under the path source discovery gives the file', async () => {
     const builds = watchBuilds([start]);
     expect(await builds.next()).toBeUndefined(); // the initial full build
-    writeFileSync(start, ':: Start\nTwo\n');
-    expect(await builds.next()).toEqual(new Set(getFilenames([start]).filenames));
+    const changed = await builds.firstChange((n) => writeFileSync(start, `:: Start\nTwo ${n}\n`));
+    expect(changed).toEqual(new Set(getFilenames([start]).filenames));
   });
 
   it('keeps watching a file that an editor saved by replacing it', async () => {
     const builds = watchBuilds([start]);
     await builds.next();
     const temp = join(story, '.start.tw.swp');
-    writeFileSync(temp, ':: Start\nTwo\n');
-    renameSync(temp, start);
-    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+    const replaced = await builds.firstChange((n) => {
+      writeFileSync(temp, `:: Start\nTwo ${n}\n`);
+      renameSync(temp, start);
+    });
+    expect(replaced).toEqual(new Set([relative(process.cwd(), start)]));
     writeFileSync(start, ':: Start\nThree\n');
     expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
   });
@@ -405,9 +432,11 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
   it('does not rebuild for a change to a file of a type it does not build for', async () => {
     const builds = watchBuilds([story]);
     await builds.next();
-    writeFileSync(join(story, 'notes.unknown'), 'not a source');
-    writeFileSync(start, ':: Start\nTwo\n');
-    expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+    const changed = await builds.firstChange((n) => {
+      writeFileSync(join(story, 'notes.unknown'), `not a source ${n}`);
+      writeFileSync(start, `:: Start\nTwo ${n}\n`);
+    });
+    expect(changed).toEqual(new Set([relative(process.cwd(), start)]));
   });
 
   it('rebuilds for a named file of a type it would not build for in a folder', async () => {
@@ -415,8 +444,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     writeFileSync(head, '<meta name="a">');
     const builds = watchBuilds([story, head]);
     await builds.next();
-    writeFileSync(head, '<meta name="b">');
-    const changed = [...((await builds.next()) ?? [])];
+    const changed = [...((await builds.firstChange((n) => writeFileSync(head, `<meta name="b${n}">`))) ?? [])];
     expect(changed).toContain(relative(process.cwd(), head));
     // macOS FSEvents may still deliver the setup's own write of start.tw (made just before the
     // watch began) with this change; nothing else may be reported.
