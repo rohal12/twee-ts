@@ -512,14 +512,14 @@ export function getFormatIdByName(formats: ReadonlyMap<string, StoryFormatInfo>,
 // --- Format sources ---
 
 /** The bytes of formats that were downloaded, kept with their info so they are never read back from disk. */
-const downloadedBytes = new WeakMap<StoryFormatInfo, Uint8Array>();
+const downloadedBytes = new WeakMap<StoryFormatInfo, { readonly bytes: Uint8Array; readonly from: string }>();
 
 /**
  * Keep the bytes of a downloaded format with its info, so {@link readFormatSource} uses exactly the
  * bytes that were verified, even when the cache could not be written or changes later.
  */
-export function withFormatBytes(info: StoryFormatInfo, bytes: Uint8Array): StoryFormatInfo {
-  downloadedBytes.set(info, bytes);
+export function withFormatBytes(info: StoryFormatInfo, bytes: Uint8Array, from: string): StoryFormatInfo {
+  downloadedBytes.set(info, { bytes, from });
   return info;
 }
 
@@ -528,10 +528,10 @@ export function withFormatBytes(info: StoryFormatInfo, bytes: Uint8Array): Story
  * `diagnostics` receives a warning when the format file is not valid UTF-8 (it is read as Windows-1252).
  */
 export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnostic[]): string {
-  const bytes = downloadedBytes.get(format);
+  const downloaded = downloadedBytes.get(format);
   let source: string;
-  if (bytes) {
-    const decoded = decodeText(bytes, format.filename);
+  if (downloaded) {
+    const decoded = decodeText(downloaded.bytes, downloaded.from);
     diagnostics?.push(...decoded.diagnostics);
     source = normalizeSourceText(decoded.text);
   } else {
@@ -540,5 +540,11 @@ export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnost
   if (!format.isTwine2) return source;
   const decoded = decodeFormatJSON(source);
   if (!decoded.ok) throw new Error(`Cannot parse format ${format.id} JSON: ${decoded.reason}`);
+  // What decoding left out of the format a build uses (a skipped function, a field of the wrong
+  // type), once per build, naming where the format came from.
+  const from = downloaded ? `downloaded from ${downloaded.from}` : format.filename;
+  diagnostics?.push(
+    ...decoded.notes.map((note) => ({ level: 'warning' as const, message: `format ${format.id}: ${note} (${from})` })),
+  );
   return decoded.data.source;
 }

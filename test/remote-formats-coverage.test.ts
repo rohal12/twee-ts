@@ -433,7 +433,8 @@ describe('requests', () => {
   it('reads an empty body as no format', async () => {
     answer(() => new Response(null));
     await expect(fetchDirectFormat('https://example.test/format.js')).rejects.toThrow(
-      'Failed to read the story format at https://example.test/format.js: Could not find Twine 2 style story format JSON chunk.',
+      // The decoder's reason follows; its wording belongs to src/format-decode.ts.
+      /^Failed to read the story format at https:\/\/example\.test\/format\.js: \S/,
     );
   });
 

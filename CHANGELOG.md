@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [Differences from Tweego](docs/tweego-differences.md) lists every intended difference, each with a test (#246)
 - StoryData keys match regardless of letter case, as in Tweego (`IFID`, `Format-Version`), with a warning; unknown and repeated keys are warned about (#246)
 - Twine 1 entries of a format index are downloaded (`header.html`, with `code.js` and `userlib.js` when listed) and used for a format ID (#248 F04)
+- What decoding leaves out of the story format a build uses (a function-valued property it skipped, a field of the wrong type it ignored) is a warning that names the format file, or the URL a downloaded format came from (#248)
 - A format ID also finds a local format by its name and major version, as it does in format URLs and indices, so `--format sugarcube-2` finds SugarCube 2.37.3 in a folder named `sugarcube-2.37` (#248 F14)
 
 ### Fixed

@@ -541,6 +541,55 @@ describe('F14: an ID means the same in every source', () => {
   });
 });
 
+describe('what decoding a format.js leaves out is reported for the format a build uses', () => {
+  const noted = (marker: string): string =>
+    `window.storyFormat({name: 'Review', version: '1.0.0', author: 7, setup: function () { return 1; }, source: '<html><head></head><body>${marker} {{STORY_DATA}}</body></html>'});`;
+
+  it('names the local format file', async () => {
+    const dir = join(tempRoot(), 'formats');
+    mkdirSync(join(dir, 'review-1'), { recursive: true });
+    const file = join(dir, 'review-1', 'format.js');
+    writeFileSync(file, noted('LOCAL'));
+    const result = await build({ ...story('Review', '1.0.0'), formatPaths: [dir], noRemote: true });
+    expect(result.marker).toBe('LOCAL');
+    expect(result.warnings).toEqual([
+      expect.stringMatching(/^format review-1: Skipped the function at property setup \(line 1, column \d+\) \(/),
+      expect.stringMatching(
+        new RegExp(`^format review-1: Ignored "author": it is not a string \\(${escapeRegExp(file)}\\)$`),
+      ),
+    ]);
+  });
+
+  it('names the URL a downloaded format came from, online and from the cache', async () => {
+    const server = await startFormatServer({ '/format.js': noted('URL') });
+    const url = `${server.origin}/format.js`;
+    for (const noRemote of [false, true]) {
+      const result = await build({ ...story('Review', '1.0.0'), formatUrls: [url], noRemote });
+      expect(result.marker).toBe('URL');
+      expect(result.warnings).toHaveLength(2);
+      expect(
+        result.warnings.every((w) => w.startsWith('format review-1: ') && w.endsWith(`(downloaded from ${url})`)),
+      ).toBe(true);
+    }
+  });
+
+  it('says nothing about a local format the build does not use', async () => {
+    const dir = join(tempRoot(), 'formats');
+    mkdirSync(join(dir, 'review-1'), { recursive: true });
+    writeFileSync(join(dir, 'review-1', 'format.js'), noted('UNUSED'));
+    mkdirSync(join(dir, 'other-1'), { recursive: true });
+    writeFileSync(join(dir, 'other-1', 'format.js'), formatJs('Other', '1.0.0', 'USED'));
+    const result = await build({ ...story('Other', '1.0.0'), formatPaths: [dir], noRemote: true });
+    expect(result.marker).toBe('USED');
+    expect(result.warnings).toEqual([]);
+  });
+});
+
+/** `text` as a regular expression that matches it literally. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 describe('F15: a format URL accepts any name a local folder accepts', () => {
   it('uses a format named AC/DC from a format URL', async () => {
     const server = await startFormatServer({ '/format.js': formatJs('AC/DC', '1.0.0', 'ROCK') });

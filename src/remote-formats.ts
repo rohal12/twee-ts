@@ -532,11 +532,12 @@ function saveDownload(
 
 /** The info of a format with its bytes kept in memory (see {@link withFormatBytes}). */
 function formatWithBytes(
-  record: Pick<CacheRecord, 'name' | 'version' | 'isTwine2' | 'metadata' | 'main'>,
+  record: Pick<CacheRecord, 'name' | 'version' | 'isTwine2' | 'metadata' | 'main' | 'downloadUrl'>,
   path: string,
   files: ReadonlyMap<string, Uint8Array>,
 ): StoryFormatInfo {
-  return withFormatBytes(recordFormatInfo(record, path), files.get(record.main) ?? new Uint8Array(0));
+  const bytes = files.get(record.main) ?? new Uint8Array(0);
+  return withFormatBytes(recordFormatInfo(record, path), bytes, record.downloadUrl);
 }
 
 /**
