@@ -476,22 +476,15 @@ describe('Twine 2 HTML Output Spec — Story Data Attributes', () => {
   it('tags attribute on <tw-storydata>: optional per spec', async () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const tagsMatch = /\btags="([^"]*)"/.exec(tag);
-    // If present, value should be a string (empty or space-separated tags)
-    if (tagsMatch) {
-      expect(typeof tagsMatch[1]).toBe('string');
-    }
-    // Not asserting it MUST be present — spec says Optional
+    // Optional per spec; twee-ts always writes it, as a space-separated list of tags.
+    expect(tag).toMatch(/\btags="[^"]*"/);
   });
 
   it('tags attribute on <tw-storydata>: absent or empty when no story tags', async () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const tagsMatch = /\btags="([^"]*)"/.exec(tag);
-    // If present, should be empty; if absent, also spec-compliant
-    if (tagsMatch) {
-      expect(tagsMatch[1]).toBe('');
-    }
+    // Absent or empty is spec-compliant; twee-ts writes it empty.
+    expect(attr(tag, 'tags')).toBe('');
   });
 
   it('tags attribute on <tw-storydata>: contains story-level tags when set', async () => {
@@ -585,11 +578,8 @@ describe('Twine 2 HTML Output Spec — Story Data Attributes', () => {
     // Spec says zoom is optional; verify the attribute is handled correctly
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tag = storyDataTag(result.output);
-    const zoom = attr(tag, 'zoom');
-    // zoom may be absent (null) or present as a string
-    if (zoom !== null) {
-      expect(Number.isFinite(Number(zoom))).toBe(true);
-    }
+    // zoom may be absent; twee-ts writes the default zoom, 1, as a decimal number.
+    expect(attr(tag, 'zoom')).toBe('1');
   });
 
   it('zoom attribute: value is a decimal string', async () => {
@@ -1532,14 +1522,9 @@ describe('Twine 2 HTML Output Spec — Passage Tag Colors (<tw-tag>)', () => {
     ].join('\n');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const validColors = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple'];
-    const tagMatches = [...chunk.matchAll(/<tw-tag[^>]*>/g)];
-    for (const tagMatch of tagMatches) {
-      const colorVal = attr(tagMatch[0], 'color');
-      if (colorVal !== null) {
-        expect(validColors).toContain(colorVal);
-      }
-    }
+    // twee-ts leaves out a tag whose color is not one of the seven.
+    expect(chunk).not.toMatch(/<tw-tag\b/);
+    expect(chunk).not.toContain('pink');
   });
 });
 

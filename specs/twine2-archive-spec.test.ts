@@ -1178,20 +1178,12 @@ describe('Twine 2 Archive Spec -- Well-Formed Structure', () => {
     // The passage name with special chars must be escaped so the attribute is valid HTML
     const block = extractStoryDataBlock(result.output);
     // Should not contain raw < > " & inside attribute values
-    const passageTags = [...block.matchAll(/<tw-passagedata[^>]*>/g)];
-    for (const m of passageTags) {
-      const tag = m[0];
-      // Extract all name="..." values and verify they don't contain unescaped special chars
-      const nameMatch = /name="([^"]*)"/.exec(tag);
-      if (nameMatch) {
-        const nameVal = nameMatch[1]!;
-        // Inside attribute values, & < > " must be escaped
-        expect(nameVal).not.toMatch(/[<>"]/);
-        // & is only valid as part of an entity (e.g. &amp;)
-        if (nameVal.includes('&')) {
-          expect(nameVal).toMatch(/&amp;|&lt;|&gt;|&quot;/);
-        }
-      }
+    const names = [...block.matchAll(/<tw-passagedata[^>]*>/g)].map((m) => /\bname="([^"]*)"/.exec(m[0])?.[1]);
+    expect(names).toEqual(['Start', 'A&amp;B&lt;C&gt;&quot;D']);
+    for (const name of names) {
+      // Inside attribute values, < > " are escaped, and & only starts a character reference.
+      expect(name).not.toMatch(/[<>"]/);
+      expect(name).not.toMatch(/&(?!amp;|lt;|gt;|quot;)/);
     }
   });
 

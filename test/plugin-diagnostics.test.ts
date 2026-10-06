@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { TweeTsError } from '../src/compiler.js';
 import { fatalError, formatDiagnostic, splitDiagnostics } from '../src/plugins/diagnostics.js';
 import type { CompileResult, Diagnostic } from '../src/types.js';
+import { thrownBy } from './helpers/errors.js';
 
 function resultWith(diagnostics: Diagnostic[]): CompileResult {
   return { output: '<html></html>', diagnostics } as unknown as CompileResult;
@@ -39,30 +40,21 @@ describe('splitDiagnostics', () => {
         ]),
       );
     expect(run).toThrow('b.tw:9: broken\nsecond');
-    try {
-      run();
-    } catch (e) {
-      expect(e).toMatchObject({ id: 'b.tw', loc: { file: 'b.tw', line: 9, column: 1 } });
-    }
+    expect(thrownBy(run)).toMatchObject({ id: 'b.tw', loc: { file: 'b.tw', line: 9, column: 1 } });
   });
 
   it('puts the location at line 1 when the error names a file but no line', () => {
-    try {
-      splitDiagnostics(resultWith([{ level: 'error', message: 'unreadable', file: 'c.tw' }]));
-      expect.unreachable();
-    } catch (e) {
-      expect(e).toMatchObject({ id: 'c.tw', loc: { file: 'c.tw', line: 1, column: 1 } });
-    }
+    const error = thrownBy(() =>
+      splitDiagnostics(resultWith([{ level: 'error', message: 'unreadable', file: 'c.tw' }])),
+    );
+    expect(error).toMatchObject({ id: 'c.tw', loc: { file: 'c.tw', line: 1, column: 1 } });
   });
 
   it('gives no location when the first error names no file', () => {
-    try {
-      splitDiagnostics(resultWith([{ level: 'error', message: 'no format' }]));
-      expect.unreachable();
-    } catch (e) {
-      expect(e).not.toHaveProperty('id');
-      expect(e).not.toHaveProperty('loc');
-    }
+    const error = thrownBy(() => splitDiagnostics(resultWith([{ level: 'error', message: 'no format' }])));
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty('id');
+    expect(error).not.toHaveProperty('loc');
   });
 });
 

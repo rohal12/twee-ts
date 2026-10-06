@@ -282,14 +282,16 @@ describe('Passage Header', () => {
     it('MUST: passage name is required — header with only :: and whitespace is invalid', () => {
       // Spec: "Required passage name." — name is mandatory after ::
       const { passages, diagnostics } = parseTwee('::\nContent');
-      // Either no passage is created, or an error is emitted
-      if (passages.length > 0) {
-        // If a passage was created, its name should not be empty
-        const first = passages[0];
-        if (!first) throw new Error('expected at least one passage');
-        expect(first.name.trim().length).toBeGreaterThan(0);
-      }
-      expect(diagnostics.length).toBeGreaterThan(0);
+      // The header is rejected: no passage, and an error saying why.
+      expect(passages).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          level: 'error',
+          message: 'line 1: Malformed twee source; passage with no name.',
+          file: '<inline>',
+          line: 1,
+        },
+      ]);
     });
   });
 
@@ -526,23 +528,18 @@ describe('Passage Header', () => {
       // Spec: metadata "must directly follow either the tag block or, if the tag block
       // is omitted, the passage name." So metadata BEFORE tags is wrong order.
       const source = ':: Room {"position":"100,200"} [tag]\nContent';
-      const result = parseTwee(source);
-      // When metadata appears before tags, the metadata should NOT be parsed as valid
-      // metadata with the tag block also being valid. Either:
-      // 1. The parser emits a diagnostic about the ordering, OR
-      // 2. The metadata is NOT parsed as metadata (e.g., treated as part of the name), OR
-      // 3. The tag block is NOT parsed as tags
-      const room = result.passages.find((p) => p.name === 'Room');
-      if (room) {
-        // If the parser found a "Room" passage, the metadata and tags must NOT both be
-        // correctly parsed, since the spec requires metadata to follow tags
-        const hasBothCorrect = room.metadata?.position === '100,200' && room.tags.includes('tag');
-        expect(hasBothCorrect).toBe(false);
-      }
-      // If no Room passage was found, there should be diagnostics
-      if (!room) {
-        expect(result.diagnostics.length).toBeGreaterThan(0);
-      }
+      const { passages, diagnostics } = parseTwee(source);
+      // Metadata must follow the tags, so a tag block after it is out of order.
+      // The header is rejected: no passage, and an error saying why.
+      expect(passages).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          level: 'error',
+          message: 'line 1: Malformed twee source; optional tags block must immediately follow the passage name.',
+          file: '<inline>',
+          line: 1,
+        },
+      ]);
     });
   });
 
@@ -653,18 +650,16 @@ describe('Passage Header', () => {
     it('MUST: tag block split across lines is not parsed as multi-line tags', () => {
       // Spec requires passage headers to be on a single line.
       const { passages, diagnostics } = parseTwee(':: Room [tag1\ntag2]\nContent');
-      // Either: the parser emits a diagnostic about the unterminated tag block,
-      // or if it produces the passage, "tag2" should NOT appear as a tag.
-      if (passages.length > 0) {
-        const first = passages[0];
-        if (!first) throw new Error('expected at least one passage');
-        const allTags = first.tags;
-        expect(allTags).not.toContain('tag2');
-        expect(allTags).not.toContain('tag2]');
-      } else {
-        // Parser could not produce a passage — the unterminated header was rejected
-        expect(diagnostics.length).toBeGreaterThan(0);
-      }
+      // The header is rejected: no passage, and an error saying why.
+      expect(passages).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          level: 'error',
+          message: 'line 1: Malformed twee source; unterminated tag block.',
+          file: '<inline>',
+          line: 1,
+        },
+      ]);
     });
   });
 });
@@ -1260,10 +1255,8 @@ describe('Special Passages — StoryData', () => {
 
     it('zoom: default value when omitted from StoryData', async () => {
       const result = await compileInline(minimalStory(':: Start\nHello'));
-      // When zoom is not in StoryData, the output should either omit it or use default 1
-      if (result.output.includes('zoom=')) {
-        expect(result.output).toMatch(/zoom="1"/);
-      }
+      // When zoom is not in StoryData, the output may omit it or use the default, 1; twee-ts writes 1.
+      expect(result.output).toMatch(/\bzoom="1"/);
     });
 
     it('zoom is optional — omitting it does not cause an error', async () => {
@@ -1622,10 +1615,7 @@ describe('Special Tags — script', () => {
     const result = await compileInline(source);
     // Content should be inside <script type="text/twine-javascript">...</script>
     const scriptMatch = /<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
-    expect(scriptMatch).not.toBeNull();
-    if (scriptMatch) {
-      expect(scriptMatch[1]).toContain('console.log("hello");');
-    }
+    expect(scriptMatch?.[1]).toContain('console.log("hello");');
   });
 
   it('MUST: script passage is NOT rendered as a regular tw-passagedata', async () => {
@@ -1671,10 +1661,7 @@ describe('Special Tags — stylesheet', () => {
     const result = await compileInline(source);
     // Content should be inside <style type="text/twine-css">...</style>
     const styleMatch = /<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
-    expect(styleMatch).not.toBeNull();
-    if (styleMatch) {
-      expect(styleMatch[1]).toContain('body { color: red; }');
-    }
+    expect(styleMatch?.[1]).toContain('body { color: red; }');
   });
 
   it('MUST: stylesheet passage is NOT rendered as a regular tw-passagedata', async () => {
@@ -2388,14 +2375,16 @@ describe('Requirements and Recommendations — Additional Coverage', () => {
     it('MUST: metadata JSON that spans multiple lines is rejected (single-line header)', () => {
       // The header is only the first line; multiline JSON is not valid header metadata
       const { passages, diagnostics } = parseTwee(':: Room {"position":\n"100,100"}\nContent');
-      // Either diagnostics are emitted or the metadata is not parsed correctly
-      if (passages.length > 0) {
-        const first = passages[0];
-        if (!first) throw new Error('expected at least one passage');
-        // If the passage exists, the metadata should NOT have been parsed across lines
-        expect(first.metadata?.position).not.toBe('100,100');
-      }
-      expect(diagnostics.length).toBeGreaterThan(0);
+      // The header is rejected: no passage, and an error saying why.
+      expect(passages).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          level: 'error',
+          message: 'line 1: Malformed twee source; unterminated metadata block.',
+          file: '<inline>',
+          line: 1,
+        },
+      ]);
     });
   });
 
@@ -3646,15 +3635,10 @@ describe('Script and Stylesheet — Element Type Specificity', () => {
     const result = await compileInline(source);
     // The script content should be in <script>, not <style>
     const scriptMatch = /<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
-    expect(scriptMatch).not.toBeNull();
-    if (scriptMatch) {
-      expect(scriptMatch[1]).toContain('alert(1);');
-    }
-    // The script content should NOT be in a <style> element
-    const styleMatch = /<style[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
-    if (styleMatch) {
-      expect(styleMatch[1]).not.toContain('alert(1);');
-    }
+    expect(scriptMatch?.[1]).toContain('alert(1);');
+    // The script content should NOT be in any <style> element
+    const styles = [...result.output.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+    expect(styles.join('\n')).not.toContain('alert(1);');
   });
 
   it('MUST: stylesheet tag produces <style> element, not <script>', async () => {
@@ -3662,15 +3646,10 @@ describe('Script and Stylesheet — Element Type Specificity', () => {
     const result = await compileInline(source);
     // The style content should be in <style>, not <script>
     const styleMatch = /<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
-    expect(styleMatch).not.toBeNull();
-    if (styleMatch) {
-      expect(styleMatch[1]).toContain('.red { color: red; }');
-    }
-    // The style content should NOT be in a <script> element
-    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
-    if (scriptMatch) {
-      expect(scriptMatch[1]).not.toContain('.red { color: red; }');
-    }
+    expect(styleMatch?.[1]).toContain('.red { color: red; }');
+    // The style content should NOT be in any <script> element
+    const scripts = [...result.output.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(scripts.join('\n')).not.toContain('.red { color: red; }');
   });
 });
 

@@ -282,7 +282,7 @@ describe('Twine 1 HTML Output Spec -- Story Data (id-based alternative)', () => 
     expect(content).toBe('A Subtitle');
   });
 
-  it('spec documents id-based elements as <span> elements specifically', async () => {
+  it('archive output carries title, author and subtitle as tiddlers, not id-based <span> elements', async () => {
     // Spec example:
     //   <span id="storyTitle">Title</span>
     //   <span id="storyAuthor">Author</span>
@@ -303,23 +303,12 @@ describe('Twine 1 HTML Output Spec -- Story Data (id-based alternative)', () => 
       'Hello',
     ].join('\n');
     const result = await compileToArchive(source);
-    // Archive mode uses tiddler-based approach, so span elements are not expected
-    // But if id-based elements ARE present, they must be <span> per spec
-    const hasIdBased =
-      result.output.includes('id="storyTitle"') ||
-      result.output.includes('id="storyAuthor"') ||
-      result.output.includes('id="storySubtitle"');
-    if (hasIdBased) {
-      if (result.output.includes('id="storyTitle"')) {
-        expect(result.output).toMatch(/<span id="storyTitle">/);
-      }
-      if (result.output.includes('id="storyAuthor"')) {
-        expect(result.output).toMatch(/<span id="storyAuthor">/);
-      }
-      if (result.output.includes('id="storySubtitle"')) {
-        expect(result.output).toMatch(/<span id="storySubtitle">/);
-      }
-    }
+    // The spec allows either approach; archive output uses the tiddler-based one, and the
+    // id-based <span> elements belong to a story format's page, which an archive leaves out.
+    expect(result.output).not.toMatch(/id="story(?:Title|Author|Subtitle)"/);
+    expect(extractTiddlerContent(result.output, 'StoryTitle')).toBe('Test');
+    expect(extractTiddlerContent(result.output, 'StoryAuthor')).toBe('Auth');
+    expect(extractTiddlerContent(result.output, 'StorySubtitle')).toBe('Sub');
   });
 });
 
@@ -652,12 +641,8 @@ describe('Twine 1 HTML Output Spec -- Passage Attributes', () => {
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const modifier = attr(tiddler, 'modifier');
-    // Spec says it's optional; if present, should be a non-empty string naming the tool
-    if (modifier !== null) {
-      expect(modifier.length).toBeGreaterThan(0);
-      // Spec says the value is a tool name like "twee", "tweego", etc.
-      expect(modifier).toMatch(/^[a-zA-Z0-9_-]+$/);
-    }
+    // Optional per spec; twee-ts writes "twee", the value the spec gives for Twine 1 tools.
+    expect(modifier).toBe('twee');
   });
 
   it('created attribute is optional per spec', async () => {
@@ -666,10 +651,8 @@ describe('Twine 1 HTML Output Spec -- Passage Attributes', () => {
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const created = attr(tiddler, 'created');
-    // Spec says it's optional; if present, should be a datestamp string
-    if (created !== null) {
-      expect(created.length).toBeGreaterThan(0);
-    }
+    // Optional per spec; twee-ts writes the build time as a datestamp.
+    expect(created).toMatch(/^\d{12}$/);
   });
 
   it('modified attribute is optional per spec', async () => {
@@ -678,10 +661,8 @@ describe('Twine 1 HTML Output Spec -- Passage Attributes', () => {
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const modified = attr(tiddler, 'modified');
-    // Spec says it's optional; if present, should be a datestamp string
-    if (modified !== null) {
-      expect(modified.length).toBeGreaterThan(0);
-    }
+    // Optional per spec; twee-ts leaves it out, as the passage was not edited after creation.
+    expect(modified).toBeNull();
   });
 
   it('tiddler name with special characters is attribute-escaped', async () => {
@@ -991,7 +972,7 @@ describe('Twine 1 HTML Output Spec -- Story Stylesheet', () => {
     expect(result.output).not.toContain('id="story-style"');
   });
 
-  it('spec requires stylesheet element to be a <style> element', async () => {
+  it('archive output keeps a stylesheet passage as a tiddler tagged stylesheet', async () => {
     // Spec examples:
     //   <style id="storyCSS"></style>
     //   <style id="story-style"></style>
@@ -1000,32 +981,19 @@ describe('Twine 1 HTML Output Spec -- Story Stylesheet', () => {
     // but validates that if they existed, they use the correct tag.
     const source = minimalStory([':: Start', 'Hello', '', ':: CSS [stylesheet]', 'body { color: red; }'].join('\n'));
     const result = await compileToArchive(source);
-    // If any storyCSS element exists, it must be a <style> element per spec
-    if (result.output.includes('id="storyCSS"')) {
-      expect(result.output).toMatch(/<style id="storyCSS">/);
-    }
-    if (result.output.includes('id="story-style"')) {
-      expect(result.output).toMatch(/<style id="story-style">/);
-    }
+    // The <style id="storyCSS"> element belongs to a story format's page; the archive keeps the passage.
+    const css = findTiddler(result.output, 'CSS');
+    expect(css === undefined ? null : attr(css, 'tags')).toBe('stylesheet');
+    expect(extractTiddlerContent(result.output, 'CSS')).toBe('body { color: red; }');
   });
 
-  it('spec places stylesheet elements inside <head>', async () => {
+  it('archive output has no <head>, so no stylesheet element outside one', async () => {
     // Spec examples show: <head><style id="storyCSS"></style></head>
     // In archive mode there is no <head>, so this is a structural documentation test.
     const source = minimalStory([':: Start', 'Hello', '', ':: CSS [stylesheet]', 'body { color: red; }'].join('\n'));
     const result = await compileToArchive(source);
-    // Archive mode: no <head> element expected
-    // But if a <head> and storyCSS/story-style exist, storyCSS must be inside <head>
-    const headMatch = /<head>([\s\S]*?)<\/head>/.exec(result.output);
-    if (headMatch) {
-      const headContent = headMatch[1];
-      if (result.output.includes('id="storyCSS"')) {
-        expect(headContent).toContain('id="storyCSS"');
-      }
-      if (result.output.includes('id="story-style"')) {
-        expect(headContent).toContain('id="story-style"');
-      }
-    }
+    expect(result.output).not.toMatch(/<head\b/i);
+    expect(result.output).not.toMatch(/<style\b/i);
   });
 });
 
@@ -1046,37 +1014,24 @@ describe('Twine 1 HTML Output Spec -- Creator Info Comment', () => {
     expect(result.output).not.toContain('Build Info');
   });
 
-  it('spec defines two creator comment formats: "Made in" and "Build Info:" prefix', async () => {
+  it('archive output has no creator comment in either of the two formats', async () => {
     // Spec format 1: <!-- Made in Twine 1.4.2 \n Built on 20 Dec 2014 at 19:25:29, -0800 -->
     // Spec format 2: <!-- Build Info: \n * "Made in Twine 1.4.2" \n * "Built on ..." -->
     // If creator info exists in full HTML output, it must follow one of these formats.
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     // Archive mode has no <head>, so no creator info expected.
     // This test documents the expected formats for full HTML output.
+    // Creator info is part of a story format's page, which an archive leaves out.
     const comments = [...result.output.matchAll(/<!--([\s\S]*?)-->/g)].map((m) => m[1] ?? '');
-    for (const comment of comments) {
-      if (comment.includes('Made in') || comment.includes('Build Info')) {
-        // Format 1: contains "Made in" and "Built on" directly
-        // Format 2: contains "Build Info:" prefix with quoted strings
-        const isFormat1 = comment.includes('Made in') && !comment.includes('Build Info:');
-        const isFormat2 = comment.includes('Build Info:');
-        expect(isFormat1 || isFormat2).toBe(true);
-      }
-    }
+    expect(comments).toEqual([]);
   });
 
-  it('spec places creator info comment inside <head> element', async () => {
+  it('archive output has neither a <head> nor creator info outside one', async () => {
     // Spec: "the tool creator and version will be found inside an HTML comment
     // element within the <head> element"
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
-    const headMatch = /<head>([\s\S]*?)<\/head>/.exec(result.output);
-    if (headMatch) {
-      const headContent = headMatch[1];
-      // If there are creator comments in the output, they must be inside <head>
-      if (result.output.includes('Made in')) {
-        expect(headContent).toContain('Made in');
-      }
-    }
+    expect(result.output).not.toMatch(/<head\b/i);
+    expect(result.output).not.toMatch(/Made in|Build Info/);
   });
 });
 
@@ -1148,14 +1103,15 @@ describe('Twine 1 HTML Output Spec -- StorySettings value constraints', () => {
       'H',
     ].join('\n');
     const result = await compileToArchive(source);
-    const settings = result.story.twine1.settings;
-    const onOffKeys = ['undo', 'bookmark', 'hash', 'exitprompt', 'blankcss', 'jquery', 'modernizr'] as const;
-    for (const key of onOffKeys) {
-      const val = settings.get(key);
-      if (val !== undefined) {
-        expect(val === 'on' || val === 'off').toBe(true);
-      }
-    }
+    expect([...result.story.twine1.settings]).toEqual([
+      ['undo', 'on'],
+      ['bookmark', 'off'],
+      ['hash', 'on'],
+      ['exitprompt', 'off'],
+      ['blankcss', 'off'],
+      ['jquery', 'off'],
+      ['modernizr', 'off'],
+    ]);
   });
 });
 
@@ -1305,22 +1261,18 @@ describe('Twine 1 HTML Output Spec -- Datestamp Format', () => {
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const created = attr(tiddler, 'created');
-    // Spec says this attribute is optional; if present, it must match the datestamp format
-    if (created !== null) {
-      expect(created).toMatch(/^\d{12}$/);
-    }
+    // Optional per spec; twee-ts writes it, in the datestamp format.
+    expect(created).toMatch(/^\d{12}$/);
   });
 
-  it('OPTIONAL: modified attribute datestamp follows YYYYMMDDHHMM format if present', async () => {
+  it('OPTIONAL: modified attribute is left out, so it has no datestamp to format', async () => {
     // Spec example: created="202306020121" -- same format applies to modified
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const modified = attr(tiddler, 'modified');
-    // Spec says this attribute is optional; if present, it must match the datestamp format
-    if (modified !== null) {
-      expect(modified).toMatch(/^\d{12}$/);
-    }
+    // Optional per spec; twee-ts leaves it out.
+    expect(modified).toBeNull();
   });
 });
 
@@ -1828,11 +1780,8 @@ describe('Twine 1 HTML Output Spec -- Modifier Tool Name', () => {
     const tiddler = findTiddler(result.output, 'Start');
     if (!tiddler) throw new Error('expected Start tiddler');
     const modifier = attr(tiddler, 'modifier');
-    // If modifier is present, it should be the tool name (e.g., "twee-ts" or "twee")
-    if (modifier !== null) {
-      // Spec examples show values like "twee" and "tweego" -- a lowercase tool identifier
-      expect(modifier).toMatch(/^[a-z][a-z0-9_-]*$/);
-    }
+    // Spec examples show values like "twee" and "tweego"; twee-ts writes "twee", as Twine 1's own twee does.
+    expect(modifier).toBe('twee');
   });
 
   it('modifier attribute is consistent across all tiddler elements', async () => {
@@ -1840,13 +1789,8 @@ describe('Twine 1 HTML Output Spec -- Modifier Tool Name', () => {
     const source = minimalStory([':: Start', 'Hello', '', ':: Room1', 'World'].join('\n'));
     const result = await compileToArchive(source);
     const tiddlers = tiddlerElements(result.output);
-    const modifiers = tiddlers.map((t) => attr(t, 'modifier')).filter((m) => m !== null);
-    if (modifiers.length > 0) {
-      const firstModifier = modifiers[0];
-      for (const m of modifiers) {
-        expect(m).toBe(firstModifier);
-      }
-    }
+    const modifiers = tiddlers.map((t) => attr(t, 'modifier'));
+    expect(modifiers).toEqual(['twee', 'twee', 'twee']);
   });
 });
 

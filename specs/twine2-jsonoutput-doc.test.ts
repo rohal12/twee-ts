@@ -207,15 +207,14 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
     expect(ifid).toMatch(/^[0-9A-Z-]+$/);
   });
 
-  it('ifid: Optional -- when StoryData has no ifid, ifid may be absent or auto-generated string', async () => {
+  it('ifid: Optional -- when StoryData has no ifid, an IFID is generated and the author told to add it', async () => {
     const source = [':: StoryTitle', 'No IFID Story', '', ':: Start', 'Hello'].join('\n');
-    const { json } = await compileToJSON(source);
-    if (json.ifid !== undefined) {
-      expect(typeof json.ifid).toBe('string');
-      expect(json.ifid.length).toBeGreaterThanOrEqual(8);
-      expect(json.ifid.length).toBeLessThanOrEqual(63);
-      expect(json.ifid).toMatch(/^[0-9A-Z-]+$/);
-    }
+    const { json, diagnostics } = await compileToJSON(source);
+    // A generated IFID is a version 4 UUID: 36 characters of digits, capitals and hyphens.
+    expect(json.ifid).toMatch(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/);
+    expect(diagnostics).toEqual([
+      { level: 'error', message: `Story IFID not found. Add an IFID to your story: {"ifid":"${json.ifid ?? ''}"}` },
+    ]);
   });
 
   // --- format ---
@@ -317,9 +316,8 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
       'This is passage named "1"',
     ].join('\n');
     const { json } = await compileToJSON(source);
-    if (json.start !== undefined) {
-      expect(typeof json.start).toBe('string');
-    }
+    // A passage name that looks like a number stays a JSON string.
+    expect(json.start).toBe('1');
   });
 
   it('start: referencing non-existent passage is handled gracefully', async () => {
@@ -407,9 +405,8 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
 
   it('zoom: when not set in StoryData, may be omitted or present with default number value', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if (json.zoom !== undefined) {
-      expect(typeof json.zoom).toBe('number');
-    }
+    // twee-ts leaves out the default zoom, 1.
+    expect(json).not.toHaveProperty('zoom');
   });
 
   it('zoom: value is serialized as a JSON number, not a JSON string', async () => {
@@ -429,43 +426,30 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
     // Spec: "The name of program used to create the file."
     // A compiler that produces JSON should identify itself as the creator.
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if (json.creator !== undefined) {
-      expect(typeof json.creator).toBe('string');
-      expect(json.creator).not.toBe('');
-    }
+    expect(json.creator).toBe('Twee-ts');
   });
 
   it('creator: maps to <tw-storydata creator> -- names the program that created the file', async () => {
     const { json } = await compileToJSON(fullStory(':: Begin\nHello'));
-    if (json.creator !== undefined) {
-      expect(typeof json.creator).toBe('string');
-      // The creator should be a meaningful program name, not empty or whitespace-only
-      expect(json.creator.trim().length).toBeGreaterThan(0);
-    }
+    // twee-ts names itself, whatever the StoryData says.
+    expect(json.creator).toBe('Twee-ts');
   });
 
   // --- creator-version ---
   it('creator-version: (string) Optional per spec, when present uses hyphenated key and is a string', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if (json['creator-version'] !== undefined) {
-      expect(typeof json['creator-version']).toBe('string');
-      expect(json['creator-version']).not.toBe('');
-    }
+    expect(json['creator-version']).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it('creator-version: maps to <tw-storydata creator-version> -- version of the creator program', async () => {
     const { json } = await compileToJSON(fullStory(':: Begin\nHello'));
-    if (json['creator-version'] !== undefined) {
-      expect(typeof json['creator-version']).toBe('string');
-      // The creator-version should be a meaningful version string
-      expect(json['creator-version'].trim().length).toBeGreaterThan(0);
-    }
+    // The version of twee-ts, a SemVer version.
+    expect(json['creator-version']).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   // --- zoom edge case: integer 1 ---
-  it('zoom: integer value 1 is serialized as a number, not omitted or stringified', async () => {
-    // Spec says zoom is "(decimal) Optional" -- when explicitly set to 1,
-    // it should appear as a JSON number
+  it('zoom: an explicit 1, the default, is left out rather than stringified', async () => {
+    // Spec says zoom is "(decimal) Optional", so the default may be left out.
     const source = [
       ':: StoryData',
       '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","zoom":1}',
@@ -476,13 +460,9 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
       ':: Start',
       'Hello',
     ].join('\n');
-    const { json } = await compileToJSON(source);
-    // When zoom is explicitly set to 1, the spec says it's optional --
-    // but if present, it must be a number
-    if (json.zoom !== undefined) {
-      expect(typeof json.zoom).toBe('number');
-      expect(json.zoom).toBe(1);
-    }
+    const result = await compileToJSON(source);
+    expect(result.json).not.toHaveProperty('zoom');
+    expect(result.output).not.toMatch(/"zoom"/);
   });
 
   // --- tag-colors edge case: empty object ---
@@ -498,12 +478,8 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
       'Hello',
     ].join('\n');
     const { json } = await compileToJSON(source);
-    // If tag-colors is present, it must be an object (not array, not null)
-    if (json['tag-colors'] !== undefined) {
-      expect(typeof json['tag-colors']).toBe('object');
-      expect(Array.isArray(json['tag-colors'])).toBe(false);
-      expect(json['tag-colors']).not.toBeNull();
-    }
+    // twee-ts leaves out an empty tag-colors object.
+    expect(json).not.toHaveProperty('tag-colors');
   });
 });
 
@@ -528,30 +504,26 @@ describe('Twine 2 JSON Output Spec -- Style and Script', () => {
 
   it('style: empty string or omitted when no stylesheet passages', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if (json.style !== undefined) {
-      expect(json.style).toBe('');
-    }
+    // twee-ts writes an empty string.
+    expect(json.style).toBe('');
   });
 
   it('script: empty string or omitted when no script passages', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if (json.script !== undefined) {
-      expect(json.script).toBe('');
-    }
+    // twee-ts writes an empty string.
+    expect(json.script).toBe('');
   });
 
   it('style: when present, is always a string type (not null, undefined, or other type)', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if ('style' in json) {
-      expect(typeof json.style).toBe('string');
-    }
+    // twee-ts always writes it.
+    expect(json).toHaveProperty('style', expect.any(String));
   });
 
   it('script: when present, is always a string type (not null, undefined, or other type)', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
-    if ('script' in json) {
-      expect(typeof json.script).toBe('string');
-    }
+    // twee-ts always writes it.
+    expect(json).toHaveProperty('script', expect.any(String));
   });
 
   it('style: multiple stylesheet passages are merged into a single string', async () => {
@@ -1195,18 +1167,11 @@ describe('Twine 2 JSON Output Spec -- Passages Array Requirement', () => {
       ':: JS [script]',
       'window.x = 1;',
     ].join('\n');
-    const { json, diagnostics } = await compileToJSON(source);
-    expect(Array.isArray(json.passages)).toBe(true);
-    // Spec says "one or more" -- when all passages are special, empty array is
-    // acceptable but a diagnostic (warning/error) is expected
-    const hasPassageWarning = diagnostics.some(
-      (d) =>
-        // Every diagnostic is a warning or an error.
-        d.message.toLowerCase().includes('passage') || d.message.toLowerCase().includes('start'),
-    );
-    if (json.passages.length === 0 && hasPassageWarning) {
-      expect(hasPassageWarning).toBe(true);
-    }
+    const { json } = await compileToJSON(source);
+    // The special passages and the script passage leave no story passage: the array is empty,
+    // and the script goes to the script property.
+    expect(json.passages).toEqual([]);
+    expect(json.script).toBe('window.x = 1;');
   });
 
   it('passages array contains objects (not strings, numbers, or null)', async () => {
@@ -1270,10 +1235,7 @@ describe('Twine 2 JSON Output Spec -- Partial Story Encoding', () => {
       [':: Start', 'Hello', '', ':: Styles [stylesheet]', '.highlight { color: yellow; }'].join('\n'),
     );
     const { json } = await compileToJSON(source);
-    if (json.style !== undefined) {
-      expect(typeof json.style).toBe('string');
-      expect(json.style).toContain('.highlight { color: yellow; }');
-    }
+    expect(json.style).toBe('.highlight { color: yellow; }');
   });
 
   it('partial encoding: JavaScript content can be included via script for story compilation', async () => {
@@ -1282,10 +1244,7 @@ describe('Twine 2 JSON Output Spec -- Partial Story Encoding', () => {
     // larger story compilation process."
     const source = minimalStory([':: Start', 'Hello', '', ':: Setup [script]', 'window.storySetup = true;'].join('\n'));
     const { json } = await compileToJSON(source);
-    if (json.script !== undefined) {
-      expect(typeof json.script).toBe('string');
-      expect(json.script).toContain('window.storySetup = true;');
-    }
+    expect(json.script).toBe('window.storySetup = true;');
   });
 
   it('partial encoding: a story with only name and passages is valid per spec', async () => {
@@ -1321,13 +1280,9 @@ describe('Twine 2 JSON Output Spec -- Partial Story Encoding', () => {
     const { json } = await compileToJSON(source);
     // The story should contain the main passage
     expect(json.passages.some((p) => p.name === 'Start')).toBe(true);
-    // And CSS/JS should be in style/script properties if present
-    if (json.style !== undefined) {
-      expect(json.style).toContain('body { margin: 0; }');
-    }
-    if (json.script !== undefined) {
-      expect(json.script).toContain('window.init = true;');
-    }
+    // And CSS/JS go to the style and script properties
+    expect(json.style).toBe('body { margin: 0; }');
+    expect(json.script).toBe('window.init = true;');
   });
 });
 
@@ -1371,11 +1326,8 @@ describe('Twine 2 JSON Output Spec -- Type Correctness', () => {
 
   it('zoom is a number (decimal), finite, not NaN', async () => {
     const { json } = await compileToJSON(fullStory(':: Begin\nHello'));
-    expect(typeof json.zoom).toBe('number');
-    if (json.zoom !== undefined) {
-      expect(Number.isFinite(json.zoom)).toBe(true);
-      expect(Number.isNaN(json.zoom)).toBe(false);
-    }
+    expect(json.zoom).toBe(0.25);
+    expect(Number.isFinite(json.zoom)).toBe(true);
   });
 
   it('creator is a string', async () => {
@@ -1391,21 +1343,13 @@ describe('Twine 2 JSON Output Spec -- Type Correctness', () => {
   it('style is a string when present (not a number, boolean, array, or object)', async () => {
     const source = minimalStory([':: Start', 'Hello', '', ':: CSS [stylesheet]', 'body {}'].join('\n'));
     const { json } = await compileToJSON(source);
-    if (json.style !== undefined) {
-      expect(typeof json.style).toBe('string');
-      expect(json.style).not.toBeNull();
-      expect(Array.isArray(json.style)).toBe(false);
-    }
+    expect(json.style).toBe('body {}');
   });
 
   it('script is a string when present (not a number, boolean, array, or object)', async () => {
     const source = minimalStory([':: Start', 'Hello', '', ':: JS [script]', 'window.x = 1;'].join('\n'));
     const { json } = await compileToJSON(source);
-    if (json.script !== undefined) {
-      expect(typeof json.script).toBe('string');
-      expect(json.script).not.toBeNull();
-      expect(Array.isArray(json.script)).toBe(false);
-    }
+    expect(json.script).toBe('window.x = 1;');
   });
 
   it('passages is an array', async () => {
@@ -1572,11 +1516,9 @@ describe('Twine 2 JSON Output Spec -- Property Name Mappings', () => {
     const { json } = await compileToJSON(source);
     const passage = json.passages.find((p) => p.name === 'Start');
     if (!passage) throw new Error('expected Start passage');
-    if (passage.metadata) {
-      expect('metadata' in passage).toBe(true);
-      expect('meta' in passage).toBe(false);
-      expect('position' in passage).toBe(false);
-    }
+    expect(passage.metadata).toEqual({ position: '600,400' });
+    expect('meta' in passage).toBe(false);
+    expect('position' in passage).toBe(false);
   });
 
   it('tag-colors pairs map to <tw-tag name>:<tw-tag color> structure', async () => {
