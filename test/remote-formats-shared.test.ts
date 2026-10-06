@@ -222,11 +222,14 @@ describe('each caller keeps its own timeout when requests are shared (#205)', ()
   it('keeps waiting for a long-limit caller after the first, shorter caller timed out', async () => {
     const server = await startServer();
     const url = `${server.origin}/format.js`;
-    const first = fetchDirectFormat(url, { timeout: 20 });
+    // Settled from the start: on a slow machine the first caller can time out before the server sees the request.
+    const first = Promise.allSettled([fetchDirectFormat(url, { timeout: 20 })]);
     const second = fetchDirectFormat(url, { timeout: 0 });
     const held = await server.next();
 
-    await expect(first).rejects.toThrow(TIMEOUT_20);
+    expect(await first).toEqual([
+      { status: 'rejected', reason: expect.objectContaining({ message: expect.stringMatching(TIMEOUT_20) }) },
+    ]);
     expect(held.res.destroyed).toBe(false);
     held.answer(formatText('Review', '1.0.0'));
     expect((await second).name).toBe('Review');
@@ -236,9 +239,13 @@ describe('each caller keeps its own timeout when requests are shared (#205)', ()
   it('stops the download once every caller has timed out', async () => {
     const server = await startServer();
     const url = `${server.origin}/format.js`;
-    const calls = [fetchDirectFormat(url, { timeout: 10 }), fetchDirectFormat(url, { timeout: 20 })];
+    // Settled from the start: on a slow machine both can time out before the server sees the request.
+    const settled = Promise.allSettled([
+      fetchDirectFormat(url, { timeout: 10 }),
+      fetchDirectFormat(url, { timeout: 20 }),
+    ]);
     const held = await server.next();
-    const results = await Promise.allSettled(calls);
+    const results = await settled;
     expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
     await held.closed;
   });
