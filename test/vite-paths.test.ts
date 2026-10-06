@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isInside, isViteConfigTemp, outputLocations, toPosix } from '../src/plugins/paths.js';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, outputLocations, toPosix } from '../src/plugins/paths.js';
 
 describe('vite plugin path helpers', () => {
   it('turns Windows separators into forward slashes', () => {
@@ -7,17 +10,24 @@ describe('vite plugin path helpers', () => {
     expect(toPosix('/game/src/app/index.ts')).toBe('/game/src/app/index.ts');
   });
 
-  it('tells whether a file is inside one of the given folders', () => {
-    expect(isInside('C:/game/src/a.ts', ['C:/game/src'])).toBe(true);
-    expect(isInside('C:/game/src', ['C:/game/src'])).toBe(true);
-    expect(isInside('C:/game/srcs/a.ts', ['C:/game/src'])).toBe(false);
-    expect(isInside('/other/a.ts', ['C:/game/src', '/game'])).toBe(false);
-  });
-
-  it('reads a folder that is written with a trailing slash, or the root, as holding its files', () => {
-    expect(isInside('/game/src/a.ts', ['/game/src/'])).toBe(true);
-    expect(isInside('/game/srcs/a.ts', ['/game/src/'])).toBe(false);
-    expect(isInside('/a.ts', ['/'])).toBe(true);
+  it('compares files by identity: a folder reached through a link holds the files of its real folder', () => {
+    const real = realpathSync.native(mkdtempSync(join(tmpdir(), 'twee-ts-paths-')));
+    const holder = realpathSync.native(mkdtempSync(join(tmpdir(), 'twee-ts-paths-')));
+    try {
+      mkdirSync(join(real, 'src'));
+      writeFileSync(join(real, 'src', 'a.ts'), '');
+      symlinkSync(real, join(holder, 'link'), 'junction');
+      const linked = join(holder, 'link', 'src', 'a.ts');
+      expect(fileKey(linked)).toBe(fileKey(join(real, 'src', 'a.ts')));
+      expect(canonicalPath(linked)).toBe(toPosix(join(real, 'src', 'a.ts')));
+      expect(keyWithin(fileKey(linked), [fileKey(join(real, 'src'))])).toBe(true);
+      expect(keyWithin(fileKey(join(real, 'src')), [fileKey(join(real, 'src'))])).toBe(true);
+      expect(keyWithin(fileKey(join(real, 'srcs', 'a.ts')), [fileKey(join(real, 'src'))])).toBe(false);
+      expect(keyWithin(fileKey(linked), [])).toBe(false);
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+      rmSync(holder, { recursive: true, force: true });
+    }
   });
 
   it('reads the locations an output option names, one or several', () => {

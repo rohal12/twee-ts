@@ -192,7 +192,11 @@ describe('rollup plugin', () => {
     const plugin = storyPlugin(dir);
     // Rollup's watch mode passes the outputs to the options hook before the first build.
     plugin.options({ output: [{ dir: story, format: 'es' }] });
-    expect(watchFiles(plugin, true).sort()).toEqual([join(story, 'parts'), join(story, 'start.tw')]);
+    expect(watchFiles(plugin, true).sort()).toEqual([
+      join(story, 'parts'),
+      join(story, 'parts', 'more.tw'),
+      join(story, 'start.tw'),
+    ]);
   });
 
   it('registers no output folder inside a source folder, nor what it holds', () => {

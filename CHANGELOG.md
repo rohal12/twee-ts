@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch()` rejects options that can't work (an output that is a named input, an option out of range) instead of reporting them through `onError`, and stops watching when such an error appears later (FS-13, #247)
 - A config file's `output`, and the entries of `sources`, `exclude`, `modules`, `formatPaths`, `formatIndices` and `formatUrls`, must not be empty; tag aliases and their targets must be non-empty and hold no whitespace (FS-16, FS-19, #247)
 - `TweeTsError` has a `code` (`OUTPUT_IS_INPUT`, `INPUT_UNAVAILABLE`, `INVALID_OPTIONS`, `BUILD_FAILED`), and config errors are `TweeTsError`s (#247)
+- The Vite and Rollup plugins check their options when created and throw a `TweeTsError` naming the option for an unknown option (a misspelt `outputFileName`, say), a value of the wrong type, `compileOptions.sources` or `compileOptions.formatId` (set the plugin's `sources` and `format` instead; the two plugins used to give them opposite precedence), and an `outputFilename` that is not a plain relative path (`./index.html`, `../x.html`, `a//b.html`, a backslash, `?`, `#`, `%` or a name Windows reserves). Migrate by moving those values to the top-level options and writing `index.html` for `./index.html` (#249)
+- The dev entry build evaluates the user's configuration for the dev command, as the dev server does: a config function sees `command: 'serve'`, `apply: 'build'` plugins no longer run in dev (and `apply: 'serve'` ones do), and plugins' `config`, `configEnvironment` and `configResolved` hooks see the dev command. A build-only plugin the entry needs in dev must apply to both commands (#249)
+- A Vite build fails with an error naming the file when the bundle already holds a file named as the story's `outputFilename` (the user's own `index.html` input, or another twee-ts instance); it used to replace that file silently. The Rollup plugin fails the same way (#249)
+- The dev server's story reload message names the story's path, so with an `outputFilename` other than `index.html` only the pages showing the story reload (#249)
 
 ### Added
 
@@ -49,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `-o /dev/stdout`, `/dev/fd/N`, FIFOs, `/dev/null` and Windows device names work as output targets (FS-03, #247)
 - Tweego's deprecated `--decompile` is accepted; `--charset` and `-c` given a charset name explain that twee-ts reads UTF-8 (#247)
 - `TweeTsErrorCode` is exported (#247)
+- The plugins export their `PluginCompileOptions` type, the `compileOptions` they accept (#249)
+- With `entry`, a Vite build keeps the user's own inputs (an `index.html` landing page, an array or object of inputs, a library) and bundles the entry with a build of its own, and several twee-ts instances in one build each bundle their own entry (#249)
 - `Twine1Metadata` and `Twine2Metadata`, the types of `Story.twine1` and `Story.twine2`, are exported (#250)
 - CommonJS builds of `@rohal12/twee-ts/vite` and `@rohal12/twee-ts/rollup`; `require()` of either no longer fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` (#250)
 - `@rohal12/twee-ts/package.json` and `@rohal12/twee-ts/schemas/*.json` are exported, so `require.resolve()` and `import.meta.resolve()` find them (#250)
@@ -92,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--tag-alias __proto__=…` keeps the alias (#241)
 - `--list-formats` lists only the cached downloads a build would consider (from the configured format URLs and indices, and the Story Formats Archive), not every download in the cache; `cache list` still lists them all (#247)
 - On Windows, renaming the output over a file another program holds open is retried (#247)
+- The dev entry build replays the user's whole configuration: everything passed to `createServer()` or on the command line, on top of the config file, apart from the keys that configure servers or logging. `base`, `envPrefix`/`envDir`, `css`, `resolve.conditions`/`extensions`, `assetsInclude` and the rest now apply in dev as in a build (#249, #222)
+- The dev entry build prints no progress lines (`transforming...`, `rendering chunks...`), at any log level (#249)
+- Every file the entry was bundled from is watched, also outside the Vite root (a shared package of a monorepo, a workspace link) and modules whose code the bundler inlined; watcher events, module ids and the files a plugin adds with `addWatchFile` are matched by file identity (the real path, without case on a case-insensitive volume); with `server.watch: null` a request for the story catches up with them (#249, #242)
+- The story is built in the client environment only: an SSR or other environment, and an SSR build, no longer get a copy (#249)
+- The dev server serves the story after Vite's own middlewares, so its host check (403 for another `Host` on Vite 5.4.12+), `server.headers` and `Cache-Control: no-cache` apply; only GET and HEAD get the story. An `outputFilename` of `dir/index.html` is also served at `dir/`, as static hosts serve it, and files the entry emits separately are found by their decoded names (`keep%20file.png`) (#249)
+- `rollup --watch` and `vite build --watch` start no build for an edit to a file `exclude` leaves out, and the Vite and Rollup plugins register the same files (#249)
 - The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)
 - TypeScript projects that compile to CommonJS (`module: node16`/`nodenext` in a `.cts` file or a CommonJS package) get the CommonJS declarations instead of TS1479; every entry point has `types` per `import`/`require` condition (#250)
 - `moduleResolution: node10` finds the types of `@rohal12/twee-ts` and `@rohal12/twee-ts/rollup` (`main`, `types`, `typesVersions`). `@rohal12/twee-ts/vite` still needs `node16`, `nodenext` or `bundler`, because Vite's own types do (#250)
