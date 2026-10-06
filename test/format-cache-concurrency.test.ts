@@ -90,7 +90,12 @@ describe('compiles in several processes sharing a cache', () => {
         `process.stdout.write(JSON.stringify({ marker: /<body>(\\S+) /.exec(result.output)?.[1], diagnostics: result.diagnostics }));`,
       ].join('\n'),
     );
-    const env = { ...process.env, XDG_CACHE_HOME: join(tempRoot(), 'cache'), HOME: join(tempRoot(), 'home') };
+    const env = {
+      ...process.env,
+      XDG_CACHE_HOME: join(tempRoot(), 'cache'),
+      HOME: join(tempRoot(), 'home'),
+      USERPROFILE: join(tempRoot(), 'home'),
+    };
     const run = (): Promise<{ code: number | null; stdout: string; stderr: string }> =>
       new Promise((done) => {
         const child = spawn(process.execPath, ['--import', TSX_LOADER, script], { env, cwd: tempRoot() });

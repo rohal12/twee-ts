@@ -242,10 +242,7 @@ describe('table A: one candidate × source × mode × cache state', () => {
     world.server.log.length = 0;
     world.external.length = 0;
 
-    if (mode === 'network down') {
-      await world.server.close();
-      world.external = guardNetwork({}, { offline: true });
-    }
+    if (mode === 'network down') world.external = guardNetwork({}, { offline: true });
     const outcome = await run(WANTED, { ...world.options, noRemote: mode === 'noRemote' });
 
     // Online, the answer never depends on the cache; offline, a source answers only from its own cache.

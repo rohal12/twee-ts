@@ -104,16 +104,18 @@ export const SFA_OFFICIAL_BASE = 'https://videlais.github.io/story-formats-archi
 /**
  * Replace `fetch` so loopback requests go through, and every other request is answered from
  * `remote` (an absolute URL → body table; a missing index answers an empty index, anything else
- * 404). Returns the log of non-loopback URLs requested.
+ * 404). With `offline`, every request fails as with no network at all, loopback ones included
+ * (without waiting on a refused connection, which takes seconds on Windows). Returns the log of
+ * non-loopback URLs requested.
  */
 export function guardNetwork(remote: Readonly<Record<string, string>> = {}, { offline = false } = {}): string[] {
   const realFetch = globalThis.fetch;
   const external: string[] = [];
   vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    if (offline) return Promise.reject(new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND') }));
     if (url.hostname === '127.0.0.1') return realFetch(input, init);
     external.push(url.href);
-    if (offline) return Promise.reject(new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND') }));
     const body = remote[url.href];
     if (body !== undefined) return Promise.resolve(new Response(body));
     if (url.pathname.endsWith('/index.json')) return Promise.resolve(new Response('{"twine1":[],"twine2":[]}'));
