@@ -208,7 +208,7 @@ export function storyGet(story: Story, name: string): Passage | undefined {
   return i === -1 ? undefined : story.passages[i];
 }
 
-export function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
+function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
   const i = position(story, p.name);
   if (i === -1) {
     push(story, p);

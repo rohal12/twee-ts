@@ -180,33 +180,22 @@ function lexName(ctx: LexerContext): StateFn {
   }
   // Always emit a name item, even if empty.
   ctx.emit(ItemType.Name);
-
-  switch (r) {
-    case 0x5b:
-      return lexTags; // [
-    case 0x5d:
-      return ctx.errorf(`unexpected right square bracket ']'`);
-    case 0x7b:
-      return lexMetadata; // {
-    case 0x7d:
-      return ctx.errorf(`unexpected right curly brace '}'`);
-    case 0x0a: // newline
-      ctx.pos++;
-      ctx.ignore();
-      return lexContent;
-    case EOF:
-    default:
-      ctx.emit(ItemType.EOF);
-      return null;
-  }
+  return lexAfterHeaderPart(ctx, r);
 }
 
 function lexNextOptionalBlock(ctx: LexerContext): StateFn {
   // Consume whitespace.
   ctx.acceptRun(' \t');
   ctx.ignore();
+  return lexAfterHeaderPart(ctx, ctx.peek());
+}
 
-  const r = ctx.peek();
+/**
+ * The state after the passage name or an optional block, by the character `r` that follows it (not yet
+ * consumed). The name ends only at one of the characters handled here, so only an optional block can be
+ * followed by an illegal one.
+ */
+function lexAfterHeaderPart(ctx: LexerContext, r: number): StateFn {
   switch (r) {
     case 0x5b:
       return lexTags; // [

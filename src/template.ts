@@ -31,12 +31,6 @@ export type TemplatePart =
  */
 export const CLOSING_HEAD_TAG = '<\\/[Hh][Ee][Aa][Dd](?=[\\t\\n\\f\\r />])[^>]*>';
 
-/**
- * The start of an HTML body start tag: `<body` in any letter case, followed by whitespace, `/` or `>` (so not
- * `<bodyx>`). Only the `<body` is matched; the attributes and `>` after it are left alone.
- */
-export const BODY_START_TAG = '<[Bb][Oo][Dd][Yy](?=[\\t\\n\\f\\r />])';
-
 /** The regular expression source matching exactly `text`. */
 export function literal(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');

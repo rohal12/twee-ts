@@ -363,6 +363,3 @@ export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnost
   if (!decoded.ok) throw new Error(`Cannot parse format ${format.id} JSON: ${decoded.reason}`);
   return decoded.data.source;
 }
-
-/** Read a file as UTF-8 (re-exported for loader use). */
-export { readUTF8 as readFileUTF8 } from './util.js';

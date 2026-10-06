@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Twine1Metadata` and `Twine2Metadata`, the types of `Story.twine1` and `Story.twine2`, are exported (#250)
+
 ### Fixed
 
 - The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)

@@ -55,7 +55,7 @@ export interface BuildOutputs {
 }
 
 /** A build that writes nothing: `compile()`, or output to stdout. */
-export const NO_BUILD_OUTPUTS: BuildOutputs = { files: [], dirs: [] };
+const NO_BUILD_OUTPUTS: BuildOutputs = { files: [], dirs: [] };
 
 /** The outputs of a build that writes the one file `outFile`, or none without it. */
 export function toBuildOutputs(outputs: BuildOutputs | string | undefined): BuildOutputs {

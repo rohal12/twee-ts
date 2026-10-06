@@ -52,6 +52,8 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "knip": "knip",
     "prepublishOnly": "pnpm run typecheck && pnpm test && pnpm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

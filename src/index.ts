@@ -63,6 +63,8 @@ export type {
   Story,
   Passage,
   PassageMetadata,
+  Twine1Metadata,
+  Twine2Metadata,
   StoryFormatInfo,
   OutputMode,
   SourceInput,

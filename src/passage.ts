@@ -34,19 +34,19 @@ export function hasTag(p: ReadonlyPassage, tag: string): boolean {
   return p.tags.includes(tag);
 }
 
-export function hasAnyTag(p: ReadonlyPassage, ...tags: string[]): boolean {
+function hasAnyTag(p: ReadonlyPassage, ...tags: string[]): boolean {
   return p.tags.some((t) => tags.includes(t));
 }
 
-export function hasTagStartingWith(p: ReadonlyPassage, prefix: string): boolean {
+function hasTagStartingWith(p: ReadonlyPassage, prefix: string): boolean {
   return p.tags.some((t) => t.startsWith(prefix));
 }
 
-export function hasInfoTags(p: ReadonlyPassage): boolean {
+function hasInfoTags(p: ReadonlyPassage): boolean {
   return hasAnyTag(p, ...INFO_TAGS) || hasTagStartingWith(p, 'Twine.');
 }
 
-export function hasInfoName(p: ReadonlyPassage): boolean {
+function hasInfoName(p: ReadonlyPassage): boolean {
   return INFO_PASSAGE_NAMES.has(p.name);
 }
 
@@ -58,15 +58,15 @@ export function isStoryPassage(p: ReadonlyPassage): boolean {
   return !hasInfoName(p) && !hasInfoTags(p);
 }
 
-export function hasMetadataPosition(p: ReadonlyPassage): boolean {
+function hasMetadataPosition(p: ReadonlyPassage): boolean {
   return p.metadata?.position != null && p.metadata.position !== '';
 }
 
-export function hasMetadataSize(p: ReadonlyPassage): boolean {
+function hasMetadataSize(p: ReadonlyPassage): boolean {
   return p.metadata?.size != null && p.metadata.size !== '';
 }
 
-export function hasAnyMetadata(p: ReadonlyPassage): boolean {
+function hasAnyMetadata(p: ReadonlyPassage): boolean {
   if (!p.metadata) return false;
   return Object.values(p.metadata).some((v) => v != null && v !== '');
 }

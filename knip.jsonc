@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // The package entry points (package.json "exports" and "bin") are found from package.json;
+  // the tests through the Vitest plugin, and the scripts through package.json "scripts".
+  "entry": ["docs/.vitepress/config.ts"],
+  "project": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "scripts/**/*.{ts,mjs}", "*.config.ts"],
+  "ignoreDependencies": [
+    // Run as binaries from node_modules/.bin by scripts/duplication.ts, which knip cannot follow.
+    "jscpd",
+    "fallow",
+    // For the property-based tests that follow; remove from this list once a test imports it.
+    "fast-check",
+  ],
+}

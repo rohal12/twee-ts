@@ -32,7 +32,7 @@ const DEFAULT_SFA_INDICES = [
 ];
 
 /** How long one story format request (an index or a format.js) may take by default, in milliseconds. */
-export const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
+const DEFAULT_FORMAT_FETCH_TIMEOUT = 30_000;
 
 /** The longest delay a timer accepts; a longer timeout means no limit. */
 const MAX_TIMER_DELAY = 2_147_483_647;
@@ -362,7 +362,11 @@ function cachedFormatInfo(
  * agree. A format.js that names no format ({@link UNNAMED_FORMAT_NAME}) is allowed: such formats
  * exist, and the index entry then supplies the name it is cached under.
  */
-function checkFormatIdentity(entry: DownloadEntry, data: Twine2FormatJSON, downloadUrl: string): void {
+function checkFormatIdentity(
+  entry: Pick<SFAIndexEntry, 'name' | 'version'>,
+  data: Twine2FormatJSON,
+  downloadUrl: string,
+): void {
   const nameMatches = data.name === UNNAMED_FORMAT_NAME || data.name.toLowerCase() === entry.name.toLowerCase();
   if (nameMatches && sameVersion(data.version, entry.version)) return;
   throw new Error(
@@ -371,11 +375,6 @@ function checkFormatIdentity(entry: DownloadEntry, data: Twine2FormatJSON, downl
   );
 }
 
-/** The parts of an index entry a download uses; an entry without checksums is downloaded unchecked. */
-type DownloadEntry = Pick<SFAIndexEntry, 'name' | 'version'> & {
-  readonly checksums?: Readonly<Record<string, string>> | undefined;
-};
-
 /**
  * Download a format, verify its checksum, check that it is the format the entry names, write it to
  * the cache shared by name and version, and return its StoryFormatInfo. Concurrent calls for one
@@ -383,7 +382,10 @@ type DownloadEntry = Pick<SFAIndexEntry, 'name' | 'version'> & {
  * entry, within its own timeout.
  */
 export async function fetchAndCacheFormat(
-  entry: DownloadEntry,
+  // The parts of an index entry a download uses; an entry without checksums is downloaded unchecked.
+  entry: Pick<SFAIndexEntry, 'name' | 'version'> & {
+    readonly checksums?: Readonly<Record<string, string>> | undefined;
+  },
   downloadUrl: string,
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo> {
@@ -524,7 +526,7 @@ function toError(e: unknown): Error {
  * 4. Fall back to a compatible download from the shared cache (e.g. when offline)
  *
  * `options.signal` aborts the lookup, which then rejects with the signal's reason;
- * `options.timeout` limits each request (default {@link DEFAULT_FORMAT_FETCH_TIMEOUT} ms).
+ * `options.timeout` limits each request (default 30000 ms).
  */
 export async function resolveRemoteFormat(
   name: string,
