@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TypeScript projects that compile to CommonJS (`module: node16`/`nodenext` in a `.cts` file or a CommonJS package) get the CommonJS declarations instead of TS1479; every entry point has `types` per `import`/`require` condition (#250)
 - `moduleResolution: node10` finds the types of `@rohal12/twee-ts` and `@rohal12/twee-ts/rollup` (`main`, `types`, `typesVersions`). `@rohal12/twee-ts/vite` still needs `node16`, `nodenext` or `bundler`, because Vite's own types do (#250)
 - The compiler is bundled once per format and shared by every entry point, so `TweeTsError` and module state such as the format caches are the same objects whether loaded through `@rohal12/twee-ts`, `/vite` or `/rollup`; the unpacked package shrinks from 4.0 MB to 2.4 MB (#250)
+- The Vite plugin compares and watches its sources, head file, modules and the entry's dependencies by real path, so `vite build --watch` rebuilds and the dev server sees changes on macOS (`/var` is `/private/var`), on Windows (8.3 short names such as `RUNNER~1`) and in projects reached through a symbolic link (#250)
+- On case-insensitive file systems (macOS, Windows), a story format folder that both `storyformats` and `storyFormats` reach is searched once, at the rank of its first name, so format precedence matches Linux (#250)
 - Builds from a git checkout (tests, git dependencies, `pnpm link`) report the version `0.0.0-development` in `--version` and `creator-version` instead of the stale `1.2.0`; published packages report the released version (#250)
 
 ### Changed
