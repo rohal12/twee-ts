@@ -5,28 +5,35 @@
 import { join, dirname } from 'node:path';
 import type { Diagnostic, PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
 import { readUTF8 } from './util.js';
-import { hasTag, passageToTiddler } from './passage.js';
+import { hasTag, isObfuscatable, passageToTiddler } from './passage.js';
 import { readFormatSource } from './formats.js';
-import { placeHead } from './modules.js';
-import { fillTemplateParts, literal } from './template.js';
-import type { TemplateSlot } from './template.js';
-import { jsStringEscape, htmlCommentSanitize } from './escape.js';
+import { DEFAULT_TWINE1_FOOTER, storyDataProbe, twine1ArchiveStoreArea } from './html-structure.js';
+import { fillFormatTemplate } from './template.js';
+import type { Placeholder } from './template.js';
+import { htmlCommentSanitize, rot13 } from './escape.js';
+import { unrepresentableTextDiagnostics } from './html-output-check.js';
+import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'twee-ts';
 
-export function toTwine1Archive(story: ReadonlyStory, _startName: string): string {
-  const { data, count } = getTwine1PassageChunk(story);
-  return `<div id="storeArea" data-size="${count}">${data}</div>\n`;
+export function toTwine1Archive(
+  story: ReadonlyStory,
+  _startName: string,
+  options?: { readonly diagnostics?: Diagnostic[] },
+): string {
+  const { data, count, diagnostics } = getTwine1PassageChunk(story);
+  options?.diagnostics?.push(...diagnostics);
+  return twine1ArchiveStoreArea(count, data);
 }
 
 /**
  * Fill the Twine 1 format template. The format's components are inserted first, one after another, as Tweego and
- * Twine 1 do. Then the first of each story placeholder (`"VERSION"`, `"TIME"`, `"START_AT"`, `"STORY_SIZE"`,
- * `"STORY"`), the IFID comment and `head` (before the first closing head tag or, with a warning, the body start
- * tag; see `placeHead()`) are found in one pass, so a start passage name or story data holding a placeholder or a
- * closing head tag stays literal. `options.diagnostics` receives a warning for each format file that is not valid
- * UTF-8, and any warning about where `head` went.
+ * Twine 1 do. Then the story placeholders (`"VERSION"`, `"TIME"`, `"START_AT"`, `"STORY_SIZE"`, `"STORY"`), the IFID
+ * comment (before the store area element) and `head` (at the end of the head) are placed by the template's HTML
+ * structure (see `fillFormatTemplate()`), so a start passage name or story data holding a placeholder or a closing
+ * head tag stays literal. `options.diagnostics` receives a warning for each format file that is not valid UTF-8, any
+ * diagnostic about the template, and an error for text that HTML cannot carry.
  */
 export function toTwine1HTML(
   story: ReadonlyStory,
@@ -38,7 +45,9 @@ export function toTwine1HTML(
   const parentDir = dirname(formatDir);
   const diagnostics = options?.diagnostics;
   let template = readFormatSource(format, diagnostics);
-  const { data, count } = getTwine1PassageChunk(story);
+  const chunk = getTwine1PassageChunk(story);
+  const { data, count } = chunk;
+  diagnostics?.push(...chunk.diagnostics);
 
   // Component replacements
   template = tryReplaceComponent(template, '"USER_LIB"', join(formatDir, 'userlib.js'), false, diagnostics);
@@ -57,48 +66,34 @@ export function toTwine1HTML(
   const isPre14 = !template.includes('"STORY"');
   const footer = isPre14 ? readFooter(formatDir, diagnostics) : '';
 
-  // The IFID comment and the head content are also looked for in the footer, if the template has no place for them.
-  const storeArea = (template + footer).includes('<div id="store-area"')
-    ? '<div id="store-area"'
-    : '<div id="storeArea"';
-  const safeIfid = htmlCommentSanitize(story.ifid);
-  const ifid: TemplateSlot | undefined = story.ifid
-    ? { pattern: literal(storeArea), occurrences: 'first', replacement: (div) => `<!-- UUID://${safeIfid}// -->${div}` }
-    : undefined;
-  const placement = placeHead(
-    options?.head ?? '',
-    isPre14 ? [template, footer] : [template],
-    `Story format "${format.name}"`,
-  );
-  diagnostics?.push(...placement.diagnostics);
-  const late = [ifid, placement.slot].filter((slot) => slot !== undefined);
-
-  // Story instance replacements. "START_AT" sits in a script element (`testplay = "START_AT";` in Sugarcane),
-  // which jsStringEscape() keeps whole.
+  // Story instance replacements. "START_AT" is a JavaScript string literal (`testplay = "START_AT";` in Sugarcane),
+  // and "STORY_SIZE" a quoted attribute value (`data-size="STORY_SIZE"`); their quotes are kept as theirs.
   const displayStart = startName === 'Start' ? '' : startName;
-  const slots: readonly TemplateSlot[] = [
-    firstSlot('"VERSION"', `Compiled with ${CREATOR_NAME}, ${VERSION}`),
-    firstSlot('"TIME"', `Built on ${new Date().toUTCString()}`),
-    firstSlot('"START_AT"', `"${jsStringEscape(displayStart)}"`),
-    firstSlot('"STORY_SIZE"', `"${count}"`),
-    firstSlot('"STORY"', data),
-    ...late,
-  ];
-
-  return fillTemplateParts(
-    isPre14
-      ? [
-          { kind: 'scan', text: template, slots },
-          { kind: 'verbatim', text: data },
-          { kind: 'scan', text: footer, slots: late },
-        ]
-      : [{ kind: 'scan', text: template, slots }],
-  );
-}
-
-/** A slot replacing the first `token` with `value`. */
-function firstSlot(token: string, value: string): TemplateSlot {
-  return { pattern: literal(token), occurrences: 'first', replacement: () => value };
+  const probe = storyDataProbe('twine1', chunk.hasText);
+  const storyData: readonly Placeholder[] = isPre14
+    ? []
+    : [{ token: '"STORY"', occurrences: 'first', value: { kind: 'markup', html: data, probe } }];
+  const filled = fillFormatTemplate({
+    template,
+    placeholders: [
+      {
+        token: '"VERSION"',
+        occurrences: 'first',
+        value: { kind: 'text', text: `Compiled with ${CREATOR_NAME}, ${VERSION}` },
+      },
+      { token: '"TIME"', occurrences: 'first', value: { kind: 'text', text: `Built on ${new Date().toUTCString()}` } },
+      { token: '"START_AT"', occurrences: 'first', value: { kind: 'quoted', text: displayStart } },
+      { token: '"STORY_SIZE"', occurrences: 'first', value: { kind: 'quoted', text: String(count) } },
+      ...storyData,
+    ],
+    // The IFID comment and the head content may go into the footer, if the template has no place for them.
+    tail: isPre14 ? { data, footer, probe } : undefined,
+    head: options?.head,
+    beforeStoreArea: story.ifid ? `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->` : undefined,
+    owner: `Story format "${format.name}"`,
+  });
+  diagnostics?.push(...filled.diagnostics);
+  return filled.output;
 }
 
 /** The footer of a pre-1.4 format, or the default one when the format has none. */
@@ -106,7 +101,7 @@ function readFooter(formatDir: string, diagnostics: Diagnostic[] | undefined): s
   try {
     return readUTF8(join(formatDir, 'footer.html'), diagnostics);
   } catch {
-    return '</div>\n</body>\n</html>\n';
+    return DEFAULT_TWINE1_FOOTER;
   }
 }
 
@@ -117,18 +112,50 @@ export function twine1PassageOmission(p: ReadonlyPassage): PassageOmission | und
   return hasTag(p, 'Twine.private') ? { kind: 'tag', tag: 'Twine.private' } : undefined;
 }
 
-function getTwine1PassageChunk(story: ReadonlyStory): { data: string; count: number } {
-  const obfuscateRot13 = story.twine1.settings.get('obfuscate') === 'rot13';
-  let data = '';
-  let count = 0;
-
-  for (const p of story.passages) {
-    if (twine1PassageOmission(p) !== undefined) continue;
-    count++;
-    data += passageToTiddler(p, count, obfuscateRot13);
+/**
+ * The tiddlers of the passages Twine 1 output writes, their count, and the diagnostics about them.
+ *
+ * The tiddlers are ROT13-obfuscated when the StorySettings tiddler that is written says `obfuscate:rot13`, since
+ * that is what tells the engine to decode them; a StorySettings passage left out (`Twine.private`) cannot, so then
+ * nothing is obfuscated, with a warning. Obfuscation that would turn a name into `StorySettings` or a tag into
+ * `Twine.image` is an error: the engine reads such a tiddler as the settings, or as an image it doesn't decode.
+ */
+function getTwine1PassageChunk(story: ReadonlyStory): {
+  data: string;
+  count: number;
+  hasText: boolean;
+  diagnostics: Diagnostic[];
+} {
+  const written = story.passages.filter((p) => twine1PassageOmission(p) === undefined);
+  const obfuscateRot13 = isRot13Obfuscated(written);
+  const diagnostics = unrepresentableTextDiagnostics(story, written);
+  if (!obfuscateRot13 && story.twine1.settings.get('obfuscate') === 'rot13') {
+    diagnostics.push({
+      level: 'warning',
+      message:
+        'The "StorySettings" passage says "obfuscate:rot13", but it is not written to the output (it is tagged ' +
+        '"Twine.private"), so the story engine could not decode obfuscated passages; they are written unobfuscated.',
+    });
   }
+  if (obfuscateRot13) diagnostics.push(...obfuscationCollisions(written));
+  const data = written.map((p, i) => passageToTiddler(p, i + 1, obfuscateRot13)).join('');
+  const hasText = written.some((p) => /[^\t\n\f\r ]/.test(p.text));
+  return { data, count: written.length, hasText, diagnostics };
+}
 
-  return { data, count };
+/** Errors for passages whose ROT13-encoded name or tag is one the Twine 1 engine reads unencoded. */
+function obfuscationCollisions(passages: readonly ReadonlyPassage[]): Diagnostic[] {
+  return passages.filter(isObfuscatable).flatMap((p): Diagnostic[] => {
+    const reserved = [rot13(p.name) === 'StorySettings' ? `its name to "StorySettings"` : undefined]
+      .concat(p.tags.map((tag) => (rot13(tag) === 'Twine.image' ? `its tag "${tag}" to "Twine.image"` : undefined)))
+      .filter((what) => what !== undefined);
+    return reserved.map((what) => ({
+      level: 'error',
+      message:
+        `Passage "${p.name}" cannot be obfuscated: ROT13 turns ${what}, which the Twine 1 engine reads ` +
+        'unencoded, so it would not decode the passage. Rename it, or turn off "obfuscate:rot13".',
+    }));
+  });
 }
 
 function tryReplaceComponent(

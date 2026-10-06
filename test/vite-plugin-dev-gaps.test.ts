@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DomUtils, parseDocument } from 'htmlparser2';
+import { attr, elements, parentTag } from './helpers/html.js';
 import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import {
@@ -345,9 +345,7 @@ describe.skipIf(!hasEntry || peerRun)(
 
 describe('vite plugin: the client script in the served head', { timeout: 30_000 }, () => {
   function clientScripts(html: string) {
-    return DomUtils.getElementsByTagName('script', parseDocument(html), true).filter(
-      (script) => script.attribs['src'] === '/@vite/client',
-    );
+    return elements(html, (e) => e.tagName === 'script' && attr(e, 'src') === '/@vite/client');
   }
 
   async function serveTemplate(source: string): Promise<string> {
@@ -363,8 +361,7 @@ describe('vite plugin: the client script in the served head', { timeout: 30_000 
     return (await fetch(url)).text();
   }
 
-  const parentName = (script: { parent: unknown }): string | undefined =>
-    (script.parent as { name?: string } | null)?.name;
+  const parentName = parentTag;
   const BODY = '<body>{{STORY_DATA}}</body></html>';
 
   it('puts exactly one client element in the real head and leaves a comment look-alike alone', async () => {

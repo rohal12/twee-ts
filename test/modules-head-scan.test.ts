@@ -2,31 +2,31 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { findHeadStartEnd, loadHeadContent, loadModules, scanHeadTags } from '../src/modules.js';
+import { loadHeadContent, loadModules } from '../src/modules.js';
+import { locateHeadEnd, locateHeadStart } from '../src/html-structure.js';
 
-describe('scanHeadTags: text that only looks like markup', () => {
-  it('skips a lone < in text and finds the tags after it', () => {
-    const html = '<html><head><title>a</title><p>1 < 2</p></head><body>x</body></html>';
-    expect(scanHeadTags(html).closingHead).toBe(html.indexOf('</head>'));
-    expect(scanHeadTags(html).bodyStart).toBe(html.indexOf('<body>'));
+describe('locating the head: text that only looks like markup', () => {
+  it('skips a lone < in text and finds the closing head tag after it', () => {
+    const html = '<html><head><title>a</title></head><body><p>1 < 2</p></body></html>';
+    expect(locateHeadEnd(html)).toEqual({ offset: html.indexOf('</head>'), how: 'end-tag' });
   });
 
-  it('finds nothing after an unterminated doctype or processing instruction', () => {
-    expect(scanHeadTags('<!doctype html <body')).toEqual({ closingHead: undefined, bodyStart: undefined });
-    expect(scanHeadTags('<?xml version="1.0" <body')).toEqual({
-      closingHead: undefined,
-      bodyStart: undefined,
-    });
+  it('reads a doctype or processing instruction as the browser does, up to the first >', () => {
+    const doctype = '<!doctype html <body><head></head>';
+    expect(locateHeadEnd(doctype)).toEqual({ offset: doctype.indexOf('</head>'), how: 'end-tag' });
+    const pi = '<?xml version="1.0" <body><head></head>';
+    expect(locateHeadEnd(pi)).toEqual({ offset: pi.indexOf('</head>'), how: 'end-tag' });
   });
 
-  it('ends a tag with an unterminated quoted attribute value at the end of the text', () => {
-    expect(scanHeadTags('<p class="open </head><body>')).toEqual({ closingHead: undefined, bodyStart: undefined });
+  it('drops a tag with an unterminated quoted attribute value, as the browser does at the end of the document', () => {
+    const html = '<head><title>t</title><p class="open </head><body>';
+    expect(locateHeadEnd(html)).toEqual({ offset: html.indexOf('<p'), how: 'implicit-end' });
   });
 
   it('reads an attribute value after whitespace following the equals sign, quoted or not', () => {
     const html = '<head data-x =  "a>b" data-y=  c></head><body>';
-    expect(scanHeadTags(html).closingHead).toBe(html.indexOf('</head>'));
-    expect(findHeadStartEnd(html)).toBe(html.indexOf('></head>') + 1);
+    expect(locateHeadEnd(html)).toEqual({ offset: html.indexOf('</head>'), how: 'end-tag' });
+    expect(locateHeadStart(html)).toEqual({ offset: html.indexOf('></head>') + 1, how: 'start-tag' });
   });
 });
 

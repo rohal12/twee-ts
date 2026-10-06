@@ -308,6 +308,8 @@ twee-ts reads only the package's `format.js`, from the folder the package is ins
 
 These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md). A Twine 1 format package holds a `header.html` instead, as a Twine 1 format folder does.
 
+Each `{{STORY_NAME}}` gets the story name escaped for where it is, as the HTML parser reads the template: HTML-escaped in text and attribute values (as Twine 2 does), percent-encoded in a URL attribute such as `href`, and in a JavaScript string or template literal HTML-escaped (so SugarCube's `Util.unescape()` gets the name back) with `\`, line breaks, U+2028 and U+2029 escaped for JavaScript. A JSON data block or a CSS string gets JSON or CSS escaping. Where no escaping keeps the value (JavaScript code outside a literal, raw text, inside a tag), the name is HTML-escaped as Twine 2 writes it, with a warning. `{{STORY_DATA}}` is replaced at its first occurrence where the browser reads the story data as elements of the page (not in a comment, a script or the title).
+
 ## Naming Convention
 
 We recommend the `@twine-formats/` npm scope for community packages, with the format ID as the package name, so that the installed folder is the format ID:
