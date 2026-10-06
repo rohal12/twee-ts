@@ -10,6 +10,7 @@ import { compile } from '../src/compiler.js';
 import { parseTwee } from '../src/parser.js';
 import { StoryBuilder, createStory, decodeStoryData, marshalStoryData } from '../src/story.js';
 import { toTwee } from '../src/output-twee.js';
+import { decompileHTML } from '../src/html-parser.js';
 import type { CompileResult, Diagnostic, OutputMode } from '../src/types.js';
 
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
@@ -138,5 +139,30 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
       line: 1,
       message: expect.stringContaining('a.tw (line 1)'),
     });
+  });
+
+  it('D-14: keeps the tw-storydata attributes and renames a passage named StoryData', () => {
+    const { story, diagnostics } = decompileHTML(
+      `<tw-storydata name="S" startnode="1" ifid="${IFID}" format="SugarCube">` +
+        '<tw-passagedata pid="1" name="Start">x</tw-passagedata>' +
+        '<tw-passagedata pid="2" name="StoryData">{"format":"Harlowe"}</tw-passagedata></tw-storydata>',
+    );
+    expect([story.ifid, story.twine2.format, story.twine2.start]).toEqual([IFID, 'SugarCube', 'Start']);
+    expect(story.passages.map((p) => p.name)).toContain('StoryData 2');
+    expect(diagnostics.map((d) => d.level)).toEqual(['warning']);
+  });
+
+  it('D-15: reads numbers in attributes whole, and warns about a startnode no passage has', () => {
+    const { story, diagnostics } = decompileHTML(
+      `<tw-storydata name="S" startnode="7" zoom="Inf" ifid="${IFID}">` +
+        '<tw-passagedata pid="1x" name="Start">x</tw-passagedata></tw-storydata>',
+    );
+    expect(story.twine2.zoom).toBe(1);
+    expect(story.twine2.start).toBe('');
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      'Cannot parse "tw-storydata" content attribute "zoom" as a float; value "Inf".',
+      'Cannot parse "tw-passagedata" content attribute "pid" as an integer; value "1x".',
+      'The "tw-storydata" content attribute "startnode" is 7, but no "tw-passagedata" has that "pid"; the story has no start passage.',
+    ]);
   });
 });

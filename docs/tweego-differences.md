@@ -39,3 +39,9 @@ Go was not available when this list was made, so the comparisons come from readi
 ## Diagnostics
 
 **D-13. Locations.** Diagnostics about a passage carry its file and line, and the warning about a duplicate passage also names the file and line of the passage it replaces.
+
+## Reading Twine 2 HTML
+
+**D-14. Passages named StoryData or StoryTitle.** In Twine 2 HTML the story metadata and name are the `tw-storydata` attributes, which Twine 2 and the story formats read; a passage named StoryData or StoryTitle is an ordinary passage to them. twee-ts keeps the attributes and gives such a passage the next free name (`StoryData 2`), with a warning, unless it is a StoryTitle that holds the story name. Tweego reads the passage as the special passage, so a StoryData passage overrides the IFID, format and start passage the attributes give.
+
+**D-15. Numbers in attributes.** `startnode` and `pid` are read as Go's `strconv.Atoi` reads them (an optional sign and decimal digits), up to 2^53 − 1. `zoom` must be a finite decimal number (`0.6`, `.5`, `6e-1`); Go's `ParseFloat` also accepts `Inf`, `NaN`, hexadecimal and underscores, which twee-ts reports as it reports any value it cannot read. A `startnode` that no passage has as its `pid` is a warning; Tweego leaves the story without a start passage silently.
