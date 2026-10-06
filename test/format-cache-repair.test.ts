@@ -52,8 +52,12 @@ function usable(origin: CacheOrigin): boolean {
 
 describe('saving a download over a damaged content directory (#275)', () => {
   const DAMAGE = {
-    'a corrupted main file': (dir: string) => writeFileSync(join(dir, 'format.js'), 'corrupted'),
-    'a missing main file': (dir: string) => rmSync(join(dir, 'format.js')),
+    'a corrupted main file': (dir: string) => {
+      writeFileSync(join(dir, 'format.js'), 'corrupted');
+    },
+    'a missing main file': (dir: string) => {
+      rmSync(join(dir, 'format.js'));
+    },
     'a main file that became a folder': (dir: string) => {
       rmSync(join(dir, 'format.js'));
       mkdirSync(join(dir, 'format.js'));

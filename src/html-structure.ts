@@ -110,6 +110,18 @@ export function findStoryData(doc: HtmlDocument): HtmlElement | undefined {
   return findElement(doc, (element) => element.tagName === 'tw-storydata');
 }
 
+/**
+ * Whether any text of the document, script and style text included, or any comment, contains `needle`. Markup
+ * that only holds the text in an attribute value does not count.
+ */
+export function documentTextContains(doc: HtmlDocument, needle: string): boolean {
+  for (const { node } of descendants(doc, false)) {
+    if (node.nodeName === '#text' && 'value' in node && node.value.includes(needle)) return true;
+    if (node.nodeName === '#comment' && 'data' in node && node.data.includes(needle)) return true;
+  }
+  return false;
+}
+
 /** What names the Twine 1 store area in diagnostics. */
 export const STORE_AREA_DESCRIPTION = 'element with the id "store-area" or "storeArea"';
 
