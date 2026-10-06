@@ -180,7 +180,19 @@ async function editExcludedThenSource(
   await saveUntilBuilt('WARM_TEXT');
   changes.length = 0;
   writeFileSync(project.image, 'two');
+  // A build already under way may read an edit before its event arrives, so the edits are
+  // done when the watcher has reported two saves made after the image's: by then it has
+  // reported the image too, had it watched it.
+  const sourceChanges = (): number => changes.filter((id) => id.endsWith('/start.tw')).length;
   await saveUntilBuilt('NEW_TEXT');
+  await vi.waitFor(() => {
+    expect(sourceChanges()).toBeGreaterThan(0);
+  }, SETTLED);
+  const seen = sourceChanges();
+  await saveUntilBuilt('LAST_TEXT');
+  await vi.waitFor(() => {
+    expect(sourceChanges()).toBeGreaterThan(seen);
+  }, SETTLED);
   return changes;
 }
 
