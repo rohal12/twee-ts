@@ -5,7 +5,7 @@
  * to 8 (see vitest.peer.config.ts), so a test checks `hasEntry` before using
  * the entry option.
  */
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -71,6 +71,16 @@ function isBuildWatcher(value: unknown): value is BuildWatcher {
 }
 
 const dirs: string[] = [];
+
+/**
+ * A new temporary folder, by its real path: Vite reads the root by its real
+ * path, and a build input or a watched file named another way (macOS's /var for
+ * /private/var, a Windows 8.3 name such as RUNNER~1) would not lie inside it.
+ * The tests that are about such spellings make them themselves.
+ */
+function newTempDir(): string {
+  return realpathSync.native(mkdtempSync(join(tmpdir(), 'twee-ts-plugin-')));
+}
 const servers: ViteDevServer[] = [];
 const watchers: BuildWatcher[] = [];
 
@@ -96,7 +106,7 @@ export async function startBuildWatch(config: InlineConfig): Promise<BuildWatche
 
 /** A temporary project with `files` (relative path to content); removed by cleanUp(). */
 export function makeProject(files: Readonly<Record<string, string | Uint8Array>>): string {
-  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-plugin-'));
+  const dir = newTempDir();
   dirs.push(dir);
   writeFiles(dir, files);
   return dir;
@@ -113,7 +123,7 @@ export function writeFiles(dir: string, files: Readonly<Record<string, string | 
 
 /** Another temporary folder, removed by cleanUp(). */
 export function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'twee-ts-plugin-'));
+  const dir = newTempDir();
   dirs.push(dir);
   return dir;
 }

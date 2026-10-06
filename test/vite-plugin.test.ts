@@ -557,7 +557,8 @@ describe(
 
     it('watches neither the story it writes nor a folder that holds it, and rebuilds for an edit', async () => {
       const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT'), 'story/parts/more.tw': ':: More\nMore\n' });
-      const story = toPosix(join(dir, 'story'));
+      // The bundler watches real paths (macOS FSEvents reports nothing else).
+      const story = toPosix(realpathSync.native(join(dir, 'story')));
       const preview = join(dir, 'story', 'preview');
       const out = join(preview, 'index.html');
       const files: string[] = [];
