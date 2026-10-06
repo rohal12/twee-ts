@@ -141,6 +141,12 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     });
   });
 
+  it('D-16: escapes a Twee2 position as a JSON string', () => {
+    const { passages, diagnostics } = parseTwee(':: A <1","size":"9,9>\nx', { twee2Compat: true });
+    expect(diagnostics).toEqual([]);
+    expect(passages[0]?.metadata).toEqual({ position: '1","size":"9,9' });
+  });
+
   it('D-14: keeps the tw-storydata attributes and renames a passage named StoryData', () => {
     const { story, diagnostics } = decompileHTML(
       `<tw-storydata name="S" startnode="1" ifid="${IFID}" format="SugarCube">` +

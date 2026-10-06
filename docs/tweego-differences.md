@@ -45,3 +45,7 @@ Go was not available when this list was made, so the comparisons come from readi
 **D-14. Passages named StoryData or StoryTitle.** In Twine 2 HTML the story metadata and name are the `tw-storydata` attributes, which Twine 2 and the story formats read; a passage named StoryData or StoryTitle is an ordinary passage to them. twee-ts keeps the attributes and gives such a passage the next free name (`StoryData 2`), with a warning, unless it is a StoryTitle that holds the story name. Tweego reads the passage as the special passage, so a StoryData passage overrides the IFID, format and start passage the attributes give.
 
 **D-15. Numbers in attributes.** `startnode` and `pid` are read as Go's `strconv.Atoi` reads them (an optional sign and decimal digits), up to 2^53 − 1. `zoom` must be a finite decimal number (`0.6`, `.5`, `6e-1`); Go's `ParseFloat` also accepts `Inf`, `NaN`, hexadecimal and underscores, which twee-ts reports as it reports any value it cannot read. A `startnode` that no passage has as its `pid` is a warning; Tweego leaves the story without a start passage silently.
+
+## Twee2 conversion
+
+**D-16. Twee2 positions are escaped.** Converting a Twee2 header (`--twee2-compat`, `.tw2` files), twee-ts writes the position as a JSON string, so a `"`, `\` or control character in `<…>` stays part of the position. Tweego puts the text in as it is, so `:: A <1","size":"9,9>` gets a `size` key and `:: A <1\>` metadata that is not valid JSON.

@@ -14,12 +14,14 @@ const DETECT = /(?<=^|\n)::[ ]*[^[]*?(?:[ ]*\[[^\n]*?\])?[ ]*<([^\n]*?)>[ ]*(?=\
 const HEADER = /(?<=^|\n)(::[ ]*[^[]*?)([ ]*\[[^\n]*?\])?(?:[ ]*<([^\n]*?)>)?[ ]*(?=\n|$)/g;
 const BAD_POSITION = /(?<=^|\n)(::[^\n]*?)[ ]*\{"position":"[ ]*"\}(?=\n|$)/g;
 
+/** Tweego's conversion, with the one intended difference (D-16): the position is escaped as a JSON string. */
 function tweegoToV3(s: string): string {
   if (!DETECT.test(s)) return s;
   return s
     .replace(
       HEADER,
-      (_m, p1: string, p2: string | undefined, p3: string | undefined) => `${p1}${p2 ?? ''} {"position":"${p3 ?? ''}"}`,
+      (_m, p1: string, p2: string | undefined, p3: string | undefined) =>
+        `${p1}${p2 ?? ''} {"position":"${JSON.stringify(p3 ?? '').slice(1, -1)}"}`,
     )
     .replace(BAD_POSITION, '$1');
 }

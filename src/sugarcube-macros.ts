@@ -596,8 +596,9 @@ function linkDestination(link: string): string {
 
 /**
  * The passage that link markup from `start` in `text` names, and where the markup ends, or
- * `undefined` where SugarCube rejects the markup. Image markup names none here, nor does markup
- * with a template literal's `${…}` in it, whose passage is known only in play.
+ * `undefined` where SugarCube rejects the markup. Image markup names the passage of its link
+ * component (`[img[pic.png][Room]]`), which SugarCube goes to on a click, and none without one.
+ * Markup with a template literal's `${…}` in it names none: its passage is known only in play.
  */
 function linkMarkupAt(
   text: string,
@@ -608,8 +609,7 @@ function linkMarkupAt(
   if (markup === undefined) {
     return undefined;
   }
-  const passage =
-    markup.type === 'link' && !text.slice(start, markup.end).includes(SUBSTITUTION) ? markup.link : undefined;
+  const passage = text.slice(start, markup.end).includes(SUBSTITUTION) ? undefined : markup.link;
   return {
     link: passage === undefined ? undefined : { via: 'markup', passage: linkDestination(passage) },
     end: markup.end,
@@ -678,6 +678,7 @@ function innerPassageLink(
 // it comes first, as in SugarCube: `//*` is italics.
 const REGION_OPEN_RE = /\[\[[^[]|\[[<>]?[Ii][Mm][Gg]\[|\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]/g;
 const HAS_SCRIPT_OPEN_RE = /<[Ss][Cc][Rr][Ii][Pp][Tt]/;
+const HAS_IMAGE_OPEN_RE = /\[[<>]?[Ii][Mm][Gg]\[/;
 type RegionKind = 'markup' | '//' | CommentKind | 'script';
 
 function regionKind(opener: string): RegionKind {
@@ -880,7 +881,7 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * `<<` the walk reaches, and link or image markup read at each `[[` or `[img[`; markup SugarCube
  * rejects is read on from just after its opener, and so is markup after a limit on how much
  * markup a reading may scan, which only input built to take quadratic time reaches (see
- * `readSquareBracketedMarkup`). Image markup names no passage here. Of the wikifier's other
+ * `readSquareBracketedMarkup`). Image markup names the passage of its link component. Of the wikifier's other
  * parsers, only those whose text holds no link or call are told apart: comments (`/* … *` + `/`,
  * `/% … %/`, `<!-- … -->`), whose links and calls never run, and `<script>` elements and
  * `<<script>>` bodies, which are JavaScript: only the links and calls in their strings are read
@@ -923,7 +924,7 @@ export function findPassageLinks(text: string): PassageLink[] {
 function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
   if (
     context.depth > MAX_STRING_DEPTH ||
-    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text))
+    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
   ) {
     return [];
   }
@@ -1044,12 +1045,14 @@ export function findJavaScriptPassageLinks(source: string): PassageLink[] {
  * `\x3c`, `\u003c`, `\u{…}` or, in sloppy mode, the octal `\74` or `\074`; two can be next to
  * each other with only line continuations between, and the first is `<` or `\<` (then the source
  * holds `<<` or `<\`) or one of the others. A value holding `[[`, likewise: the source holds `[[`,
- * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. Or a
- * value holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the
- * outer string encodes.
+ * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. A value
+ * holding image markup (`[img[`, `[<img[`, `[>img[`): the source holds a `[` (or one of its
+ * escapes, above) followed by an `i`, by `<` or `>` and an `i`, or by an escape. Or a value
+ * holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the outer
+ * string encodes.
  */
 const MAY_HOLD_LINK_RE = new RegExp(
-  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133`,
+  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133|\[[<>]?[i\\]`,
   'i',
 );
 

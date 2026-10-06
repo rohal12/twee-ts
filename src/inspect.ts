@@ -81,7 +81,7 @@ export interface BrokenLink {
  * - `<<link "Display" "PassageName">>`  (SugarCube macro)
  *
  * In link markup, the first `|`, `->` or `<-` divides the text from the passage name; image
- * markup (`[img[…][PassageName]]`) is not read. SugarCube macro arguments may be double- or
+ * markup links to the passage of its link component (`[img[pic.png][PassageName]]`). SugarCube macro arguments may be double- or
  * single-quoted, with backslash escapes, or bare words; a passage named by a variable or an
  * expression is known only in play and is skipped. Links and macro calls are also read inside the
  * quoted strings of macros' arguments, and inside the strings of `<<script>>` bodies and
