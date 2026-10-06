@@ -494,15 +494,43 @@ export function getFormatIdByName(formats: ReadonlyMap<string, StoryFormatInfo>,
 // --- Format sources ---
 
 /** The bytes of formats that were downloaded, kept with their info so they are never read back from disk. */
-const downloadedBytes = new WeakMap<StoryFormatInfo, { readonly bytes: Uint8Array; readonly from: string }>();
+const downloadedBytes = new WeakMap<
+  StoryFormatInfo,
+  { readonly bytes: Uint8Array; readonly from: string; readonly files: ReadonlyMap<string, Uint8Array> }
+>();
 
 /**
  * Keep the bytes of a downloaded format with its info, so {@link readFormatSource} uses exactly the
- * bytes that were verified, even when the cache could not be written or changes later.
+ * bytes that were verified, even when the cache could not be written or changes later. `files` are all
+ * the files of the download (a Twine 1 format's `code.js` and `userlib.js` besides its header), which
+ * {@link readFormatComponent} reads.
  */
-export function withFormatBytes(info: StoryFormatInfo, bytes: Uint8Array, from: string): StoryFormatInfo {
-  downloadedBytes.set(info, { bytes, from });
+export function withFormatBytes(
+  info: StoryFormatInfo,
+  bytes: Uint8Array,
+  from: string,
+  files: ReadonlyMap<string, Uint8Array>,
+): StoryFormatInfo {
+  downloadedBytes.set(info, { bytes, from, files });
   return info;
+}
+
+/**
+ * A component file of a downloaded format (`code.js`, `userlib.js`), as the verified download has it, or
+ * `undefined` when the format is not a download or the download has no such file. `diagnostics` receives a
+ * warning when it is not valid UTF-8 (it is read as Windows-1252).
+ */
+export function readFormatComponent(
+  format: StoryFormatInfo,
+  file: string,
+  diagnostics?: Diagnostic[],
+): string | undefined {
+  const downloaded = downloadedBytes.get(format);
+  const bytes = downloaded?.files.get(file);
+  if (downloaded === undefined || bytes === undefined) return undefined;
+  const decoded = decodeText(bytes, `${downloaded.from} (${file})`);
+  diagnostics?.push(...decoded.diagnostics);
+  return normalizeSourceText(decoded.text);
 }
 
 /**

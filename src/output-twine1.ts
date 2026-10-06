@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import type { Diagnostic, PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
 import { readUTF8 } from './util.js';
 import { hasTag, isObfuscatable, passageToTiddler } from './passage.js';
-import { readFormatSource } from './formats.js';
+import { readFormatComponent, readFormatSource } from './formats.js';
 import { DEFAULT_TWINE1_FOOTER, storyDataProbe, twine1ArchiveStoreArea } from './html-structure.js';
 import { fillFormatTemplate } from './template.js';
 import type { Placeholder } from './template.js';
@@ -53,10 +53,26 @@ export function toTwine1HTML(
   diagnostics?.push(...chunk.diagnostics);
 
   // Component replacements
-  template = tryReplaceComponent(template, '"USER_LIB"', join(formatDir, 'userlib.js'), false, diagnostics);
+  // The format's own components come from the verified download when it is one, else from its folder.
+  const own = (file: string) => (): string | undefined => readFormatComponent(format, file, diagnostics);
+  template = tryReplaceComponent(
+    template,
+    '"USER_LIB"',
+    join(formatDir, 'userlib.js'),
+    false,
+    diagnostics,
+    own('userlib.js'),
+  );
   template = tryReplaceComponent(template, '"ENGINE"', join(parentDir, 'engine.js'), true, diagnostics);
-  template = tryReplaceComponent(template, '"SUGARCANE"', join(formatDir, 'code.js'), true, diagnostics);
-  template = tryReplaceComponent(template, '"JONAH"', join(formatDir, 'code.js'), true, diagnostics);
+  template = tryReplaceComponent(
+    template,
+    '"SUGARCANE"',
+    join(formatDir, 'code.js'),
+    true,
+    diagnostics,
+    own('code.js'),
+  );
+  template = tryReplaceComponent(template, '"JONAH"', join(formatDir, 'code.js'), true, diagnostics, own('code.js'));
 
   if (story.twine1.settings.get('jquery') === 'on') {
     template = tryReplaceComponent(template, '"JQUERY"', join(parentDir, 'jquery.js'), true, diagnostics);
@@ -170,10 +186,11 @@ function tryReplaceComponent(
   componentPath: string,
   required: boolean,
   diagnostics: Diagnostic[] | undefined,
+  downloaded?: () => string | undefined,
 ): string {
   if (!template.includes(placeholder)) return template;
   try {
-    const content = readUTF8(componentPath, diagnostics);
+    const content = downloaded?.() ?? readUTF8(componentPath, diagnostics);
     return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) {
