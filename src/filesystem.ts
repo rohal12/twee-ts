@@ -440,15 +440,16 @@ function nearestFolderAbove(
 }
 
 function rootState(abs: string): RootState {
-  const byPath = new Map<string, { id: string; names: Set<string> }>();
+  // One watch per folder, however many spellings reach it (the path as written, and its real path).
+  const byFolder = new Map<string, { path: string; names: Set<string> }>();
   for (const location of linkLocations(abs)) {
     const anchor = nearestFolderAbove(location);
     if (anchor === undefined) continue;
-    const entry = byPath.get(anchor.path) ?? { id: anchor.id, names: new Set<string>() };
+    const entry = byFolder.get(anchor.id) ?? { path: anchor.path, names: new Set<string>() };
     entry.names.add(anchor.name);
-    byPath.set(anchor.path, entry);
+    byFolder.set(anchor.id, entry);
   }
-  const anchors = [...byPath].map(([path, { id, names }]) => ({ path, id, names }));
+  const anchors = [...byFolder].map(([id, { path, names }]) => ({ path, id, names }));
   return { anchors, self: pathKind(abs) };
 }
 

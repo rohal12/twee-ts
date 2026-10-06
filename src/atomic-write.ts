@@ -27,7 +27,7 @@ import {
   writeSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, posix, resolve } from 'node:path';
 import { identify } from './path-identity.js';
 
 /**
@@ -75,7 +75,7 @@ type WriteStrategy = 'atomic' | 'in-place' | 'stream';
  * by its `/dev/fd` path.
  */
 export function ownDescriptor(path: string): number | undefined {
-  const match = /^\/dev\/(?:(stdout)|(stderr)|fd\/(\d+))$|^\/proc\/self\/fd\/(\d+)$/.exec(resolve(path));
+  const match = /^\/dev\/(?:(stdout)|(stderr)|fd\/(\d+))$|^\/proc\/self\/fd\/(\d+)$/.exec(posix.resolve(path));
   if (match === null) return undefined;
   if (match[1] !== undefined) return 1;
   if (match[2] !== undefined) return 2;
@@ -155,7 +155,7 @@ export function isStreamPath(path: string, platform: NodeJS.Platform): boolean {
   if (platform === 'win32') {
     return path.startsWith('\\\\.\\') || WINDOWS_DEVICE.test(path);
   }
-  return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(resolve(path));
+  return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(posix.resolve(path));
 }
 
 /** Replaces `target` with a temporary file holding `data`, keeping the permissions of the file replaced. */

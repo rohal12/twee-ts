@@ -454,6 +454,14 @@ function runCacheClear(name: string | undefined): void {
 quietOnClosedPipe(process.stdout);
 quietOnClosedPipe(process.stderr);
 
+// Node 22 before 22.14 flags path.matchesGlob, which exclude globs use, as experimental; that warning tells a
+// twee-ts user nothing. Other warnings are printed as Node prints them.
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'ExperimentalWarning' && warning.message.startsWith('glob is an experimental feature')) return;
+  log(`(node:${process.pid}) ${warning.name}: ${warning.message}`);
+});
+
 main(process.argv.slice(2)).then(
   (status) => {
     // process.exitCode, not process.exit(): output still being written to a pipe is not cut off.

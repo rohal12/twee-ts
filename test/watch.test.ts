@@ -1335,7 +1335,8 @@ describe('watchFilesystem events and timing (#247)', () => {
 
   beforeEach(() => {
     vi.useFakeTimers(FAKE_TIMERS);
-    root = mkdtempSync(join(tmpdir(), 'twee-ts-watch-events-'));
+    // The real path, so the macOS link /var adds no watch of its own.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-watch-events-')));
     story = join(root, 'story');
     mkdirSync(story);
     writeFileSync(join(story, 'a.tw'), ':: A\nOne\n');

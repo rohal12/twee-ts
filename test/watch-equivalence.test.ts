@@ -89,6 +89,24 @@ function startWatch(sources: CompileOptions['sources'], extra: Partial<CompileOp
 
 const readOut = (): string => (existsSync(outFile) ? readFileSync(outFile, 'utf-8') : '');
 
+/**
+ * Waits until the OS watcher reports changes: rewrites `file` with the content it has until a build
+ * follows. macOS's FSEvents stream starts some time after fs.watch() returns, and a change made before it
+ * has started is never reported; a user's edits come later than that, a test's first operation may not.
+ */
+async function primed(w: Watching, file: string): Promise<void> {
+  const content = readFileSync(file);
+  const before = w.builds.length;
+  let polls = 0;
+  await eventually(
+    () => {
+      if (polls++ % 25 === 0) writeFileSync(file, content);
+      return w.builds.length > before;
+    },
+    () => `a build after rewriting ${file}`,
+  );
+}
+
 /** Waits until the watch's output is what a fresh compile of the tree gives. */
 async function converges(w: Watching, label: () => string): Promise<void> {
   let expected = '';
@@ -235,6 +253,8 @@ describe('watch output equals a fresh compile after any sequence of operations',
         const w = startWatch([STORY_DATA, src], { outputMode: 'twine2-archive', sourceInfo: true });
         try {
           await converges(w, () => 'initial build');
+          await primed(w, join(src, 'a.tw'));
+          await converges(w, () => 'after priming');
           for (const [i, op] of ops.entries()) {
             apply(op);
             await converges(w, () => `after ${JSON.stringify(ops.slice(0, i + 1))}`);
@@ -262,6 +282,7 @@ describe('folders moved or renamed under a watched folder (FS-04)', { timeout: 3
         () => readOut().includes('SIDE'),
         () => 'first build',
       );
+      await primed(w, join(src, 'main.tw'));
       renameSync(join(src, 'sub'), join(outside, 'sub'));
       await eventually(
         () => readOut() !== '' && !readOut().includes('SIDE'),
@@ -280,6 +301,7 @@ describe('folders moved or renamed under a watched folder (FS-04)', { timeout: 3
         () => readOut().includes('sub/side.tw') || readOut().includes('sub\\side.tw'),
         () => 'first build',
       );
+      await primed(w, join(src, 'main.tw'));
       renameSync(join(src, 'sub'), join(src, 'chapter.v2'));
       await eventually(
         () => readOut().includes('chapter.v2'),

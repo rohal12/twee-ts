@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
@@ -35,7 +35,9 @@ let handle: WatchHandle | undefined;
 let errors: WatchPathError[];
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'twee-ts-fs-watch-err-'));
+  // The real path: on macOS the temporary folder is reached through the link /var, whose folder the watcher
+  // would watch as well, which would change the watcher order the tests rely on.
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'twee-ts-fs-watch-err-')));
   watchers.length = 0;
   errors = [];
 });

@@ -233,11 +233,9 @@ describe('the input policy applied', () => {
       expect(result.diagnostics).toEqual([]);
     });
 
-    it('a named FIFO or device is skipped with a warning', async () => {
-      const result = await compile({
-        ...options,
-        sources: [story, process.platform === 'win32' ? 'NUL' : '/dev/null'],
-      });
+    // Windows has no device path that stat() can see.
+    it.skipIf(process.platform === 'win32')('a named FIFO or device is skipped with a warning', async () => {
+      const result = await compile({ ...options, sources: [story, '/dev/null'] });
       expect(result.diagnostics).toContainEqual(
         expect.objectContaining({ level: 'warning', message: expect.stringMatching(/Not a regular file; skipped\./) }),
       );
