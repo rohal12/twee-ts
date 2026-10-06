@@ -11,7 +11,7 @@
 
 TypeScript reimplementation of [Tweego](https://www.motoslave.net/tweego/) — a command-line compiler for Twine/Twee interactive fiction projects.
 
-Zero runtime dependencies. Node.js 22+.
+Zero runtime dependencies. Node.js 22.12+.
 
 **[Documentation](https://rohal12.github.io/twee-ts/)**
 

@@ -76,7 +76,10 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      # tsdown itself needs Node 22.18+; the package's runtime on 22.12.0 is checked by the
+      # package workflow's consumers job instead.
       - name: Build
+        if: matrix.node-version != '22.12.0'
         run: pnpm run build
 
   coverage:
