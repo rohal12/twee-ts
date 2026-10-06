@@ -3,6 +3,7 @@ import { basename, join, parse, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   chmodSync,
+  linkSync,
   mkdtempSync,
   realpathSync,
   renameSync,
@@ -320,6 +321,25 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
       expect(output.isOutput(join(build, 'x.tw'), [build])).toBe(false);
     });
 
+    it('knows the hard links of an output that did not exist when it was built, and of one replaced since (#268)', () => {
+      const out = join(root, 'out.html');
+      const alias = join(story, 'alias.html');
+      const output = outputPaths({ files: [out], dirs: [] });
+      // The output is missing when the paths are made, then written, and an alias made.
+      writeFileSync(out, 'one');
+      linkSync(out, alias);
+      expect(output.isFile(alias)).toBe(true);
+      // An atomic replacement is a new file: its aliases are outputs, the old alias no longer is.
+      const replacement = join(root, 'out.tmp');
+      writeFileSync(replacement, 'two');
+      renameSync(replacement, out);
+      const second = join(story, 'second.html');
+      linkSync(out, second);
+      expect(output.isFile(second)).toBe(true);
+      expect(output.isFile(alias)).toBe(false);
+      expect(output.isOutput(second, [story])).toBe(true);
+    });
+
     it('tells whether a folder holds an output', () => {
       const output = outputPaths({ files: [join(story, 'build', 'index.html')], dirs: [join(root, 'dist')] });
       expect(output.holds(story)).toBe(true);
@@ -447,6 +467,19 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
       writeFileSync(start, `:: Start\nTwo ${n}\n`);
     });
     expect(changed).toEqual(new Set(getFilenames([start]).filenames));
+  });
+
+  it('ignores a hard link of an output that was missing when the watch started (#268)', async () => {
+    const builds = watchBuilds([story]);
+    await builds.next();
+    writeFileSync(outFile, 'built');
+    linkSync(outFile, join(story, 'alias.html'));
+    // The alias is a build input, so an event for it must not start a build; the source change does, once.
+    const changed = await builds.firstChange((n) => {
+      writeFileSync(outFile, `built ${n}`);
+      writeFileSync(start, `:: Start\nTwo ${n}\n`);
+    });
+    expect(changed).toEqual(new Set([relative(process.cwd(), start)]));
   });
 
   it('keeps watching a file that an editor saved by replacing it', async () => {
