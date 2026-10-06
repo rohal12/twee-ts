@@ -204,3 +204,11 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     expect(loadConfigFile(join(dir, 'proj', 'twee-ts.config.json'))).toEqual(expected);
   });
 });
+
+describe('defaults the schema states', () => {
+  // Left out, formatId and startPassage leave the choice to StoryData, so the schema gives them no default:
+  // an editor that fills in defaults would otherwise override StoryData's format or start passage.
+  it.each(['formatId', 'startPassage'] as const)('gives %s no default', (key) => {
+    expect('default' in CONFIG_SPEC[key].spec).toBe(false);
+  });
+});

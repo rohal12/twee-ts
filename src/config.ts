@@ -173,8 +173,13 @@ export const CONFIG_SPEC: ConfigSpec = {
   ),
   output: stringField('Output file path, relative to the config file; "-" for standard output.', { minLength: 1 }),
   outputMode: enumField(VALID_OUTPUT_MODES, 'html', 'Output mode.'),
-  formatId: stringField("Story format directory ID (e.g. 'sugarcube-2')."),
-  startPassage: stringField('Name of the starting passage.', { default: 'Start' }),
+  // No schema default for these two: when they are left out, StoryData decides, so no value is the default.
+  formatId: stringField(
+    "Story format ID (e.g. 'sugarcube-2'). Overrides StoryData's format; without it, StoryData's format decides, and 'sugarcube-2' when StoryData names none.",
+  ),
+  startPassage: stringField(
+    "Name of the starting passage. Overrides StoryData's start; without it, StoryData's start decides, and 'Start' when StoryData names none.",
+  ),
   formatPaths: stringArrayField('Extra directories to search for story formats, relative to the config file.'),
   formatIndices: stringArrayField('URLs to SFA-compatible index.json files for remote format lookup.'),
   formatUrls: stringArrayField('Direct URLs to format.js files.'),

@@ -39,12 +39,11 @@
     },
     "formatId": {
       "type": "string",
-      "description": "Story format directory ID (e.g. 'sugarcube-2')."
+      "description": "Story format ID (e.g. 'sugarcube-2'). Overrides StoryData's format; without it, StoryData's format decides, and 'sugarcube-2' when StoryData names none."
     },
     "startPassage": {
       "type": "string",
-      "default": "Start",
-      "description": "Name of the starting passage."
+      "description": "Name of the starting passage. Overrides StoryData's start; without it, StoryData's start decides, and 'Start' when StoryData names none."
     },
     "formatPaths": {
       "type": "array",

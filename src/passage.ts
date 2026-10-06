@@ -210,7 +210,7 @@ export function isObfuscatable(p: Pick<ReadonlyPassage, 'name' | 'tags'>): boole
  * `isObfuscatable()`) has its name, each tag and its text ROT13-encoded, as Twine 1.4 writes it
  * (`Tiddler.toHtml()`), and as its engine.js decodes it.
  */
-export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13 = false): string {
+export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13: boolean, time: Date): string {
   let position: string;
 
   if (hasMetadataPosition(p)) {
@@ -223,7 +223,8 @@ export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13
     position = `${xp * 140 - 130},${yp * 140 - 130}`;
   }
 
-  const created = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+  // Twine 1's form, YYYYMMDDHHMM in UTC; every tiddler of one build has the build's time.
+  const created = time.toISOString().replace(/[-:T]/g, '').slice(0, 12);
   const encode = obfuscateRot13 && isObfuscatable(p) ? rot13 : (s: string) => s;
   const name = attrEscape(encode(p.name));
   const tags = attrEscape(p.tags.map(encode).join(' '));

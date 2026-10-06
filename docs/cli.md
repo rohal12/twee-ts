@@ -63,6 +63,8 @@ On Windows, a rename over a file another program holds open (an antivirus scanne
 
 See [Output Modes](./output-modes) for details on each mode.
 
+Twine 1 output (HTML and archive) is stamped with the build time. Set `SOURCE_DATE_EPOCH` (whole seconds since 1970, UTC, as the [Reproducible Builds](https://reproducible-builds.org/specs/source-date-epoch/) project defines it) to build the same bytes every time; a value that is not such a number is an error.
+
 ### Head Injection
 
 | Flag                  | Description                                            |

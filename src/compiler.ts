@@ -46,6 +46,7 @@ import type { InputFailure, InputProblem } from './input-policy.js';
 import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
+import { buildTime } from './build-time.js';
 
 export { TweeTsError };
 
@@ -542,6 +543,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   options.signal?.throwIfAborted();
   validateOptions(options);
+  // Read once, so every time stamp in the output agrees (and SOURCE_DATE_EPOCH is checked before anything is read).
+  const time = buildTime();
   diagnostics.push(...unknownOptionWarnings(options));
   checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
@@ -655,7 +658,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       break;
 
     case 'twine1-archive':
-      output = toTwine1Archive(story, startName, { diagnostics });
+      output = toTwine1Archive(story, startName, { diagnostics, time });
       break;
 
     case 'json':
@@ -687,7 +690,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
-        : toTwine1HTML(story, format, startName, { head, diagnostics });
+        : toTwine1HTML(story, format, startName, { head, diagnostics, time });
       break;
     }
 

@@ -31,7 +31,7 @@ With this in place, run `npx @rohal12/twee-ts` with no arguments.
 
 ## Complete Reference
 
-Every key, with its default. `sources` has none: name the sources here or on the command line. `formatId` and `startPassage` apply only where StoryData names no format or start passage, so leave them out to let StoryData decide.
+Every key, with its default. `sources` has none: name the sources here or on the command line. `formatId` and `startPassage` override StoryData's format and start passage (the values shown are what a story gets when neither names one), so leave them out to let StoryData decide.
 
 ```json
 {

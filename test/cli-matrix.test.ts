@@ -70,8 +70,10 @@ describe('standard output carries only the story (FS-01)', () => {
     it(`gives the same bytes on stdout as in -o's file, with -l, --log-files and a warning (${mode.join(' ')})`, () => {
       writeFileSync(join(dir, 'a.tw'), WARNING_STORY);
       const flags = ['--no-config', '--no-remote', '-l', '--log-files', ...mode];
-      const toStdout = cli(dir, [...flags, 'a.tw']);
-      const toFile = cli(dir, [...flags, '-o', 'out', 'a.tw']);
+      // One build time for both runs, which Twine 1 output stamps (otherwise the two could straddle a minute).
+      const env = { ...ENV, SOURCE_DATE_EPOCH: '1700000000' };
+      const toStdout = cli(dir, [...flags, 'a.tw'], env);
+      const toFile = cli(dir, [...flags, '-o', 'out', 'a.tw'], env);
       expect(toStdout.status).toBe(0);
       expect(toFile.status).toBe(0);
       expect(toStdout.stdout.length).toBeGreaterThan(0);
