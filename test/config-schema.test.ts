@@ -87,7 +87,8 @@ const anyValue = fc.oneof(
   fc.string(),
   fc.constantFrom('', '-', 'html', 'json', 'tweego', 'whitespace', 'a b', ' ', '\t'),
   fc.boolean(),
-  fc.double({ noNaN: true }),
+  // A config is JSON, which has no NaN or infinity.
+  fc.double({ noNaN: true, noDefaultInfinity: true }),
   fc.integer({ min: -5, max: 5 }),
   fc.constant(null),
   fc.array(fc.oneof(fc.string(), fc.constant(''), fc.integer()), { maxLength: 3 }),

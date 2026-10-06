@@ -166,12 +166,14 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
    * output is an array, which the entry's IIFE can't use); else the stand-in
    * input.
    */
-  const inputSettings = (config: Readonly<UserConfig>): { build: BuildEnvironmentOptions } | undefined => {
+  const inputSettings = (
+    config: Readonly<UserConfig>,
+  ): { build: BuildEnvironmentOptions; define?: Record<string, string> } | undefined => {
     if (namesInput(config)) return undefined;
     if (entryPath === undefined) return { build: inputOnly(EMPTY_INPUT) };
     const output = config.build?.rolldownOptions?.output;
     if (Array.isArray(output)) return { build: inputOnly(EMPTY_INPUT) };
-    return { build: entryInputSettings(entryInput, entryPath, output) };
+    return entryInputSettings(entryInput, entryPath, output, outputFilename);
   };
 
   /** Whether this instance's entry is an input of the build with this config. */
@@ -226,7 +228,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       if (entryPath === undefined || bundlesEntryInside(config)) return;
       let bundle: EntryBundle;
       try {
-        bundle = await bundleEntry(config, entryPath, 'build');
+        bundle = await bundleEntry(config, entryPath, 'build', outputFilename);
       } catch (e) {
         return this.error(fatalError(e));
       }

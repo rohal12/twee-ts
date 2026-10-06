@@ -20,6 +20,9 @@ import type { PathIdentity } from './path-identity.js';
 import { inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
 import type { Diagnostic } from './types.js';
+import { attributeOf, documentTextContains, findStoreArea, findStoryData, parseHtml } from './html-structure.js';
+import { JsonObject, parseJSON } from './json-decode.js';
+import type { JsonValue } from './json-decode.js';
 
 /**
  * Whether `filename` matches one of the `exclude` globs (see `matchesExclude` in path-identity.ts): the
@@ -302,15 +305,27 @@ function readLinkText(path: string): string | undefined {
   }
 }
 
-/**
- * The marks twee-ts leaves in what it builds: the creator attribute of Twine 2 story data (HTML and
- * archive output), the creator of JSON output, and the version line of Twine 1 HTML output.
- */
-const BUILD_MARKS = [/<tw-storydata\b[^>]*\bcreator="Twee-ts"/i, /"creator": "Twee-ts"/, /Compiled with twee-ts, /];
+/** The creator Twine 2 story data and JSON output name (see compiler.ts and output-twine2.ts). */
+const CREATOR = 'Twee-ts';
+
+/** The words Twine 1 HTML output puts where its story format has the `"VERSION"` placeholder. */
+const TWINE1_VERSION_TEXT = 'Compiled with twee-ts, ';
+
+/** Whether a parsed JSON value is the story JSON output writes: an object with the creator and the passages. */
+function isStoryJson(value: JsonValue): boolean {
+  if (!(value instanceof JsonObject)) return false;
+  const member = (key: string): JsonValue | undefined => value.members.find((m) => m.key === key)?.value;
+  return member('creator') === CREATOR && Array.isArray(member('passages'));
+}
 
 /**
- * Whether the file at `path` shows that twee-ts built it (see BUILD_MARKS). Twee output and Twine 1
- * archives carry no such mark; false for a file that can't be read.
+ * Whether the file at `path` is a story twee-ts built, recognised by its structure and not by text that
+ * happens to appear in it: JSON output is a JSON object with the creator and the passages; Twine 2 HTML and
+ * archive output hold a `tw-storydata` element whose `creator` attribute is twee-ts; Twine 1 HTML output has
+ * a store area, and the version text where its story format put it (in text or a comment, never only in an
+ * attribute). HTML is read only from a file named as HTML (`.html`, `.htm`): any text parses as HTML, and a
+ * script, a stylesheet or a Twee file that quotes `<tw-storydata creator="Twee-ts">` is not a build. Twee
+ * output and Twine 1 archives carry no mark and are never recognised; false for a file that can't be read.
  */
 export function isPreviousBuild(path: string): boolean {
   let text: string;
@@ -319,7 +334,13 @@ export function isPreviousBuild(path: string): boolean {
   } catch {
     return false;
   }
-  return BUILD_MARKS.some((mark) => mark.test(text));
+  const json = parseJSON(text);
+  if (json.ok) return isStoryJson(json.value);
+  if (!['html', 'htm'].includes(normalizedFileExt(path))) return false;
+  const doc = parseHtml(text, false);
+  const storyData = findStoryData(doc);
+  if (storyData !== undefined) return attributeOf(storyData, 'creator') === CREATOR;
+  return findStoreArea(doc) !== undefined && documentTextContains(doc, TWINE1_VERSION_TEXT);
 }
 
 /** Whether `path` has a file type the `role` loads from a folder. */

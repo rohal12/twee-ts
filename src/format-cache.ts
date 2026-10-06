@@ -21,7 +21,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { StoryFormatInfo } from './types.js';
 import { errorText, formatInfoFromJSON, formatNameKey, makeFormatId } from './formats.js';
 import { isRecord } from './util.js';
@@ -331,7 +331,7 @@ export function writeEntry(record: NewRecord, files: ReadonlyMap<string, Uint8Ar
   const keyDir = join(root, key);
   ensurePlainDirectory(keyDir);
   const contentDir = join(keyDir, dir);
-  writeContentDir(keyDir, contentDir, files);
+  writeContentDir(keyDir, contentDir, files, hashes);
 
   const json = {
     schema: RECORD_SCHEMA,
@@ -348,18 +348,32 @@ export function writeEntry(record: NewRecord, files: ReadonlyMap<string, Uint8Ar
     ...(record.etag === undefined ? {} : { etag: record.etag }),
     ...(record.lastModified === undefined ? {} : { lastModified: record.lastModified }),
   };
+  const replaced = readRecordByKey(key)?.dir;
   writeAtomically(join(keyDir, RECORD_FILE), `${JSON.stringify(json, null, 2)}\n`);
-  removeStaleContent(keyDir, dir);
+  // Another writer may have removed this content as the one its record replaced (the same bytes
+  // saved again): the record is published now, so make the directory whole under it.
+  repairContentDir(contentDir, files, hashes);
+  removeStaleContent(keyDir, replaced);
   return join(contentDir, record.main);
 }
 
 /**
- * Write the files into `contentDir` (named by their hashes) unless it is already there: they go to
- * a temporary directory that is renamed into place, so the directory is complete or absent.
+ * Make `contentDir` (named by the hashes of `files`) hold exactly these files: they go to a temporary
+ * directory that is renamed into place, so the directory is complete or absent. A directory that is
+ * already there is not trusted: each of its files is checked, and one that is missing, damaged or not
+ * a plain file is written again (see {@link repairContentDir}).
  */
-function writeContentDir(keyDir: string, contentDir: string, files: ReadonlyMap<string, Uint8Array>): void {
+function writeContentDir(
+  keyDir: string,
+  contentDir: string,
+  files: ReadonlyMap<string, Uint8Array>,
+  hashes: ReadonlyMap<string, string>,
+): void {
   const existing = lstatSync(contentDir, { throwIfNoEntry: false });
-  if (existing?.isDirectory()) return;
+  if (existing?.isDirectory()) {
+    repairContentDir(contentDir, files, hashes);
+    return;
+  }
   if (existing) {
     throw new Error(`Refusing to write a story format outside the cache directory: ${contentDir} is not a directory`);
   }
@@ -370,17 +384,64 @@ function writeContentDir(keyDir: string, contentDir: string, files: ReadonlyMap<
     renameSync(temp, contentDir);
   } catch (e) {
     rmSync(temp, { recursive: true, force: true });
-    // Another process put the same content there meanwhile (the name is a hash of it).
-    if (lstatSync(contentDir, { throwIfNoEntry: false })?.isDirectory()) return;
+    // Another process put content there meanwhile (the name is a hash of it): check it like any other.
+    if (lstatSync(contentDir, { throwIfNoEntry: false })?.isDirectory()) {
+      repairContentDir(contentDir, files, hashes);
+      return;
+    }
     throw e;
   }
 }
 
-/** Remove the content directories of an entry that its record no longer names (best effort). */
-function removeStaleContent(keyDir: string, current: string): void {
+/** Whether `path` is a plain file holding the bytes with SHA-256 `hash`. */
+function isIntactFile(path: string, hash: string): boolean {
   try {
+    return lstatSync(path).isFile() && sha256Hex(readFileSync(path)) === hash;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write again each file of an existing content directory that is missing, damaged or not a plain
+ * file, each through a temporary file renamed into place (replacing a link, never writing through it).
+ */
+function repairContentDir(
+  contentDir: string,
+  files: ReadonlyMap<string, Uint8Array>,
+  hashes: ReadonlyMap<string, string>,
+): void {
+  for (const [file, bytes] of files) {
+    const path = join(contentDir, file);
+    if (isIntactFile(path, hashes.get(file) ?? '')) continue;
+    // A folder cannot be renamed over by a file.
+    if (lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) rmSync(path, { recursive: true, force: true });
+    writeAtomically(path, bytes);
+  }
+}
+
+/**
+ * How long a content directory that no record named is kept: a writer that has written its content
+ * but not yet published the record must not lose it to another writer's cleanup.
+ */
+const IN_FLIGHT_MS = 10 * 60 * 1000;
+
+/**
+ * Clean up after a writer published a record that replaced the one naming the content directory
+ * `replaced`: remove that directory, and any other that no record names and that is older than a
+ * writer takes to publish (best effort). The published record is read now, not when the caller wrote
+ * it, so a writer that was paused never removes what a later writer published, and a directory
+ * another writer has just written, but not yet published, is left alone.
+ */
+export function removeStaleContent(keyDir: string, replaced: string | undefined, now = Date.now()): void {
+  try {
+    const current = readRecordByKey(basename(keyDir))?.dir;
     for (const name of readdirSync(keyDir)) {
-      if (HEX64.test(name) && name !== current) rmSync(join(keyDir, name), { recursive: true, force: true });
+      if (!HEX64.test(name) || name === current) continue;
+      const stat = lstatSync(join(keyDir, name), { throwIfNoEntry: false });
+      if (stat !== undefined && (name === replaced || now - stat.mtimeMs > IN_FLIGHT_MS)) {
+        rmSync(join(keyDir, name), { recursive: true, force: true });
+      }
     }
   } catch {
     // A directory left behind only takes space; the record decides what is read.

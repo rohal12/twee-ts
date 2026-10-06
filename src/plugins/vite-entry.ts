@@ -104,15 +104,34 @@ export function entryOutput(userOutput: OutputOption): OutputOptions {
 const ONE_FILE = { cssCodeSplit: false, assetsInlineLimit: (): boolean => true } as const;
 
 /**
+ * What `import.meta.url` stands for in the entry's script, given the story's output file name. The script runs
+ * as a classic script inside the story page, where `import.meta` does not exist (the bundler leaves `{}.url`, so
+ * `new URL(asset, import.meta.url)` and Vite's worker URLs throw `Invalid URL`). The files the build writes
+ * besides the story, such as an asset marked `?no-inline`, are found from the output folder the story is below,
+ * so the base is the story page's URL, taken up one level for each folder of a nested `outputFilename`.
+ */
+function entryDefine(outputFilename: string): { readonly 'import.meta.url': string } {
+  const depth = outputFilename.split('/').length - 1;
+  const base =
+    depth === 0 ? 'document.baseURI' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.baseURI).href`;
+  return { 'import.meta.url': base };
+}
+
+/**
  * Build settings that bundle the entry inside the user's build, as its only
- * input, under `inputName`, which tells the plugin instance it is its own.
+ * input, under `inputName`, which tells the plugin instance it is its own, and
+ * what the bundled script needs to run in the story (`define`).
  */
 export function entryInputSettings(
   inputName: string,
   entryPath: string,
   userOutput: OutputOption,
-): BuildEnvironmentOptions {
-  return { ...ONE_FILE, rolldownOptions: { input: { [inputName]: entryPath }, output: entryOutput(userOutput) } };
+  outputFilename: string,
+): { readonly build: BuildEnvironmentOptions; readonly define: Record<string, string> } {
+  return {
+    build: { ...ONE_FILE, rolldownOptions: { input: { [inputName]: entryPath }, output: entryOutput(userOutput) } },
+    define: entryDefine(outputFilename),
+  };
 }
 
 /** Removes a trailing source-map comment that points at a file (a data: URL map stays). */
@@ -339,7 +358,7 @@ function entryBuildSettings(
  * reads), so no setting from the user or a plugin makes the entry build build
  * or write anything else.
  */
-function entryBuildEnforcer(entryPath: string, command: ViteCommand): Plugin {
+function entryBuildEnforcer(entryPath: string, command: ViteCommand, outputFilename: string): Plugin {
   return {
     name: `${PLUGIN_NAME}:entry-build`,
     enforce: 'post',
@@ -347,12 +366,15 @@ function entryBuildEnforcer(entryPath: string, command: ViteCommand): Plugin {
       order: 'post',
       handler(config) {
         config.build = entryBuildSettings(config.build, entryPath, command);
+        config.define = { ...config.define, ...entryDefine(outputFilename) };
       },
     },
     configEnvironment: {
       order: 'post',
       handler(name, config) {
-        if (name === 'client') config.build = entryBuildSettings(config.build, entryPath, command);
+        if (name !== 'client') return;
+        config.build = entryBuildSettings(config.build, entryPath, command);
+        config.define = { ...config.define, ...entryDefine(outputFilename) };
       },
     },
   };
@@ -475,6 +497,7 @@ export async function bundleEntry(
   config: ResolvedConfig,
   entryPath: string,
   command: ViteCommand,
+  outputFilename: string,
 ): Promise<EntryBundle> {
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
@@ -492,7 +515,7 @@ export async function bundleEntry(
     customLogger: entryBuildLogger(config.logger),
     clearScreen: false,
     publicDir: false,
-    plugins: [...plugins, entryBuildEnforcer(entryPath, command), recordWatchFiles(watchFiles)],
+    plugins: [...plugins, entryBuildEnforcer(entryPath, command, outputFilename), recordWatchFiles(watchFiles)],
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).
   const [result] = [await build(inline)].flat();

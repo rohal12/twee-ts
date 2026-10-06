@@ -552,7 +552,7 @@ function formatWithBytes(
   files: ReadonlyMap<string, Uint8Array>,
 ): StoryFormatInfo {
   const bytes = files.get(record.main) ?? new Uint8Array(0);
-  return withFormatBytes(recordFormatInfo(record, path), bytes, record.downloadUrl);
+  return withFormatBytes(recordFormatInfo(record, path), bytes, record.downloadUrl, files);
 }
 
 /**
