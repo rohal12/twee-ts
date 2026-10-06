@@ -92,13 +92,16 @@ describe('vite plugin dev: a timestamp-preserving edit with no watcher (#270)', 
 });
 
 describe('vite plugin dev: an entry file edited while it is bundled, with no watcher (#286)', () => {
+  /** Whether a module id names `file`: Vite's ids use forward slashes, also on Windows. */
+  const names = (id: string, file: string): boolean => id.replaceAll('\\', '/') === file.replaceAll('\\', '/');
+
   /** A plugin that, the first time it sees `file` loaded, writes `text` to `target` (an editor save during the build). */
   function editDuring(file: string, target: string, text: string): Plugin {
     let done = false;
     return {
       name: 'edit-during-bundle',
       transform(_code: string, id: string) {
-        if (id === file && !done) {
+        if (names(id, file) && !done) {
           done = true;
           writeFileSync(target, text);
         }
@@ -139,7 +142,7 @@ describe('vite plugin dev: an entry file edited while it is bundled, with no wat
     const plugin: Plugin = {
       name: 'edit-during-later-bundle',
       transform(_code: string, id: string) {
-        if (id === entry && armed) {
+        if (names(id, entry) && armed) {
           armed = false;
           writeFileSync(entry, 'globalThis.probe = "THREE";\n');
         }
