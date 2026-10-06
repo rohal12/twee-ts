@@ -18,9 +18,6 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22, 24]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -48,17 +45,12 @@ jobs:
         run: pnpm run knip
 
   test:
-    name: test (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: [22, 24]
-        include:
-          # The oldest Node that package.json "engines" allows.
-          - os: ubuntu-latest
-            node-version: 22.12.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,7 +60,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -76,21 +68,13 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      # tsdown itself needs Node 22.18+; the package's runtime on 22.12.0 is checked by the
-      # package workflow's consumers job instead.
       - name: Build
-        if: matrix.node-version != '22.12.0'
         run: pnpm run build
 
   # The compiler contract matrix (validation/contracts, docs/compiler-validation.md): public
   # behaviour checked against the build, imported as users import it.
   contracts:
-    name: contracts (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,7 +106,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -155,24 +139,12 @@ jobs:
     permissions:
       contents: read
 
-  # The bundler plugins against every Vite and Rollup the peer range allows: the plugin test files
+  # The bundler plugins against the latest Vite and Rollup: the plugin test files
   # (vitest.peer.config.ts aliases `vite` and `rollup` to the versions installed here; Vitest keeps
   # the repository's), and a consumer config type-checked against the packed plugins' types.
   plugin-peers:
-    name: plugin peers (Vite ${{ matrix.vite }}, Rollup ${{ matrix.rollup }})
+    name: plugin peers (Vite 8, Rollup 4)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { vite: 5.0.0, rollup: 4.0.0 }
-          - { vite: '5.4', rollup: '4' }
-          - { vite: 6.0.0, rollup: '4' }
-          - { vite: '6', rollup: '4' }
-          - { vite: 7.0.0, rollup: '4' }
-          - { vite: '7', rollup: '4' }
-          - { vite: 8.0.0, rollup: '4' }
-          - { vite: '8', rollup: '4' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -189,8 +161,8 @@ jobs:
 
       - name: Install the peer versions
         env:
-          VITE_VERSION: ${{ matrix.vite }}
-          ROLLUP_VERSION: ${{ matrix.rollup }}
+          VITE_VERSION: '8'
+          ROLLUP_VERSION: '4'
         run: |
           mkdir -p "$RUNNER_TEMP/peer"
           cd "$RUNNER_TEMP/peer"

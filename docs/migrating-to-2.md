@@ -17,7 +17,7 @@ Most projects need to check four things:
 
 **Before:** Node.js 22.0 and later. **After:** `engines` requires Node.js 22.12 or newer, the first Node 22 release that loads ES modules through `require()` without a flag.
 
-**Migrate:** upgrade Node.js. CI tests 22.12.0 and the latest Node 22 and 24.
+**Migrate:** upgrade Node.js. CI tests the latest Node 24.
 
 ## Command line
 
