@@ -132,11 +132,14 @@ function fileStates(files: TrackedFiles): Map<string, string> {
   return states;
 }
 
-/** Whether a file was modified after `time` (milliseconds since the epoch); false when it can't be looked at. */
+/**
+ * Whether a file's content was written after `time` (milliseconds since the epoch); false when it can't be
+ * looked at. Only the modification time counts: the change time also moves for a file's attributes, which an
+ * indexer or a virus scanner may set at any moment, and must not make a bundle that read the file look stale.
+ */
 function modifiedAfter(path: string, time: number): boolean {
   try {
-    const stat = statSync(path);
-    return stat.mtimeMs > time || stat.ctimeMs > time;
+    return statSync(path).mtimeMs > time;
   } catch {
     return false;
   }
