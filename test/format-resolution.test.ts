@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { compile, TweeTsError } from '../src/compiler.js';
 import { getFormatSearchDirs } from '../src/formats.js';
 import { resolveStoryFormat } from '../src/format-resolution.js';
-import { fetchDirectFormat, getCacheDir } from '../src/remote-formats.js';
+import { fetchDirectFormat } from '../src/remote-formats.js';
+import { seedIndexDownload } from './helpers/format-cache.js';
 import type { CompileOptions, Diagnostic, SFAIndexEntry } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -262,10 +263,9 @@ describe('format written into compiled Twine 2 HTML (#91)', () => {
 });
 
 describe('download cache used without the network (#92)', () => {
+  /** Cache a format as downloaded from the official index. */
   function seedCache(name: string, version: string): void {
-    const dir = join(getCacheDir(), name, version);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'format.js'), formatJs(name, version));
+    seedIndexDownload(name, version, formatJs(name, version));
   }
 
   it('compiles with noRemote from a cached format', async () => {
@@ -279,12 +279,17 @@ describe('download cache used without the network (#92)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('compiles offline from a cached format with remote fetching enabled', async () => {
+  it('compiles offline from a cached format with remote fetching enabled, warning that the index is unreachable', async () => {
     seedCache('SugarCube', '2.37.3');
     const fetchSpy = stubOffline();
     const result = await compile(options({ sources: story({ format: 'SugarCube', 'format-version': '2.37.3' }) }));
     expect(result.format?.version).toBe('2.37.3');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith(OFFICIAL_INDEX, expect.anything());
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      expect.stringContaining(
+        `Failed to fetch format index from ${OFFICIAL_INDEX}: offline; using the formats downloaded from it before`,
+      ),
+    ]);
   });
 
   it('resolves the default ID from the cache', async () => {
@@ -299,7 +304,9 @@ describe('download cache used without the network (#92)', () => {
     seedCache('Pre', '2.0.0-beta.1');
     seedCache('Pre', '2.0.0');
     const fetchSpy = stubOffline();
-    const result = await compile(options({ sources: story({ format: 'Pre', 'format-version': '2.0.0' }) }));
+    const result = await compile(
+      options({ sources: story({ format: 'Pre', 'format-version': '2.0.0' }), noRemote: true }),
+    );
     expect(result.format?.version).toBe('2.0.0');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -377,9 +384,7 @@ describe('format names and IDs match the same way everywhere (#156)', () => {
     formats = join(cacheRoot, 'formats');
     writeFormat(formats, 'sugarcube-2', 'SugarCube', '2.36.1', 'LOCAL');
     // A newer copy in the download cache, and a remote index that has one too.
-    const cached = join(getCacheDir(), 'SugarCube', '2.37.3');
-    mkdirSync(cached, { recursive: true });
-    writeFileSync(join(cached, 'format.js'), formatJs('SugarCube', '2.37.3'));
+    seedIndexDownload('SugarCube', '2.37.3', formatJs('SugarCube', '2.37.3'));
     calls = stubFetch({
       [OFFICIAL_INDEX]: indexJson(sfaEntry('SugarCube', '2.36.1')),
       [`${OFFICIAL_BASE}/twine2/SugarCube/2.36.1/format.js`]: formatJs('SugarCube', '2.36.1'),
@@ -441,9 +446,7 @@ describe('explicit format IDs are looked up before pruning (#161)', () => {
     const formats = join(cacheRoot, 'formats');
     writeFormat(formats, 'fixture-1', 'Fixture', '1.0.0', 'PINNED');
     writeFormat(formats, 'fixture-1-new', 'Fixture', '1.2.0', 'NEWER');
-    const cached = join(getCacheDir(), 'Fixture', '1.3.0');
-    mkdirSync(cached, { recursive: true });
-    writeFileSync(join(cached, 'format.js'), formatJs('Fixture', '1.3.0'));
+    seedIndexDownload('Fixture', '1.3.0', formatJs('Fixture', '1.3.0'));
     const result = await compile(options({ formatId: 'fixture-1', formatPaths: [formats], noRemote: true }));
     expect(markerOf(result.output)).toBe('PINNED');
   });

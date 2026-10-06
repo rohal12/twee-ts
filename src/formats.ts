@@ -1,10 +1,10 @@
 /**
- * Story format discovery, loading, and SemVer matching.
+ * Story format discovery in local folders, and the one selection policy every source shares.
  * Ported from formats.go + config.go.
  *
- * Every lookup (local folders here, the download cache and remote indices in remote-formats.ts)
- * goes through the same version parsing ({@link parseVersion}) and the same matching rules
- * ({@link selectFormatCandidate}).
+ * Every source (local folders here; format URLs and format indices in format-resolution.ts) turns
+ * what it has into {@link FormatCandidate}s, and {@link selectFormat} alone decides which one
+ * answers a request. docs/story-formats.md ("How a format is chosen") states the same policy.
  */
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -12,7 +12,13 @@ import { homedir } from 'node:os';
 import type { Diagnostic, FormatDecodeResult, FormatRequest, SemVer, StoryFormatInfo } from './types.js';
 import { decodeFormatJSON } from './format-decode.js';
 import { compareVersions, parseVersion } from './semver.js';
-import { readUTF8 } from './util.js';
+import { normalizeSourceText } from './source-text.js';
+import { decodeText, readUTF8 } from './util.js';
+
+/** The message of a caught error, or the text of a thrown value that is not an Error. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 /** A directory's entries in a stable order, or none when it cannot be read. */
 function listDirectory(dir: string): string[] {
@@ -76,7 +82,7 @@ function loadFormatDir(
     try {
       decoded = decodeFormatJSON(readUTF8(filename, encoding));
     } catch (e) {
-      decoded = { ok: false, reason: `Could not read ${filename}: ${e instanceof Error ? e.message : String(e)}` };
+      decoded = { ok: false, reason: `Could not read ${filename}: ${errorText(e)}` };
     }
     if (!decoded.ok) {
       diagnostics?.push(...encoding);
@@ -86,23 +92,40 @@ function loadFormatDir(
       });
       continue;
     }
-    const { data } = decoded;
-    const format: StoryFormatInfo = {
-      id,
-      filename,
-      isTwine2: true,
-      name: data.name,
-      version: data.version,
-      proofing: data.proofing ?? false,
-    };
-    if (data.author) format.author = data.author;
-    if (data.description) format.description = data.description;
-    if (data.image) format.image = data.image;
-    if (data.url) format.url = data.url;
-    if (data.license) format.license = data.license;
-    return format;
+    return formatInfoFromJSON(id, filename, decoded.data);
   }
   return undefined;
+}
+
+/** The StoryFormatInfo of a Twine 2 format, from its decoded format.js metadata. */
+export function formatInfoFromJSON(
+  id: string,
+  filename: string,
+  data: {
+    readonly name: string;
+    readonly version: string;
+    readonly proofing?: boolean | undefined;
+    readonly author?: string | undefined;
+    readonly description?: string | undefined;
+    readonly image?: string | undefined;
+    readonly url?: string | undefined;
+    readonly license?: string | undefined;
+  },
+): StoryFormatInfo {
+  const format: StoryFormatInfo = {
+    id,
+    filename,
+    isTwine2: true,
+    name: data.name,
+    version: data.version,
+    proofing: data.proofing === true,
+  };
+  if (data.author) format.author = data.author;
+  if (data.description) format.description = data.description;
+  if (data.image) format.image = data.image;
+  if (data.url) format.url = data.url;
+  if (data.license) format.license = data.license;
+  return format;
 }
 
 /**
@@ -141,38 +164,55 @@ function searchDirOf(format: StoryFormatInfo): string {
 }
 
 /**
+ * The rank of each format's search directory in a discovered map (higher outranks lower).
+ * Search directories first appear in the map in rank order (see {@link discoverAllFormats}).
+ */
+function searchDirRanks(formats: ReadonlyMap<string, StoryFormatInfo>): Map<StoryFormatInfo, number> {
+  const dirRank = new Map<string, number>();
+  return new Map(
+    [...formats.values()].map((format) => {
+      const dir = searchDirOf(format);
+      const rank = dirRank.get(dir) ?? dirRank.size;
+      dirRank.set(dir, rank);
+      return [format, rank] as const;
+    }),
+  );
+}
+
+/**
+ * The pruning group of a format: its name, exactly as written (as in Tweego), and its major version.
+ * Two formats whose names differ only in case both survive pruning, so that selection can prefer
+ * the one in the request's exact case between equal versions.
+ */
+function pruneGroup(format: StoryFormatInfo, version: SemVer): string {
+  return `${format.name}\0${version.major}`;
+}
+
+/**
  * Prune formats by SemVer: within each (name, major) group, keep only the version with the highest
- * precedence (a release outranks its prereleases). Between equal versions, the folder in the
- * higher-ranked search directory wins, and within one directory the first folder name in sort
- * order. Returns a new map in the same order.
+ * precedence (a release outranks its prereleases). Between equal versions, the folder in the higher-ranked search directory wins, and within
+ * one directory the first folder name in sort order. Returns a new map in the same order.
  *
  * Pruning serves name-based selection and listings. An explicit format ID is looked up in the
  * unpruned map, so a pinned folder is used even when another folder holds a newer version.
  */
 export function pruneFormats(formats: ReadonlyMap<string, StoryFormatInfo>): Map<string, StoryFormatInfo> {
-  // Search directories first appear in the map in rank order (see discoverAllFormats).
-  const dirRank = new Map<string, number>();
-  for (const format of formats.values()) {
-    const dir = searchDirOf(format);
-    if (!dirRank.has(dir)) dirRank.set(dir, dirRank.size);
-  }
-  const rankOf = (format: StoryFormatInfo): number => dirRank.get(searchDirOf(format)) ?? 0;
-
-  const best = new Map<string, { readonly format: StoryFormatInfo; readonly version: SemVer }>();
-  for (const format of formats.values()) {
+  const ranks = searchDirRanks(formats);
+  const best = new Map<string, { readonly format: StoryFormatInfo; readonly version: SemVer; readonly rank: number }>();
+  for (const [format, rank] of ranks) {
     const version = prunableVersion(format);
     if (!version) continue;
-    const group = `${format.name}@${version.major}`;
+    const group = pruneGroup(format, version);
     const current = best.get(group);
     const order = current ? compareVersions(version, current.version) : 1;
-    if (order > 0 || (order === 0 && current && rankOf(format) > rankOf(current.format))) {
-      best.set(group, { format, version });
+    if (order > 0 || (order === 0 && current && rank > current.rank)) {
+      best.set(group, { format, version, rank });
     }
   }
   return new Map(
-    [...formats].filter(([id, format]) => {
+    [...formats].filter(([, format]) => {
       const version = prunableVersion(format);
-      return version === null || best.get(`${format.name}@${version.major}`)?.format.id === id;
+      return version === null || best.get(pruneGroup(format, version))?.format === format;
     }),
   );
 }
@@ -249,10 +289,22 @@ export function semverCompare(a: [number, number, number], b: [number, number, n
   return 0;
 }
 
-/** Build a directory-style format ID from a name and version, e.g. ('SugarCube', '2.37.3') → 'sugarcube-2'. */
+/**
+ * The key two format names match by: names that differ only in letter case are the same format.
+ * Every lookup, pruning, and `cache clear` compare names through this one function.
+ */
+export function formatNameKey(name: string): string {
+  return name.toLowerCase();
+}
+
+/**
+ * Build a directory-style format ID from a name and version, e.g. ('SugarCube', '2.37.3') →
+ * 'sugarcube-2': the name in lower case with each run of whitespace replaced by `-`, then the major
+ * version. A version that is not a version gives major 0.
+ */
 export function makeFormatId(name: string, version: string): string {
   const major = parseVersion(version)?.major ?? 0;
-  return `${name.toLowerCase().replace(/\s+/g, '-')}-${major}`;
+  return `${formatNameKey(name).replace(/\s+/g, '-')}-${major}`;
 }
 
 /** Describe a format request for diagnostics. */
@@ -269,95 +321,179 @@ export function describeFormatRequest(request: FormatRequest): string {
   }
 }
 
-/** Options for {@link selectFormatCandidate}. */
-export interface SelectFormatOptions {
-  /** For a name request, also accept a version older than the one asked for (same major only). */
-  readonly allowOlder?: boolean;
+// --- The candidate model and the selection policy ---
+
+/** The kind of source a candidate comes from. */
+export type FormatSourceKind = 'local' | 'url' | 'index';
+
+/**
+ * One format some source can supply, with what selection needs to know about it. Candidates from
+ * every source have this one shape, so {@link selectFormat} cannot treat two sources differently
+ * except through `rank`.
+ */
+export interface FormatCandidate {
+  /** The format's name: from its format.js, an index entry, or (Twine 1, local) its folder. */
+  readonly name: string;
+  /** The format's version as written; '' for a local Twine 1 format. */
+  readonly version: string;
+  readonly isTwine2: boolean;
+  readonly source: FormatSourceKind;
+  /**
+   * The position of the candidate's source in the source order: local folders 0, then each format
+   * URL, then each format index. A lower rank is preferred (see {@link selectFormat}).
+   */
+  readonly rank: number;
+  /** A local candidate's folder name, which an ID request may name. */
+  readonly folder?: string | undefined;
+  /** A local candidate's search directory rank (higher outranks lower). */
+  readonly dirRank?: number | undefined;
 }
 
-/** {@link selectFormatCandidate} over one set of candidates, matching names without regard to case. */
-function pickFormatCandidate<T>(
-  request: FormatRequest,
-  candidates: readonly T[],
-  describe: (candidate: T) => { readonly name: string; readonly version: string },
-  allowOlder: boolean,
-): T | undefined {
-  const wanted = request.kind === 'name' ? parseVersion(request.version) : null;
-  let best: { readonly candidate: T; readonly version: SemVer } | undefined;
+/**
+ * How a candidate answers a request, best first:
+ * - `pinned`: an ID request names the candidate's local folder.
+ * - `exact`: a name request's version, by SemVer precedence.
+ * - `newer`: a name request, the same major version and above the version asked for.
+ * - `any`: a name request whose version is empty or not a version: any version.
+ * - `id`: an ID request matches the candidate's name and major version ({@link makeFormatId}).
+ * - `older`: a name request, the same major version and below the version asked for. Used only
+ *   when no source has a candidate of any other tier, and then with a warning.
+ */
+export type MatchTier = 'pinned' | 'exact' | 'newer' | 'any' | 'id' | 'older';
 
-  for (const candidate of candidates) {
-    const { name, version } = describe(candidate);
-    const have = parseVersion(version);
-    if (!have) continue;
+const TIER_ORDER: readonly MatchTier[] = ['pinned', 'exact', 'newer', 'any', 'id', 'older'];
 
-    if (request.kind === 'id') {
-      if (makeFormatId(name, version) !== request.id.toLowerCase()) continue;
-    } else {
-      if (name.toLowerCase() !== request.name.toLowerCase()) continue;
-      if (wanted) {
-        const order = compareVersions(have, wanted);
-        if (order === 0) return candidate;
-        if (have.major !== wanted.major) continue;
-        if (!allowOlder && order < 0) continue;
+/** How a candidate relates to a request: the tier it answers in, or why it does not answer. */
+export type Judgement =
+  | { readonly kind: 'match'; readonly tier: MatchTier; readonly version: SemVer | null }
+  | { readonly kind: 'rejected'; readonly reason: string };
+
+function rejected(reason: string): Judgement {
+  return { kind: 'rejected', reason };
+}
+
+/** Whether a request's ID names a local candidate's folder (without regard to case). */
+function namesFolder(request: { readonly id: string }, candidate: FormatCandidate): boolean {
+  return candidate.folder !== undefined && formatNameKey(candidate.folder) === formatNameKey(request.id);
+}
+
+/** Judge one candidate against a request: the policy for a single candidate, whatever its source. */
+export function judgeCandidate(request: FormatRequest, candidate: FormatCandidate): Judgement {
+  const version = parseVersion(candidate.version);
+  switch (request.kind) {
+    case 'id': {
+      if (namesFolder(request, candidate)) return { kind: 'match', tier: 'pinned', version };
+      if (!version) return rejected('its version is not a SemVer version');
+      const id = makeFormatId(candidate.name, candidate.version);
+      const wanted = formatNameKey(request.id);
+      if (id !== wanted) {
+        const sameName = id.replace(/-\d+$/, '') === wanted.replace(/-\d+$/, '');
+        return rejected(`${sameName ? 'another major version' : 'a different format'} (its ID is ${id})`);
       }
+      return { kind: 'match', tier: 'id', version };
     }
-
-    if (!best || compareVersions(have, best.version) > 0) best = { candidate, version: have };
+    case 'name': {
+      if (formatNameKey(candidate.name) !== formatNameKey(request.name)) return rejected('a different format');
+      if (!candidate.isTwine2) return rejected('a Twine 1 format (StoryData names Twine 2 formats)');
+      if (!version) return rejected('its version is not a SemVer version');
+      const wanted = parseVersion(request.version);
+      if (!wanted) return { kind: 'match', tier: 'any', version };
+      const order = compareVersions(version, wanted);
+      if (order === 0) return { kind: 'match', tier: 'exact', version };
+      if (version.major !== wanted.major) return rejected(`another major version than ${wanted.major}`);
+      return { kind: 'match', tier: order > 0 ? 'newer' : 'older', version };
+    }
+    default: {
+      const _exhaustive: never = request;
+      throw new Error(`unhandled format request: ${JSON.stringify(_exhaustive)}`);
+    }
   }
+}
 
-  return best?.candidate;
+/** Whether a candidate's name (or, for an ID request, folder) has the request's exact letter case. */
+function hasExactCase(request: FormatRequest, candidate: FormatCandidate): boolean {
+  return request.kind === 'id' ? candidate.folder === request.id : candidate.name === request.name;
+}
+
+/** Options for {@link selectFormat}. */
+export interface SelectFormatOptions {
+  /** When no candidate answers in another tier, take one from the `older` tier. */
+  readonly allowOlder?: boolean | undefined;
+}
+
+/** The candidate {@link selectFormat} chose, and the tier it answers the request in. */
+export interface FormatSelection<C extends FormatCandidate> {
+  readonly choice: C;
+  readonly tier: MatchTier;
 }
 
 /**
- * Pick the candidate that best answers a format request. Local folders, the download cache and
- * remote indices all select through this one function.
+ * Choose the candidate that answers a request. This is the whole selection policy:
  *
- * - An ID request ('sugarcube-2') matches, without regard to case, a candidate whose name and
- *   major version build that ID, and takes the greatest such version.
- * - A name request matches the name without regard to case, but a candidate whose name matches in
- *   case too is preferred when one answers the request. An exact version (prerelease included)
- *   wins outright; otherwise the greatest version with the same major that is not older than the
- *   one asked for (or, with `allowOlder`, the greatest same-major version). An unparseable
- *   requested version takes the greatest version of any major.
+ * 1. Each candidate is judged alone ({@link judgeCandidate}); the result depends on its name,
+ *    version and (local) folder, never on its source kind.
+ * 2. Every tier but `older` answers. Among the answering candidates, the lowest source rank wins;
+ *    within one source, the better tier ({@link MatchTier}); then the greater version (SemVer
+ *    precedence); then a name (or folder) in the request's exact letter case; then the
+ *    higher-ranked search directory (local folders); then the earlier candidate.
+ * 3. Only when no candidate answers, and `allowOlder` is set, the `older` candidates are ordered
+ *    the same way (source rank, then greater version, …) and the first is taken.
  *
- * Versions compare by SemVer precedence ({@link compareVersions}), so a release outranks its
- * prereleases. Between equal versions, the earlier candidate wins.
+ * Because the source rank comes first among answering candidates, a source's answer never depends
+ * on sources ranked after it, so callers may gather sources one at a time and stop at the first
+ * answer: the result equals selecting over every source at once.
  */
-export function selectFormatCandidate<T>(
+export function selectFormat<C extends FormatCandidate>(
   request: FormatRequest,
-  candidates: readonly T[],
-  describe: (candidate: T) => { readonly name: string; readonly version: string },
+  candidates: readonly C[],
   options: SelectFormatOptions = {},
-): T | undefined {
-  const allowOlder = options.allowOlder ?? false;
-  if (request.kind === 'name') {
-    const exactCase = candidates.filter((c) => describe(c).name === request.name);
-    const preferred = pickFormatCandidate(request, exactCase, describe, allowOlder);
-    if (preferred !== undefined) return preferred;
-  }
-  return pickFormatCandidate(request, candidates, describe, allowOlder);
+): FormatSelection<C> | undefined {
+  const judged = candidates.flatMap((candidate, index) => {
+    const judgement = judgeCandidate(request, candidate);
+    return judgement.kind === 'match' ? [{ candidate, index, tier: judgement.tier, version: judgement.version }] : [];
+  });
+  type Judged = (typeof judged)[number];
+  const order = (a: Judged, b: Judged): number =>
+    a.candidate.rank - b.candidate.rank ||
+    TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) ||
+    compareOptionalVersions(b.version, a.version) ||
+    Number(hasExactCase(request, b.candidate)) - Number(hasExactCase(request, a.candidate)) ||
+    (b.candidate.dirRank ?? 0) - (a.candidate.dirRank ?? 0) ||
+    a.index - b.index;
+
+  const answering = judged.filter((j) => j.tier !== 'older').sort(order);
+  const best =
+    answering[0] ?? (options.allowOlder ? judged.filter((j) => j.tier === 'older').sort(order)[0] : undefined);
+  return best && { choice: best.candidate, tier: best.tier };
 }
 
-/** The Twine 2 formats of a discovered map, those from higher-ranked search directories first. */
-export function rankedTwine2Formats(formats: ReadonlyMap<string, StoryFormatInfo>): StoryFormatInfo[] {
-  return [...formats.values()].filter((f) => f.isTwine2).reverse();
+/** Compare versions that may be missing (a local Twine 1 format); a missing one ranks lowest. */
+function compareOptionalVersions(a: SemVer | null, b: SemVer | null): number {
+  if (a && b) return compareVersions(a, b);
+  return Number(a !== null) - Number(b !== null);
 }
 
-/**
- * Look a format ID up among discovered folders. The ID matches a folder name without regard to
- * case; an exact-case folder is preferred, then the highest-ranked one.
- */
-export function findFormatById(formats: ReadonlyMap<string, StoryFormatInfo>, id: string): StoryFormatInfo | undefined {
-  const exact = formats.get(id);
-  if (exact) return exact;
-  const wanted = id.toLowerCase();
-  return [...formats.values()].reverse().find((f) => f.id.toLowerCase() === wanted);
+/** Local formats as candidates: rank 0, their folder, and their search directory's rank. */
+export function localCandidates(
+  formats: ReadonlyMap<string, StoryFormatInfo>,
+): (FormatCandidate & { readonly folder: string; readonly info: StoryFormatInfo })[] {
+  const ranks = searchDirRanks(formats);
+  return [...formats].map(([folder, info]) => ({
+    name: info.name,
+    version: info.version,
+    isTwine2: info.isTwine2,
+    source: 'local' as const,
+    rank: 0,
+    folder,
+    dirRank: ranks.get(info),
+    info,
+  }));
 }
 
 /**
  * Get format ID from Twine 2 name and version, as a compile selects a local format by StoryData:
- * {@link selectFormatCandidate} over the pruned formats, so the greatest version with the same
- * major that is not older than `version` (any major when `version` is unparseable).
+ * {@link selectFormat} over the pruned formats, so the greatest version with the same major that
+ * is not older than `version` (any major when `version` is empty or unparseable).
  */
 export function getFormatIdByNameAndVersion(
   formats: ReadonlyMap<string, StoryFormatInfo>,
@@ -365,7 +501,7 @@ export function getFormatIdByNameAndVersion(
   version: string,
 ): string | undefined {
   const request: FormatRequest = { kind: 'name', name, version };
-  return selectFormatCandidate(request, rankedTwine2Formats(pruneFormats(formats)), (f) => f)?.id;
+  return selectFormat(request, localCandidates(pruneFormats(formats)))?.choice.folder;
 }
 
 /** Get format ID from Twine 2 name, picking the greatest version. */
@@ -373,14 +509,42 @@ export function getFormatIdByName(formats: ReadonlyMap<string, StoryFormatInfo>,
   return getFormatIdByNameAndVersion(formats, name, '');
 }
 
+// --- Format sources ---
+
+/** The bytes of formats that were downloaded, kept with their info so they are never read back from disk. */
+const downloadedBytes = new WeakMap<StoryFormatInfo, { readonly bytes: Uint8Array; readonly from: string }>();
+
+/**
+ * Keep the bytes of a downloaded format with its info, so {@link readFormatSource} uses exactly the
+ * bytes that were verified, even when the cache could not be written or changes later.
+ */
+export function withFormatBytes(info: StoryFormatInfo, bytes: Uint8Array, from: string): StoryFormatInfo {
+  downloadedBytes.set(info, { bytes, from });
+  return info;
+}
+
 /**
  * Read the story format source (for Twine 2, extract the `source` property from JSON).
  * `diagnostics` receives a warning when the format file is not valid UTF-8 (it is read as Windows-1252).
  */
 export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnostic[]): string {
-  const source = readUTF8(format.filename, diagnostics);
+  const downloaded = downloadedBytes.get(format);
+  let source: string;
+  if (downloaded) {
+    const decoded = decodeText(downloaded.bytes, downloaded.from);
+    diagnostics?.push(...decoded.diagnostics);
+    source = normalizeSourceText(decoded.text);
+  } else {
+    source = readUTF8(format.filename, diagnostics);
+  }
   if (!format.isTwine2) return source;
   const decoded = decodeFormatJSON(source);
   if (!decoded.ok) throw new Error(`Cannot parse format ${format.id} JSON: ${decoded.reason}`);
+  // What decoding left out of the format a build uses (a skipped function, a field of the wrong
+  // type), once per build, naming where the format came from.
+  const from = downloaded ? `downloaded from ${downloaded.from}` : format.filename;
+  diagnostics?.push(
+    ...decoded.notes.map((note) => ({ level: 'warning' as const, message: `format ${format.id}: ${note} (${from})` })),
+  );
   return decoded.data.source;
 }

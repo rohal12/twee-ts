@@ -9,10 +9,11 @@ import {
   getFormatIdByNameAndVersion,
   makeFormatId,
   readFormatSource,
-  selectFormatCandidate,
+  selectFormat,
 } from '../src/formats.js';
 import { decodeFormatJSON, parseFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, FormatRequest } from '../src/types.js';
+import type { FormatCandidate } from '../src/formats.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'storyformats');
@@ -179,15 +180,20 @@ describe('makeFormatId', () => {
   });
 });
 
-describe('selectFormatCandidate', () => {
-  const candidates = [
-    { name: 'SugarCube', version: '2.36.1' },
-    { name: 'SugarCube', version: '2.37.3' },
-    { name: 'SugarCube', version: '1.0.35' },
-    { name: 'Harlowe', version: '3.3.9' },
-  ] as const;
+/** Candidates from one index source, as selection sees them. */
+function indexed(...list: readonly (readonly [string, string])[]): FormatCandidate[] {
+  return list.map(([name, version]) => ({ name, version, isTwine2: true, source: 'index', rank: 1 }));
+}
+
+describe('selectFormat', () => {
+  const candidates = indexed(
+    ['SugarCube', '2.36.1'],
+    ['SugarCube', '2.37.3'],
+    ['SugarCube', '1.0.35'],
+    ['Harlowe', '3.3.9'],
+  );
   const select = (request: FormatRequest, allowOlder = false) =>
-    selectFormatCandidate(request, candidates, (c) => c, { allowOlder })?.version;
+    selectFormat(request, candidates, { allowOlder })?.choice.version;
 
   it('prefers an exact version, then the highest same-major version at or above it', () => {
     expect(select({ kind: 'name', name: 'SugarCube', version: '2.36.1' })).toBe('2.36.1');
@@ -212,34 +218,35 @@ describe('selectFormatCandidate', () => {
     expect(select({ kind: 'name', name: 'SugarCube', version: '3.0.0' }, true)).toBeUndefined();
   });
 
-  it('matches names without regard to case, preferring an exact-case match (#156)', () => {
-    const mixed = [
-      { name: 'sugarcube', version: '2.37.3' },
-      { name: 'SugarCube', version: '2.36.1' },
-    ];
-    const pick = (name: string) => selectFormatCandidate({ kind: 'name', name, version: '2.0.0' }, mixed, (c) => c);
-    expect(pick('SugarCube')?.version).toBe('2.36.1');
-    expect(pick('sugarcube')?.version).toBe('2.37.3');
-    expect(pick('SUGARCUBE')?.version).toBe('2.37.3');
+  it('matches names without regard to case, preferring an exact-case match between equal versions (#156)', () => {
+    const mixed = indexed(['sugarcube', '2.37.3'], ['SugarCube', '2.37.3'], ['SUGARCUBE', '2.36.1']);
+    const pick = (name: string) => selectFormat({ kind: 'name', name, version: '2.0.0' }, mixed)?.choice.name;
+    expect(pick('SugarCube')).toBe('SugarCube');
+    expect(pick('sugarcube')).toBe('sugarcube');
+    expect(pick('SUGARCUBE')).toBe('sugarcube');
+  });
+
+  it('prefers the exact version to the exact letter case (F18)', () => {
+    const mixed = indexed(['sugarcube', '2.36.1'], ['SugarCube', '2.37.3']);
+    const pick = selectFormat({ kind: 'name', name: 'SugarCube', version: '2.36.1' }, mixed);
+    expect(pick?.choice.name).toBe('sugarcube');
+    expect(pick?.tier).toBe('exact');
   });
 
   it('ranks a release above its prereleases and never treats them as the same version (#162)', () => {
-    const pre = [
-      { name: 'Pre', version: '2.0.0' },
-      { name: 'Pre', version: '2.0.0-beta.1' },
-    ];
+    const pre = indexed(['Pre', '2.0.0'], ['Pre', '2.0.0-beta.1']);
     for (const list of [pre, [...pre].reverse()]) {
       const pick = (request: FormatRequest, allowOlder = false) =>
-        selectFormatCandidate(request, list, (c) => c, { allowOlder })?.version;
+        selectFormat(request, list, { allowOlder })?.choice.version;
       expect(pick({ kind: 'name', name: 'Pre', version: '2.0.0' })).toBe('2.0.0');
       expect(pick({ kind: 'name', name: 'Pre', version: '2.0.0-beta.1' })).toBe('2.0.0-beta.1');
       expect(pick({ kind: 'name', name: 'Pre', version: '1.0.0' })).toBeUndefined();
       expect(pick({ kind: 'id', id: 'pre-2' })).toBe('2.0.0');
     }
-    const betaOnly = [{ name: 'Pre', version: '2.0.0-beta.1' }];
+    const betaOnly = indexed(['Pre', '2.0.0-beta.1']);
     const request: FormatRequest = { kind: 'name', name: 'Pre', version: '2.0.0' };
-    expect(selectFormatCandidate(request, betaOnly, (c) => c)).toBeUndefined();
-    expect(selectFormatCandidate(request, betaOnly, (c) => c, { allowOlder: true })?.version).toBe('2.0.0-beta.1');
+    expect(selectFormat(request, betaOnly)).toBeUndefined();
+    expect(selectFormat(request, betaOnly, { allowOlder: true })?.choice.version).toBe('2.0.0-beta.1');
   });
 });
 

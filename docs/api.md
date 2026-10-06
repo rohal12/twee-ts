@@ -274,7 +274,7 @@ for (const [id, format] of formats) {
 ```typescript
 import {
   resolveRemoteFormat,
-  fetchAndCacheFormat,
+  fetchDirectFormat,
   discoverCachedFormats,
   listCachedFormats,
   clearCachedFormats,
@@ -282,7 +282,8 @@ import {
   getCacheDir,
 } from '@rohal12/twee-ts';
 
-// Auto-resolve from SFA indices
+// Resolve from format URLs and indices (then the Story Formats Archive) by the same rules as a
+// compile, without local formats; see "How a Format Is Chosen" in Story Formats
 const format = await resolveRemoteFormat('SugarCube', '2.37.3');
 
 // With direct format URLs, a signal and a per-request timeout (RemoteFetchOptions)
@@ -291,19 +292,24 @@ const fork = await resolveRemoteFormat('SugarCube', '2.37.3', [], ['https://exam
   timeout: 10_000,
 });
 
-// List cached formats (Map<id, StoryFormatInfo>)
+// Download a format.js URL into the cache (checked again with a conditional request when cached)
+const direct = await fetchDirectFormat('https://example.com/my-format/format.js');
+
+// Every intact cached format (Map<cache entry key, StoryFormatInfo>)
 const cached = discoverCachedFormats();
 
-// List cached formats with size and modification date
+// List cached formats with where each came from, its size and when it was downloaded
 const entries = listCachedFormats();
 for (const e of entries) {
-  console.log(`${e.name} ${e.version} — ${e.sizeBytes} bytes, modified ${e.modifiedAt.toISOString()}`);
+  console.log(
+    `${e.name} ${e.version} from ${e.source} ${e.origin}: ${e.sizeBytes} bytes, ${e.modifiedAt.toISOString()}`,
+  );
 }
 
-// Clear all cached formats, including downloads from direct URLs (returns count removed)
+// Clear all cached formats (returns count removed)
 clearCachedFormats();
 
-// Clear cached formats by name
+// Clear cached formats by name, without regard to letter case
 clearCachedFormats('SugarCube');
 
 // Get total cache size

@@ -17,6 +17,7 @@ import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { seedIndexDownload, seedUrlDownload, withCacheHome } from './helpers/format-cache.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const BIN = join(ROOT, 'bin', 'twee-ts.ts');
@@ -177,8 +178,14 @@ describe('CLI --list-formats (#174)', () => {
   };
 
   it('lists cached formats under IDs that --format accepts', () => {
-    writeFormat(join(dir, 'cache', 'twee-ts', 'storyformats', 'Fixture', '1.0.0'), 'Fixture', '1.0.0');
-    writeFormat(join(dir, 'cache', 'twee-ts', 'storyformats', 'Fixture', '1.1.0'), 'Fixture', '1.1.0');
+    // Downloads from the Story Formats Archive, which every build consults.
+    withCacheHome(join(dir, 'cache'), () => {
+      for (const version of ['1.0.0', '1.1.0']) {
+        const source = `<html><head></head><body>Fixture-${version} {{STORY_DATA}}</body></html>`;
+        const text = `window.storyFormat(${JSON.stringify({ name: 'Fixture', version, source })});`;
+        seedIndexDownload('Fixture', version, text);
+      }
+    });
     const list = runCli(dir, ['--no-config', '--list-formats'], env());
     expect(list.status).toBe(0);
     expect(list.stdout).toContain('Cached remote formats:\n  fixture-1: Fixture 1.1.0 (also cached: 1.0.0)\n');
@@ -551,14 +558,16 @@ describe('CLI formatFetchTimeout config key', () => {
     const { port } = server.address() as AddressInfo;
     const url = `http://127.0.0.1:${port}/format.js`;
 
-    // After the URL times out, the format is found in the download cache, so nothing else goes to the network.
+    // After the URL times out, its cached copy answers, so nothing else goes to the network.
     const cache = join(dir, 'cache');
-    const cached = join(cache, 'twee-ts', 'storyformats', 'Stalled', '1.0.0');
-    mkdirSync(cached, { recursive: true });
-    writeFileSync(
-      join(cached, 'format.js'),
-      'window.storyFormat({"name":"Stalled","version":"1.0.0","source":"<html><head></head><body>{{STORY_DATA}}</body></html>"});',
-    );
+    withCacheHome(cache, () => {
+      seedUrlDownload(
+        url,
+        'Stalled',
+        '1.0.0',
+        'window.storyFormat({"name":"Stalled","version":"1.0.0","source":"<html><head></head><body>{{STORY_DATA}}</body></html>"});',
+      );
+    });
     writeFileSync(join(dir, 'story.tw'), VALID_STORY);
     writeFileSync(
       join(dir, 'twee-ts.config.json'),

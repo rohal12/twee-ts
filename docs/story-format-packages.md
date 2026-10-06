@@ -10,24 +10,23 @@ This document describes how to package a Twine 2 story format as an npm package 
 
 A story format npm package serves up to three purposes:
 
-1. **Compilation** — twee-ts uses the format's HTML template to produce playable story files
-2. **Type safety** — story authors get autocomplete and type checking for the format's JavaScript API
-3. **Source access** — story authors can read the format's source to understand how features work
+1. **Compilation**: twee-ts uses the format's HTML template to produce playable story files
+2. **Type safety**: story authors get autocomplete and type checking for the format's JavaScript API
+3. **Source access**: story authors can read the format's source to understand how features work
 
-Only the first is required. The other two are optional but significantly improve the authoring experience.
+Only the first is required. The other two are optional but significantly improve the authoring experience. twee-ts finds an installed package through `formatPaths`, as [Level 1](#level-1-compilation-only-minimum-viable-package) shows.
 
 ## Levels of Support
 
 ### Level 1: Compilation Only (minimum viable package)
 
-This is the bare minimum. It lets twee-ts use your format for compilation.
+This is the bare minimum: a package that holds the format's `format.js`, so twee-ts can build with it.
 
 #### Package structure
 
 ```
-my-format/
+my-format-1/
 ├── package.json
-├── index.js
 └── format.js
 ```
 
@@ -35,18 +34,14 @@ my-format/
 
 ```json
 {
-  "name": "@twine-formats/my-format",
+  "name": "@twine-formats/my-format-1",
   "version": "1.0.0",
-  "type": "module",
-  "exports": {
-    ".": "./index.js"
-  },
   "keywords": ["twine-story-format"],
-  "files": ["index.js", "format.js"]
+  "files": ["format.js"]
 }
 ```
 
-The `"twine-story-format"` keyword is required. twee-ts uses it to identify format packages in `node_modules`.
+The `"twine-story-format"` keyword helps people find format packages on npm; twee-ts does not read it.
 
 #### `format.js`
 
@@ -62,11 +57,41 @@ window.storyFormat({
 
 This is the standard format file as defined by the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md).
 
-#### `index.js`
+#### Usage by story authors
 
-A thin ESM wrapper that parses format.js and re-exports its fields:
+```sh
+npm install @twine-formats/my-format-1
+```
+
+twee-ts reads story formats from folders: each subfolder of a [format directory](./story-formats#search-order) that holds a `format.js` is a format. An npm scope folder is such a directory, so list it in `formatPaths`, in the [config file](./configuration):
+
+```json
+{
+  "formatPaths": ["node_modules/@twine-formats"]
+}
+```
+
+or through the [API](./api#compile-options):
+
+```typescript
+import { compile } from '@rohal12/twee-ts';
+
+const result = await compile({
+  sources: ['src/'],
+  formatPaths: ['node_modules/@twine-formats'],
+});
+```
+
+The package's folder name is then its format ID (`--format my-format-1`), and a `StoryData` passage that names `My Format` finds it by name and version, as for any local format (see [How a Format Is Chosen](./story-formats#how-a-format-is-chosen)). An unscoped package works the same way when its folder is listed directly: `formatPaths: ['node_modules']` makes every package with a `format.js` a format, so a scope keeps the list short.
+
+twee-ts does not search `node_modules` by itself, and `compile()` has no option that takes a format module: `formatPaths` is the one way to add formats from disk. Packages and their versions stay under your project's control (and its lockfile), and nothing else in `node_modules` is read.
+
+#### An ESM wrapper (optional)
+
+Tools other than twee-ts may want the format's fields from JavaScript. A thin wrapper can export them; twee-ts does not use it:
 
 ```javascript
+// index.js
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -81,23 +106,7 @@ export const source = json.source;
 export const proofing = json.proofing ?? false;
 ```
 
-#### Usage by story authors
-
-```sh
-npm install @twine-formats/my-format
-```
-
-```typescript
-import * as myFormat from '@twine-formats/my-format';
-import { compile } from 'twee-ts';
-
-const result = await compile({
-  sources: ['src/'],
-  format: myFormat,
-});
-```
-
-Or with no code at all — twee-ts auto-discovers packages with the `twine-story-format` keyword from `node_modules`.
+This simple parse needs a `format.js` whose object is strict JSON; twee-ts itself also reads the JavaScript object literal syntax some formats use (see [Format Metadata](./story-formats#format-metadata)). Add `"type": "module"`, `"exports": { ".": "./index.js" }` and `index.js` to `files` in `package.json` when you ship it.
 
 ---
 
@@ -135,12 +144,14 @@ my-format/
 }
 ```
 
+The types need an entry point to hang on, so this level ships the [optional ESM wrapper](#an-esm-wrapper-optional) as `index.js`.
+
 #### `types/index.d.ts`
 
 Declares the format metadata exports and any API types:
 
 ```typescript
-// Format metadata (used by twee-ts)
+// Format metadata (exported by the optional wrapper)
 export declare const name: string;
 export declare const version: string;
 export declare const source: string;
@@ -284,29 +295,29 @@ Or use declaration maps (`"declarationMap": true` in tsconfig) if your types are
 
 ---
 
-## Required Exports
+## What twee-ts Reads
 
-twee-ts requires the following named exports from the package's main entry point:
+twee-ts reads only the package's `format.js`, from the folder the package is installed in, exactly as it reads any [local story format](./story-formats#format-metadata):
 
-| Export     | Type      | Required | Description                                                                 |
-| ---------- | --------- | -------- | --------------------------------------------------------------------------- |
-| `name`     | `string`  | yes      | Format name (e.g. `"SugarCube"`)                                            |
-| `version`  | `string`  | yes      | Semantic version (e.g. `"2.37.3"`)                                          |
-| `source`   | `string`  | yes      | HTML template containing `{{STORY_NAME}}` and `{{STORY_DATA}}` placeholders |
-| `proofing` | `boolean` | no       | Whether this is a proofing format. Default: `false`                         |
+| Field      | Required | Description                                                                       |
+| ---------- | -------- | --------------------------------------------------------------------------------- |
+| `name`     | no       | Format name (e.g. `"SugarCube"`); a format without one is `Untitled Story Format` |
+| `version`  | yes      | SemVer version (e.g. `"2.37.3"`)                                                  |
+| `source`   | yes      | HTML template containing `{{STORY_NAME}}` and `{{STORY_DATA}}` placeholders       |
+| `proofing` | no       | Whether this is a proofing format. Default: `false`                               |
 
-These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md).
+These correspond to the fields in the [Twine 2 Story Formats Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-storyformats-spec.md). A Twine 1 format package holds a `header.html` instead, as a Twine 1 format folder does.
 
 ## Naming Convention
 
-We recommend the `@twine-formats/` npm scope for community packages:
+We recommend the `@twine-formats/` npm scope for community packages, with the format ID as the package name, so that the installed folder is the format ID:
 
 - `@twine-formats/sugarcube-2`
 - `@twine-formats/harlowe-3`
 - `@twine-formats/chapbook-2`
 - `@twine-formats/snowman-2`
 
-Unscoped names work too. The package name does not need to match the format name — twee-ts matches by the `name` and `version` exports, not by the package name.
+A `StoryData` request finds a format by the `name` and `version` in its `format.js` whatever its folder is called, and `--format` finds it by its folder name or by its name and major version (`sugarcube-2`).
 
 ## Versioning
 
@@ -318,7 +329,7 @@ npm install @twine-formats/sugarcube-2@2.37.3
 
 ## Compatibility with Existing Tools
 
-Packages that follow this spec remain compatible with Twine 2 and Tweego because they include the standard `format.js` file. The ESM wrapper and type declarations are additive — they don't change the format.js in any way.
+Packages that follow this guide remain compatible with Twine 2 and Tweego because they include the standard `format.js` file. Tweego users can point `TWEEGO_PATH` at the same scope folder. The optional wrapper and type declarations are additive: they don't change `format.js` in any way.
 
 ## Example: Minimal SugarCube Package
 
@@ -334,34 +345,26 @@ mkdir sugarcube-2 && cd sugarcube-2
   "name": "@twine-formats/sugarcube-2",
   "version": "2.37.3",
   "description": "SugarCube story format for Twine, packaged for twee-ts",
-  "type": "module",
-  "exports": {
-    ".": "./index.js"
-  },
   "keywords": ["twine-story-format"],
-  "files": ["index.js", "format.js"],
+  "files": ["format.js"],
   "license": "BSD-2-Clause"
 }
-```
-
-```javascript
-// index.js
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const raw = readFileSync(join(__dirname, 'format.js'), 'utf-8');
-const json = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-
-export const name = json.name;
-export const version = json.version;
-export const source = json.source;
-export const proofing = json.proofing ?? false;
 ```
 
 Then copy the SugarCube `format.js` into the directory and publish:
 
 ```sh
 npm publish --access public
+```
+
+A project then installs it and lists the scope folder:
+
+```sh
+npm install --save-dev @twine-formats/sugarcube-2
+```
+
+```json
+{
+  "formatPaths": ["node_modules/@twine-formats"]
+}
 ```

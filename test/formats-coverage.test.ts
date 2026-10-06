@@ -7,7 +7,7 @@ import {
   discoverAllFormats,
   makeFormatId,
   readFormatSource,
-  selectFormatCandidate,
+  selectFormat,
 } from '../src/formats.js';
 import { decodeFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, StoryFormatInfo } from '../src/types.js';
@@ -57,12 +57,15 @@ describe('format IDs and request descriptions', () => {
 
 describe('selecting among candidates', () => {
   it('skips candidates whose version is not SemVer', () => {
-    const candidates = [
-      { name: 'Mock', version: 'banana' },
-      { name: 'Mock', version: '1.2.0' },
-    ];
-    const picked = selectFormatCandidate({ kind: 'name', name: 'Mock', version: '1.0.0' }, candidates, (c) => c);
-    expect(picked?.version).toBe('1.2.0');
+    const candidates = ['banana', '1.2.0'].map((version) => ({
+      name: 'Mock',
+      version,
+      isTwine2: true,
+      source: 'url' as const,
+      rank: 1,
+    }));
+    const picked = selectFormat({ kind: 'name', name: 'Mock', version: '1.0.0' }, candidates);
+    expect(picked?.choice.version).toBe('1.2.0');
   });
 });
 

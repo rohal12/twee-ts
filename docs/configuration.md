@@ -94,8 +94,8 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 | -------------------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `formatId`           | `string`   | `"sugarcube-2"` | Story format directory ID.                                                                                                            |
 | `formatPaths`        | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                                                                                |
-| `formatIndices`      | `string[]` | `[]`            | URLs to SFA-compatible `index.json` files for remote format lookup.                                                                   |
-| `formatUrls`         | `string[]` | `[]`            | Direct URLs to `format.js` files, looked up before the download cache.                                                                |
+| `formatIndices`      | `string[]` | `[]`            | `http:`/`https:` URLs of SFA-compatible `index.json` files, consulted after `formatUrls` and before the Story Formats Archive.        |
+| `formatUrls`         | `string[]` | `[]`            | `http:`/`https:` URLs of `format.js` files, consulted after local formats and before `formatIndices`.                                 |
 | `useTweegoPath`      | `boolean`  | `true`          | Also search the `TWEEGO_PATH` environment variable for formats.                                                                       |
 | `noRemote`           | `boolean`  | `false`         | Disable remote format fetching entirely.                                                                                              |
 | `formatFetchTimeout` | `number`   | `30000`         | Milliseconds each story format request may take before it fails with a warning and the next source is tried. `0` turns the limit off. |

@@ -126,13 +126,13 @@ Manage the local cache of downloaded remote story formats.
 twee-ts cache <subcommand>
 ```
 
-| Subcommand     | Description                                               |
-| -------------- | --------------------------------------------------------- |
-| `list`         | List cached formats with name, version, size, and date.   |
-| `clear`        | Delete all cached formats, including `--format-url` ones. |
-| `clear <name>` | Delete cached formats matching a name.                    |
-| `size`         | Show total cache size and format count.                   |
-| `path`         | Print the cache directory path.                           |
+| Subcommand     | Description                                             |
+| -------------- | ------------------------------------------------------- |
+| `list`         | List cached formats with name, version, size, and date. |
+| `clear`        | Delete all cached formats.                              |
+| `clear <name>` | Delete cached formats with a name (any letter case).    |
+| `size`         | Show total cache size and format count.                 |
+| `path`         | Print the cache directory path.                         |
 
 ```sh
 $ twee-ts cache list
@@ -149,6 +149,8 @@ Cleared 1 cached format.
 $ twee-ts cache path
 /home/user/.cache/twee-ts/storyformats
 ```
+
+The cache keeps each download for the format index or format URL it came from; see [The Download Cache](./story-formats#the-download-cache).
 
 ## Exit Status
 

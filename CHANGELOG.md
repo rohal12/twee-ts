@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `format.js` must be valid JavaScript: one that is not, such as a file with an unterminated comment after the `storyFormat()` call, is skipped with the parser's message and position. Fix the file; a browser cannot load it either (#245)
 - The format object is the object literal passed to the file's one `storyFormat()` call, or the whole file when it is nothing but an object literal. A file whose object was found only as the first `{` of other code, or that calls `storyFormat()` more than once, is skipped. Write the object as `window.storyFormat({…})` (#245)
 - Format objects are read by a stated subset of JavaScript literals (see the story formats guide). Values outside it, which were partly accepted before, are errors that name the property and its line and column: for example a signed property key (`{-1: 1}`, a syntax error in JavaScript) or a `__proto__` key, which sets the prototype in JavaScript (#245)
+- Story format downloads are cached by where they came from (#248). A download from a format index is used only by builds that consult that index, and only while it matches the checksums the index lists; a download from a format URL only by builds that list that URL. The cache directories of twee-ts 1.x are no longer read: run `twee-ts cache clear` (which also removes them) and let the next online build download again. `noRemote` builds use the cached downloads of their own `formatUrls` and `formatIndices` and of the Story Formats Archive, not every download on the machine
+- One selection policy for every source ([How a Format Is Chosen](docs/story-formats.md#how-a-format-is-chosen)): the first source (local folders, then each format URL, then each format index) with an answering format wins; within a source, an exact version beats a newer one, and the greater version beats exact letter case. A same-major older version is used, with a warning, only when no source has an answering one, whatever source holds it (#224, #248 F03). An online build's choice no longer depends on what the cache holds (#248 F01)
+- A format URL is requested again on every online build that reaches it (conditionally, with its ETag or Last-Modified), instead of using its cached copy for ever (#248 F08); offline, the cached copy is used as before
+- `formatUrls` and `formatIndices` accept only absolute `http:` and `https:` URLs without credentials; anything else (a `file:` URL, a relative path) is an error diagnostic that points to `formatPaths` (#248 F17)
+- Versions follow SemVer 2.0.0 strictly besides Tweego's leading `v` and short `1`/`1.2` forms: a number with a leading zero (`01.2.3`, `1.0.0-01`) or a major, minor or patch above 2^53 − 1 is not a version (#248 F18). A format with such a version is skipped with a warning
+- `fetchAndCacheFormat` is removed: it cached a download for every project by name and version. Use `formatIndices`, or `resolveRemoteFormat` with the index URL
+- `listCachedFormats`, `getCacheSize` and `clearCachedFormats` cover downloads from format URLs too, and `clearCachedFormats(name)` matches the format name without regard to letter case instead of a directory name (#248 F10). `discoverCachedFormats` keys its map by cache entry. `CachedFormatEntry` has new `source` and `origin` fields
+- An empty or relative `XDG_CACHE_HOME` is ignored, as the XDG Base Directory spec says (#248 F18)
 
 ### Added
 
@@ -32,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StoryBuilder.remove()`, `rename()`, `get()` and `passages` (#171)
 - [Differences from Tweego](docs/tweego-differences.md) lists every intended difference, each with a test (#246)
 - StoryData keys match regardless of letter case, as in Tweego (`IFID`, `Format-Version`), with a warning; unknown and repeated keys are warned about (#246)
+- Twine 1 entries of a format index are downloaded (`header.html`, with `code.js` and `userlib.js` when listed) and used for a format ID (#248 F04)
+- What decoding leaves out of the story format a build uses (a function-valued property it skipped, a field of the wrong type it ignored) is a warning that names the format file, or the URL a downloaded format came from (#248)
+- A format ID also finds a local format by its name and major version, as it does in format URLs and indices, so `--format sugarcube-2` finds SugarCube 2.37.3 in a folder named `sugarcube-2.37` (#248 F14)
 
 ### Fixed
 
@@ -42,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Positions in format.js errors count CR, CR LF, U+2028 and U+2029 as line breaks, also in downloaded files (#245)
 - The link check reads JavaScript with a JavaScript parser, so a regular expression after `if (…)`, `while (…)`, a block or a function declaration no longer hides a broken link or reports a phantom one, and a division after a variable named `of` or after `1.` is read as one (#245)
 - Strings in `<script>` elements are read as sloppy-mode JavaScript, so a link written with octal escapes (`'\74\74goto "Room">>'`) is checked (#245)
+- Indexed formats whose `format.js` names no format stay resolvable offline, by ID and by name, and are listed and cleared by their index name (#237)
+- A format index's download URLs are resolved against the URL the index was served from (after redirects), with each part percent-encoded, so an index URL with a query, a fragment, another file name or a redirect works (#238, #248 F05)
+- Every failing source is reported, with its URL and the cause (such as `ECONNREFUSED`, the JSON error, or why a `format.js` cannot be used), even when a later source answers; a checksum mismatch names the URL and both hashes (#248 F06, F07). When nothing answers, the error lists the candidates with the requested name and why each does not answer
+- A missing or unparseable `format-version` warns, as Tweego does, instead of silently taking the greatest version of any major (#248 F09)
+- A download that cannot be written to the cache (a read-only home directory) is used for that build, with a warning, instead of failing it (#248 F11)
+- Responses larger than 32 MiB are refused while they stream (#248 F12)
+- An index checksum is matched by exact file name; a checksum that is not a string skips the entry with a reason, and a malformed digest fails the download it is for (#248 F13)
+- A format URL accepts any format name, as a local folder does; cache paths never contain format names (#248 F15, #238)
+- Cached files are checked against their SHA-256 when read, and a downloaded format is used from the bytes that were checked, never read back from disk (#248)
+- The packaging guide no longer documents a `format` compile option or `node_modules` discovery that do not exist; it shows `formatPaths` with an npm scope folder (#248 F16)
 - The optional properties of the public option types (`CompileOptions`, `CompileToFileOptions`, `WatchOptions`, `TweeTsConfig`, `DecompileOptions`, `InspectOptions`, `RemoteFetchOptions`, `ParseOptions`, `Passage`, and the Vite and Rollup plugin options) accept an explicit `undefined`, so projects with `exactOptionalPropertyTypes` can pass values such as `formatId: process.env.FORMAT`. `CompileResult.format` is typed `StoryFormatInfo | undefined`, as compile sets it (#250)
 - TypeScript projects that compile to CommonJS (`module: node16`/`nodenext` in a `.cts` file or a CommonJS package) get the CommonJS declarations instead of TS1479; every entry point has `types` per `import`/`require` condition (#250)
 - `moduleResolution: node10` finds the types of `@rohal12/twee-ts` and `@rohal12/twee-ts/rollup` (`main`, `types`, `typesVersions`). `@rohal12/twee-ts/vite` still needs `node16`, `nodenext` or `bundler`, because Vite's own types do (#250)

@@ -9,12 +9,13 @@ import { join } from 'node:path';
 import {
   clearIndexCache,
   discoverCachedFormats,
-  fetchAndCacheFormat,
   fetchDirectFormat,
   fetchIndex,
-  resolveRemoteFormatRequest,
+  obtainIndexEntry,
+  parseFormatIndex,
 } from '../src/remote-formats.js';
-import type { SFAIndexEntry } from '../src/types.js';
+import { resolveStoryFormat } from '../src/format-resolution.js';
+import type { Diagnostic, FormatRequest, RemoteFetchOptions, SFAIndexEntry, StoryFormatInfo } from '../src/types.js';
 
 /** A request the local server has received and holds until the test answers it. */
 interface HeldRequest {
@@ -121,6 +122,44 @@ function entry(name: string, version: string, checksum?: string): SFAIndexEntry 
   };
 }
 
+/**
+ * Obtain an index entry's format.js from `url`'s server, as an index at that server's root lists
+ * it (every path of the test servers answers the same).
+ */
+async function fetchAndCacheFormat(
+  listed: SFAIndexEntry,
+  url: string,
+  options: RemoteFetchOptions = {},
+): Promise<StoryFormatInfo> {
+  const index = parseFormatIndex(
+    JSON.stringify({ twine2: [listed] }),
+    'https://index.test/index.json',
+    new URL('/index.json', url).href,
+  );
+  const [parsed] = index.entries;
+  if (!parsed) throw new Error(`the test entry is not usable: ${JSON.stringify(index.skipped)}`);
+  return (await obtainIndexEntry(index, parsed, options)).info;
+}
+
+/** Resolve a request as a compile does, with no local formats, and fail with the diagnostics when nothing answers. */
+async function resolveRequest(request: FormatRequest, formatIndices: readonly string[]): Promise<StoryFormatInfo> {
+  const diagnostics: Diagnostic[] = [];
+  const home = process.env['HOME'];
+  process.env['HOME'] = root;
+  try {
+    const info = await resolveStoryFormat(
+      request,
+      { formatPaths: [], useTweegoPath: false, formatIndices },
+      diagnostics,
+    );
+    if (!info) throw new Error(diagnostics.map((d) => d.message).join('\n'));
+    return info;
+  } finally {
+    if (home === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = home;
+  }
+}
+
 const BOM = Uint8Array.from([0xef, 0xbb, 0xbf]);
 const withBom = (text: string): Buffer => Buffer.concat([BOM, Buffer.from(text)]);
 
@@ -130,8 +169,8 @@ describe('checksums cover the downloaded bytes (#204)', () => {
     const server = await startServer(() => bytes);
     const info = await fetchAndCacheFormat(entry('Review', '1.0.0', sha256(bytes)), `${server.origin}/format.js`);
     expect(info.name).toBe('Review');
-    // The cached copy is the decoded text, which local format loading reads back.
-    expect(readFileSync(info.filename, 'utf-8')).toBe(formatText('Review', '1.0.0'));
+    // The cached copy holds the bytes as served, so a later read checks them against the same hash.
+    expect(readFileSync(info.filename)).toEqual(bytes);
   });
 
   it('rejects a BOM-prefixed format.js whose checksum is of the text without the BOM', async () => {
@@ -139,7 +178,7 @@ describe('checksums cover the downloaded bytes (#204)', () => {
     const server = await startServer(() => withBom(text));
     await expect(
       fetchAndCacheFormat(entry('Review', '1.0.0', sha256(text)), `${server.origin}/format.js`),
-    ).rejects.toThrow('Checksum verification failed for Review 1.0.0');
+    ).rejects.toThrow(/Checksum mismatch for http:.*\/twine2\/Review\/1\.0\.0\/format\.js/);
     expect(discoverCachedFormats().size).toBe(0);
   });
 
@@ -147,7 +186,7 @@ describe('checksums cover the downloaded bytes (#204)', () => {
     const server = await startServer(() => withBom(formatText('Review', '1.0.0')));
     await expect(
       fetchAndCacheFormat(entry('Review', '1.0.0', '0'.repeat(64)), `${server.origin}/format.js`),
-    ).rejects.toThrow('Checksum verification failed');
+    ).rejects.toThrow(/Checksum mismatch/);
   });
 
   it('accepts bytes that are not valid UTF-8 when the checksum is of those bytes', async () => {
@@ -183,11 +222,14 @@ describe('each caller keeps its own timeout when requests are shared (#205)', ()
   it('keeps waiting for a long-limit caller after the first, shorter caller timed out', async () => {
     const server = await startServer();
     const url = `${server.origin}/format.js`;
-    const first = fetchDirectFormat(url, { timeout: 20 });
+    // Settled from the start: on a slow machine the first caller can time out before the server sees the request.
+    const first = Promise.allSettled([fetchDirectFormat(url, { timeout: 20 })]);
     const second = fetchDirectFormat(url, { timeout: 0 });
     const held = await server.next();
 
-    await expect(first).rejects.toThrow(TIMEOUT_20);
+    expect(await first).toEqual([
+      { status: 'rejected', reason: expect.objectContaining({ message: expect.stringMatching(TIMEOUT_20) }) },
+    ]);
     expect(held.res.destroyed).toBe(false);
     held.answer(formatText('Review', '1.0.0'));
     expect((await second).name).toBe('Review');
@@ -197,9 +239,13 @@ describe('each caller keeps its own timeout when requests are shared (#205)', ()
   it('stops the download once every caller has timed out', async () => {
     const server = await startServer();
     const url = `${server.origin}/format.js`;
-    const calls = [fetchDirectFormat(url, { timeout: 10 }), fetchDirectFormat(url, { timeout: 20 })];
+    // Settled from the start: on a slow machine both can time out before the server sees the request.
+    const settled = Promise.allSettled([
+      fetchDirectFormat(url, { timeout: 10 }),
+      fetchDirectFormat(url, { timeout: 20 }),
+    ]);
     const held = await server.next();
-    const results = await Promise.allSettled(calls);
+    const results = await settled;
     expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
     await held.closed;
   });
@@ -225,7 +271,7 @@ describe('each caller keeps its own timeout when requests are shared (#205)', ()
 
     await expect(limited).rejects.toThrow(TIMEOUT_20);
     held.answer(JSON.stringify({ twine2: [entry('Review', '1.0.0')] }));
-    expect((await unlimited).twine2).toHaveLength(1);
+    expect((await unlimited).entries).toHaveLength(1);
     expect(server.requests).toHaveLength(1);
   });
 });
@@ -314,8 +360,9 @@ describe('a download must be the format its index entry names (#207)', () => {
   it('allows a format.js that names no format', async () => {
     const unnamed = `window.storyFormat(${JSON.stringify({ version: '1.0.0', source: '{{STORY_DATA}}' })});`;
     const info = await download('Review', '1.0.0', unnamed);
-    expect(info.version).toBe('1.0.0');
-    expect(discoverCachedFormats().size).toBe(1);
+    // It keeps the identity its index entry gives it (#237).
+    expect(info).toMatchObject({ name: 'Review', version: '1.0.0', id: 'review-1' });
+    expect([...discoverCachedFormats().values()].map((f) => f.name)).toEqual(['Review']);
   });
 
   describe('when resolving a request through indices', () => {
@@ -345,7 +392,7 @@ describe('a download must be the format its index entry names (#207)', () => {
         indexRoutes(formatText('Actual Review Format', '1.0.0'), 'RequestedReviewFormat'),
       );
       await expect(
-        resolveRemoteFormatRequest({ kind: 'id', id: 'requestedreviewformat-1' }, [`${server.origin}/index.json`]),
+        resolveRequest({ kind: 'id', id: 'requestedreviewformat-1' }, [`${server.origin}/index.json`]),
       ).rejects.toThrow(/mismatch/);
       expect(discoverCachedFormats().size).toBe(0);
     });
@@ -353,7 +400,7 @@ describe('a download must be the format its index entry names (#207)', () => {
     it('goes on to the next index after a mismatching download', async () => {
       const stale = await startServer(indexRoutes(formatText('Actual', '1.0.0'), 'Review'));
       const fresh = await startServer(indexRoutes(formatText('Review', '1.0.0'), 'Review'));
-      const info = await resolveRemoteFormatRequest({ kind: 'id', id: 'review-1' }, [
+      const info = await resolveRequest({ kind: 'id', id: 'review-1' }, [
         `${stale.origin}/index.json`,
         `${fresh.origin}/index.json`,
       ]);

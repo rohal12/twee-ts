@@ -238,6 +238,10 @@ export interface InspectOptions {
 
 export interface StoryFormatInfo {
   id: string;
+  /**
+   * The format's file (format.js or header.html): in a local format folder, in the download cache,
+   * or, for a download the cache could not store, the URL it was downloaded from.
+   */
   filename: string;
   isTwine2: boolean;
   name: string;
