@@ -5,11 +5,11 @@
  * `compileOptions.exclude` leaves out. The Vite and the Rollup plugin share this,
  * so the same options mean the same thing in both.
  */
-import { resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
 import { TweeTsError } from '../errors.js';
 import { isExcluded } from '../filesystem.js';
-import { isSameOrInside } from '../path-identity.js';
+import { identify, isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
 import { isRecord } from '../util.js';
 
@@ -165,6 +165,20 @@ function absolute(path: string): string {
 }
 
 /**
+ * How the compiler spells `file` when it finds it by walking each source it is inside: the source
+ * as given, then the file's path below it. A watcher may report the real path of a file the sources
+ * (and so the exclude globs) reach through a link, which the globs would otherwise not match.
+ */
+function spellingsUnderSources(file: string, sources: readonly string[]): string[] {
+  const real = identify(file).canonical;
+  return sources.flatMap((source) => {
+    const below = relative(identify(source).canonical, real);
+    const outside = below === '..' || below.startsWith(`..${sep}`) || isAbsolute(below);
+    return outside ? [] : [join(resolve(source), below)];
+  });
+}
+
+/**
  * Checks a plugin's options and resolves them. Throws a TweeTsError naming the
  * option for anything outside what the plugin supports: an unknown option, a
  * value of the wrong type, `compileOptions.sources` or `compileOptions.formatId`
@@ -188,7 +202,10 @@ export function resolvePluginOptions(
     entry: entry === undefined ? undefined : resolve(entry),
     inputs: [...sources.map(absolute), ...notExcludable],
     // `exclude` never applies to the head file and the modules.
-    excluded: (file) => isExcluded(file, exclude) && !notExcludable.some((path) => isSameOrInside(file, path)),
+    excluded: (file) =>
+      exclude.length > 0 &&
+      [file, ...spellingsUnderSources(file, sources)].some((spelling) => isExcluded(spelling, exclude)) &&
+      !notExcludable.some((path) => isSameOrInside(file, path)),
     compile: (inline = []) => ({ ...compileOptions, sources: [...sources, ...inline], formatId: format }),
   };
 }

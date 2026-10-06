@@ -17,10 +17,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, relative } from 'node:path';
+import { createServer } from 'vite';
 import { compile, compileIncremental, watch } from '../src/compiler.js';
 import { parseFormatJSON } from '../src/format-decode.js';
 import { getFormatSearchDirs } from '../src/formats.js';
+import { resolvePluginOptions } from '../src/plugins/options.js';
+import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import type { CompileOptions, CompileResult, FileCacheEntry, OutputMode } from '../src/types.js';
 import { judgeHeadFile, judgeModule, judgeViteClient } from './helpers/insertion-judges.js';
@@ -234,6 +237,65 @@ describe.skipIf(!LINKS)(
     });
   },
 );
+
+describe.skipIf(!LINKS)('#242: exclude globs for sources named through a folder link', () => {
+  /**
+   * The story folder is reached through `alias`, a link to `real`, and the glob is written as the compiler
+   * reads it: relative to the working directory, through the alias. A watcher reports the real path.
+   */
+  function project(): { readonly real: string; readonly alias: string; readonly glob: string } {
+    const real = join(root, 'real');
+    const alias = join(root, 'alias');
+    mkdirSync(join(real, 'story', 'art'), { recursive: true });
+    writeFileSync(join(real, 'story', 'start.tw'), story('Hi'));
+    writeFileSync(join(real, 'story', 'art', 'x.png'), '');
+    symlinkSync(real, alias, 'dir');
+    const glob = `${toPosix(relative(process.cwd(), join(alias, 'story')))}/art/**`;
+    return { real, alias, glob };
+  }
+
+  it.each(['vite', 'rollup'] as const)('%s: matches a file by its real path as by its authored one', (kind) => {
+    const { real, alias, glob } = project();
+    const resolved = resolvePluginOptions(kind, {
+      sources: [join(alias, 'story')],
+      compileOptions: { exclude: [glob] },
+    });
+    expect(resolved.excluded(join(alias, 'story', 'art', 'x.png'))).toBe(true);
+    expect(resolved.excluded(join(real, 'story', 'art', 'x.png'))).toBe(true);
+    expect(resolved.excluded(join(real, 'story', 'start.tw'))).toBe(false);
+  });
+
+  it('starts no rebuild in the dev server for a change the watcher reports by the real path', async () => {
+    const { real, alias, glob } = project();
+    const server = await createServer({
+      configFile: false,
+      root: real,
+      logLevel: 'silent',
+      server: { watch: null, port: 0 },
+      plugins: [
+        tweeTsPlugin({
+          sources: [join(alias, 'story')],
+          format: 'test-format-1',
+          compileOptions: { ...COMPILE, exclude: [glob] },
+        }),
+      ],
+    });
+    try {
+      await server.listen();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        server.watcher.emit('all', 'change', join(real, 'story', 'art', 'x.png'));
+        expect(vi.getTimerCount()).toBe(0);
+        server.watcher.emit('all', 'change', join(real, 'story', 'start.tw'));
+        expect(vi.getTimerCount()).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    } finally {
+      await server.close();
+    }
+  });
+});
 
 /**
  * Templates whose head boundaries depend on HTML tokenizer or tree-construction states that the #244 regression
