@@ -36,6 +36,8 @@ Go was not available when this list was made, so the comparisons come from readi
 
 **D-12. StoryData is written from the story.** The StoryData passage records what the compile options changed (the start passage, test mode) and a generated IFID. Tweego writes it as it rewrote it when loading, without the options' changes.
 
+**D-17. Line endings.** Twee output uses LF line endings on every operating system, so a build gives the same bytes everywhere; Tweego writes CRLF on Windows. Both read either.
+
 ## Diagnostics
 
 **D-13. Locations.** Diagnostics about a passage carry its file and line, and the warning about a duplicate passage also names the file and line of the passage it replaces.

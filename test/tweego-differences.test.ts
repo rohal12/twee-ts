@@ -141,6 +141,12 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     });
   });
 
+  it('D-17: writes Twee with LF line endings on every OS', async () => {
+    const result = await build({ 'a.tw': ':: Start\r\nline one\r\nline two\r\n' }, 'twee3');
+    expect(result.output).toContain('line one\nline two');
+    expect(result.output).not.toContain('\r');
+  });
+
   it('D-16: escapes a Twee2 position as a JSON string', () => {
     const { passages, diagnostics } = parseTwee(':: A <1","size":"9,9>\nx', { twee2Compat: true });
     expect(diagnostics).toEqual([]);
