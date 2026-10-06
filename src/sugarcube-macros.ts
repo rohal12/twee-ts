@@ -20,6 +20,7 @@
  */
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from './javascript-strings.js';
 import type { ScriptMode } from './javascript-strings.js';
+import { scriptsJQueryRuns } from './html-structure.js';
 import { LINE_TERMINATORS, isLineTerminator } from './js-chars.js';
 import { readSquareBracketedMarkup } from './link-markup.js';
 
@@ -883,7 +884,11 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * parsers, only those whose text holds no link or call are told apart: comments (`/* … *` + `/`,
  * `/% … %/`, `<!-- … -->`), whose links and calls never run, and `<script>` elements and
  * `<<script>>` bodies, which are JavaScript: only the links and calls in their strings are read
- * (see `findJavaScriptPassageLinks`). Everything else, verbatim text included, is read as markup.
+ * (see `findJavaScriptPassageLinks`). A `<script>` element is read as jQuery and the browser run
+ * it when SugarCube inserts it (see `scriptsJQueryRuns`): a classic script as sloppy-mode code, a
+ * `type="module"` script as module code, and one that does not run (a template or JSON `type`, a
+ * `src`, a classic script marked `nomodule`) not at all. Everything else, verbatim text included,
+ * is read as markup.
  *
  * Where this differs from SugarCube:
  * - a link whose passage SugarCube evaluates, because no passage has its name, is taken by its
@@ -905,6 +910,8 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * - a `<<script>>` body's end is found as `parseBody` finds it, except that parseBody rejects a
  *   closing tag with arguments, and resumes inside the arguments of a tag whose name starts with
  *   `/` or `end`;
+ * - a `<script>` element is taken to run when the passage is shown, as a classic script in a
+ *   browser that supports modules;
  * - the lines of a `<<nobr>>` body, and of every passage when a story sets
  *   `Config.passages.nobr`, are not joined before they are read (see `storyInspect` for passages
  *   tagged `nobr`).
@@ -964,8 +971,10 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
           // SugarCube reads the opener and nothing more; the content is markup.
           return element.openerEnd;
         }
-        // The browser runs a `<script>` element as a classic, sloppy-mode script.
-        append(links, javaScriptPassageLinks(text.slice(element.openerEnd, element.close), context, 'sloppy'));
+        append(
+          links,
+          scriptElementPassageLinks(text.slice(start, element.close + 9), element.openerEnd - start, context),
+        );
         return element.close + 9;
       }
       default: {
@@ -1043,6 +1052,21 @@ const MAY_HOLD_LINK_RE = new RegExp(
   String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133`,
   'i',
 );
+
+/**
+ * The passages named in the strings of the scripts that run when SugarCube inserts `markup`, the
+ * `<script>` markup its `verbatimScriptTag` parser matched, whose opener ends at `contentStart`
+ * (see `scriptsJQueryRuns`): a classic
+ * script is sloppy-mode code, a module script module code. A script that does not run, such as a
+ * template (`type="text/template"`), JSON or one with a `src`, names no passage.
+ */
+function scriptElementPassageLinks(markup: string, contentStart: number, context: ReadContext): PassageLink[] {
+  // The code of every script in it lies after the opener.
+  if (context.depth >= MAX_STRING_DEPTH || !MAY_HOLD_LINK_RE.test(markup.slice(contentStart))) return [];
+  return scriptsJQueryRuns(markup).flatMap((script) =>
+    javaScriptPassageLinks(script.code, context, script.kind === 'module' ? 'module' : 'sloppy'),
+  );
+}
 
 /** The passages named in the strings of JavaScript `source`, evaluated in the given mode. */
 function javaScriptPassageLinks(source: string, context: ReadContext, mode: ScriptMode): PassageLink[] {

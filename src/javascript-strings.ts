@@ -9,6 +9,7 @@
 import { tokTypes } from 'acorn';
 import type { Options, Token, TokenType } from 'acorn';
 import { lineEnd } from './js-chars.js';
+import { isRecord } from './util.js';
 import { AcornParser, SCRIPT_OPTIONS, parseScript, trySyntax } from './js-syntax.js';
 import type { JsSyntaxError } from './js-syntax.js';
 
@@ -21,10 +22,11 @@ export const SUBSTITUTION = '\ufdd0';
 /**
  * How code is evaluated: Story JavaScript, `<<script>>` bodies and macro arguments in strict mode
  * (SugarCube evaluates them from its strict-mode code), a `<script>` element in sloppy mode (the
- * browser runs it as a classic script). The two differ in their strings only in legacy octal
- * escapes (`\101`) and `\8`/`\9`, which strict mode rejects.
+ * browser runs it as a classic script), or as a module (a `<script type="module">` element). Strict
+ * and sloppy mode differ in their strings only in legacy octal escapes (`\101`) and `\8`/`\9`, which
+ * strict mode rejects; a module is strict, and has no HTML-like comments (`<!--`, line-leading `-->`).
  */
-export type ScriptMode = 'strict' | 'sloppy';
+export type ScriptMode = 'strict' | 'sloppy' | 'module';
 
 const STRICT_OPTIONS: Readonly<Options> = { ...SCRIPT_OPTIONS, strict: true };
 
@@ -37,7 +39,7 @@ export function evalStringLiteral(literal: string, mode: ScriptMode = 'strict'):
   const quote = literal[0];
   if (quote !== '"' && quote !== "'") return undefined;
   const read = trySyntax(() =>
-    AcornParser.parseExpressionAt(literal, 0, mode === 'strict' ? STRICT_OPTIONS : SCRIPT_OPTIONS),
+    AcornParser.parseExpressionAt(literal, 0, mode === 'sloppy' ? SCRIPT_OPTIONS : STRICT_OPTIONS),
   );
   const node = read.ok ? read.value : undefined;
   return node?.type === 'Literal' && typeof node.value === 'string' && node.end === literal.length
@@ -58,6 +60,13 @@ const STORY_CODE_OPTIONS: Readonly<Options> = {
   allowImportExportEverywhere: true,
   checkPrivateFields: false,
 };
+
+/** Options for reading story code in `mode`: a module is read with the Module goal. */
+function storyCodeOptions(mode: ScriptMode): Readonly<Options> {
+  return mode === 'module' ? STORY_MODULE_OPTIONS : STORY_CODE_OPTIONS;
+}
+
+const STORY_MODULE_OPTIONS: Readonly<Options> = { ...STORY_CODE_OPTIONS, sourceType: 'module' };
 
 /** The parts of an acorn token the strings are read from; `start` and `end` index the whole source. */
 interface SourceToken {
@@ -95,11 +104,12 @@ function sourceToken(token: Token): SourceToken {
  */
 export function javaScriptStrings(source: string, mode: ScriptMode = 'strict'): string[] {
   const tokens: Token[] = [];
-  const parsed = parseScript(source, { ...STORY_CODE_OPTIONS, onToken: tokens });
+  const options = storyCodeOptions(mode);
+  const parsed = parseScript(source, { ...options, onToken: tokens });
   const exact = tokens.map(sourceToken);
   const runs = parsed.ok
     ? [exact]
-    : joinAt(exact, tokenRuns(source), Math.max(parsed.error.pos, exact.at(-1)?.end ?? 0));
+    : joinAt(exact, tokenRuns(source, options), Math.max(parsed.error.pos, exact.at(-1)?.end ?? 0));
   return runs.flatMap((run) => literalValues(source, run, mode));
 }
 
@@ -132,21 +142,64 @@ function joinAt(exact: readonly SourceToken[], runs: readonly TokenRun[], at: nu
   return joined;
 }
 
+declare module 'acorn' {
+  // Acorn's own tokenizer methods, which its type declarations leave out; TolerantTokenizer refines them.
+  interface Parser {
+    /** Updates the token context and `exprAllowed` after the token just read; `prevType` is the one before. */
+    updateContext(prevType: TokenType): void;
+    /** Whether a `{` after a token of `prevType` opens a block (rather than an object literal). */
+    braceIsBlock(prevType: TokenType): boolean;
+  }
+}
+
+/** Whether one of acorn's token contexts is a brace that opened a block (acorn's `b_stat`). */
+function isBlockBrace(context: unknown): boolean {
+  return isRecord(context) && context['token'] === '{' && context['isExpr'] === false;
+}
+
 /**
  * Acorn's tokenizer, made to read on after an error as acorn-loose does: a syntax error ends the
  * current token with a {@link JsSyntaxError}, and {@link restartAt} reads on from a later position
  * with nothing open. The members declared here are acorn's own, which its type declarations leave
  * out.
+ *
+ * Without a parse, acorn tells a regular expression from a division by the tokens before it. Two of
+ * its rules are refined here, where they read valid code wrongly:
+ * - a `{` right after a `}` that closed a block (of a statement, a function, a class or an arrow
+ *   function) opens a block, not an object literal: such a `}` ends a statement, so what follows
+ *   starts one (acorn decided by whether an expression may follow, which it may);
+ * - an expression may follow `await` (except as a property name, `o.await`), so `await /re/` reads
+ *   a regular expression. Acorn took `await` for a name. Story code may use `await` at the top
+ *   level, and `await` as a variable name, the one case read wrongly now (`await / 2`), is valid
+ *   only in sloppy code outside async functions and practically unused.
  */
 class TolerantTokenizer extends AcornParser {
   declare context: unknown[];
   declare exprAllowed: boolean;
   declare containsEsc: boolean;
+  declare type: TokenType;
+  declare value: unknown;
   declare getToken: () => Token;
   declare initialContext: () => unknown[];
 
-  constructor(input: string) {
-    super(STORY_CODE_OPTIONS, input);
+  /** Whether the last token was a `}` that closed a block. */
+  private closedBlock = false;
+
+  constructor(input: string, options: Readonly<Options>) {
+    super(options, input);
+  }
+
+  override updateContext(prevType: TokenType): void {
+    const closing = this.type === tokTypes.braceR ? this.context.at(-1) : undefined;
+    super.updateContext(prevType);
+    this.closedBlock = closing !== undefined && isBlockBrace(closing);
+    if (this.type === tokTypes.name && this.value === 'await' && prevType !== tokTypes.dot) {
+      this.exprAllowed = true;
+    }
+  }
+
+  override braceIsBlock(prevType: TokenType): boolean {
+    return (prevType === tokTypes.braceR && this.closedBlock) || super.braceIsBlock(prevType);
   }
 
   /** Read on from `pos` as at the start of a script. */
@@ -155,6 +208,7 @@ class TolerantTokenizer extends AcornParser {
     this.context = this.initialContext();
     this.exprAllowed = true;
     this.containsEsc = false;
+    this.closedBlock = false;
   }
 }
 
@@ -168,10 +222,10 @@ class TolerantTokenizer extends AcornParser {
  * Each run starts with nothing open, as at the start of a script. A run starts where the last one
  * stopped reading, or later, so this takes linear time.
  */
-function tokenRuns(source: string): TokenRun[] {
+function tokenRuns(source: string, options: Readonly<Options>): TokenRun[] {
   let run: TokenRun = { start: 0, tokens: [] };
   const runs = [run];
-  const stream = new TolerantTokenizer(source);
+  const stream = new TolerantTokenizer(source, options);
   for (;;) {
     const read = trySyntax(() => stream.getToken());
     if (read.ok) {
@@ -230,9 +284,9 @@ function literalValues(source: string, tokens: readonly SourceToken[], mode: Scr
     switch (token.type) {
       case tokTypes.string: {
         const raw = source.slice(token.start, token.end);
-        // Acorn cooks strings as sloppy mode does; only an escape of a digit can differ in strict mode.
+        // Acorn's tokenizer cooks strings as sloppy mode does; only an escape of a digit can differ in strict mode.
         const value =
-          mode === 'strict' && LEGACY_ESCAPE_CANDIDATE.test(raw) ? evalStringLiteral(raw, 'strict') : token.value;
+          mode !== 'sloppy' && LEGACY_ESCAPE_CANDIDATE.test(raw) ? evalStringLiteral(raw, 'strict') : token.value;
         if (typeof value === 'string') values.push(value);
         break;
       }
