@@ -20,11 +20,13 @@ const UNREPRESENTABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\
 
 /**
  * Errors for the text of `story` and of the passages it writes (`passages`) that HTML cannot carry: names, tags,
- * passage text and the story's own metadata.
+ * passage text, the layout metadata the output mode writes (`layout`: Twine 2 writes `position` and `size`, Twine 1
+ * only `position`) and the story's own metadata.
  */
 export function unrepresentableTextDiagnostics(
   story: ReadonlyStory,
   passages: readonly ReadonlyPassage[],
+  layout: readonly ('position' | 'size')[],
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const check = (what: string, text: string): void => {
@@ -46,6 +48,10 @@ export function unrepresentableTextDiagnostics(
   for (const p of passages) {
     check(`The name of passage "${p.name}"`, p.name);
     check(`The text of passage "${p.name}"`, p.text);
+    for (const field of layout) {
+      const value = p.metadata?.[field];
+      if (typeof value === 'string') check(`The ${field} of passage "${p.name}"`, value);
+    }
     for (const tag of p.tags) {
       check(`The tag "${tag}" of passage "${p.name}"`, tag);
       const fields = splitTweeFields(tag);

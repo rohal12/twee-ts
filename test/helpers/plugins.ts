@@ -1,9 +1,6 @@
 /**
  * Shared set-up for the bundler plugin tests: temporary projects, dev servers
- * on a free loopback port, builds held in memory, and what the Vite version
- * under test supports. The peer-version CI job runs these tests against Vite 5
- * to 8 (see vitest.peer.config.ts), so a test checks `hasEntry` before using
- * the entry option.
+ * on a free loopback port, and builds held in memory.
  */
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
@@ -32,28 +29,12 @@ export function storyWith(text: string): string {
   return STORY.replace('Hello from the story.', text);
 }
 
-/** The major version of the Vite under test. */
-export const viteMajor = Number.parseInt(version, 10);
-
-/** Whether the Vite under test supports the plugin's entry option (Vite 8 and newer). */
-export const hasEntry = viteMajor >= 8;
-
 /**
  * Whether `vite build --watch` reports a change inside a folder a plugin
  * registers with addWatchFile: the Rolldown watcher of Vite 8.0 and 8.1 reports
  * changes to registered files only.
  */
 export const buildWatchSeesFolders = !/^8\.[01]\./.test(version);
-
-/** The name of the bundler options in the Vite under test. */
-export const bundlerOptionsKey = viteMajor >= 8 ? 'rolldownOptions' : 'rollupOptions';
-
-/**
- * Whether the tests run against a peer Vite (see vitest.peer.config.ts). A config
- * file loads the plugin with Node's own resolution, which finds the repository's
- * Vite, so tests that load the plugin from a config file only run without one.
- */
-export const peerRun = (process.env['TWEE_TS_PEER_DIR'] ?? '') !== '';
 
 /** The watcher `vite build --watch` returns, as far as the tests use it. */
 export interface BuildWatcher {
@@ -181,8 +162,7 @@ export async function startServer(config: InlineConfig): Promise<{ server: ViteD
 
 /**
  * The loopback URL (no trailing slash) of a listening dev server. Tests never choose a port: they pass
- * `port: 0` without `strictPort`, so Vite 8 lets the OS pick one, and Vite 5 to 7 (which read 0 as their
- * default, 5173) move on to the next free one. A port found free beforehand could be taken by another
+ * `port: 0` without `strictPort`, so Vite lets the OS pick one. A port found free beforehand could be taken by another
  * process before the server binds it.
  */
 export function serverUrl(server: ViteDevServer): string {

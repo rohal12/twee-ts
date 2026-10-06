@@ -79,6 +79,7 @@ function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
     ...unrepresentableTextDiagnostics(
       story,
       story.passages.filter((p) => !hasTag(p, 'Twine.private')),
+      ['position', 'size'],
     ),
     ...codeEscapeDiagnostics('script', joinCode(scripts, 'script')),
     ...codeEscapeDiagnostics('style', joinCode(stylesheets, 'stylesheet')),

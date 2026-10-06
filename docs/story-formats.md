@@ -246,27 +246,28 @@ twee-ts recognizes the following special passage names. They are **info passages
 
 Twine 2 output leaves out `StoryTitle`, `StoryData` and a `StorySettings` passage with no settings, and writes the others as `<tw-passagedata>` elements; Twine 1 output writes all of them as tiddlers; JSON output leaves out `StoryTitle` and `StoryData`.
 
-| Passage          | Purpose                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------- |
-| `StoryTitle`     | Story name (required for Twine 1)                                                           |
-| `StoryData`      | JSON metadata: IFID, format, format version, start passage, options, tags, tag colors, zoom |
-| `StoryAuthor`    | Author name                                                                                 |
-| `StoryInit`      | SugarCube initialization code                                                               |
-| `StoryMenu`      | SugarCube sidebar menu items                                                                |
-| `StorySubtitle`  | Story subtitle                                                                              |
-| `StoryBanner`    | SugarCube story banner                                                                      |
-| `StoryCaption`   | SugarCube sidebar caption                                                                   |
-| `StoryInterface` | SugarCube custom UI template                                                                |
-| `StoryShare`     | SugarCube sharing links                                                                     |
-| `StorySettings`  | Twine 1 settings (see below)                                                                |
-| `StoryIncludes`  | Tweego's include list: ignored, with a warning                                              |
-| `PassageReady`   | SugarCube: runs before each passage                                                         |
-| `PassageDone`    | SugarCube: runs after each passage                                                          |
-| `PassageHeader`  | SugarCube: rendered before each passage                                                     |
-| `PassageFooter`  | SugarCube: rendered after each passage                                                      |
-| `MenuOptions`    | Menu option passages                                                                        |
-| `MenuShare`      | Menu sharing passages                                                                       |
-| `MenuStory`      | Menu story passages                                                                         |
+| Passage             | Purpose                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| `StoryTitle`        | Story name (required for Twine 1)                                                           |
+| `StoryData`         | JSON metadata: IFID, format, format version, start passage, options, tags, tag colors, zoom |
+| `StoryAuthor`       | Author name                                                                                 |
+| `StoryInit`         | SugarCube initialization code                                                               |
+| `StoryMenu`         | SugarCube sidebar menu items                                                                |
+| `StorySubtitle`     | Story subtitle                                                                              |
+| `StoryBanner`       | SugarCube story banner                                                                      |
+| `StoryDisplayTitle` | SugarCube formatted title shown in the UI bar                                               |
+| `StoryCaption`      | SugarCube sidebar caption                                                                   |
+| `StoryInterface`    | SugarCube custom UI template                                                                |
+| `StoryShare`        | SugarCube sharing links                                                                     |
+| `StorySettings`     | Twine 1 settings (see below)                                                                |
+| `StoryIncludes`     | Tweego's include list: ignored, with a warning                                              |
+| `PassageReady`      | SugarCube: runs before each passage                                                         |
+| `PassageDone`       | SugarCube: runs after each passage                                                          |
+| `PassageHeader`     | SugarCube: rendered before each passage                                                     |
+| `PassageFooter`     | SugarCube: rendered after each passage                                                      |
+| `MenuOptions`       | Menu option passages                                                                        |
+| `MenuShare`         | Menu sharing passages                                                                       |
+| `MenuStory`         | Menu story passages                                                                         |
 
 When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage, naming the file and line of each. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value. A last `StoryData` that is not valid JSON still replaces the earlier ones: the story then has none of their metadata, and an error says so. The same holds for `StoryTitle` and `StorySettings`: the story's title, its Twine 1 settings and its legacy IFID always come from the last passage of each name alone.
 

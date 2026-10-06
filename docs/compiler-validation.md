@@ -147,7 +147,7 @@ What the gate does guarantee is that no release goes out without that record, fo
      "release": "2.0.0",
      "commit": "<the frozen commit, 40 hex digits>",
      "fingerprint": "<its fingerprint, 64 hex digits>",
-     "checks": ["contracts (macos-latest)", "coverage", "lint (22)", "…every name --checks printed"],
+     "checks": ["contracts", "coverage", "lint", "…every name --checks printed"],
      "reviews": [
        {
          "reviewer": "<who>",

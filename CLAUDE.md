@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack
 
-- Node.js 22.12+, zero runtime dependencies: parse5 (HTML) and acorn (JavaScript) are bundled into `dist/`, and `THIRD_PARTY_NOTICES` covers them
+- Node.js 24+, zero runtime dependencies: parse5 (HTML) and acorn (JavaScript) are bundled into `dist/`, and `THIRD_PARTY_NOTICES` covers them
 - TypeScript 7 (native compiler) with strict mode (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noUnusedLocals`, `noUnusedParameters` and the rest of `tsconfig.json`)
 - pnpm package manager
 - tsdown for bundling (ESM + CJS dual output, one build graph)

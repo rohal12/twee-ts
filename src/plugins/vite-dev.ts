@@ -77,11 +77,15 @@ function toOverlayError(e: unknown): ErrorPayload['err'] {
   };
 }
 
-/** What a change to a file alters: modification time, size and inode (a file replaced by a new one). */
+/**
+ * What a change to a file alters: modification time, change time (which an in-place edit that restores the
+ * modification time still moves, as the loader's file signature relies on), size and inode (a file replaced by a
+ * new one).
+ */
 function fileState(file: string): string | undefined {
   try {
     const stat = statSync(file);
-    return `${stat.mtimeMs}:${stat.size}:${stat.ino}`;
+    return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
   } catch {
     return undefined; // Missing: it counts as gone.
   }
@@ -199,6 +203,13 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const bundle = async (): Promise<void> => {
     if (entryPath === undefined) return;
     entryStale = true;
+    if (entry === undefined) {
+      // No good bundle yet, so the configured entry is the one file known to matter: watch it
+      // (it may lie outside the root) and note its state, so that fixing it bundles again.
+      entryFiles = tracked([entryPath]);
+      entryStates = fileStates(entryFiles);
+      watchEntryFiles(entryFiles);
+    }
     const next = await bundleEntry(config, entryPath, 'serve');
     entry = next;
     entryStale = false;
@@ -302,7 +313,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   });
 
   const send = (req: IncomingMessage, res: ServerResponse, type: string, body: string | Uint8Array): void => {
-    // `server.headers`, as Vite sends them with the pages it serves itself (Vite 5 may leave them unset).
+    // `server.headers`, as Vite sends them with the pages it serves itself.
     for (const [name, value] of Object.entries({ ...config.server.headers })) {
       if (typeof value === 'string' || typeof value === 'number') res.setHeader(name, value);
       else if (Array.isArray(value)) res.setHeader(name, value.map(String));

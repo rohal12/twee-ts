@@ -322,3 +322,47 @@ describe('formatLintReport', () => {
     expect(report).toContain('Orphans');
   });
 });
+
+describe('lint: SugarCube info passages', () => {
+  const STORY =
+    ':: StoryTitle\nTest\n\n:: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n\n:: Start\nWelcome\n\n' +
+    ':: StoryDisplayTitle\n[[About]]\n\n:: Boot [init]\n<<set $booted = true>>\n\n:: About\n[[Start]]';
+
+  it('counts StoryDisplayTitle and init-tagged passages as info, and follows the title’s links', async () => {
+    const result = await lint({ sources: [{ filename: 'story.tw', content: STORY }] });
+    expect(result.orphans).toEqual([]);
+    expect(result.deadEnds).toEqual(['Start']);
+    expect(result.storyPassages).toBe(2);
+    expect(result.infoPassages).toBe(4);
+    expect(result.diagnostics).toEqual([]);
+  });
+});
+
+describe('output boundary: passage layout metadata', () => {
+  const header = (meta: string): string =>
+    `:: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n\n:: Start ${meta}\nHello`;
+  const BAD = ['\\u0000', '\\ud800'];
+
+  it.each(BAD.flatMap((bad) => (['position', 'size'] as const).map((field) => [bad, field] as const)))(
+    'rejects %s in the %s of a Twine 2 passage',
+    async (bad, field) => {
+      const meta = field === 'position' ? `{"position":"1,${bad}2"}` : `{"size":"1,${bad}2"}`;
+      const result = await compile({
+        sources: [{ filename: 's.tw', content: header(meta) }],
+        outputMode: 'twine2-archive',
+      });
+      expect(result.diagnostics.filter((d) => d.level === 'error').map((d) => d.message)).toEqual([
+        expect.stringContaining(`The ${field} of passage "Start" contains`),
+      ]);
+    },
+  );
+
+  it('rejects the position of a Twine 1 passage but not its size, which Twine 1 does not write', async () => {
+    const run = (meta: string) =>
+      compile({ sources: [{ filename: 's.tw', content: header(meta) }], outputMode: 'twine1-archive' });
+    expect((await run('{"position":"1,\\u00002"}')).diagnostics.map((d) => d.message)).toEqual([
+      expect.stringContaining('The position of passage "Start" contains U+0000'),
+    ]);
+    expect((await run('{"size":"1,\\u00002"}')).diagnostics).toEqual([]);
+  });
+});

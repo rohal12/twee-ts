@@ -102,7 +102,7 @@
   },
   "packageManager": "pnpm@10.14.0",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=24"
   },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
@@ -128,7 +128,7 @@
     "vitest": "^5.0.2"
   },
   "peerDependencies": {
-    "vite": ">=5"
+    "vite": ">=8"
   },
   "peerDependenciesMeta": {
     "vite": {

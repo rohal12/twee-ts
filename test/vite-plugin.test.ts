@@ -25,14 +25,7 @@ import {
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { toPosix } from '../src/plugins/paths.js';
-import {
-  buildWatchSeesFolders,
-  bundlerOptionsKey,
-  hasEntry,
-  peerRun,
-  watcherReady,
-  serverUrl,
-} from './helpers/plugins.js';
+import { buildWatchSeesFolders, watcherReady, serverUrl } from './helpers/plugins.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -175,7 +168,7 @@ function entryPlugin(dir: string): ReturnType<typeof tweeTsPlugin> {
 }
 
 describe('vite plugin: build', { timeout: 30_000 }, () => {
-  it.skipIf(!hasEntry)('bundles the entry into the story and writes only the HTML', async () => {
+  it('bundles the entry into the story and writes only the HTML', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const outDir = await buildProject(
       dir,
@@ -194,7 +187,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(userStylesheet(html)).toContain('--entry-marker');
   });
 
-  it.skipIf(!hasEntry)('entry without CSS: no stylesheet passage and no .css file', async () => {
+  it('entry without CSS: no stylesheet passage and no .css file', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts': '(window as unknown as Record<string, number>).n = 1;\n',
@@ -259,7 +252,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     const outDirs = [join(dir, 'dist'), join(dir, 'story', 'preview')];
     const buildOptions = {
       emptyOutDir: false,
-      [bundlerOptionsKey]: { output: outDirs.map((outDir) => ({ dir: outDir })) },
+      rolldownOptions: { output: outDirs.map((outDir) => ({ dir: outDir })) },
     };
     await buildProject(dir, plugin, buildOptions);
     writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
@@ -272,7 +265,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     }
   });
 
-  it.skipIf(!hasEntry).each([
+  it.each([
     ['a subfolder of', (dir: string) => outDirInSources(dir)],
     ['the same folder as', (dir: string) => join(dir, 'story')],
   ])(
@@ -308,7 +301,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
   });
 
-  it.skipIf(!hasEntry)('inlines the fonts and images the entry uses, so the HTML stays the only file', async () => {
+  it('inlines the fonts and images the entry uses, so the HTML stays the only file', async () => {
     const dir = assetProject();
     const outDir = await buildProject(dir, entryPlugin(dir));
     expect(readdirSync(outDir)).toEqual(['index.html']);
@@ -318,14 +311,14 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(userScript(html)).toContain('data:image/png;base64,');
   });
 
-  it.skipIf(!hasEntry)('writes an asset the bundler still emits next to the HTML', async () => {
+  it('writes an asset the bundler still emits next to the HTML', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': KEEP_ENTRY });
     writeBinary(dir, 'app/img/keep.png', 8192);
     const outDir = await buildProject(dir, entryPlugin(dir));
     expect(readdirSync(outDir).sort()).toEqual(['index.html', 'keep.png']);
   });
 
-  it.skipIf(!hasEntry)('leaves no source-map comment pointing at a file the build does not write', async () => {
+  it('leaves no source-map comment pointing at a file the build does not write', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const outDir = await buildProject(dir, entryPlugin(dir), { sourcemap: true });
     expect(readdirSync(outDir)).toEqual(['index.html']);
@@ -334,7 +327,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
     expect(userStylesheet(html)).not.toContain('sourceMappingURL');
   });
 
-  it.skipIf(!hasEntry)("keeps an inline source map inside the story with build.sourcemap: 'inline'", async () => {
+  it("keeps an inline source map inside the story with build.sourcemap: 'inline'", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const outDir = await buildProject(dir, entryPlugin(dir), { sourcemap: 'inline' });
     expect(readdirSync(outDir)).toEqual(['index.html']);
@@ -353,7 +346,7 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
         tweeTsPlugin({
           sources: [join(dir, 'story')],
           format: 'test-format-1',
-          ...(hasEntry ? { entry: join(dir, 'app/main.ts') } : {}),
+          entry: join(dir, 'app/main.ts'),
           compileOptions: COMPILE,
         }),
       ),
@@ -368,14 +361,14 @@ describe('vite plugin: build', { timeout: 30_000 }, () => {
         tweeTsPlugin({
           sources: [join(dir, 'story')],
           format: 'no-such-format',
-          ...(hasEntry ? { entry: join(dir, 'app/main.ts') } : {}),
+          entry: join(dir, 'app/main.ts'),
           compileOptions: COMPILE,
         }),
       ),
     ).rejects.toThrow(/no-such-format/);
   });
 
-  it.skipIf(!hasEntry)('fails the build on a TypeScript syntax error in the entry', async () => {
+  it('fails the build on a TypeScript syntax error in the entry', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'const = ;\n' });
     await expect(
       buildProject(
@@ -573,7 +566,7 @@ describe(
         configFile: false,
         root: dir,
         logLevel: 'silent',
-        build: { emptyOutDir: false, watch: {}, [bundlerOptionsKey]: { output: { dir: preview } } },
+        build: { emptyOutDir: false, watch: {}, rolldownOptions: { output: { dir: preview } } },
         plugins: [recordingBuildStart(plugin, files)],
       })) as unknown as BuildWatcher;
       watcher = started;
@@ -679,13 +672,13 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     return tweeTsPlugin({
       sources: [join(dir, 'story')],
       format: 'test-format-1',
-      ...(hasEntry ? { entry: join(dir, 'app/main.ts') } : {}),
+      entry: join(dir, 'app/main.ts'),
       compileOptions: COMPILE,
       ...extra,
     });
   }
 
-  it.skipIf(!hasEntry || peerRun)('does not loop when the entry sits next to the config file', async () => {
+  it('does not loop when the entry sits next to the config file', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'main.ts': ENTRY, 'style.css': STYLE });
     const configFile = writeConfig(dir, {
       sources: [join(dir, 'story')],
@@ -724,7 +717,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(reloadsSent(send)).toBe(2);
   });
 
-  it.skipIf(!hasEntry)("recovers when a missing import outside the entry's folder is created", async () => {
+  it("recovers when a missing import outside the entry's folder is created", async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts':
@@ -745,7 +738,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)("inlines the entry's fonts and images in dev too", async () => {
+  it("inlines the entry's fonts and images in dev too", async () => {
     const dir = assetProject();
     const url = await start(dir, plugin(dir));
     const html = await page(url);
@@ -753,7 +746,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(userScript(html)).toContain('data:image/png;base64,');
   });
 
-  it.skipIf(!hasEntry)('serves an asset the bundler still emits', async () => {
+  it('serves an asset the bundler still emits', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': KEEP_ENTRY });
     writeBinary(dir, 'app/img/keep.png', 8192);
     const url = await start(dir, plugin(dir));
@@ -844,7 +837,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it.skipIf(!hasEntry)("without a config file, bundles the entry with the server's define and aliases", async () => {
+  it("without a config file, bundles the entry with the server's define and aliases", async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'lib/mark.ts': "export const libMark = 'alias-ok';\n",
@@ -860,7 +853,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(script).toContain('alias-ok');
   });
 
-  it.skipIf(!hasEntry || peerRun)("bundles the entry even when the user's config turns on build.watch", async () => {
+  it("bundles the entry even when the user's config turns on build.watch", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const configFile = writeConfig(
       dir,
@@ -876,7 +869,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(userScript(await page(url))).toContain('entry-ok');
   });
 
-  it.skipIf(!hasEntry)("does not print the entry build's own failure message", async () => {
+  it("does not print the entry build's own failure message", async () => {
     const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'const = ;\n' });
@@ -888,7 +881,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     }
   });
 
-  it.skipIf(!hasEntry)('warns when the entry sits inside the story sources', async () => {
+  it('warns when the entry sits inside the story sources', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const warnings: string[] = [];
     const quiet = createLogger('silent');
@@ -897,7 +890,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(warnings.join('\n')).toMatch(/entry \S*main\.ts is inside the story sources/);
   });
 
-  it.skipIf(!hasEntry)("serves the story with Vite's client and the bundled entry", async () => {
+  it("serves the story with Vite's client and the bundled entry", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
     const html = await page(url);
@@ -925,7 +918,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '/index.html' });
   });
 
-  it.skipIf(!hasEntry)('rebundles when CSS imported by the entry changes', async () => {
+  it('rebundles when CSS imported by the entry changes', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
     writeFileSync(join(dir, 'app/style.css'), ':root { --entry-marker: 2; }\n');
@@ -940,7 +933,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)('rebundles when CSS reached through a nested @import changes', async () => {
+  it('rebundles when CSS reached through a nested @import changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts': "import './styles/index.css';\n",
@@ -961,7 +954,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)('rebundles when a file the entry CSS references with url() changes', async () => {
+  it('rebundles when a file the entry CSS references with url() changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts': "import './styles/index.css';\n",
@@ -986,79 +979,76 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)(
-    "leaves a shared plugin object's hooks alone across entry rebuilds, and still sees its watch files",
-    async () => {
-      const dir = makeProject({
-        'story/start.tw': STORY,
-        'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v0';\n",
-        'app/extra.txt': 'extra-one',
-      });
-      const extra = join(dir, 'app/extra.txt');
-      const transformHandler = function (this: { addWatchFile(id: string): void }, code: string, id: string) {
-        if (!id.endsWith('main.ts')) return null;
-        this.addWatchFile(extra);
-        return code.replace('EXTRA', readFileSync(extra, 'utf-8'));
-      };
-      const transform = { order: 'pre' as const, handler: transformHandler };
-      const load = (): null => null;
-      // One object every load of the config file hands out, as a package-level plugin would be.
-      const shared = { name: 'shared-plugin', transform, load };
-      const key = '__tweeTsSharedTestPlugin';
-      (globalThis as Record<string, unknown>)[key] = shared;
-      const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
-      const configFile = join(dir, 'vite.config.mjs');
-      const options = {
-        sources: [join(dir, 'story')],
-        format: 'test-format-1',
-        entry: join(dir, 'app/main.ts'),
-        compileOptions: COMPILE,
-      };
-      writeFileSync(
-        configFile,
-        `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\n` +
-          `export default { plugins: [globalThis[${JSON.stringify(key)}], tweeTsPlugin(${JSON.stringify(options)})] };\n`,
-      );
-      try {
-        const url = await start(dir, undefined, configFile);
-        expect(userScript(await page(url))).toContain('extra-one');
-        for (const n of [1, 2, 3]) {
-          writeFileSync(
-            join(dir, 'app/main.ts'),
-            `(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v${n}';\n`,
-          );
-          await vi.waitFor(
-            async () => {
-              expect(userScript(await page(url))).toContain(`v${n}`);
-            },
-            {
-              timeout: 10_000,
-              interval: 100,
-            },
-          );
-        }
-        expect(Object.keys(shared)).toEqual(['name', 'transform', 'load']);
-        expect(shared.transform).toBe(transform);
-        expect(shared.transform.handler).toBe(transformHandler);
-        expect(Object.keys(shared.transform)).toEqual(['order', 'handler']);
-        expect(shared.load).toBe(load);
-        writeFileSync(extra, 'extra-two');
+  it("leaves a shared plugin object's hooks alone across entry rebuilds, and still sees its watch files", async () => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v0';\n",
+      'app/extra.txt': 'extra-one',
+    });
+    const extra = join(dir, 'app/extra.txt');
+    const transformHandler = function (this: { addWatchFile(id: string): void }, code: string, id: string) {
+      if (!id.endsWith('main.ts')) return null;
+      this.addWatchFile(extra);
+      return code.replace('EXTRA', readFileSync(extra, 'utf-8'));
+    };
+    const transform = { order: 'pre' as const, handler: transformHandler };
+    const load = (): null => null;
+    // One object every load of the config file hands out, as a package-level plugin would be.
+    const shared = { name: 'shared-plugin', transform, load };
+    const key = '__tweeTsSharedTestPlugin';
+    (globalThis as Record<string, unknown>)[key] = shared;
+    const pluginUrl = pathToFileURL(resolve(__dirname, '..', 'src', 'plugins', 'vite.ts')).href;
+    const configFile = join(dir, 'vite.config.mjs');
+    const options = {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+    };
+    writeFileSync(
+      configFile,
+      `import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};\n` +
+        `export default { plugins: [globalThis[${JSON.stringify(key)}], tweeTsPlugin(${JSON.stringify(options)})] };\n`,
+    );
+    try {
+      const url = await start(dir, undefined, configFile);
+      expect(userScript(await page(url))).toContain('extra-one');
+      for (const n of [1, 2, 3]) {
+        writeFileSync(
+          join(dir, 'app/main.ts'),
+          `(window as unknown as Record<string, string>).marker = 'EXTRA' + 'v${n}';\n`,
+        );
         await vi.waitFor(
           async () => {
-            expect(userScript(await page(url))).toContain('extra-two');
+            expect(userScript(await page(url))).toContain(`v${n}`);
           },
           {
             timeout: 10_000,
             interval: 100,
           },
         );
-      } finally {
-        Reflect.deleteProperty(globalThis, key);
       }
-    },
-  );
+      expect(Object.keys(shared)).toEqual(['name', 'transform', 'load']);
+      expect(shared.transform).toBe(transform);
+      expect(shared.transform.handler).toBe(transformHandler);
+      expect(Object.keys(shared.transform)).toEqual(['order', 'handler']);
+      expect(shared.load).toBe(load);
+      writeFileSync(extra, 'extra-two');
+      await vi.waitFor(
+        async () => {
+          expect(userScript(await page(url))).toContain('extra-two');
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+        },
+      );
+    } finally {
+      Reflect.deleteProperty(globalThis, key);
+    }
+  });
 
-  it.skipIf(!hasEntry)('sees the watch files of a plugin in a project reached through a symbolic link', async () => {
+  it('sees the watch files of a plugin in a project reached through a symbolic link', async () => {
     const dir = makeLinkedProject({
       'story/start.tw': STORY,
       'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA';\n",
@@ -1097,7 +1087,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)('sees the watch files of a plugin that applyToEnvironment returns', async () => {
+  it('sees the watch files of a plugin that applyToEnvironment returns', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts': "(window as unknown as Record<string, string>).marker = 'EXTRA';\n",
@@ -1148,7 +1138,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     }
   });
 
-  it.skipIf(!hasEntry)('rebundles when CSS the entry imports with ?inline changes', async () => {
+  it('rebundles when CSS the entry imports with ?inline changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts':
@@ -1394,7 +1384,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
   it("leaves a build's story out when the bundler's output.dir put it in a source folder (#155)", async () => {
     const dir = makeProject({ 'story/start.tw': storyWith('OLD_TEXT') + DELETED_PASSAGE });
     const preview = join(dir, 'story', 'preview');
-    const buildOptions = { emptyOutDir: false, [bundlerOptionsKey]: { output: { dir: preview } } };
+    const buildOptions = { emptyOutDir: false, rolldownOptions: { output: { dir: preview } } };
     const storyPlugin = (): ReturnType<typeof tweeTsPlugin> =>
       tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
     await buildProject(dir, storyPlugin(), buildOptions);
@@ -1472,7 +1462,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(await page(url)).toContain('window.modMarker = 2;');
   });
 
-  it.skipIf(!hasEntry)('rebundles when an excluded file the entry uses changes', async () => {
+  it('rebundles when an excluded file the entry uses changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,
       'app/main.ts': "import './style.css';\n",
@@ -1519,7 +1509,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(await page(url)).toContain('Hello from the story.');
   });
 
-  it.skipIf(!hasEntry)('recovers after a broken entry is fixed', async () => {
+  it('recovers after a broken entry is fixed', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
     const url = await start(dir, plugin(dir));
     const send = vi.spyOn(server!.ws, 'send');
@@ -1545,7 +1535,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     );
   });
 
-  it.skipIf(!hasEntry)('serves a waiting page with the client when the first compile fails', async () => {
+  it('serves a waiting page with the client when the first compile fails', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': 'const = ;\n' });
     const url = await start(dir, plugin(dir));
     const html = await page(url);
@@ -1561,22 +1551,19 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     expect(html).toContain('Hello from the story.');
   });
 
-  it.skipIf(!hasEntry || peerRun)(
-    "works from a config file: the entry build loads the user's config and the plugin stands aside",
-    async () => {
-      const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
-      const configFile = writeConfig(dir, {
-        sources: [join(dir, 'story')],
-        format: 'test-format-1',
-        entry: join(dir, 'app/main.ts'),
-        compileOptions: COMPILE,
-      });
-      const url = await start(dir, undefined, configFile);
-      const html = await page(url);
-      expect(userScript(html)).toContain('entry-ok');
-      expect(html).toContain('Hello from the story.');
-    },
-  );
+  it("works from a config file: the entry build loads the user's config and the plugin stands aside", async () => {
+    const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });
+    const configFile = writeConfig(dir, {
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      entry: join(dir, 'app/main.ts'),
+      compileOptions: COMPILE,
+    });
+    const url = await start(dir, undefined, configFile);
+    const html = await page(url);
+    expect(userScript(html)).toContain('entry-ok');
+    expect(html).toContain('Hello from the story.');
+  });
 
   it('serves the story under a non-default base', async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'app/main.ts': ENTRY, 'app/style.css': STYLE });

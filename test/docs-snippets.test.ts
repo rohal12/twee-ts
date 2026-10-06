@@ -434,8 +434,8 @@ function shownOutput(block: CodeBlock): string[] {
 }
 
 /**
- * The examples run against the package built with tsdown, which needs Node 22.18+ (or 24.11+). CI's
- * Node 22.12.0 job checks the rest; the jobs on the latest Node 22 and 24 run the examples.
+ * The examples run against the package built with tsdown, which needs Node 22.18+ (or 24.11+). CI runs
+ * them on the latest Node 24.
  */
 const CAN_BUILD = ((): boolean => {
   const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);

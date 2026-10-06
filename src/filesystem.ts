@@ -97,15 +97,15 @@ export interface OutputPaths {
 
 export function outputPaths(outputs: BuildOutputs): OutputPaths {
   const files = new Set(outputs.files.map((f) => identify(f).key));
-  const inodes = new Set(outputs.files.map(inodeOf).filter((id) => id !== undefined));
+  // Read when asked: an output that is written, or replaced, after these paths are made is a new file.
+  const outputInodes = (): ReadonlySet<string> => new Set(outputs.files.map(inodeOf).filter((id) => id !== undefined));
   const dirs = new Set(outputs.dirs.map((d) => identify(d).key));
   const all = [...files, ...dirs];
   const keyOf = (path: string): string => identify(path).key;
   const isFile = (path: string): boolean => {
     if (files.has(keyOf(path))) return true;
-    if (inodes.size === 0) return false;
     const inode = inodeOf(path);
-    return inode !== undefined && inodes.has(inode);
+    return inode !== undefined && outputInodes().has(inode);
   };
   return {
     isFile,

@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import type { TweeTsVitePluginOptions } from '../src/plugins/vite.js';
-import { bundlerOptionsKey, hasEntry, viteMajor } from './helpers/plugins.js';
+import {} from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -23,14 +23,14 @@ const SERVE = { command: 'serve', mode: 'development' };
 interface BuildContext {
   addWatchFile(id: string): void;
   meta: { watchMode: boolean };
-  environment?: unknown;
+  environment: { config: unknown };
 }
 
 interface BundleContext {
   emitFile(file: { type: 'asset'; fileName: string; source: string }): void;
   warn(message: string): void;
   error(error: Error | string): never;
-  environment?: unknown;
+  environment: { config: unknown };
 }
 
 /** The hooks as the tests call them. */
@@ -80,14 +80,12 @@ function resolvedConfig(root: string, build: Record<string, unknown> = {}, comma
 describe('vite plugin hooks: the build input', () => {
   it('gives the client build the stand-in input when the config names none', () => {
     const result = hooksOf({ sources: ['story'] }).configEnvironment('client', {}, BUILD);
-    expect(result).toEqual({ build: { [bundlerOptionsKey]: { input: 'virtual:twee-ts-empty-input' } } });
+    expect(result).toEqual({ build: { rolldownOptions: { input: 'virtual:twee-ts-empty-input' } } });
   });
 
   /** Configs naming an input of their own: the bundler option, or what Vite reads instead. */
   const OWN_INPUTS: readonly (readonly [string, Record<string, unknown>])[] = [
-    ...(viteMajor >= 8
-      ? [['build.rolldownOptions.input', { build: { rolldownOptions: { input: 'main.ts' } } }] as const]
-      : []),
+    ['build.rolldownOptions.input', { build: { rolldownOptions: { input: 'main.ts' } } }],
     ['build.rollupOptions.input', { build: { rollupOptions: { input: 'main.ts' } } }],
     ["Vite 8's top-level input", { input: 'main.ts' }],
     ['build.lib', { build: { lib: { entry: 'lib.ts' } } }],
@@ -98,43 +96,36 @@ describe('vite plugin hooks: the build input', () => {
     expect(hooksOf({ sources: ['story'] }).configEnvironment('client', config, BUILD)).toBeUndefined();
   });
 
-  it.skipIf(viteMajor < 6)(
-    'changes nothing for the dev server, another environment, or through the config hook under Vite 6+',
-    () => {
-      const hooks = hooksOf({ sources: ['story'] });
-      expect(hooks.configEnvironment('client', {}, SERVE)).toBeUndefined();
-      expect(hooks.configEnvironment('ssr', {}, BUILD)).toBeUndefined();
-      expect(hooks.config({}, BUILD)).toBeUndefined();
-    },
-  );
+  it('changes nothing for the dev server or another environment', () => {
+    const hooks = hooksOf({ sources: ['story'] });
+    expect(hooks.configEnvironment('client', {}, SERVE)).toBeUndefined();
+    expect(hooks.configEnvironment('ssr', {}, BUILD)).toBeUndefined();
+  });
 
-  it.skipIf(!hasEntry)(
-    "makes the entry the build's only input, named for the instance, keeping the user's one output",
-    () => {
-      const hooks = hooksOf({ sources: ['story'], entry: 'app/main.ts' });
-      const result = hooksOf({ sources: ['story'], entry: 'app/main.ts' }).configEnvironment(
-        'client',
-        { build: { rolldownOptions: { output: { banner: '/* user */', format: 'es' } } } },
-        BUILD,
-      );
-      const settings = JSON.parse(JSON.stringify(result)) as {
-        build: { cssCodeSplit: boolean; rolldownOptions: { input: Record<string, string>; output: unknown } };
-      };
-      expect(settings.build.cssCodeSplit).toBe(false);
-      expect(Object.keys(settings.build.rolldownOptions.input)).toEqual([expect.stringMatching(/^twee-ts-entry-\d+$/)]);
-      expect(Object.values(settings.build.rolldownOptions.input)).toEqual([join(process.cwd(), 'app/main.ts')]);
-      expect(settings.build.rolldownOptions.output).toEqual({
-        banner: '/* user */',
-        format: 'iife',
-        entryFileNames: 'twee-ts-entry.js',
-        assetFileNames: '[name][extname]',
-      });
-      // Each instance names its input differently, so each finds only its own.
-      expect(JSON.stringify(hooks.configEnvironment('client', {}, BUILD))).not.toBe(JSON.stringify(result));
-    },
-  );
+  it("makes the entry the build's only input, named for the instance, keeping the user's one output", () => {
+    const hooks = hooksOf({ sources: ['story'], entry: 'app/main.ts' });
+    const result = hooksOf({ sources: ['story'], entry: 'app/main.ts' }).configEnvironment(
+      'client',
+      { build: { rolldownOptions: { output: { banner: '/* user */', format: 'es' } } } },
+      BUILD,
+    );
+    const settings = JSON.parse(JSON.stringify(result)) as {
+      build: { cssCodeSplit: boolean; rolldownOptions: { input: Record<string, string>; output: unknown } };
+    };
+    expect(settings.build.cssCodeSplit).toBe(false);
+    expect(Object.keys(settings.build.rolldownOptions.input)).toEqual([expect.stringMatching(/^twee-ts-entry-\d+$/)]);
+    expect(Object.values(settings.build.rolldownOptions.input)).toEqual([join(process.cwd(), 'app/main.ts')]);
+    expect(settings.build.rolldownOptions.output).toEqual({
+      banner: '/* user */',
+      format: 'iife',
+      entryFileNames: 'twee-ts-entry.js',
+      assetFileNames: '[name][extname]',
+    });
+    // Each instance names its input differently, so each finds only its own.
+    expect(JSON.stringify(hooks.configEnvironment('client', {}, BUILD))).not.toBe(JSON.stringify(result));
+  });
 
-  it.skipIf(!hasEntry)('bundles the entry with a build of its own when the user writes several outputs', () => {
+  it('bundles the entry with a build of its own when the user writes several outputs', () => {
     const hooks = hooksOf({ sources: ['story'], entry: 'app/main.ts' });
     const config = { build: { rolldownOptions: { output: [{ dir: 'a' }, { dir: 'b' }] } } };
     expect(hooks.configEnvironment('client', config, BUILD)).toEqual({
@@ -151,7 +142,7 @@ describe('vite plugin hooks: the build input', () => {
 });
 
 describe('vite plugin hooks: configResolved', () => {
-  it.skipIf(!hasEntry)('warns about an entry inside the sources', () => {
+  it('warns about an entry inside the sources', () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'main.ts': '' });
     const hooks = hooksOf({ sources: [dir], entry: join(dir, 'main.ts'), compileOptions: COMPILE });
     const config = resolvedConfig(dir) as { logger: { warn: ReturnType<typeof vi.fn> } };
@@ -159,7 +150,7 @@ describe('vite plugin hooks: configResolved', () => {
     expect(config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('is inside the story sources'));
   });
 
-  it.skipIf(!hasEntry)('does not warn about an entry outside the sources, or without an entry', () => {
+  it('does not warn about an entry outside the sources, or without an entry', () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'main.ts': '' });
     for (const options of [{ entry: join(dir, 'main.ts') }, {}]) {
       const config = resolvedConfig(dir) as { logger: { warn: ReturnType<typeof vi.fn> } };
@@ -170,47 +161,42 @@ describe('vite plugin hooks: configResolved', () => {
 });
 
 describe('vite plugin hooks: buildStart', () => {
-  async function registered(hooks: Hooks, watchMode: boolean, environment?: unknown): Promise<string[]> {
+  /** The files buildStart registers for the build of this config. */
+  async function registered(hooks: Hooks, watchMode: boolean, config: unknown): Promise<string[]> {
     const added: string[] = [];
-    await hooks.buildStart.call({ addWatchFile: (id) => added.push(id), meta: { watchMode }, environment });
+    await hooks.buildStart.call({
+      addWatchFile: (id) => added.push(id),
+      meta: { watchMode },
+      environment: { config },
+    });
     return added;
   }
 
   it('registers the sources for --watch, and nothing outside watch mode', async () => {
     const dir = makeProject({ 'story/start.tw': STORY });
     const hooks = hooksOf({ sources: [join(dir, 'story')], compileOptions: COMPILE });
-    hooks.configResolved(resolvedConfig(dir));
+    const config = resolvedConfig(dir);
     // By real path, as the bundler's watcher reports them (macOS gives /private/var/… for /var/…).
     const story = realpathSync.native(join(dir, 'story')).replace(/\\/g, '/');
-    expect(await registered(hooks, true)).toEqual([story, `${story}/start.tw`]);
-    expect(await registered(hooks, false)).toEqual([]);
+    expect(await registered(hooks, true, config)).toEqual([story, `${story}/start.tw`]);
+    expect(await registered(hooks, false, config)).toEqual([]);
   });
 
-  it("reads the build's config from the hook's environment when there is one", async () => {
+  it('registers nothing for the dev server or an SSR build', async () => {
     const dir = makeProject({ 'story/start.tw': STORY });
     const hooks = hooksOf({ sources: [join(dir, 'story')], compileOptions: COMPILE });
-    hooks.configResolved(resolvedConfig(dir, {}, 'serve'));
-    expect(await registered(hooks, true)).toEqual([]);
-    expect(await registered(hooks, true, { config: resolvedConfig(dir) })).toHaveLength(2);
-  });
-
-  it('stands aside before any config is resolved, and in an SSR build', async () => {
-    const dir = makeProject({ 'story/start.tw': STORY });
-    const hooks = hooksOf({ sources: [join(dir, 'story')], compileOptions: COMPILE });
-    expect(await registered(hooks, true)).toEqual([]);
-    hooks.configResolved(resolvedConfig(dir, { ssr: true }));
-    expect(await registered(hooks, true)).toEqual([]);
+    expect(await registered(hooks, true, resolvedConfig(dir, {}, 'serve'))).toEqual([]);
+    expect(await registered(hooks, true, resolvedConfig(dir, { ssr: true }))).toEqual([]);
+    expect(await registered(hooks, true, resolvedConfig(dir))).toHaveLength(2);
   });
 
   it("leaves out the output folder the bundler's output.dir names, and an output file", async () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'story/out/index.html': 'last build', 'story/b.html': 'x' });
     const hooks = hooksOf({ sources: [join(dir, 'story')], compileOptions: COMPILE });
-    hooks.configResolved(
-      resolvedConfig(dir, {
-        [bundlerOptionsKey]: { output: [{ dir: join(dir, 'story', 'out') }, { file: join(dir, 'story', 'b.html') }] },
-      }),
-    );
-    const targets = await registered(hooks, true);
+    const config = resolvedConfig(dir, {
+      rolldownOptions: { output: [{ dir: join(dir, 'story', 'out') }, { file: join(dir, 'story', 'b.html') }] },
+    });
+    const targets = await registered(hooks, true, config);
     expect(targets.some((t) => t.includes('/out'))).toBe(false);
     expect(targets.some((t) => t.endsWith('/b.html'))).toBe(false);
     expect(targets.some((t) => t.endsWith('/start.tw'))).toBe(true);
@@ -225,7 +211,6 @@ describe('vite plugin hooks: generateBundle', () => {
     config: unknown = resolvedConfig(tmpdir()),
   ): Promise<{ emitted: { fileName: string; source: string }[]; warnings: string[] }> {
     const hooks = hooksOf(options);
-    hooks.configResolved(config);
     const emitted: { fileName: string; source: string }[] = [];
     const warnings: string[] = [];
     await hooks.generateBundle.handler.call(
@@ -235,6 +220,7 @@ describe('vite plugin hooks: generateBundle', () => {
         error: (error) => {
           throw typeof error === 'string' ? new Error(error) : error;
         },
+        environment: { config },
       },
       { dir: join(tmpdir(), 'twee-ts-never-written') },
       bundle,

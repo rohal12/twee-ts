@@ -22,6 +22,7 @@ const INFO_PASSAGE_NAMES = new Set([
   'PassageFooter',
   'StoryBanner',
   'StoryCaption',
+  'StoryDisplayTitle',
   'MenuOptions',
   'MenuShare',
   'MenuStory',
@@ -32,7 +33,7 @@ const INFO_PASSAGE_NAMES = new Set([
   'StoryIncludes',
 ]);
 
-const INFO_TAGS = ['annotation', 'script', 'stylesheet', 'widget'];
+const INFO_TAGS = ['annotation', 'init', 'script', 'stylesheet', 'widget'];
 
 export function hasTag(p: ReadonlyPassage, tag: string): boolean {
   return p.tags.includes(tag);

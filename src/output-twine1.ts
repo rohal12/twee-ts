@@ -134,7 +134,7 @@ function getTwine1PassageChunk(
 } {
   const written = story.passages.filter((p) => twine1PassageOmission(p) === undefined);
   const obfuscateRot13 = isRot13Obfuscated(written);
-  const diagnostics = unrepresentableTextDiagnostics(story, written);
+  const diagnostics = unrepresentableTextDiagnostics(story, written, ['position']);
   if (!obfuscateRot13 && story.twine1.settings.get('obfuscate') === 'rot13') {
     diagnostics.push({
       level: 'warning',

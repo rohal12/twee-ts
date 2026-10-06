@@ -12,10 +12,8 @@
  * name, in the client environment only.
  */
 import { relative, resolve } from 'node:path';
-import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
-import { TweeTsError } from '../errors.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
@@ -47,7 +45,6 @@ export interface TweeTsVitePluginOptions extends SharedPluginOptions {
    * A JS or TS file, relative to the working directory. Vite bundles it and
    * everything it imports into one self-contained script that becomes the
    * story's Story JavaScript; CSS it imports becomes the Story Stylesheet.
-   * Requires Vite 8.
    */
   entry?: string | undefined;
 }
@@ -63,15 +60,13 @@ const RESOLVED_EMPTY_INPUT = '\0' + EMPTY_INPUT;
 /** The environment the story belongs to: the browser's. */
 const CLIENT = 'client';
 
-const viteMajor = Number.parseInt(viteVersion, 10);
-
 /** The plugin instances created so far, which numbers each instance's entry input. */
 let instances = 0;
 
-/** The bundler options of build settings, under the name this Vite version reads. */
+/** The bundler options of build settings: `rolldownOptions`, or the older name Vite 8 still reads. */
 function bundlerOptionsOf(build: unknown): Readonly<Record<string, unknown>> | undefined {
   if (!isRecord(build)) return undefined;
-  const options = build[viteMajor >= 8 ? 'rolldownOptions' : 'rollupOptions'] ?? build['rollupOptions'];
+  const options = build['rolldownOptions'] ?? build['rollupOptions'];
   return isRecord(options) ? options : undefined;
 }
 
@@ -88,9 +83,9 @@ function namesInput(config: object): boolean {
   );
 }
 
-/** Build settings naming one input, under the option name this Vite version reads. */
+/** Build settings naming one input. */
 function inputOnly(input: string): BuildEnvironmentOptions {
-  return viteMajor >= 8 ? { rolldownOptions: { input } } : { rollupOptions: { input } };
+  return { rolldownOptions: { input } };
 }
 
 /**
@@ -149,19 +144,10 @@ function isStoryBuild(config: ResolvedConfig): boolean {
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const resolved = resolvePluginOptions('vite', options);
   const { outputFilename, entry: entryPath } = resolved;
-  if (entryPath !== undefined && viteMajor < 8) {
-    throw new TweeTsError(`twee-ts: the entry option needs Vite 8 or newer (found ${viteVersion}).`, [], {
-      code: 'INVALID_OPTIONS',
-    });
-  }
   instances += 1;
   // The name of this instance's entry input, when it bundles the entry inside the user's build.
   const entryInput = `${ENTRY_INPUT_NAME}-${instances}`;
   const cache = new Map<string, FileCacheEntry>();
-  // The config of the last build or server this instance took part in. Under Vite 6
-  // and newer, each build hook reads its own build's config from the environment
-  // instead, so builds sharing the instance keep apart.
-  let lastConfig: ResolvedConfig | undefined;
   // The entry bundled by a build of its own, for each build (by environment) that
   // couldn't bundle it inside itself.
   const ownBuilds = new WeakMap<object, EntryBundle>();
@@ -194,38 +180,24 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     return isRecord(input) && Object.hasOwn(input, entryInput);
   };
 
-  /**
-   * The resolved config of the build a hook runs in: under Vite 6 and newer the
-   * config of the hook's environment, under Vite 5 (no environments) the last one.
-   */
-  const configOf = (context: {
-    readonly environment: { readonly config: ResolvedConfig };
-  }): ResolvedConfig | undefined => {
-    const environment: unknown = context.environment;
-    return environment === undefined ? lastConfig : context.environment.config;
-  };
+  /** The resolved config of the build a hook runs in: its environment's, so builds sharing the instance keep apart. */
+  const configOf = (context: { readonly environment: { readonly config: ResolvedConfig } }): ResolvedConfig =>
+    context.environment.config;
 
   return {
     name: PLUGIN_NAME,
 
-    // Vite 6 and newer: the story belongs to the client build. A server or worker
+    // The story belongs to the client build. A server or worker
     // environment a framework adds builds no copy of it.
     applyToEnvironment: (environment) => environment.name === CLIENT,
 
-    // Vite 5, which has one environment per build: the input of a client build.
-    config(userConfig, env) {
-      if (viteMajor >= 6 || env.command !== 'build' || Boolean(userConfig.build?.ssr)) return undefined;
-      return inputSettings(userConfig);
-    },
-
-    // Vite 6 and newer: the input of the client environment only.
+    // The input of the client environment only.
     configEnvironment(name, environmentConfig, env) {
       if (name !== CLIENT || env.command !== 'build') return undefined;
       return inputSettings(environmentConfig);
     },
 
     configResolved(config) {
-      lastConfig = config;
       if (entryPath === undefined) return;
       if (resolved.inputs.some((input) => isSameOrInside(entryPath, input))) {
         config.logger.warn(
@@ -243,7 +215,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // whose files are registered too.
     async buildStart() {
       const config = configOf(this);
-      if (config === undefined || !isStoryBuild(config)) return;
+      if (!isStoryBuild(config)) return;
       if (this.meta.watchMode) {
         const outputs = outputPaths(allOutputs(config));
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
@@ -275,7 +247,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     },
 
     load(id) {
-      // A statement app builds keep (they drop unused exports), so Rollup in Vite 5
+      // A statement app builds keep (they drop unused exports), so the bundler
       // doesn't warn about an empty chunk. The chunk is removed from the output.
       return id === RESOLVED_EMPTY_INPUT ? 'globalThis.tweeTsEmptyInput = true;' : undefined;
     },
@@ -284,7 +256,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       order: 'post',
       async handler(outputOptions, bundle) {
         const config = configOf(this);
-        if (config === undefined || !isStoryBuild(config)) return;
+        if (!isStoryBuild(config)) return;
         for (const [fileName, item] of Object.entries(bundle)) {
           if (item.type === 'chunk' && item.facadeModuleId === RESOLVED_EMPTY_INPUT) removeFromBundle(bundle, fileName);
         }
