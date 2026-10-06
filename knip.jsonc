@@ -4,6 +4,8 @@
   // the tests through the Vitest plugin, and the scripts through package.json "scripts".
   "entry": ["docs/.vitepress/config.ts"],
   "project": ["src/**/*.ts", "bin/**/*.ts", "test/**/*.ts", "specs/**/*.ts", "scripts/**/*.{ts,mjs}", "*.config.ts"],
+  // The tests make FIFOs with the system's mkfifo, where it exists.
+  "ignoreBinaries": ["mkfifo"],
   "ignoreDependencies": [
     // Run as binaries from node_modules/.bin by scripts/duplication.ts, which knip cannot follow.
     "jscpd",

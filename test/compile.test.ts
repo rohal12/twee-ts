@@ -26,6 +26,7 @@ describe('compile', () => {
     expect(result.diagnostics).toContainEqual({
       level: 'warning',
       message: expect.stringContaining(`path ${missing}: ENOENT`),
+      file: missing,
     });
   });
 
@@ -41,7 +42,8 @@ describe('compile', () => {
 
     expect(result.diagnostics).toContainEqual({
       level: 'warning',
-      message: expect.stringContaining(`path ${missing}: ENOENT`),
+      message: expect.stringContaining(`module path ${missing}: ENOENT`),
+      file: missing,
     });
   });
 
@@ -540,10 +542,10 @@ describe('compileToFile with a named source that is the output (#157)', () => {
     writeFileSync(out, 'kept');
     const options = { sources: [story], formatId: 'test-format-1', formatPaths: [FORMAT_DIR], useTweegoPath: false };
     await expect(compileToFile({ ...options, noRemote: true, modules: [out], outFile: out })).rejects.toThrow(
-      `path ${out}: Output file cannot be an input source.`,
+      `path ${out}: Output file cannot be an input source (the module).`,
     );
     await expect(compileToFile({ ...options, noRemote: true, headFile: out, outFile: out })).rejects.toThrow(
-      `path ${out}: Output file cannot be an input source.`,
+      `path ${out}: Output file cannot be an input source (the head file).`,
     );
     expect(readFileSync(out, 'utf-8')).toBe('kept');
   });

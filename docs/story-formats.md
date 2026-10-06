@@ -47,7 +47,7 @@ Cached remote formats:
   sugarcube-2: SugarCube 2.37.3 (also cached: 2.36.1)
 ```
 
-Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version. `--format` accepts every local ID; it uses a cached download when the build consults the format URL or format index it came from (see [The Download Cache](#the-download-cache)), which is always so for the Story Formats Archive.
+Local formats are listed after [pruning](#semver-version-pruning); the list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version, and only when a build would consider it: when it came from one of the configured `formatUrls` or `formatIndices`, or from the Story Formats Archive (see [The Download Cache](#the-download-cache)). `twee-ts cache list` lists every download.
 
 ## Format Directory Structure
 

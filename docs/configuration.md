@@ -2,6 +2,8 @@
 
 twee-ts automatically loads `twee-ts.config.json` from the current working directory. Use `-c <file>` to specify a different path, or `--no-config` to skip loading entirely.
 
+Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder that holds the config file, so `twee-ts -c proj/twee-ts.config.json` from the folder above `proj` builds `proj/src/`, not `src/`. Absolute paths, `"-"` (stdout) and an empty `headFile` are kept as they are. (Before 2.0 they were relative to the working directory.)
+
 ## JSON Schema
 
 The config file has a [JSON Schema](https://json-schema.org/) that provides autocompletion, validation, and inline documentation in editors like VS Code. Add a `$schema` key to enable it:
@@ -64,7 +66,7 @@ Every key with its default value:
 | ------------ | ---------- | -------- | ------------------------------------------------------------------------------------- |
 | `sources`    | `string[]` | —        | Files or directories to compile. Directories are walked recursively.                  |
 | `exclude`    | `string[]` | `[]`     | Glob patterns for source files to leave out. See [Excluding files](#excluding-files). |
-| `output`     | `string`   | stdout   | Output file path.                                                                     |
+| `output`     | `string`   | stdout   | Output file path; `"-"` for stdout. Must not be empty.                                |
 | `outputMode` | `string`   | `"html"` | One of `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.          |
 
 Source directories are walked as on the command line: a symbolic link to a directory inside one is not followed, and the output file is never read as a source. See the [CLI Reference](./cli).
@@ -80,13 +82,14 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 }
 ```
 
-- Each pattern is matched against a file's path relative to the working directory, the path `--log-files` prints, with Node's [`path.matchesGlob`](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern): `*` matches within one folder, `**` across folders, `{png,webp}` either name. A leading `./` is ignored. `*` and `**` don't match names that start with a dot.
+- Each pattern is matched against a file's path relative to the working directory, the path `--log-files` prints, with Node's [`path.matchesGlob`](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern): `*` matches within one folder, `**` across folders, `{png,webp}` either name. A leading `./` is ignored. `*` and `**` don't match names that start with a dot. In a config file, a relative pattern is relative to the config file's folder; on the command line, to the working directory.
+- The path is also matched as the real path relative to the working directory, so a pattern works whether the working directory or the sources are reached through a symbolic link (macOS's `/var` and `/private/var`, a linked project folder). A pattern that starts with `/` (or a drive letter) is matched against absolute paths.
+- The file extension is matched without regard to letter case, as twee-ts reads `Photo.PNG` as a PNG image: `**/*.png` leaves it out. On a volume that ignores letter case (macOS and Windows by default), the whole path is.
 - To leave out a folder, match the files in it: `src/story/art/**`.
 - `**` doesn't reach outside the working directory. For sources outside it, start the pattern with the same `../` path: `../shared/**/*.png`.
 - A file listed in `sources` directly is left out too if a pattern matches it. Modules and the head file are never left out.
 - In watch mode and in the Vite plugin's dev server, changes to excluded files don't trigger a rebuild.
 - `--exclude` on the command line replaces the config's list.
-- Needs Node.js 22.5 or newer.
 
 ### Story Format
 
@@ -122,9 +125,9 @@ See [Head Injection](./cli#head-injection) for where they go in a template witho
 
 ### Tag Aliases
 
-| Key          | Type                     | Default | Description                                     |
-| ------------ | ------------------------ | ------- | ----------------------------------------------- |
-| `tagAliases` | `Record<string, string>` | `{}`    | Map custom tag names to canonical special tags. |
+| Key          | Type                     | Default | Description                                                                                |
+| ------------ | ------------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `tagAliases` | `Record<string, string>` | `{}`    | Map custom tag names to canonical special tags. Both are non-empty and hold no whitespace. |
 
 See the dedicated [Tag Aliases](./tag-aliases) page for full details and examples.
 
@@ -172,6 +175,8 @@ Invalid config in twee-ts.config.json:
   "trim" must be a boolean.
 ```
 
+The config file is read as strict JSON. A key given twice is a warning, and the last one is used. The checks are those of the JSON Schema, which is generated from the same table twee-ts checks with, so the two agree.
+
 A key the config does not define is ignored, so its option keeps the default. twee-ts warns about each one and the build goes on. When the key differs from a real one only in letter case, `-` or `_`, the warning names the real key:
 
 ```
@@ -180,4 +185,4 @@ warning: /path/to/twee-ts.config.json: Unknown config key "formatID" (did you me
 
 `$schema` is always allowed.
 
-The config file is read like any other text file: it may start with a byte order mark (as Windows PowerShell 5 and older Notepad versions write it) and use CRLF line endings. See [Text encoding](./getting-started#text-encoding).
+The config file is read like any other text file: it may start with a byte order mark, be UTF-16 (as Windows PowerShell 5's `>` writes it) and use CRLF line endings. See [Text encoding](./getting-started#text-encoding).

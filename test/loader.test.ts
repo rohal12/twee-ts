@@ -139,8 +139,17 @@ describe('loadSources', () => {
   it('collects error diagnostics for unreadable files', () => {
     const story = freshStory();
     const diag: Diagnostic[] = [];
+    // A folder where the walk found a file: reading it fails as an unreadable file does.
+    mkdirSync(join(tmpDir, 'folder.tw'));
+    loadSources(story, [join(tmpDir, 'folder.tw')], { trim: true }, diag, new Set());
+    expect(diag).toEqual([expect.objectContaining({ level: 'error', message: expect.stringMatching(/EISDIR/) })]);
+  });
+
+  it('warns about a file that went away after the walk found it', () => {
+    const story = freshStory();
+    const diag: Diagnostic[] = [];
     loadSources(story, [join(tmpDir, 'missing.tw')], { trim: true }, diag, new Set());
-    expect(diag.some((d) => d.level === 'error')).toBe(true);
+    expect(diag).toEqual([expect.objectContaining({ level: 'warning', message: expect.stringMatching(/ENOENT/) })]);
   });
 
   it('prepends StoryTitle if story has a name but no StoryTitle passage', () => {

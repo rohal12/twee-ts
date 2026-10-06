@@ -3,7 +3,8 @@
  * compile(), compileToFile(), watch().
  * Ported from tweego.go + config.go.
  */
-import { resolve, sep } from 'node:path';
+import { lstatSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import type {
   CompileOptions,
   CompileToFileOptions,
@@ -16,10 +17,19 @@ import type {
   OutputMode,
   InlineSource,
   FileCacheEntry,
+  TweeTsErrorCode,
 } from './types.js';
 import { createStory, storyHas, getStoryStats } from './story.js';
-import { getFilenames, isExcluded, outputPaths, realPathOf, toBuildOutputs, watchFilesystem } from './filesystem.js';
-import type { BuildOutputs } from './filesystem.js';
+import {
+  getFilenames,
+  isExcluded,
+  isLoadableType,
+  isPreviousBuild,
+  outputPaths,
+  toBuildOutputs,
+  watchFilesystem,
+} from './filesystem.js';
+import type { BuildOutputs, DiscoveredFile, OutputPaths, SkippedOutput, WatchTiming } from './filesystem.js';
 import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
@@ -30,7 +40,11 @@ import { toTwee } from './output-twee.js';
 import { loadHeadContent } from './modules.js';
 import { startPassageDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
-import { writeFileAtomic } from './atomic-write.js';
+import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
+import { identify, isKeyInside } from './path-identity.js';
+import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
+import type { InputFailure, InputProblem } from './input-policy.js';
+import { readUTF8 } from './util.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
@@ -38,26 +52,41 @@ const CREATOR_NAME = 'Twee-ts';
 const DEFAULT_FORMAT_ID = 'sugarcube-2';
 const DEFAULT_START_NAME = 'Start';
 
+/**
+ * A build that could not run: nothing was built or written. `code` says why (see TweeTsErrorCode),
+ * `diagnostics` holds what the build reported before it stopped, and `cause` the error behind it, if any.
+ */
 export class TweeTsError extends Error {
+  readonly code: TweeTsErrorCode;
+
   constructor(
     message: string,
     public diagnostics: Diagnostic[] = [],
+    options: { readonly code?: TweeTsErrorCode; readonly cause?: unknown } = {},
   ) {
-    super(message);
+    super(message, 'cause' in options ? { cause: options.cause } : undefined);
     this.name = 'TweeTsError';
+    this.code = options.code ?? 'BUILD_FAILED';
   }
+}
+
+/** Whether `error` is one no change to the sources can fix: a watch stops on it. */
+function isConfigurationError(error: unknown): error is TweeTsError {
+  return error instanceof TweeTsError && (error.code === 'OUTPUT_IS_INPUT' || error.code === 'INVALID_OPTIONS');
 }
 
 /**
  * Compile Twee sources to HTML, Twee, or JSON.
  */
 export async function compile(options: CompileOptions): Promise<CompileResult> {
-  return buildOutput(options);
+  return buildOutput(options, {});
 }
 
 /**
- * Compile and write to a file. The file is replaced atomically: a reader sees the previous
- * build or the new one, never part of it, and a failed write leaves the previous build.
+ * Compile and write to a file. How the file is written depends on what is there (see atomic-write.ts): a
+ * regular file is replaced atomically, so a reader sees the previous build or the new one, never part of it,
+ * and a failed write leaves the previous build; a FIFO or a device is written through; a read-only file is
+ * refused.
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
   const result = await compileForOutputFile(options, options.outFile);
@@ -67,15 +96,22 @@ export async function compileToFile(options: CompileToFileOptions): Promise<Comp
   return result;
 }
 
+/** An input named outside the compile options, which the output must not overwrite either. */
+export interface ExtraInput {
+  readonly role: 'config';
+  readonly path: string;
+}
+
 /**
  * Builds as compileToFile() does for `outputs`, without writing them: an output may sit
  * inside a source folder, so its last build is left out of the sources and modules and
  * never read back. `outputs` is the one file the CLI writes, or every path a bundler's
  * build writes (see BuildOutputs). The caller decides whether the result is written.
  * With no outputs (output to stdout, or none), this is compile(). With `cache`, files
- * are cached as compileIncremental() caches them.
+ * are cached as compileIncremental() caches them. `extraInputs` (the CLI's config file)
+ * are checked against the outputs as the sources are.
  *
- * Throws a TweeTsError when a source, module or head file named directly is an output.
+ * Throws a TweeTsError (`OUTPUT_IS_INPUT`) when an input would be overwritten (see checkNamedInputs).
  *
  * Internal, for the CLI and the bundler plugins; not part of the public API.
  */
@@ -83,35 +119,39 @@ export async function compileForOutputFile(
   options: CompileOptions,
   outputs: BuildOutputs | string | undefined,
   cache?: Map<string, FileCacheEntry>,
+  extraInputs: readonly ExtraInput[] = [],
 ): Promise<CompileResult> {
-  return buildOutput(options, cache, undefined, outputs);
+  return buildOutput(options, { cache, outputs, extraInputs });
 }
 
 /**
  * Compile with incremental caching support.
  * Plugins and advanced users can manage their own cache and changed-file tracking.
  *
- * Without `changedFiles`, a cached file is reused while its modification time is unchanged.
- * With it, a file it names is always reparsed, whatever its modification time, and every
+ * Without `changedFiles`, a cached file is reused while its modification time, size, inode and
+ * status-change time are unchanged. With it, a file it names is always reparsed, and every
  * other cached file is reused as it is. A file may be named by an absolute path or by a path
- * relative to the working directory, with or without a leading `./`: entries are matched to
- * the source files by resolved path. A file that fails to load is dropped from the cache, so
- * the next build tries it again.
+ * relative to the working directory, with or without a leading `./`, or through a link: entries are
+ * matched to the source files by identity (see path-identity.ts). A file that fails to load is
+ * dropped from the cache, so the next build tries it again.
  */
 export async function compileIncremental(
   options: CompileOptions,
   cache: Map<string, FileCacheEntry>,
   changedFiles?: ReadonlySet<string>,
 ): Promise<CompileResult> {
-  return buildOutput(options, cache, changedFiles);
+  return buildOutput(options, { cache, changedFiles });
 }
 
 /**
- * Watch for file changes and recompile. Every build is written to `outFile` (replacing it
- * atomically, as compileToFile() does), including one whose diagnostics report errors.
- * Builds run one at a time, and each one is written and reported as it finishes, in order:
- * changes made during a build go into one follow-up build after it. A watched path that
- * can't be watched is passed to `onError`.
+ * Watch for file changes and recompile. Every build is written to `outFile` (as compileToFile()
+ * writes it), including one whose diagnostics report errors. Builds run one at a time, and each
+ * one is written and reported as it finishes, in order: changes made during a build go into one
+ * follow-up build after it. A watched path that can't be watched is passed to `onError`.
+ *
+ * Options that can't work (an output that is also a named input, an out-of-range option) reject the
+ * returned promise before anything is watched. A build that fails for such a reason later (a link
+ * changed to make the output an input) is passed to `onError`, and watching stops.
  *
  * Aborting the returned controller, or the `signal` in the options, stops watching and
  * aborts the story format requests of the build in progress.
@@ -127,6 +167,8 @@ export function watch(options: WatchOptions): Promise<AbortController> {
  * watch(), writing to `outFile` only the builds `shouldWrite` accepts. A rejected build
  * leaves the output file as it was; `onBuild` receives every build either way.
  *
+ * Throws (a TweeTsError) when the options can't work, before anything is watched.
+ *
  * Internal, for the CLI, which keeps the last good output when a rebuild reports errors;
  * not part of the public API.
  */
@@ -135,6 +177,9 @@ export function watchWithWriteFilter(
   shouldWrite: (result: CompileResult) => boolean,
   hooks: WatchHooks = {},
 ): AbortController {
+  validateOptions(options);
+  checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(toBuildOutputs(options.outFile)), []);
+
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
   // Every build runs with the controller's signal, which the caller's own signal also aborts (below).
@@ -150,11 +195,11 @@ export function watchWithWriteFilter(
   // head file alone, so a module (or a file in a module folder) or the head file
   // still rebuilds when a glob matches it.
   const exclude = options.exclude ?? [];
-  const notExcludable = [...modulePaths, ...headPaths].map((p) => resolve(p));
+  const notExcludable = [...modulePaths, ...headPaths].map((p) => identify(p).key);
   const ignore = (filename: string): boolean => {
     if (!isExcluded(filename, exclude)) return false;
-    const abs = resolve(filename);
-    return !notExcludable.some((root) => abs === root || abs.startsWith(root + sep));
+    const { key } = identify(filename);
+    return !notExcludable.some((root) => isKeyInside(key, root, sep));
   };
 
   // One build at a time. Changes reported while a build is in flight wait in `queued` and go
@@ -181,6 +226,8 @@ export function watchWithWriteFilter(
       options.onBuild?.(outcome.result);
     } catch (e) {
       reportError(toError(e));
+      // An error no edit to the sources can fix (FS-13): stop, as Tweego does.
+      if (isConfigurationError(e)) controller.abort(e);
     }
   };
 
@@ -192,11 +239,21 @@ export function watchWithWriteFilter(
     try {
       let request: WatchBuildRequest | undefined = first;
       while (request !== undefined) {
-        const outcome = await buildOutput(buildOptions, cache, request.changedFiles, options.outFile).then(
+        let found: readonly DiscoveredFile[] = [];
+        const outcome = await buildOutput(buildOptions, {
+          cache,
+          changedFiles: request.changedFiles,
+          outputs: options.outFile,
+          extraInputs: hooks.extraInputs ?? [],
+          onDiscovered: (files) => {
+            found = files;
+          },
+        }).then(
           (result): WatchBuildOutcome => ({ ok: true, result }),
           (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),
         );
         if (controller.signal.aborted) return;
+        handle.track(found);
         deliver(outcome);
         request = queued;
         queued = undefined;
@@ -223,6 +280,7 @@ export function watchWithWriteFilter(
     },
     ignore,
     reportError,
+    hooks.timing,
   );
 
   const outer = options.signal;
@@ -247,6 +305,10 @@ export interface WatchHooks {
    * nothing it does shows.
    */
   readonly onIdle?: () => void;
+  /** How long to wait for changes to settle (see watchFilesystem); tests shorten it. */
+  readonly timing?: WatchTiming;
+  /** Inputs besides the compile options' own (the CLI's config file), which the output must not overwrite. */
+  readonly extraInputs?: readonly ExtraInput[];
 }
 
 /** A watch-mode build: the files that changed, or `undefined` for a full build. */
@@ -267,19 +329,167 @@ function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+/** Throws a TweeTsError (`INVALID_OPTIONS`) for an option out of range, before anything is read. */
+function validateOptions(options: CompileOptions): void {
+  const timeout = options.formatFetchTimeout;
+  if (timeout !== undefined && !(timeout >= 0)) {
+    throw new TweeTsError(`formatFetchTimeout must be 0 or more milliseconds, not ${timeout}.`, [], {
+      code: 'INVALID_OPTIONS',
+    });
+  }
+}
+
+/** An input the output must not overwrite, named by the user. */
+interface NamedInput {
+  readonly role: 'source' | 'module' | 'head' | 'config' | 'story format';
+  readonly path: string;
+}
+
+/** Every input named in `options` (and `extra`), whatever the output mode. */
+function namedInputs(options: CompileOptions, extra: readonly ExtraInput[]): NamedInput[] {
+  return [
+    ...options.sources
+      .filter((s): s is string => typeof s === 'string')
+      .map((path) => ({ role: 'source' as const, path })),
+    ...(options.modules ?? []).map((path) => ({ role: 'module' as const, path })),
+    ...(options.headFile ? [{ role: 'head' as const, path: options.headFile }] : []),
+    ...extra,
+  ];
+}
+
+/** The TweeTsError for an output that would overwrite `input`. */
+function outputIsInput(input: NamedInput, diagnostics: readonly Diagnostic[], detail = ''): TweeTsError {
+  const role = input.role === 'source' ? '' : ` (the ${input.role === 'head' ? 'head file' : input.role})`;
+  return new TweeTsError(
+    `path ${input.path}: Output file cannot be an input source${role}.${detail}`,
+    [...diagnostics],
+    {
+      code: 'OUTPUT_IS_INPUT',
+    },
+  );
+}
+
+/**
+ * The one output-safety check for inputs named directly, run before the output mode is looked at, so it
+ * holds for every mode and every role: a source, module, head file or config file (or, once it is known,
+ * a story format file) that is an output file (the same file by identity, or a hard link to it) is a
+ * TweeTsError, as in Tweego. Writing the build would overwrite it. A folder that holds an output is
+ * walked instead, and the output inside it left out (see checkSkippedOutputs).
+ */
+function checkNamedInputs(
+  inputs: readonly NamedInput[],
+  output: OutputPaths,
+  diagnostics: readonly Diagnostic[],
+): void {
+  const overlap = inputs.find((input) => output.isFile(input.path));
+  if (overlap !== undefined) throw outputIsInput(overlap, diagnostics);
+}
+
+/**
+ * The output-safety check for output files found while walking a source or module folder, which are
+ * left out of the inputs. Writing over one is fine when it is a previous build, or a file the walk
+ * would not load anyway; but an existing file of a type the folder's role loads, which twee-ts did not
+ * build, is the author's own file (FS-07): a TweeTsError, unless an exclude glob leaves it out.
+ */
+function checkSkippedOutputs(
+  skipped: readonly SkippedOutput[],
+  role: 'source' | 'module',
+  diagnostics: readonly Diagnostic[],
+): void {
+  for (const output of skipped) {
+    if (!isLoadableType(output.path, role) || isOwnOutput(output.path) || isPreviousBuild(output.path)) continue;
+    throw outputIsInput(
+      { role, path: output.path },
+      diagnostics,
+      ` It is a ${role} file inside the ${role} folder ${output.folder}, and not an earlier build. Move the output out of the folder, or exclude the file.`,
+    );
+  }
+}
+
+/** The files a story format reads, which the output must not overwrite. */
+function formatInputs(format: StoryFormatInfo): NamedInput[] {
+  if (format.isTwine2) return [{ role: 'story format', path: format.filename }];
+  // A Twine 1 format reads its components from its own folder and the one above it (see output-twine1.ts).
+  const formatDir = dirname(format.filename);
+  const parentDir = dirname(formatDir);
+  return [
+    format.filename,
+    join(formatDir, 'userlib.js'),
+    join(formatDir, 'code.js'),
+    join(formatDir, 'footer.html'),
+    join(parentDir, 'engine.js'),
+    join(parentDir, 'jquery.js'),
+    join(parentDir, 'modernizr.js'),
+  ].map((path) => ({ role: 'story format', path }));
+}
+
+/** Throws the TweeTsError a fatal input problem calls for. */
+function fatalInput(problem: InputProblem, diagnostics: readonly Diagnostic[]): TweeTsError {
+  return new TweeTsError(problem.message, [...diagnostics], { code: 'INPUT_UNAVAILABLE', cause: problem.cause });
+}
+
+/** The failure kind of a file that could not be read, telling a dangling link from a missing file. */
+function readFailure(path: string, e: unknown): InputFailure {
+  const failure = failureOfError(e);
+  if (failure !== 'missing') return failure;
+  return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true ? 'dangling-link' : 'missing';
+}
+
+/**
+ * The head file's text, trimmed. Any failure to read it is fatal, as in Tweego (`modifyHead`): the output
+ * would silently lack what the author put in the head.
+ */
+function readHeadFile(path: string, diagnostics: Diagnostic[]): string {
+  try {
+    return readUTF8(path, diagnostics).trim();
+  } catch (e) {
+    throw fatalInput(inputProblem('head', 'named', readFailure(path, e), path, e), diagnostics);
+  }
+}
+
+/**
+ * The module tags for the head, each module read on its own so a failure names its file; a module that
+ * can't be read is reported as the input policy says (an error) and left out.
+ */
+function moduleTags(files: readonly DiscoveredFile[], diagnostics: Diagnostic[]): string {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const file of files) {
+    if (seen.has(file.key)) continue;
+    seen.add(file.key);
+    if (!isLoadableType(file.path, 'module')) {
+      const diagnostic = problemDiagnostic(
+        inputProblem('module', file.discovery, 'unsupported-type', file.path, undefined),
+      );
+      if (diagnostic) diagnostics.push(diagnostic);
+      continue;
+    }
+    try {
+      const tag = loadHeadContent([file.path], undefined, diagnostics);
+      if (tag.length > 0) tags.push(tag);
+    } catch (e) {
+      const diagnostic = problemDiagnostic(
+        inputProblem('module', file.discovery, readFailure(file.path, e), file.path, e),
+      );
+      if (diagnostic) diagnostics.push(diagnostic);
+    }
+  }
+  return tags.join('\n');
+}
+
 /**
  * `outputs`: what the build writes (an output file's path, or a bundler's outputs),
  * which source and module discovery skip, so an output inside a source folder is
- * never loaded back. A source, module or head file named directly that is an output
- * is a TweeTsError, as in Tweego: writing the build would overwrite it.
+ * never loaded back. The output-safety checks run before any input is read and before
+ * the output mode matters: see checkNamedInputs and checkSkippedOutputs.
  */
-async function buildOutput(
-  options: CompileOptions,
-  cache?: Map<string, FileCacheEntry>,
-  changedFiles?: ReadonlySet<string>,
-  outputs?: BuildOutputs | string,
-): Promise<CompileResult> {
+async function buildOutput(options: CompileOptions, context: BuildContext): Promise<CompileResult> {
+  const { cache, changedFiles, outputs, extraInputs = [] } = context;
   const written = toBuildOutputs(outputs);
+  const outputGuard = outputPaths(written);
+  // The story file a user named (CLI, compileToFile, watch). A bundler's outputs are its own: it writes
+  // over its chunks and assets in a source folder on every build, so only named inputs are checked for it.
+  const namedOutput = typeof outputs === 'string';
   const diagnostics: Diagnostic[] = [];
   const outputMode: OutputMode = options.outputMode ?? 'html';
   const trim = options.trim ?? true;
@@ -289,10 +499,8 @@ async function buildOutput(
   const sourceInfo = options.sourceInfo ?? false;
 
   options.signal?.throwIfAborted();
-  const timeout = options.formatFetchTimeout;
-  if (timeout !== undefined && !(timeout >= 0)) {
-    throw new TweeTsError(`formatFetchTimeout must be 0 or more milliseconds, not ${timeout}.`);
-  }
+  validateOptions(options);
+  checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
   // Clear per-compile index cache
   clearIndexCache();
@@ -301,7 +509,6 @@ async function buildOutput(
   // expanded in place) and each run of inline sources is kept together, so a later source
   // overrides an earlier one whatever kind each is.
   const groups: SourceGroup[] = [];
-  const outputSources: string[] = [];
   for (const source of options.sources) {
     const last = groups[groups.length - 1];
     if (typeof source === 'string') {
@@ -318,12 +525,15 @@ async function buildOutput(
     if (group.kind === 'inline') return group;
     const found = getFilenames(group.paths, written, options.exclude);
     diagnostics.push(...found.diagnostics);
-    outputSources.push(...found.outputSources);
-    return { kind: 'files' as const, filenames: found.filenames };
+    if (namedOutput) checkSkippedOutputs(found.skippedOutputs, 'source', diagnostics);
+    return { kind: 'files' as const, files: found.files };
   });
-  rejectOutputSources(outputSources, diagnostics);
+  // Modules are read for HTML output only, but checked in every mode.
+  const modules = getFilenames(options.modules ?? [], written, [], 'module');
+  if (namedOutput) checkSkippedOutputs(modules.skippedOutputs, 'module', diagnostics);
+  context.onDiscovered?.([...walked.flatMap((group) => (group.kind === 'files' ? group.files : [])), ...modules.files]);
   // Every file of the build, so that a cache purge while loading one group keeps the others' entries.
-  const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.filenames : [])));
+  const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.files.map((f) => f.path) : [])));
 
   // Create story and load sources
   const story = createStory();
@@ -335,7 +545,7 @@ async function buildOutput(
     } else if (cache) {
       loadSourcesCached(
         story,
-        group.filenames,
+        group.files,
         { trim, twee2Compat },
         diagnostics,
         processedFiles,
@@ -344,7 +554,7 @@ async function buildOutput(
         buildFiles,
       );
     } else {
-      loadSources(story, group.filenames, { trim, twee2Compat }, diagnostics, processedFiles);
+      loadSources(story, group.files, { trim, twee2Compat }, diagnostics, processedFiles);
     }
   }
   if (cache && buildFiles.size === 0) {
@@ -370,6 +580,7 @@ async function buildOutput(
     format = await resolveStoryFormat(request, { ...options, noRemote }, diagnostics);
     // The caller may have aborted while the format was being found.
     options.signal?.throwIfAborted();
+    if (format) checkNamedInputs(formatInputs(format), outputGuard, diagnostics);
   }
 
   // Merge config from StoryData: command-line > StoryData > default.
@@ -387,6 +598,7 @@ async function buildOutput(
 
   // Generate output
   let output: string;
+  let externalFiles: string[] | undefined;
 
   switch (outputMode) {
     case 'twee3':
@@ -423,12 +635,12 @@ async function buildOutput(
       }
 
       // Modules and head file, injected before the template's closing head tag while the template is filled
-      const modules = getFilenames(options.modules ?? [], written);
       diagnostics.push(...modules.diagnostics);
       const { headFile } = options;
-      const headIsOutput = headFile !== undefined && outputPaths(written).isFile(realPathOf(headFile));
-      rejectOutputSources([...modules.outputSources, ...(headIsOutput ? [headFile] : [])], diagnostics);
-      const head = loadHeadContent(modules.filenames, options.headFile, diagnostics);
+      const head = [moduleTags(modules.files, diagnostics), headFile ? readHeadFile(headFile, diagnostics) : '']
+        .filter((part) => part.length > 0)
+        .join('\n');
+      externalFiles = [...modules.filenames, ...(headFile ? [identify(headFile).display] : [])];
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
@@ -446,27 +658,31 @@ async function buildOutput(
   const stats: CompileStats = {
     ...getStoryStats(story, options.wordCountMethod),
     files: [...processedFiles],
+    ...(externalFiles === undefined ? {} : { externalFiles }),
   };
 
   // Nothing is delivered, or written by the caller, for a build that was aborted meanwhile.
   options.signal?.throwIfAborted();
-  return { output, story, format, diagnostics, stats };
+  return { output: output, story, format, diagnostics, stats };
+}
+
+/** How a build runs, beyond its options: what buildOutput() is called with by each entry point. */
+interface BuildContext {
+  /** Cache files as compileIncremental() caches them. */
+  readonly cache?: Map<string, FileCacheEntry> | undefined;
+  /** The files known to have changed since the last build with `cache`. */
+  readonly changedFiles?: ReadonlySet<string> | undefined;
+  /** What the build writes, which no input may be (see checkNamedInputs). */
+  readonly outputs?: BuildOutputs | string | undefined;
+  /** Inputs besides the options' own (the CLI's config file). */
+  readonly extraInputs?: readonly ExtraInput[];
+  /** Receives every source and module file the build found, before any is read (for the watcher). */
+  readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
 }
 
 /** A run of sources of one kind, in the order supplied. */
 type SourceGroup =
   { readonly kind: 'paths'; readonly paths: string[] } | { readonly kind: 'inline'; readonly sources: InlineSource[] };
-
-/**
- * Throws for the first of `paths`, inputs named directly that are also an output:
- * writing the build would overwrite them. An output found while walking a source
- * folder is skipped instead (see getFilenames).
- */
-function rejectOutputSources(paths: readonly string[], diagnostics: readonly Diagnostic[]): void {
-  const [first] = paths;
-  if (first === undefined) return;
-  throw new TweeTsError(`path ${first}: Output file cannot be an input source.`, [...diagnostics]);
-}
 
 function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
   if (story.ifid !== '') return;

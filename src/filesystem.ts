@@ -1,38 +1,36 @@
 /**
- * File system utilities: path walking, file type detection, watch mode.
- * Ported from filesystem.go.
+ * File system utilities: source discovery, output-path checks, watch mode.
+ * Ported from filesystem.go. Every path comparison goes through path-identity.ts.
  */
 import {
   accessSync,
   constants as fsConstants,
   lstatSync,
+  readFileSync,
   readdirSync,
-  realpathSync,
+  readlinkSync,
   statSync,
   watch as fsWatch,
 } from 'node:fs';
 import type { FSWatcher, Stats } from 'node:fs';
-import * as nodePath from 'node:path';
-import { basename, dirname, resolve, relative, join, sep } from 'node:path';
-import { isKnownFileType } from './media-types.js';
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
+import { isKnownFileType, normalizedFileExt } from './media-types.js';
+import { identify, isKeyInside, matchesExclude } from './path-identity.js';
+import type { PathIdentity } from './path-identity.js';
+import { inputProblem, problemDiagnostic } from './input-policy.js';
+import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
 import type { Diagnostic } from './types.js';
 
 /**
- * Whether `filename` matches one of the `exclude` globs. The globs are matched
- * against the file's path relative to the working directory, the path
- * getFilenames reports; an absolute `filename` is made relative first. A leading
- * `./` in a glob is dropped. Matching is Node's `path.matchesGlob`.
+ * Whether `filename` matches one of the `exclude` globs (see `matchesExclude` in path-identity.ts): the
+ * globs are matched against the file's path relative to the working directory, the path getFilenames
+ * reports, and against its real path relative to the working directory; an absolute glob against the
+ * absolute paths. A leading `./` in a glob is dropped. The extension is matched without case, and on a
+ * case-insensitive volume the whole path.
  */
 export function isExcluded(filename: string, exclude: readonly string[]): boolean {
   if (exclude.length === 0) return false;
-  // Read from the namespace, not imported by name: path.matchesGlob arrived in
-  // Node 22.5, and a named import would stop this module loading on 22.0-22.4.
-  const { matchesGlob } = nodePath;
-  if (typeof matchesGlob !== 'function') {
-    throw new Error(`The exclude option needs Node.js 22.5 or newer (found ${process.version}).`);
-  }
-  const rel = relative(process.cwd(), resolve(filename)) || filename;
-  return exclude.some((pattern) => matchesGlob(rel, pattern.replace(/^\.\//, '')));
+  return matchesExclude(identify(filename), exclude);
 }
 
 /**
@@ -64,36 +62,32 @@ export function toBuildOutputs(outputs: BuildOutputs | string | undefined): Buil
 }
 
 /**
- * The path outputs are compared by: absolute, with every symbolic link in it
- * resolved, so two paths that reach the same file through different links (a
- * symlinked project folder, an alias of the output folder) compare equal. A
- * path that doesn't exist yet, such as the output before the first build, is
- * its nearest existing folder's real path joined with the rest.
+ * The real path of `path` (see `canonical` in path-identity.ts): absolute, with every symbolic link
+ * resolved, so two paths that reach the same file through different links compare equal. A path that
+ * doesn't exist yet is its nearest existing folder's real path joined with the rest.
  */
 export function realPathOf(path: string): string {
-  const abs = resolve(path);
+  return identify(path).canonical;
+}
+
+/** The inode of an existing file, as `dev:ino`, so a hard link of an output is recognised as one. */
+function inodeOf(path: string): string | undefined {
   try {
-    return realpathSync.native(abs);
+    const stats = statSync(path, { bigint: true });
+    return stats.isFile() ? `${stats.dev}:${stats.ino}` : undefined;
   } catch {
-    // Missing or unreadable: resolve the folder it would be in instead.
+    return undefined;
   }
-  const parent = dirname(abs);
-  return parent === abs ? abs : join(realPathOf(parent), basename(abs));
 }
 
-/** Whether the path `inner` is `outer` or inside it. */
-function isSameOrInside(inner: string, outer: string): boolean {
-  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
-}
-
-/** A build's outputs as real paths (see realPathOf), with the checks discovery and the watchers make. */
+/** A build's outputs, with the checks discovery and the watchers make. Every path is compared by identity. */
 export interface OutputPaths {
-  /** Whether the real path `real` is a file the build writes. */
-  isFile(real: string): boolean;
-  /** Whether the real path `real` is a folder the build owns (see BuildOutputs.dirs). */
-  isDir(real: string): boolean;
-  /** Whether the folder at the real path `real` is an owned folder or holds an output, at any depth. */
-  holds(real: string): boolean;
+  /** Whether `path` is a file the build writes (the same file, or a hard link to it). */
+  isFile(path: string): boolean;
+  /** Whether `path` is a folder the build owns (see BuildOutputs.dirs). */
+  isDir(path: string): boolean;
+  /** Whether the folder at `path` is an owned folder or holds an output, at any depth. */
+  holds(path: string): boolean;
   /**
    * Whether source discovery, walking the folders `roots`, leaves the path out
    * as output: an output file, or a path it only reaches through an owned folder.
@@ -102,21 +96,32 @@ export interface OutputPaths {
 }
 
 export function outputPaths(outputs: BuildOutputs): OutputPaths {
-  const files = new Set(outputs.files.map(realPathOf));
-  const dirs = new Set(outputs.dirs.map(realPathOf));
+  const files = new Set(outputs.files.map((f) => identify(f).key));
+  const inodes = new Set(outputs.files.map(inodeOf).filter((id) => id !== undefined));
+  const dirs = new Set(outputs.dirs.map((d) => identify(d).key));
   const all = [...files, ...dirs];
+  const keyOf = (path: string): string => identify(path).key;
+  const isFile = (path: string): boolean => {
+    if (files.has(keyOf(path))) return true;
+    if (inodes.size === 0) return false;
+    const inode = inodeOf(path);
+    return inode !== undefined && inodes.has(inode);
+  };
   return {
-    isFile: (real) => files.has(real),
-    isDir: (real) => dirs.has(real),
-    holds: (real) => dirs.has(real) || all.some((output) => output !== real && isSameOrInside(output, real)),
+    isFile,
+    isDir: (path) => dirs.has(keyOf(path)),
+    holds(path) {
+      const key = keyOf(path);
+      return dirs.has(key) || all.some((output) => output !== key && isKeyInside(output, key, sep));
+    },
     isOutput(path, roots) {
-      const real = realPathOf(path);
-      if (files.has(real)) return true;
-      const owners = [...dirs].filter((dir) => isSameOrInside(real, dir));
+      if (isFile(path)) return true;
+      const key = keyOf(path);
+      const owners = [...dirs].filter((dir) => isKeyInside(key, dir, sep));
       if (owners.length === 0) return false;
       // A root walks into the path unless an owned folder below the root holds it.
-      const reaching = roots.map(realPathOf).filter((root) => isSameOrInside(real, root));
-      return reaching.every((root) => owners.some((dir) => dir !== root && isSameOrInside(dir, root)));
+      const reaching = roots.map(keyOf).filter((root) => isKeyInside(key, root, sep));
+      return reaching.every((root) => owners.some((dir) => dir !== root && isKeyInside(dir, root, sep)));
     },
   };
 }
@@ -125,7 +130,7 @@ export function outputPaths(outputs: BuildOutputs): OutputPaths {
  * A folder entry as source discovery walks it, found at `pathname` with the real
  * path `real` when it is no link: a link to a file counts as that file, and a
  * link to anything else (a folder above all) as nothing, undefined. Throws when
- * the entry or a link's target can't be read.
+ * the entry or a link's target can't be read (a dangling link: ENOENT).
  */
 export function walkedEntry(
   pathname: string,
@@ -137,104 +142,208 @@ export function walkedEntry(
   return target.isFile() ? { stat: target, real: realPathOf(pathname) } : undefined;
 }
 
+/** A file source discovery found, as the loader reads and reports it. */
+export interface DiscoveredFile {
+  /** The path reported for it: relative to the working directory when inside it (`display` of its identity). */
+  readonly path: string;
+  /** Its identity key: the same for every spelling of the same file. */
+  readonly key: string;
+  /** Named by the user, or found walking a named folder. */
+  readonly discovery: InputDiscovery;
+  /** Reached through a symbolic link (the entry found, or the path named, is a link). */
+  readonly link?: boolean;
+}
+
+/** An output file found while walking a source or module folder: left out of the inputs. */
+export interface SkippedOutput {
+  readonly path: string;
+  /** The named folder whose walk found it. */
+  readonly folder: string;
+}
+
 export interface FilenamesResult {
+  /** The paths of `files`, for callers that only need them. */
   readonly filenames: string[];
-  /** One warning per path that could not be read. */
+  readonly files: readonly DiscoveredFile[];
+  /** A warning (or error) per path that could not be used, as the input policy says (see input-policy.ts). */
   readonly diagnostics: Diagnostic[];
   /**
    * The paths given that are themselves an output file. A build reading one would
    * overwrite its own source; the compiler refuses it, as Tweego does.
    */
   readonly outputSources: string[];
+  /** Output files found while walking a named folder, which were left out. */
+  readonly skippedOutputs: readonly SkippedOutput[];
+}
+
+/** Orders folder entries by code point, as Tweego's walk (Go's sort.Strings on UTF-8) does, on every OS. */
+function compareNames(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }
 
 /**
  * Recursively walk directories, collecting regular file paths.
  *
- * Leaves out what the build writes (`outputs`, compared by real path, see
- * realPathOf) so its last output is never read back, and the files that match an
- * `exclude` glob (see isExcluded). A path given that is itself an output file is
- * not walked but listed in `outputSources`.
+ * Leaves out what the build writes (`outputs`, compared by identity, see path-identity.ts) so its last
+ * output is never read back, and the files that match an `exclude` glob (see isExcluded). A path given
+ * that is itself an output file is not walked but listed in `outputSources`. Folder entries are walked in
+ * code-point order, so the order sources load in (and so which duplicate passage wins) is the same on
+ * every operating system.
  *
  * Symbolic links: a path given is followed wherever it leads. Inside a folder, a
  * link to a file is read, but a link to a folder is not followed, as Tweego's walk
  * doesn't follow one. A link back to its own folder or a parent would otherwise
  * walk the same files again at every depth.
  *
- * Like Tweego, a path that cannot be read is reported as a warning and skipped.
+ * What can't be used (a missing path, a dangling link, an unreadable folder) is handled as the input
+ * policy says for `role` (see input-policy.ts): a missing named path is a warning, as in Tweego, and a
+ * dangling link found in a folder (an editor's lock file) is skipped without a word.
  */
 export function getFilenames(
   pathnames: readonly string[],
   outputs?: BuildOutputs | string,
   exclude: readonly string[] = [],
+  role: Extract<InputRole, 'source' | 'module'> = 'source',
 ): FilenamesResult {
-  const filenames: string[] = [];
+  const files: DiscoveredFile[] = [];
   const diagnostics: Diagnostic[] = [];
   const outputSources: string[] = [];
+  const skippedOutputs: SkippedOutput[] = [];
   const output = outputPaths(toBuildOutputs(outputs));
 
-  function warn(pathname: string, e: unknown): void {
-    diagnostics.push({ level: 'warning', message: `path ${pathname}: ${e instanceof Error ? e.message : String(e)}` });
+  function problem(discovery: InputDiscovery, failure: InputFailure, path: string, cause: unknown): void {
+    const diagnostic = problemDiagnostic(inputProblem(role, discovery, failure, path, cause));
+    if (diagnostic !== undefined) diagnostics.push(diagnostic);
   }
 
-  function addFile(pathname: string): void {
-    const abs = resolve(pathname);
-    const rel = relative(process.cwd(), abs);
-    if (isExcluded(rel || abs, exclude)) return;
-    filenames.push(rel || abs);
+  function addFile(id: PathIdentity, discovery: InputDiscovery, link: boolean): void {
+    if (matchesExclude(id, exclude)) return;
+    files.push({ path: id.display, key: id.key, discovery, ...(link ? { link } : {}) });
   }
 
-  // A folder's entries. `real` is the folder's real path; an entry that is no link
-  // has the real path `real/entry`, so no entry needs resolving.
-  function walkDir(pathname: string, real: string): void {
-    let entries;
+  function walkDir(pathname: string, discovery: InputDiscovery, folder: string): void {
+    let entries: string[];
     try {
-      entries = readdirSync(pathname);
+      entries = readdirSync(pathname).sort(compareNames);
     } catch (e) {
-      warn(pathname, e);
+      problem(discovery, 'unreadable-folder', pathname, e);
       return;
     }
-    for (const entry of entries) walkEntry(join(pathname, entry), join(real, entry));
+    for (const entry of entries) walkEntry(join(pathname, entry), folder);
   }
 
-  function walkEntry(pathname: string, real: string): void {
-    let entry;
+  function walkEntry(pathname: string, folder: string): void {
+    let stat: Stats;
+    let link = false;
     try {
-      entry = walkedEntry(pathname, real);
+      stat = lstatSync(pathname);
+      if (stat.isSymbolicLink()) {
+        link = true;
+        const target = statSync(pathname, { throwIfNoEntry: false });
+        if (target === undefined) {
+          problem('found', 'dangling-link', pathname, readLinkText(pathname));
+          return;
+        }
+        // A link to a folder is not followed.
+        if (target.isDirectory()) return;
+        stat = target;
+      }
     } catch (e) {
-      warn(pathname, e);
+      problem('found', 'unreadable', pathname, e);
       return;
     }
-    if (entry === undefined) return;
-    if (entry.stat.isFile()) {
-      if (!output.isFile(entry.real)) addFile(pathname);
-    } else if (entry.stat.isDirectory() && !output.isDir(entry.real)) {
-      walkDir(pathname, entry.real);
+    if (stat.isFile()) {
+      const id = identify(pathname);
+      if (output.isFile(pathname)) {
+        if (!matchesExclude(id, exclude)) skippedOutputs.push({ path: id.display, folder });
+        return;
+      }
+      addFile(id, 'found', link);
+    } else if (stat.isDirectory()) {
+      if (!output.isDir(pathname)) walkDir(pathname, 'found', folder);
+    } else {
+      problem('found', 'not-a-file', pathname, undefined);
     }
   }
 
   for (const pathname of pathnames) {
-    let stat;
+    if (pathname === '-') {
+      diagnostics.push({ level: 'warning', message: 'path -: Reading from standard input is unsupported.' });
+      continue;
+    }
+    let stat: Stats;
     try {
       stat = statSync(pathname);
     } catch (e) {
-      warn(pathname, e);
+      const link = lstatSync(pathname, { throwIfNoEntry: false });
+      if (link?.isSymbolicLink() === true) problem('named', 'dangling-link', pathname, readLinkText(pathname));
+      else problem('named', 'missing', pathname, e);
       continue;
     }
-    const real = realPathOf(pathname);
     if (stat.isFile()) {
-      if (output.isFile(real)) outputSources.push(pathname);
-      else addFile(pathname);
+      if (output.isFile(pathname)) outputSources.push(pathname);
+      else addFile(identify(pathname), 'named', lstatSync(pathname).isSymbolicLink());
     } else if (stat.isDirectory()) {
-      walkDir(pathname, real);
+      walkDir(pathname, 'named', pathname);
+    } else {
+      problem('named', 'not-a-file', pathname, undefined);
     }
   }
 
-  return { filenames, diagnostics, outputSources };
+  return { filenames: files.map((f) => f.path), files, diagnostics, outputSources, skippedOutputs };
+}
+
+/** The target a link holds, for a message; undefined when it can't be read. */
+function readLinkText(path: string): string | undefined {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The marks twee-ts leaves in what it builds: the creator attribute of Twine 2 story data (HTML and
+ * archive output), the creator of JSON output, and the version line of Twine 1 HTML output.
+ */
+const BUILD_MARKS = [/<tw-storydata\b[^>]*\bcreator="Twee-ts"/i, /"creator": "Twee-ts"/, /Compiled with twee-ts, /];
+
+/**
+ * Whether the file at `path` shows that twee-ts built it (see BUILD_MARKS). Twee output and Twine 1
+ * archives carry no such mark; false for a file that can't be read.
+ */
+export function isPreviousBuild(path: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+  return BUILD_MARKS.some((mark) => mark.test(text));
+}
+
+/** Whether `path` has a file type the `role` loads from a folder. */
+export function isLoadableType(path: string, role: Extract<InputRole, 'source' | 'module'>): boolean {
+  if (role === 'source') return isKnownFileType(path);
+  return ['css', 'js', 'otf', 'ttf', 'woff', 'woff2'].includes(normalizedFileExt(path));
+}
+
+/** A file the last build found, as the watcher is told about it (see WatchHandle.track). */
+interface TrackedFile {
+  readonly path: string;
+  /** Reached through a symbolic link. */
+  readonly link?: boolean;
 }
 
 export interface WatchHandle {
   close(): void;
+  /**
+   * Tells the watcher which files the last build found, for as long as the next call doesn't list them
+   * again. Each one outside the watched folders, and each one reached through a symbolic link, is also
+   * watched on its own (the link, every link on the way, and the target): Node's recursive watch on Linux
+   * reports neither a change to a link's target outside the folder nor a link deleted or retargeted.
+   */
+  track(files: readonly TrackedFile[]): void;
 }
 
 /**
@@ -246,7 +355,7 @@ export class WatchPathError extends Error {
     readonly path: string,
     cause: unknown,
   ) {
-    super(`Cannot watch ${path}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(`Cannot watch ${path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
     this.name = 'WatchPathError';
   }
 }
@@ -265,48 +374,134 @@ function pathKind(path: string): PathKind {
   }
 }
 
+/** A folder a watched path is watched through, and the names in it that lead to the path. */
+interface Anchor {
+  readonly path: string;
+  readonly id: string;
+  readonly names: ReadonlySet<string>;
+}
+
 /**
  * Where a watched path stands, and so which folders its watches must be on. A watch follows the
  * folder it was started on, not its path, so the watches are set up again whenever this changes.
  */
 interface RootState {
   /**
-   * The folder the path is watched through, which sees it created, deleted or replaced: its
-   * parent folder, or while that is missing, the nearest folder above it that exists.
+   * The folders the path is watched through, which see it, every symbolic link on the way to it and
+   * its final target created, deleted, replaced or retargeted: the folder holding each, or while that
+   * is missing, the nearest folder above it that exists.
    */
-  readonly anchor: { readonly path: string; readonly id: string } | undefined;
-  /** The path itself: a folder is watched recursively; a file is watched through `anchor`. */
+  readonly anchors: readonly Anchor[];
+  /** The path itself, links followed: a folder is watched recursively; a file is watched through `anchors`. */
   readonly self: PathKind;
 }
 
-function rootState(abs: string): RootState {
-  return { anchor: nearestFolderAbove(abs), self: pathKind(abs) };
+/** Links followed before a path counts as a cycle (Linux stops at 40 as well). */
+const MAX_LINK_DEPTH = 40;
+
+/**
+ * Every place a change can alter what `abs` refers to: `abs` itself, each symbolic link met while
+ * resolving it component by component (in the path's folders or as the path itself), and the final
+ * target. Each is absolute; a relative link target is resolved against the folder that really holds it.
+ */
+function linkLocations(abs: string): string[] {
+  const locations = [abs];
+  const { root } = parse(abs);
+  let resolved = root;
+  let rest = abs.slice(root.length).split(sep).filter(Boolean);
+  for (let hops = 0; rest.length > 0;) {
+    const [name, ...after] = rest;
+    const next = join(resolved, name ?? '');
+    const stat = lstatSync(next, { throwIfNoEntry: false });
+    if (stat?.isSymbolicLink() === true && hops < MAX_LINK_DEPTH) {
+      hops++;
+      if (!locations.includes(next)) locations.push(next);
+      const target = readLinkText(next) ?? '';
+      const targetRoot = isAbsolute(target) ? parse(target).root : '';
+      resolved = targetRoot === '' ? resolved : targetRoot;
+      rest = [...target.slice(targetRoot.length).split(/[\\/]/).filter(Boolean), ...after];
+    } else {
+      resolved = join(resolved, name ?? '');
+      rest = after;
+    }
+  }
+  if (!locations.includes(resolved)) locations.push(resolved);
+  return locations;
 }
 
-function nearestFolderAbove(abs: string): RootState['anchor'] {
+function nearestFolderAbove(
+  abs: string,
+): { readonly path: string; readonly id: string; readonly name: string } | undefined {
   for (let dir = dirname(abs), below = abs; dir !== below; below = dir, dir = dirname(dir)) {
     const kind = pathKind(dir);
-    if (kind.kind === 'dir') return { path: dir, id: kind.id };
+    if (kind.kind === 'dir') return { path: dir, id: kind.id, name: basename(below) };
   }
   return undefined;
 }
 
-/** Whether two states need the same watches: the same anchor folder, and the same watched folder if any. */
-function sameWatches(a: RootState, b: RootState): boolean {
-  const selfId = (s: RootState): string | undefined => (s.self.kind === 'dir' ? s.self.id : undefined);
-  return a.anchor?.path === b.anchor?.path && a.anchor?.id === b.anchor?.id && selfId(a) === selfId(b);
+function rootState(abs: string): RootState {
+  const byPath = new Map<string, { id: string; names: Set<string> }>();
+  for (const location of linkLocations(abs)) {
+    const anchor = nearestFolderAbove(location);
+    if (anchor === undefined) continue;
+    const entry = byPath.get(anchor.path) ?? { id: anchor.id, names: new Set<string>() };
+    entry.names.add(anchor.name);
+    byPath.set(anchor.path, entry);
+  }
+  const anchors = [...byPath].map(([path, { id, names }]) => ({ path, id, names }));
+  return { anchors, self: pathKind(abs) };
 }
 
-/** One watched path (a source, module or head file), as given and as an absolute path. */
+/** Whether two states need the same watches: the same anchor folders (and names), and the same watched folder. */
+function sameWatches(a: RootState, b: RootState): boolean {
+  const selfId = (s: RootState): string | undefined => (s.self.kind === 'dir' ? s.self.id : undefined);
+  const anchorsId = (s: RootState): string => JSON.stringify(s.anchors.map((x) => [x.path, x.id, [...x.names].sort()]));
+  return selfId(a) === selfId(b) && anchorsId(a) === anchorsId(b);
+}
+
+/** One watched path (a source, module or head file, or a file a build read through a link), as given and absolute. */
 interface Root {
   readonly path: string;
   readonly abs: string;
+  /** Watched because a build read it (see WatchHandle.track), not because it was named. */
+  readonly tracked: boolean;
   state: RootState;
   watchers: FSWatcher[];
+  /** The folders found under a watched folder, by identity key, so a folder that goes away is recognised. */
+  folders: Set<string>;
   /** A watch could not be started, or broke: it is tried again on the next event in its anchor folder. */
   failed: boolean;
   /** The last failure reported, so that one that persists is reported once. */
   lastReport: string | undefined;
+}
+
+/** How long watch mode waits for changes to settle before it builds. */
+export interface WatchTiming {
+  /** A build starts this long after the last change (default 500 ms, Tweego's rate). */
+  readonly debounceMs?: number;
+  /** …but no later than this long after the first change it builds (default 1000 ms), so a steady stream still builds. */
+  readonly maxWaitMs?: number;
+}
+
+/** Every folder below `dir` (links to folders not followed), by identity key, `dir` included. */
+function foldersUnder(dir: string): Set<string> {
+  const found = new Set<string>([identify(dir).key]);
+  const visit = (path: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(path, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const child = join(path, entry.name);
+      found.add(identify(child).key);
+      visit(child);
+    }
+  };
+  visit(dir);
+  return found;
 }
 
 /**
@@ -314,14 +509,23 @@ interface Root {
  * A folder is watched recursively; a file is watched on its own and counts
  * whatever its type (a head file, say). A change to a file `ignore` returns true
  * for (given the path relative to the working directory) schedules no build.
- * Uses debouncing to avoid rapid rebuilds.
  *
- * A watched path that doesn't exist yet is waited for, and one that is deleted, or renamed
- * away and replaced, is followed to the new folder or file at its path: each path is also
- * watched through the folder above it. When that sets up a path's watches again, the next
- * build is a full one (`changedFiles` undefined), since changes made in between went unseen.
- * A path that can't be watched is passed to `onError` as a WatchPathError, once while the
- * failure persists; the other paths are still watched.
+ * Events are hints, not the truth: every build walks the sources again. A change to a file of a known
+ * type is reported as that file (`changedFiles`, the path relative to the working directory), so it is
+ * read again whatever its modification time. Any event on something that is not such a file (a folder
+ * created, deleted, moved or renamed, or a path that was a folder) schedules a full build
+ * (`changedFiles` undefined), which revalidates every cached file. Changes to files of unknown types
+ * schedule nothing.
+ *
+ * A build starts once changes stop for `timing.debounceMs`, but no later than `timing.maxWaitMs` after
+ * the first change it covers, so a steady stream of changes still builds.
+ *
+ * A watched path that doesn't exist yet is waited for, and one that is deleted, or renamed away and
+ * replaced, is followed to the new folder or file at its path: each path is watched through the folder
+ * above it, and so are every symbolic link on the way to it and its final target (#239), so editing,
+ * replacing or retargeting any of them rebuilds. When that sets up a path's watches again, the next build
+ * is a full one, since changes made in between went unseen. A path that can't be watched is passed to
+ * `onError` as a WatchPathError, once while the failure persists; the other paths are still watched.
  */
 export function watchFilesystem(
   pathnames: string[],
@@ -331,45 +535,92 @@ export function watchFilesystem(
   onError: (error: WatchPathError) => void = () => {
     // Errors are dropped when the caller does not ask for them.
   },
+  timing: WatchTiming = {},
 ): WatchHandle {
   const output = outputPaths(toBuildOutputs(outFilename));
+  const debounceMs = timing.debounceMs ?? 500;
+  const maxWaitMs = Math.max(debounceMs, timing.maxWaitMs ?? 2 * debounceMs);
   let buildTimer: ReturnType<typeof setTimeout> | null = null;
-  const BUILD_DEBOUNCE = 500;
+  let firstPendingAt: number | undefined;
   const pendingFiles = new Set<string>();
   let pendingFullBuild = false;
   let closed = false;
+  /** The files the last build read, as reported (see WatchHandle.track). */
+  let lastInputs: ReadonlySet<string> = new Set();
 
   // `changedFile` undefined: a full build, which wins over the changed files pending with it.
   function scheduleBuild(changedFile?: string): void {
     if (changedFile === undefined) pendingFullBuild = true;
     else pendingFiles.add(changedFile);
+    const now = Date.now();
+    firstPendingAt ??= now;
     if (buildTimer) clearTimeout(buildTimer);
+    const delay = Math.max(0, Math.min(debounceMs, firstPendingAt + maxWaitMs - now));
     buildTimer = setTimeout(() => {
       buildTimer = null;
+      firstPendingAt = undefined;
       const files = pendingFullBuild || pendingFiles.size === 0 ? undefined : new Set(pendingFiles);
       pendingFiles.clear();
       pendingFullBuild = false;
       callback(files);
-    }, BUILD_DEBOUNCE);
+    }, delay);
   }
 
-  const roots: Root[] = pathnames.map((path) => {
+  const makeRoot = (path: string, tracked: boolean): Root => {
     const abs = resolve(path);
-    return { path, abs, state: rootState(abs), watchers: [], failed: false, lastReport: undefined };
-  });
+    const state = rootState(abs);
+    return {
+      path,
+      abs,
+      tracked,
+      state,
+      watchers: [],
+      folders: state.self.kind === 'dir' ? foldersUnder(abs) : new Set(),
+      failed: false,
+      lastReport: undefined,
+    };
+  };
+  const roots: Root[] = pathnames.map((path) => makeRoot(path, false));
 
   // A watched path that is a file counts whatever its type.
   const isNamedFile = (abs: string): boolean => roots.some((r) => r.abs === abs && r.state.self.kind === 'file');
 
-  // A changed file, as an absolute path. `named`: it is one of the watched paths
-  // itself, so it counts whatever its type. Reported relative to the working
-  // directory, the form getFilenames gives and the incremental cache is keyed by.
+  // A changed file. `named`: it is one of the watched paths itself, so it counts whatever its type.
+  // Reported relative to the working directory, the form getFilenames gives.
   function fileChanged(abs: string, named: boolean): void {
     if (!named && !isKnownFileType(abs)) return;
-    // Compared by real path: the output may be reached through a link.
-    if (output.isFile(realPathOf(abs))) return;
-    const rel = relative(process.cwd(), abs);
-    if (!ignore(rel || abs)) scheduleBuild(rel || abs);
+    if (output.isFile(abs)) return;
+    const { display } = identify(abs);
+    if (!ignore(display)) scheduleBuild(display);
+  }
+
+  // An event in a watched folder `root` for the path `abs` below it.
+  function changedBelow(root: Root, abs: string): void {
+    if (output.isFile(abs)) return;
+    const kind = pathKind(abs);
+    if (kind.kind === 'dir') {
+      // A folder created, moved in or renamed: walk again, and remember what is in it.
+      for (const key of foldersUnder(abs)) root.folders.add(key);
+      scheduleBuild();
+      return;
+    }
+    if (kind.kind === 'missing') {
+      const id = identify(abs);
+      const gone = [...root.folders].filter((folder) => isKeyInside(folder, id.key, sep));
+      if (gone.length > 0) {
+        // A folder deleted, moved out or renamed: its files went with it, without events of their own.
+        for (const folder of gone) root.folders.delete(folder);
+        scheduleBuild();
+        return;
+      }
+      // A dangling link (an editor's lock file, `.#a.tw`) is no source, unless the last build read a
+      // file through it before its target went.
+      if (lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+        if (lastInputs.has(id.display)) scheduleBuild();
+        return;
+      }
+    }
+    fileChanged(abs, isNamedFile(abs));
   }
 
   function report(root: Root, cause: unknown): void {
@@ -402,41 +653,41 @@ export function watchFilesystem(
     }
   }
 
+  const selfKind = (root: Root): PathKind['kind'] => root.state.self.kind;
+
   // Starts the watches `root.state` calls for, closing any earlier ones.
   function arm(root: Root): void {
     for (const w of root.watchers) w.close();
     root.watchers = [];
     root.failed = false;
-    const { anchor, self } = root.state;
-    const anchorStarted =
-      !anchor ||
+    const { anchors, self } = root.state;
+    const anchorsStarted = anchors.map((anchor) =>
       startWatch(root, anchor.path, false, (filename) => {
         // A file is watched through its folder, not on its own: the OS reports only the file's
         // name for a watch on the file, and an editor that saves by replacing the file would
-        // leave such a watch on the old one.
+        // leave such a watch on the old one. Any event may mean the folder itself went away.
         const before = root.state.self.kind;
         recheck(root, true);
-        const isFile = before === 'file' || isNamedFile(root.abs);
-        if (isFile && filename !== '' && resolve(anchor.path, filename) === root.abs) fileChanged(root.abs, true);
-      });
+        // Read through a function: recheck() may have replaced root.state.
+        const isFile = before === 'file' || selfKind(root) === 'file';
+        if (isFile && anchor.names.has(filename)) fileChanged(root.abs, !root.tracked || isKnownFileType(root.abs));
+      }),
+    );
     const selfStarted =
       self.kind !== 'dir' ||
       startWatch(root, root.path, true, (filename) => {
         // No name: an event on the folder itself, such as its deletion.
         if (filename === '') recheck(root, true);
-        else {
-          const abs = resolve(root.abs, filename);
-          fileChanged(abs, isNamedFile(abs));
-        }
+        else changedBelow(root, resolve(root.abs, filename));
       });
-    if (anchorStarted && selfStarted) root.lastReport = undefined;
+    if (anchorsStarted.every(Boolean) && selfStarted) root.lastReport = undefined;
     else root.failed = true;
   }
 
   /**
-   * Sets up `root`'s watches again when its path, or the folder above it, is no longer the
-   * one they were started on (or, with `retry`, when one of them failed), and then schedules a
-   * full build. Returns whether its state changed.
+   * Sets up `root`'s watches again when its path, a link on the way to it, or the folder above any of
+   * them is no longer the one they were started on (or, with `retry`, when one of them failed), and then
+   * schedules a full build. Returns whether its state changed.
    */
   function recheck(root: Root, retry: boolean): boolean {
     const before = root.state;
@@ -448,6 +699,7 @@ export function watchFilesystem(
       return false;
     }
     root.state = after;
+    root.folders = after.self.kind === 'dir' ? foldersUnder(root.abs) : new Set();
     arm(root);
     const recovered = wasFailed && !root.failed;
     if ((changed || recovered) && (before.self.kind !== 'missing' || after.self.kind !== 'missing')) scheduleBuild();
@@ -459,11 +711,47 @@ export function watchFilesystem(
   // Build once initially (no changedFiles = full build).
   callback();
 
+  /** Whether `path` is already seen by a named root: inside a watched folder, or a watched file itself. */
+  const covered = (key: string): boolean =>
+    roots.some(
+      (root) =>
+        !root.tracked &&
+        (root.state.self.kind === 'dir'
+          ? isKeyInside(key, identify(root.abs).key, sep)
+          : identify(root.abs).key === key),
+    );
+
   return {
     close() {
       closed = true;
       if (buildTimer) clearTimeout(buildTimer);
+      buildTimer = null;
       for (const root of roots) for (const w of root.watchers) w.close();
+    },
+    track(files) {
+      if (closed) return;
+      const wanted = new Map<string, string>();
+      lastInputs = new Set(files.map((file) => file.path));
+      for (const file of files) {
+        if (file.link === true || !covered(identify(file.path).key)) wanted.set(resolve(file.path), file.path);
+      }
+      for (let i = roots.length - 1; i >= 0; i--) {
+        const root = roots[i];
+        if (root?.tracked !== true) continue;
+        if (wanted.has(root.abs)) wanted.delete(root.abs);
+        else if (lstatSync(root.abs, { throwIfNoEntry: false }) !== undefined) {
+          // Still there but no longer an input (excluded, say): stop watching it. One that went away is
+          // still waited for: Node's recursive watch on Linux may not report a link created again in its
+          // place.
+          for (const w of root.watchers) w.close();
+          roots.splice(i, 1);
+        }
+      }
+      for (const path of wanted.values()) {
+        const root = makeRoot(path, true);
+        roots.push(root);
+        arm(root);
+      }
     },
   };
 }

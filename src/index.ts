@@ -78,6 +78,7 @@ export type {
   SourceLocation,
   TweeTsConfig,
   FileCacheEntry,
+  TweeTsErrorCode,
   WordCountMethod,
   InspectOptions,
   PassageOutputTarget,
