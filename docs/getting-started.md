@@ -100,7 +100,7 @@ In a Twee file, a byte order mark at the start of a line directly before `::` is
 
 ### Passage names for loaded files
 
-Each stylesheet, script, font and media file becomes a passage named after the file, as in Tweego: `.css`, `.js` and font files by their file name (`style.css`), media files by their file name without the extension (`images/forest.png` becomes `forest`). A Twine 2 HTML file brings its story stylesheet and script as `Story Stylesheet` and `Story JavaScript`.
+Each stylesheet, script, font and media file becomes a passage named after the file, as in Tweego: `.css`, `.js` and font files by their file name (`style.css`), media files by their file name up to its first dot (`images/forest.png` becomes `forest`, and `images/bg.night.png` becomes `bg`). A font's family name is its file name up to the first dot too (`My.Font.woff2` gives `My`). A Twine 2 HTML file brings its story stylesheet and script as `Story Stylesheet` and `Story JavaScript`.
 
 These generated names never replace a passage, and no passage replaces them. When the name is already taken by another passage, or is a compiler special name (`StoryTitle`, `StoryData`, `StorySettings`, `StoryIncludes`), the file's passage gets the first free name of `name 2`, `name 3`, and so on. A passage from your Twee sources always keeps its name: if it comes after a file's passage with the same name, the file's passage moves to a free name. So `a/style.css` and `b/style.css` both reach the story, as `style.css` and `style.css 2`, and so do the scripts of several imported HTML files. Tweego instead lets the later of the two replace the earlier one.
 
@@ -116,6 +116,8 @@ twee-ts is a drop-in replacement for Tweego. It:
 - Produces equivalent HTML output
 
 The `--twee2-compat` flag enables Twee2 syntax compatibility for projects written in that dialect.
+
+The few intended differences, such as reporting a wrong-typed StoryData field as an error instead of stopping, are listed in [Differences from Tweego](./tweego-differences).
 
 ## What's Next?
 

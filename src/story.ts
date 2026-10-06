@@ -1,23 +1,51 @@
 /**
  * Story model + StoryData JSON marshal/unmarshal.
  * Ported from story.go + storydata.go.
+ *
+ * The story metadata (`name`, `ifid`, `legacyIFID`, `twine1`, `twine2`) is decided by the special passages that
+ * are in the story: StoryTitle, StoryData and StorySettings. Each one decides its part entirely, from its own
+ * text: a later passage of the same name replaces the earlier passage and everything it decided, and removing
+ * it puts its part back to the defaults. So the metadata always equals `deriveStoryMetadata(story.passages)`,
+ * whatever order passages arrive in and whatever was wrong with an earlier one.
  */
-import type { Story, ReadonlyStory, Passage, Diagnostic, WordCountMethod, IFID } from './types.js';
+import type {
+  Story,
+  ReadonlyStory,
+  Passage,
+  ReadonlyPassage,
+  Diagnostic,
+  WordCountMethod,
+  IFID,
+  SourceLocation,
+  Twine2Metadata,
+} from './types.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
 import { isStoryPassage, countWords } from './passage.js';
+import { trimTweeSpace } from './twee-syntax.js';
+import type { DecodeIssue, DecodeIssueKind, TextDecodeResult } from './json-decode.js';
+import {
+  field,
+  jsonArrayOf,
+  jsonNumber,
+  jsonRecordOf,
+  jsonString,
+  nullAsZero,
+  ownRecord,
+  readObjectText,
+} from './json-decode.js';
 
 // --- Passage name index ---
 
 /**
- * A story's passage positions by name, for O(1) lookups. `story.passages` is a plain mutable
- * array that code outside this module may change (StoryBuilder documents it), so the index
- * records what it was built from and is rebuilt when that no longer matches.
+ * A story's passage positions by name, for O(1) lookups. Only the functions of this module change
+ * `story.passages` in place, and they keep the index up to date. Assigning `story.passages` a new array (as
+ * the compiler does after applying tag aliases) is noticed by its identity and length, and the index rebuilt.
  */
 interface NameIndex {
-  /** The array the index describes; assigning `story.passages` gives a different one. */
+  /** The array the index describes. */
   readonly passages: readonly Passage[];
-  /** The name at each position when the index was last updated. */
-  readonly names: string[];
+  /** Its length when the index was last updated. */
+  length: number;
   /** Position by name; with duplicate names in the array, the last position. */
   readonly positions: Map<string, number>;
 }
@@ -25,32 +53,19 @@ interface NameIndex {
 const passageIndex = new WeakMap<Story, NameIndex>();
 
 function buildIndex(story: Story): NameIndex {
-  const names = story.passages.map((p) => p.name);
-  const index: NameIndex = { passages: story.passages, names, positions: new Map(names.map((name, i) => [name, i])) };
+  const positions = new Map(story.passages.map((p, i) => [p.name, i]));
+  const index: NameIndex = { passages: story.passages, length: story.passages.length, positions };
   passageIndex.set(story, index);
   return index;
 }
 
-/**
- * The index, rebuilt if `story.passages` was reassigned or changed length. O(1); `position()`
- * also checks every hit. A change that keeps the length, such as replacing an element, can still
- * hide a passage from a lookup, so `storyVerifyIndex()` checks every position.
- */
+/** The index, rebuilt if `story.passages` was reassigned or changed length. */
 function currentIndex(story: Story): NameIndex {
   const index = passageIndex.get(story);
-  return index?.passages === story.passages && index.names.length === story.passages.length ? index : buildIndex(story);
+  return index?.passages === story.passages && index.length === story.passages.length ? index : buildIndex(story);
 }
 
-/**
- * Rebuild the index unless it matches `story.passages` at every position. O(n): for entry points
- * that run after code outside the compiler may have changed the passages, such as StoryBuilder.
- */
-function storyVerifyIndex(story: Story): void {
-  const index = currentIndex(story);
-  if (!story.passages.every((p, i) => p.name === index.names[i])) buildIndex(story);
-}
-
-/** The position of the passage named `name`, or -1. */
+/** The position of the passage named `name`, or -1. A hit is checked against the passage there. */
 function position(story: Story, name: string): number {
   const i = currentIndex(story).positions.get(name);
   if (i === undefined) return -1;
@@ -62,16 +77,21 @@ function position(story: Story, name: string): number {
 function push(story: Story, p: Passage): void {
   const index = currentIndex(story);
   index.positions.set(p.name, story.passages.length);
-  index.names.push(p.name);
   story.passages.push(p);
+  index.length = story.passages.length;
 }
 
 /** Put a passage at position `i`, in place of the passage there. */
 function replaceAt(story: Story, i: number, p: Passage): void {
   const renamed = story.passages[i]?.name !== p.name;
   story.passages[i] = p;
-  // Only moving a generated name aside renames a position; that is rare, so rebuild then.
   if (renamed) buildIndex(story);
+}
+
+/** Take the passage at position `i` out. */
+function removeAt(story: Story, i: number): void {
+  story.passages.splice(i, 1);
+  buildIndex(story);
 }
 
 // --- Generated passage names ---
@@ -170,7 +190,7 @@ function moveGeneratedAside(story: Story, name: string, diagnostics: Diagnostic[
 
 // --- Story ---
 
-function defaultTwine2Metadata(): Story['twine2'] {
+function defaultTwine2Metadata(): Twine2Metadata {
   return {
     format: '',
     formatVersion: '',
@@ -182,12 +202,15 @@ function defaultTwine2Metadata(): Story['twine2'] {
   };
 }
 
+/** No IFID: the empty string. Only the empty string is ever branded without validation. */
+const NO_IFID = normalizeIFID('');
+
 export function createStory(): Story {
   const story: Story = {
     name: '',
-    ifid: '' as IFID,
+    ifid: NO_IFID,
     passages: [],
-    legacyIFID: '' as IFID,
+    legacyIFID: NO_IFID,
     twine1: { settings: new Map() },
     twine2: defaultTwine2Metadata(),
   };
@@ -199,179 +222,366 @@ export function storyHas(story: Story, name: string): boolean {
   return position(story, name) !== -1;
 }
 
-export function storyIndex(story: Story, name: string): number {
-  return position(story, name);
-}
-
 export function storyGet(story: Story, name: string): Passage | undefined {
   const i = position(story, name);
   return i === -1 ? undefined : story.passages[i];
 }
 
-function storyAppend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  const i = position(story, p.name);
-  if (i === -1) {
-    push(story, p);
-  } else {
-    diagnostics.push({
-      level: 'warning',
-      message: `Replacing existing passage "${p.name}" with duplicate.`,
-    });
-    replaceAt(story, i, p);
-  }
+// --- Diagnostics with source locations ---
+
+/** Where a passage came from, for a diagnostic: `{ file, line }`, or nothing for a passage made in memory. */
+function at(source: SourceLocation | undefined): { file?: string; line?: number } {
+  return source === undefined ? {} : { file: source.file, line: source.line };
 }
 
-export function storyPrepend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
-  moveGeneratedAside(story, p.name, diagnostics);
-  const i = position(story, p.name);
-  if (i === -1) {
-    story.passages.unshift(p);
-    // Every position moves up by one.
-    buildIndex(story);
-  } else {
-    diagnostics.push({
-      level: 'warning',
-      message: `Replacing existing passage "${p.name}" with duplicate.`,
-    });
-    replaceAt(story, i, p);
-  }
+/**
+ * The warning for `p` replacing `existing`. It is located at `p`, and says where the replaced passage was, so
+ * that both copies can be found.
+ */
+function duplicateWarning(existing: Passage | undefined, p: Passage): Diagnostic {
+  const source = existing?.source;
+  const where = source === undefined ? '' : ` It replaces the one from ${source.file} (line ${source.line}).`;
+  return {
+    level: 'warning',
+    message: `Replacing existing passage "${p.name}" with duplicate.${where}`,
+    ...at(p.source),
+  };
 }
 
 // --- StoryData JSON ---
 
-interface StoryDataJSON {
-  ifid?: string;
-  format?: string;
-  'format-version'?: string;
-  options?: string[];
-  start?: string;
-  tags?: string;
-  'tag-colors'?: Record<string, string>;
-  zoom?: number;
-}
-
 export function marshalStoryData(story: ReadonlyStory): string {
-  const data: StoryDataJSON = {};
-  if (story.ifid) data.ifid = story.ifid;
-  if (story.twine2.format) data.format = story.twine2.format;
-  if (story.twine2.formatVersion) data['format-version'] = story.twine2.formatVersion;
-
-  const options: string[] = [];
-  for (const [opt, val] of story.twine2.options) {
-    if (val) options.push(opt);
-  }
-  if (options.length > 0) data.options = options;
-
-  if (story.twine2.start) data.start = story.twine2.start;
-  if (story.twine2.tags) data.tags = story.twine2.tags;
-
-  if (story.twine2.tagColors.size > 0) {
-    data['tag-colors'] = Object.fromEntries(story.twine2.tagColors);
-  }
-  if (story.twine2.zoom !== 1) data.zoom = story.twine2.zoom;
-
+  const options = [...story.twine2.options].flatMap(([opt, on]) => (on ? [opt] : []));
+  // Keys in the order Tweego writes them; each only when set. `tag-colors` keys are own properties.
+  const data = {
+    ...(story.ifid ? { ifid: story.ifid } : {}),
+    ...(story.twine2.format ? { format: story.twine2.format } : {}),
+    ...(story.twine2.formatVersion ? { 'format-version': story.twine2.formatVersion } : {}),
+    ...(options.length > 0 ? { options } : {}),
+    ...(story.twine2.start ? { start: story.twine2.start } : {}),
+    ...(story.twine2.tags ? { tags: story.twine2.tags } : {}),
+    ...(story.twine2.tagColors.size > 0 ? { 'tag-colors': ownRecord(story.twine2.tagColors) } : {}),
+    ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
+  };
   return JSON.stringify(data, null, '\t');
 }
 
-/** StoryData as JSON.parse() gives it: any field may hold any value. */
-type UnvalidatedStoryData = { readonly [K in keyof StoryDataJSON]?: unknown };
+/** The StoryData read; its issues are about fields left out or keys read as another (see `storyDataIssueLevel`). */
+type StoryDataDecodeResult = TextDecodeResult<{ readonly ifid: IFID; readonly twine2: Twine2Metadata }>;
 
-export function unmarshalStoryData(story: Story, json: string): string | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(json) as unknown;
-  } catch (e) {
-    return `Cannot unmarshal "StoryData"; ${e instanceof Error ? e.message : String(e)}`;
-  }
-
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return 'Cannot unmarshal "StoryData"; expected a JSON object';
-  }
-  const data: UnvalidatedStoryData = raw;
-
-  // StoryData holds all of this metadata, so a field it leaves out gets its default, not the
-  // value of an earlier StoryData passage. The StorySettings IFID is kept apart (legacyIFID).
+/**
+ * Decode the text of a StoryData passage, as Tweego decodes it into its `storyDataJSON` struct with Go's
+ * `encoding/json`:
+ *
+ * - Keys match the field names regardless of letter case (`IFID` is `ifid`); a repeated key takes the last
+ *   value. `null` reads as the field's zero value. Every field the text leaves out has its default.
+ * - A field of the wrong type is left out (`zoom: "2"`); Tweego stops with an error there.
+ * - An unknown key is left out (as in Tweego); `tags` (the Twine 2 story tags) is read, which Tweego does not.
+ * - A `zoom` of 0 is the default zoom, 1.
+ *
+ * Every field left out and every key read as another one gives an issue. Text that is not a JSON object gives
+ * `ok: false`.
+ */
+export function decodeStoryData(text: string): StoryDataDecodeResult {
   const twine2 = defaultTwine2Metadata();
-  story.ifid = typeof data.ifid === 'string' ? normalizeIFID(data.ifid) : ('' as IFID);
-  if (typeof data.format === 'string') twine2.format = data.format;
-  if (typeof data['format-version'] === 'string') twine2.formatVersion = data['format-version'];
-  if (Array.isArray(data.options)) {
-    for (const opt of data.options) {
-      if (typeof opt === 'string') twine2.options.set(opt, true);
-    }
-  }
-  if (typeof data.start === 'string') twine2.start = data.start;
-  if (typeof data.tags === 'string') twine2.tags = data.tags;
-  if (typeof data['tag-colors'] === 'object' && data['tag-colors'] !== null && !Array.isArray(data['tag-colors'])) {
-    for (const [tag, color] of Object.entries(data['tag-colors'])) {
-      if (typeof color === 'string') twine2.tagColors.set(tag, color);
-    }
-  }
-  if (typeof data.zoom === 'number' && data.zoom !== 0) twine2.zoom = data.zoom;
-  story.twine2 = twine2;
+  let ifid = NO_IFID;
+  const str = nullAsZero(jsonString, '');
+  const read = readObjectText(text, {
+    keys: 'go',
+    fields: {
+      ifid: field(str, (v) => {
+        ifid = normalizeIFID(v);
+      }),
+      format: field(str, (v) => {
+        twine2.format = v;
+      }),
+      'format-version': field(str, (v) => {
+        twine2.formatVersion = v;
+      }),
+      options: field(nullAsZero(jsonArrayOf(str), []), (v) => {
+        twine2.options = new Map(v.map((o) => [o, true]));
+      }),
+      start: field(str, (v) => {
+        twine2.start = v;
+      }),
+      tags: field(str, (v) => {
+        twine2.tags = v;
+      }),
+      'tag-colors': field(nullAsZero(jsonRecordOf(str), new Map<string, string>()), (v) => {
+        twine2.tagColors = new Map(v);
+      }),
+      zoom: field(nullAsZero(jsonNumber, 0), (v) => {
+        twine2.zoom = v === 0 ? 1 : v;
+      }),
+    },
+  });
+  return read.ok ? { ok: true, ifid, twine2, issues: read.issues } : read;
+}
 
-  return null;
+/**
+ * How a StoryData issue is reported. A wrong-typed value is an error, since Tweego stops there and the story
+ * would otherwise be built with another format, start or IFID than the author wrote. The rest are warnings:
+ * the value is used (a case variant or repeated key) or was never part of StoryData (an unknown key), but the
+ * StoryData passage is rewritten without it.
+ */
+function storyDataIssueLevel(kind: DecodeIssueKind): Diagnostic['level'] {
+  switch (kind) {
+    case 'type':
+      return 'error';
+    case 'unknown-key':
+    case 'case-variant-key':
+    case 'duplicate-key':
+      return 'warning';
+    default: {
+      const _exhaustive: never = kind;
+      throw new Error(`unhandled decode issue kind: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+function storyDataIssueMessage(issue: DecodeIssue): string {
+  switch (issue.kind) {
+    case 'type':
+      return `"StoryData" ${issue.message}; the field is left out.`;
+    case 'unknown-key':
+      return `"StoryData" ${issue.message}; it is left out.`;
+    case 'case-variant-key':
+    case 'duplicate-key':
+      return `"StoryData" ${issue.message}.`;
+    default: {
+      const _exhaustive: never = issue.kind;
+      throw new Error(`unhandled decode issue kind: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 // --- StorySettings (legacy) ---
 
-export function unmarshalStorySettings(story: Story, text: string, diagnostics: Diagnostic[]): void {
+/** Lower case as Go's `bytes.ToLower`: each code point mapped on its own (U+0130 İ to i, Σ always to σ). */
+function goToLower(s: string): string {
+  let out = '';
+  for (const ch of s) out += ch === 'İ' ? 'i' : ch.toLowerCase();
+  return out;
+}
+
+interface StorySettingsData {
+  readonly settings: ReadonlyMap<string, string>;
+  /** The IFID of a valid `ifid` entry, or empty. */
+  readonly legacyIFID: IFID;
+  /** Lines with no `:`, which are skipped. */
+  readonly malformed: readonly string[];
+  /** The obsolete keys found (`ifid`, `zoom`), quoted, in order. */
+  readonly obsolete: readonly string[];
+}
+
+/**
+ * Decode the text of a StorySettings passage, as Tweego does: each line that holds a `:` is a `key:value`
+ * pair, both trimmed and lower-cased; a repeated key takes the last value. `ifid` and `zoom` are obsolete:
+ * a valid `ifid` is kept as the legacy IFID, and neither is a setting.
+ */
+function decodeStorySettings(text: string): StorySettingsData {
+  const settings = new Map<string, string>();
+  const malformed: string[] = [];
   const obsolete: string[] = [];
-
+  let legacyIFID = NO_IFID;
   for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim();
+    const line = trimTweeSpace(rawLine);
     if (line.length === 0) continue;
-
-    const colonIdx = line.indexOf(':');
-    if (colonIdx === -1) {
-      diagnostics.push({
-        level: 'warning',
-        message: `Malformed "StorySettings" entry; skipping "${line}".`,
-      });
+    const colon = line.indexOf(':');
+    if (colon === -1) {
+      malformed.push(line);
       continue;
     }
-
-    const key = line.slice(0, colonIdx).trim().toLowerCase();
-    const val = line
-      .slice(colonIdx + 1)
-      .trim()
-      .toLowerCase();
-
+    const key = goToLower(trimTweeSpace(line.slice(0, colon)));
+    const val = goToLower(trimTweeSpace(line.slice(colon + 1)));
     switch (key) {
-      case 'ifid': {
-        const err = validateIFID(val);
-        if (err === null) {
-          story.legacyIFID = normalizeIFID(val);
-        }
+      case 'ifid':
+        if (validateIFID(val) === null) legacyIFID = normalizeIFID(val);
         obsolete.push('"ifid"');
-        continue;
-      }
+        break;
       case 'zoom':
         obsolete.push('"zoom"');
-        continue;
+        break;
       default:
         // Any other key is a setting.
+        settings.set(key, val);
         break;
     }
-
-    story.twine1.settings.set(key, val);
   }
+  return { settings, legacyIFID, malformed, obsolete };
+}
 
-  if (obsolete.length > 0) {
-    const entries = obsolete.length === 1 ? 'entry' : 'entries';
-    const pronoun = obsolete.length === 1 ? 'it' : 'them';
+function storySettingsDiagnostics(data: StorySettingsData, source: SourceLocation | undefined): Diagnostic[] {
+  const diagnostics: Diagnostic[] = data.malformed.map((line) => ({
+    level: 'warning',
+    message: `Malformed "StorySettings" entry; skipping "${line}".`,
+    ...at(source),
+  }));
+  if (data.obsolete.length > 0) {
+    const entries = data.obsolete.length === 1 ? 'entry' : 'entries';
+    const pronoun = data.obsolete.length === 1 ? 'it' : 'them';
     diagnostics.push({
       level: 'warning',
       message:
-        `Detected obsolete "StorySettings" ${entries}: ${obsolete.join(', ')}. ` +
+        `Detected obsolete "StorySettings" ${entries}: ${data.obsolete.join(', ')}. ` +
         `Please remove ${pronoun} from the "StorySettings" special passage.`,
+      ...at(source),
     });
+  }
+  return diagnostics;
+}
+
+/**
+ * Set the StorySettings part of the story's metadata (`twine1.settings` and `legacyIFID`) from the text of a
+ * StorySettings passage, replacing what an earlier one set.
+ */
+export function unmarshalStorySettings(story: Story, text: string, diagnostics: Diagnostic[]): void {
+  const data = decodeStorySettings(text);
+  story.twine1 = { settings: new Map(data.settings) };
+  story.legacyIFID = data.legacyIFID;
+  diagnostics.push(...storySettingsDiagnostics(data, undefined));
+}
+
+// --- Story metadata from special passages ---
+
+/** The parts of a story that its special passages decide. */
+export type StoryMetadata = Pick<Story, 'name' | 'ifid' | 'legacyIFID' | 'twine1' | 'twine2'>;
+
+/**
+ * Set the part of the story metadata that a special passage decides from that passage alone, and return the
+ * passage as the story stores it (a StoryTitle trimmed; a StoryData that decodes rewritten from what was
+ * read, as Tweego does, so that every field it left out was reported). Any other passage is returned as is.
+ */
+function readSpecialPassage(story: Story, p: Passage, diagnostics: Diagnostic[]): Passage {
+  switch (p.name) {
+    case 'StoryIncludes':
+      diagnostics.push({
+        level: 'warning',
+        message:
+          'Ignoring "StoryIncludes" compiler special passage; twee-ts allows you to specify project files and/or directories to recursively search.',
+        ...at(p.source),
+      });
+      return p;
+
+    case 'StoryData': {
+      const decoded = decodeStoryData(p.text);
+      if (!decoded.ok) {
+        // The passage still replaces any earlier StoryData, so the story has none of its metadata.
+        story.ifid = NO_IFID;
+        story.twine2 = defaultTwine2Metadata();
+        diagnostics.push({
+          level: 'error',
+          message: `Cannot unmarshal "StoryData" compiler special passage; ${decoded.reason}. Its metadata (IFID, format, start, …) is not used.`,
+          ...at(p.source),
+        });
+        return p;
+      }
+      story.ifid = decoded.ifid;
+      story.twine2 = decoded.twine2;
+      for (const issue of decoded.issues) {
+        diagnostics.push({
+          level: storyDataIssueLevel(issue.kind),
+          message: storyDataIssueMessage(issue),
+          ...at(p.source),
+        });
+      }
+      const ifidError = decoded.ifid.length > 0 ? validateIFID(decoded.ifid) : null;
+      if (ifidError !== null) {
+        diagnostics.push({ level: 'error', message: `Cannot validate IFID; ${ifidError}.`, ...at(p.source) });
+      }
+      return { ...p, text: marshalStoryData(story) };
+    }
+
+    case 'StorySettings': {
+      const data = decodeStorySettings(p.text);
+      story.twine1 = { settings: new Map(data.settings) };
+      story.legacyIFID = data.legacyIFID;
+      diagnostics.push(...storySettingsDiagnostics(data, p.source));
+      return p;
+    }
+
+    case 'StoryTitle': {
+      const name = trimTweeSpace(p.text);
+      story.name = name;
+      return { ...p, text: name };
+    }
+
+    default:
+      // Any other name is an ordinary passage.
+      return p;
+  }
+}
+
+/** Put the part of the story metadata that the special passage `name` decides back to its defaults. */
+function clearSpecialPassage(story: Story, name: string): void {
+  switch (name) {
+    case 'StoryData':
+      story.ifid = NO_IFID;
+      story.twine2 = defaultTwine2Metadata();
+      return;
+    case 'StorySettings':
+      story.twine1 = { settings: new Map() };
+      story.legacyIFID = NO_IFID;
+      return;
+    case 'StoryTitle':
+      story.name = '';
+      return;
+    default:
+      // Other passages decide nothing.
+      return;
   }
 }
 
 /**
- * Process a passage and add it to the story, handling special passages.
- * Creates new passage objects where text is modified rather than mutating the input.
+ * The story metadata that a list of passages decides: what its StoryTitle, StoryData and StorySettings
+ * passages say, or the defaults for each one that is missing. When a name is repeated, the last passage
+ * decides, as it would replace the others. Pure; diagnostics are not reported.
+ */
+export function deriveStoryMetadata(passages: readonly ReadonlyPassage[]): StoryMetadata {
+  const story = createStory();
+  for (const p of passages) {
+    if (SPECIAL_PASSAGE_NAMES.has(p.name)) {
+      readSpecialPassage(story, { name: p.name, tags: [...p.tags], text: p.text }, []);
+    }
+  }
+  const { name, ifid, legacyIFID, twine1, twine2 } = story;
+  return { name, ifid, legacyIFID, twine1, twine2 };
+}
+
+// --- Adding passages ---
+
+/**
+ * Add `p` at the end (or the front), or in place of the passage with its name, with a warning that says
+ * where both came from.
+ */
+function storyPlace(story: Story, p: Passage, diagnostics: Diagnostic[], where: 'end' | 'front'): void {
+  const i = position(story, p.name);
+  if (i !== -1) {
+    diagnostics.push(duplicateWarning(story.passages[i], p));
+    replaceAt(story, i, p);
+  } else if (where === 'end') {
+    push(story, p);
+  } else {
+    story.passages.unshift(p);
+    // Every position moves up by one.
+    buildIndex(story);
+  }
+}
+
+/**
+ * Add a passage at the front, or in place of the passage with its name, with a warning. A special passage
+ * added this way is not read into the metadata: the caller adds one that holds the story's metadata (a
+ * StoryTitle with the story name, or a StoryData written from the story).
+ */
+export function storyPrepend(story: Story, p: Passage, diagnostics: Diagnostic[]): void {
+  moveGeneratedAside(story, p.name, diagnostics);
+  storyPlace(story, p, diagnostics, 'front');
+}
+
+/**
+ * Add a passage to the story. A special passage (StoryTitle, StoryData, StorySettings, StoryIncludes) also
+ * sets the part of the metadata it decides, replacing what an earlier one of its name set (see
+ * `readSpecialPassage`). The input passage is not changed; the story may store a rewritten copy.
  *
  * A passage replaces an earlier one with the same name, except where either name was generated
  * (see `withGeneratedName()`): a generated name never replaces a passage and is never replaced.
@@ -386,59 +596,38 @@ export function storyAdd(story: Story, p: Passage, diagnostics: Diagnostic[]): v
     return;
   }
   moveGeneratedAside(story, p.name, diagnostics);
+  storyPlace(story, readSpecialPassage(story, p, diagnostics), diagnostics, 'end');
+}
 
-  let processed = p;
+/** Take the passage named `name` out of the story, with the metadata it decided. Returns it, if there was one. */
+function storyRemove(story: Story, name: string): Passage | undefined {
+  const i = position(story, name);
+  const p = story.passages[i];
+  if (p === undefined) return undefined;
+  removeAt(story, i);
+  clearSpecialPassage(story, name);
+  return p;
+}
 
-  switch (p.name) {
-    case 'StoryIncludes':
-      diagnostics.push({
-        level: 'warning',
-        message:
-          'Ignoring "StoryIncludes" compiler special passage; twee-ts allows you to specify project files and/or directories to recursively search.',
-      });
-      break;
-
-    case 'StoryData': {
-      const err = unmarshalStoryData(story, p.text);
-      if (err === null) {
-        // Validate the IFID if present.
-        if (story.ifid.length > 0) {
-          const vErr = validateIFID(story.ifid);
-          if (vErr !== null) {
-            diagnostics.push({
-              level: 'error',
-              message: `Cannot validate IFID; ${vErr}.`,
-            });
-          }
-        }
-        // Rebuild passage contents to normalize.
-        processed = { ...p, text: marshalStoryData(story) };
-      } else {
-        diagnostics.push({
-          level: 'warning',
-          message: `Cannot unmarshal "StoryData" compiler special passage; ${err}.`,
-        });
-      }
-      break;
-    }
-
-    case 'StorySettings':
-      unmarshalStorySettings(story, p.text, diagnostics);
-      break;
-
-    case 'StoryTitle': {
-      const trimmed = p.text.trim();
-      processed = { ...p, text: trimmed };
-      story.name = trimmed;
-      break;
-    }
-
-    default:
-      // Any other name is an ordinary passage.
-      break;
+/**
+ * Rename the passage named `from` to `to`, keeping its place. A passage already named `to` is replaced, with
+ * a warning. Metadata follows the names: renaming a StoryData passage away removes its metadata, and
+ * renaming a passage to StoryData reads it as StoryData. Returns false when no passage is named `from`.
+ */
+function storyRename(story: Story, from: string, to: string, diagnostics: Diagnostic[]): boolean {
+  const p = storyGet(story, from);
+  if (p === undefined) return false;
+  if (from === to) return true;
+  const renamed: Passage = { ...p, name: to };
+  const existing = storyGet(story, to);
+  if (existing !== undefined) {
+    diagnostics.push(duplicateWarning(existing, renamed));
+    storyRemove(story, to);
   }
-
-  storyAppend(story, processed, diagnostics);
+  clearSpecialPassage(story, from);
+  // Its position after any removal above.
+  replaceAt(story, position(story, from), readSpecialPassage(story, renamed, diagnostics));
+  return true;
 }
 
 /** Get story passage count and word count stats. */
@@ -457,39 +646,93 @@ export function getStoryStats(
   return { passages: story.passages.length, storyPassages, words };
 }
 
+// --- StoryBuilder ---
+
+/** A copy of a passage that shares nothing with it; metadata keys stay own properties. */
+function copyPassage(p: ReadonlyPassage): Passage {
+  return {
+    name: p.name,
+    tags: [...p.tags],
+    text: p.text,
+    ...(p.metadata === undefined ? {} : { metadata: ownRecord(Object.entries(p.metadata)) }),
+    ...(p.source === undefined ? {} : { source: { file: p.source.file, line: p.source.line } }),
+  };
+}
+
+function frozenPassage(p: ReadonlyPassage): ReadonlyPassage {
+  const copy = copyPassage(p);
+  Object.freeze(copy.tags);
+  if (copy.metadata !== undefined) Object.freeze(copy.metadata);
+  if (copy.source !== undefined) Object.freeze(copy.source);
+  return Object.freeze(copy);
+}
+
+/** A frozen copy of the story: later changes to it do not reach the copy, and the copy cannot be changed. */
+function snapshot(story: Story): ReadonlyStory {
+  return Object.freeze({
+    name: story.name,
+    ifid: story.ifid,
+    legacyIFID: story.legacyIFID,
+    passages: Object.freeze(story.passages.map(frozenPassage)),
+    twine1: Object.freeze({ settings: new Map(story.twine1.settings) }),
+    twine2: Object.freeze({
+      ...story.twine2,
+      options: new Map(story.twine2.options),
+      tagColors: new Map(story.twine2.tagColors),
+    }),
+  });
+}
+
 /**
- * Builder that separates the mutable construction phase from the immutable consumption phase.
- * During construction, the internal `Story` is mutable via `add()` and direct access: you may
- * push, splice, sort, rename or reassign `story.passages` between calls, and `add()` and `has()`
- * see the passages as they are then.
- * After `build()`, the story is returned as `ReadonlyStory`.
+ * Builds a story from passages, as the compiler does: duplicates replace earlier passages (with a warning),
+ * and the special passages StoryTitle, StoryData and StorySettings decide the story metadata.
+ *
+ * The story is changed only through the builder's methods, so its passage list, its name lookups and its
+ * metadata always agree. Passages are copied in and out: changing a passage object after `add()`, or one that
+ * `get()`, `passages` or `build()` returned, does not change the builder.
  */
 export class StoryBuilder {
-  /** The mutable story, accessible during construction for loader functions. */
-  readonly story: Story;
+  readonly #story: Story = createStory();
 
-  constructor() {
-    this.story = createStory();
-  }
-
-  /** Add a passage, handling special passages (StoryData, StoryTitle, etc.). */
+  /** Add a passage, handling special passages (StoryData, StoryTitle, etc.) and duplicates. */
   add(passage: Passage, diagnostics: Diagnostic[]): void {
-    // A found name is checked at its position, so it is current. Only a new name (or a generated
-    // one, which looks up other names) needs every position checked first.
-    if (generatedNames.has(passage) || !storyHas(this.story, passage.name)) storyVerifyIndex(this.story);
-    storyAdd(this.story, passage, diagnostics);
+    storyAdd(this.#story, copyPassage(passage), diagnostics);
   }
 
-  /** Check if a passage name exists. */
+  /** Whether a passage has this name. */
   has(name: string): boolean {
-    // A found name is checked at its position; only "not found" needs every position checked.
-    if (storyHas(this.story, name)) return true;
-    storyVerifyIndex(this.story);
-    return storyHas(this.story, name);
+    return storyHas(this.#story, name);
   }
 
-  /** Finalize and return the story as read-only. */
+  /** The passage with this name (a frozen copy), or undefined. */
+  get(name: string): ReadonlyPassage | undefined {
+    const p = storyGet(this.#story, name);
+    return p === undefined ? undefined : frozenPassage(p);
+  }
+
+  /**
+   * Remove the passage with this name, and with it the metadata it decided (removing StoryData clears the
+   * IFID, format and start). Returns false when no passage has the name.
+   */
+  remove(name: string): boolean {
+    return storyRemove(this.#story, name) !== undefined;
+  }
+
+  /**
+   * Rename a passage, keeping its place in the story. A passage that already has the new name is replaced,
+   * with a warning, as a duplicate would be. Returns false when no passage has the old name.
+   */
+  rename(from: string, to: string, diagnostics: Diagnostic[]): boolean {
+    return storyRename(this.#story, from, to, diagnostics);
+  }
+
+  /** The passages, in order (frozen copies). */
+  get passages(): readonly ReadonlyPassage[] {
+    return Object.freeze(this.#story.passages.map(frozenPassage));
+  }
+
+  /** The story as it is now, as a frozen copy that later changes to the builder do not reach. */
   build(): ReadonlyStory {
-    return this.story;
+    return snapshot(this.#story);
   }
 }

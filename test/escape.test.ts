@@ -5,8 +5,6 @@ import {
   htmlEscape,
   tiddlerEscape,
   tiddlerUnescape,
-  tweeEscape,
-  tweeUnescape,
   jsStringEscape,
   commentSanitize,
   htmlCommentSanitize,
@@ -53,15 +51,6 @@ describe('tiddlerUnescape', () => {
   });
   it('is inverse of tiddlerEscape for relevant chars', () => {
     expect(tiddlerUnescape('\\n\\t\\s')).toBe('\n\t\\');
-  });
-});
-
-describe('tweeEscape', () => {
-  it('escapes backslash, brackets, and braces', () => {
-    expect(tweeEscape('a\\b[c]d{e}f')).toBe('a\\\\b\\[c\\]d\\{e\\}f');
-  });
-  it('returns empty string unchanged', () => {
-    expect(tweeEscape('')).toBe('');
   });
 });
 
@@ -139,19 +128,6 @@ describe('rot13', () => {
   });
   it('returns empty string unchanged', () => {
     expect(rot13('')).toBe('');
-  });
-});
-
-describe('tweeUnescape', () => {
-  it('unescapes backslash-prefixed characters', () => {
-    expect(tweeUnescape('a\\\\b\\[c\\]d\\{e\\}f')).toBe('a\\b[c]d{e}f');
-  });
-  it('is inverse of tweeEscape', () => {
-    const original = 'name [with] {special} \\chars';
-    expect(tweeUnescape(tweeEscape(original))).toBe(original);
-  });
-  it('handles trailing backslash gracefully', () => {
-    expect(tweeUnescape('test\\')).toBe('test\\');
   });
 });
 

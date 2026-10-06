@@ -5,7 +5,7 @@
  */
 import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
-import { readUTF8, readBase64, baseNameWithoutExt } from './util.js';
+import { readUTF8, readBase64, fileStem } from './util.js';
 import { cssStringEscape, scriptContentEscape, styleContentEscape } from './escape.js';
 import { fillTemplate } from './template.js';
 import type { TemplateSlot } from './template.js';
@@ -52,7 +52,7 @@ function loadModuleTagged(tag: 'script' | 'style', filename: string, diagnostics
   const source = readUTF8(filename, diagnostics).trim();
   if (source.length === 0) return null;
 
-  const family = baseNameWithoutExt(filename);
+  const family = fileStem(filename);
   const idSlug = `${tag}-module-${slugify(family)}`;
   const mimeType = tag === 'script' ? 'text/javascript' : 'text/css';
   const content = tag === 'script' ? scriptContentEscape(source) : styleContentEscape(source);
@@ -62,7 +62,7 @@ function loadModuleTagged(tag: 'script' | 'style', filename: string, diagnostics
 
 function loadModuleFont(filename: string): string | null {
   const source = readBase64(filename);
-  const family = baseNameWithoutExt(filename);
+  const family = fileStem(filename);
   const idSlug = `style-module-${slugify(family)}`;
   const ext = normalizedFileExt(filename);
   const mediaType = mediaTypeFromExt(ext);

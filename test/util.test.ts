@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import type { Diagnostic } from '../src/types.js';
-import { readUTF8, readBase64, baseNameWithoutExt, decodeText } from '../src/util.js';
+import { readUTF8, readBase64, fileStem, decodeText } from '../src/util.js';
 
 let tmpDir: string;
 
@@ -119,21 +119,25 @@ describe('readBase64', () => {
   });
 });
 
-describe('baseNameWithoutExt', () => {
-  it('returns filename without extension', () => {
-    expect(baseNameWithoutExt('path/to/file.txt')).toBe('file');
-    expect(baseNameWithoutExt('style.css')).toBe('style');
+describe('fileStem', () => {
+  it('returns the base name up to its extension', () => {
+    expect(fileStem('path/to/file.txt')).toBe('file');
+    expect(fileStem('style.css')).toBe('style');
   });
 
-  it('returns name for dotfiles', () => {
-    expect(baseNameWithoutExt('.gitignore')).toBe('.gitignore');
+  it('ends at the first dot, as Tweego names media passages and font families', () => {
+    expect(fileStem('archive.tar.gz')).toBe('archive');
+    expect(fileStem('img/bg.night.png')).toBe('bg');
+    expect(fileStem('My.Font.woff2')).toBe('My');
   });
 
-  it('handles files with multiple dots', () => {
-    expect(baseNameWithoutExt('archive.tar.gz')).toBe('archive.tar');
+  it('keeps the leading dots of a dotfile and ends at the next dot', () => {
+    expect(fileStem('.gitignore')).toBe('.gitignore');
+    expect(fileStem('.hidden.png')).toBe('.hidden');
+    expect(fileStem('..x.y.png')).toBe('..x');
   });
 
   it('handles files without extension', () => {
-    expect(baseNameWithoutExt('Makefile')).toBe('Makefile');
+    expect(fileStem('Makefile')).toBe('Makefile');
   });
 });

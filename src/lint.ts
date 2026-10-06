@@ -34,7 +34,10 @@ export interface LintResult {
   brokenLinks: BrokenLink[];
   /** Story passages with no outgoing links. */
   deadEnds: string[];
-  /** Story passages that no other passage links to. */
+  /**
+   * Story passages the player cannot reach: no chain of links leads to them from the start passage or from
+   * an info passage (see `StoryMap.orphans`).
+   */
   orphans: string[];
 }
 

@@ -36,9 +36,26 @@ describe('parseTwee: malformed optional blocks', () => {
     expect(passages[0]!.metadata).toBeUndefined();
   });
 
-  it('keeps only string metadata values', () => {
-    const { passages } = parseTwee(':: A {"position":"1,2","size":3,"x":null}\nbody');
-    expect(passages[0]!.metadata).toEqual({ position: '1,2' });
+  it('discards the metadata, with a warning, when position or size is not a string, as Tweego does', () => {
+    const { passages, diagnostics } = parseTwee(':: A {"position":"1,2","size":3,"x":null}\nbody');
+    expect(passages[0]!.metadata).toBeUndefined();
+    expect(diagnostics).toEqual([
+      {
+        level: 'warning',
+        message:
+          'load <inline>: line 1: Malformed twee source; could not decode metadata (reason: $.size must be a string, not a number (3)).',
+        file: '<inline>',
+        line: 1,
+      },
+    ]);
+  });
+
+  it('keeps other string values, reads null as empty, and warns about the values it leaves out', () => {
+    const { passages, diagnostics } = parseTwee(':: A {"position":"1,2","x":null,"y":3,"z":"ok"}\nbody');
+    expect(passages[0]!.metadata).toEqual({ position: '1,2', x: '', z: 'ok' });
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      'load <inline>: line 1: Passage metadata: $.y must be a string, not a number (3).',
+    ]);
   });
 
   it('ignores text before the first passage header', () => {

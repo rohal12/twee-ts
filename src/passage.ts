@@ -3,7 +3,11 @@
  * Ported from passage.go / passagedata.go.
  */
 import type { Passage, ReadonlyPassage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
-import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, tweeEscape, rot13 } from './escape.js';
+import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, rot13 } from './escape.js';
+import { tweeEscape } from './twee-syntax.js';
+import { countTextWords } from './word-count.js';
+import type { DecodeIssue, FieldReader, TextDecodeResult } from './json-decode.js';
+import { jsonString, nullAsZero, ownRecord, readObjectText, formatJsonPath } from './json-decode.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
 const INFO_PASSAGE_NAMES = new Set([
@@ -66,30 +70,74 @@ function hasMetadataSize(p: ReadonlyPassage): boolean {
   return p.metadata?.size != null && p.metadata.size !== '';
 }
 
-function hasAnyMetadata(p: ReadonlyPassage): boolean {
-  if (!p.metadata) return false;
-  return Object.values(p.metadata).some((v) => v != null && v !== '');
+/**
+ * The metadata entries that are written out: those with a non-empty string value, in their order. An empty
+ * value stands for no value, as in Tweego.
+ */
+function writtenMetadata(meta: Readonly<PassageMetadata> | undefined): [string, string][] {
+  return Object.entries(meta ?? {}).flatMap(([key, value]) =>
+    typeof value === 'string' && value ? [[key, value]] : [],
+  );
 }
 
-export function marshalMetadata(meta: PassageMetadata): string {
-  const obj: Record<string, string> = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (typeof value === 'string' && value) obj[key] = value;
-  }
-  return JSON.stringify(obj);
+/**
+ * Passage metadata as it is written out (in Twee 3 headers and JSON output): the entries with a value, as own
+ * properties (so `__proto__` is kept), or undefined when there are none.
+ */
+export function metadataForOutput(meta: Readonly<PassageMetadata> | undefined): Record<string, string> | undefined {
+  const entries = writtenMetadata(meta);
+  return entries.length > 0 ? ownRecord(entries) : undefined;
 }
 
-export function unmarshalMetadata(json: string): PassageMetadata {
-  const raw: unknown = JSON.parse(json);
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return {};
-  }
-  const parsed = raw as Record<string, unknown>;
-  const meta: PassageMetadata = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (typeof value === 'string') meta[key] = value;
-  }
-  return meta;
+/** The metadata fields Tweego reads; any other key is a twee-ts extension, kept when its value is a string. */
+const KNOWN_METADATA_FIELDS = ['position', 'size'] as const;
+
+/** The metadata read; its issues are about values left out or keys read as another, none of them fatal. */
+type MetadataDecodeResult = TextDecodeResult<{ readonly metadata: PassageMetadata }>;
+
+/**
+ * Decode a passage metadata block (`{"position":"600,400"}`), as Tweego decodes it into its struct:
+ *
+ * - `position` and `size` must be strings (`null` reads as empty). Their keys match regardless of letter case,
+ *   as Go matches struct fields (`Position` is `position`, with an issue saying so); a repeated key takes the
+ *   last value. A wrong-typed `position` or `size` makes the whole block unusable (`ok: false`), as in Tweego.
+ * - Other keys are kept when their value is a string (Tweego drops them); another value is left out, with an
+ *   issue.
+ * - Text that is not a JSON object is unusable.
+ *
+ * Keys are stored as own properties, so `__proto__` and `constructor` are kept like any other key.
+ */
+export function decodePassageMetadata(json: string): MetadataDecodeResult {
+  const entries = new Map<string, string>();
+  // Why a known field could not be read; any such field makes the block unusable.
+  const rejected: string[] = [];
+  const knownField = (name: string): FieldReader => ({
+    read(value, path) {
+      const fieldIssues: DecodeIssue[] = [];
+      const r = nullAsZero(jsonString, '')(value, path, fieldIssues);
+      if (r.ok) entries.set(name, r.value);
+      rejected.push(...fieldIssues.map((issue) => issue.message));
+    },
+  });
+  const read = readObjectText(json, {
+    fields: Object.fromEntries(KNOWN_METADATA_FIELDS.map((name) => [name, knownField(name)])),
+    keys: 'go',
+    unknown(member, path, memberIssues) {
+      if (entries.has(member.key)) {
+        memberIssues.push({
+          kind: 'duplicate-key',
+          path,
+          message: `${formatJsonPath(path)} repeats a key; the last one is used`,
+        });
+      }
+      const r = nullAsZero(jsonString, '')(member.value, path, memberIssues);
+      if (r.ok) entries.set(member.key, r.value);
+      else entries.delete(member.key);
+    },
+  });
+  if (!read.ok) return read;
+  if (rejected.length > 0) return { ok: false, reason: rejected.join('; ') };
+  return { ok: true, metadata: ownRecord(entries), issues: read.issues };
 }
 
 /** Convert passage to Twee source. */
@@ -100,9 +148,8 @@ export function passageToTwee(p: ReadonlyPassage, outMode: OutputMode): string {
     if (p.tags.length > 0) {
       output += ' [' + tweeEscape(p.tags.join(' ')) + ']';
     }
-    if (hasAnyMetadata(p) && p.metadata) {
-      output += ' ' + marshalMetadata(p.metadata);
-    }
+    const metadata = metadataForOutput(p.metadata);
+    if (metadata !== undefined) output += ' ' + JSON.stringify(metadata);
   } else {
     output = ':: ' + p.name;
     if (p.tags.length > 0) {
@@ -183,43 +230,9 @@ export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13
   return `<div tiddler=${quote(name)} tags=${quote(tags)} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${tiddlerEscape(encode(p.text))}</div>`;
 }
 
-/**
- * Count words in a passage.
- *
- * - `'tweego'` (default): Strip newlines, strip comments, count NFKD-normalized characters, divide by 5.
- * - `'whitespace'`: Strip comments and markup, split on whitespace, count tokens.
- */
+/** Count the words in a passage's text (see `countTextWords` for the methods). */
 export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego'): number {
-  switch (method) {
-    case 'tweego': {
-      let text = p.text;
-      text = text.replace(/\n/g, '');
-      text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
-      const normalized = text.normalize('NFKD');
-      // Code points, as Tweego counts runes.
-      const count = Array.from(normalized).length;
-      if (count === 0) return 0;
-      const words = Math.floor(count / 5);
-      return count % 5 > 0 ? words + 1 : words;
-    }
-    case 'whitespace': {
-      let text = p.text;
-      // Strip comments
-      text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
-      // Strip Twine macros <<...>>
-      text = text.replace(/<<[^>]*>>/g, '');
-      // Strip Twine links [[...]] — keep display text
-      text = text.replace(/\[\[([^\]|]*?)(?:\|[^\]]*?)?\]\]/g, '$1');
-      // Strip HTML tags
-      text = text.replace(/<[^>]+>/g, '');
-      const tokens = text.split(/\s+/).filter((t) => t.length > 0);
-      return tokens.length;
-    }
-    default: {
-      const _exhaustive: never = method;
-      throw new Error(`Unhandled word count method: ${_exhaustive as string}`);
-    }
-  }
+  return countTextWords(p.text, method);
 }
 
 /**

@@ -8,7 +8,5 @@
     // Run as binaries from node_modules/.bin by scripts/duplication.ts, which knip cannot follow.
     "jscpd",
     "fallow",
-    // For the property-based tests that follow; remove from this list once a test imports it.
-    "fast-check",
   ],
 }

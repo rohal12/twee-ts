@@ -191,7 +191,9 @@ twee-ts recognizes the following special passage names. These passages carry met
 | `MenuShare`      | Menu sharing passages                                   |
 | `MenuStory`      | Menu story passages                                     |
 
-When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value.
+When the sources hold more than one `StoryData` passage (a leftover copy in another file, or the one an imported Twine 2 HTML file brings), the last one replaces the earlier ones entirely, as in Tweego, and twee-ts warns that it replaced the passage, naming the file and line of each. A field the last one leaves out, such as `options`, `start` or `tag-colors`, gets its default rather than the earlier passage's value. A last `StoryData` that is not valid JSON still replaces the earlier ones: the story then has none of their metadata, and an error says so. The same holds for `StoryTitle` and `StorySettings`: the story's title, its Twine 1 settings and its legacy IFID always come from the last passage of each name alone.
+
+`StoryData` is read as Tweego reads it. Keys match regardless of letter case (`IFID` is `ifid`, with a warning), a repeated key takes its last value (with a warning), and `null` reads as an empty value. A field of the wrong type, such as `"format-version": 3` or `"options": "debug"`, is an error and is left out; Tweego stops there. An unknown key is a warning. The passage is then rewritten from what was read, so a value left out is always reported. See [Differences from Tweego](./tweego-differences).
 
 ### StorySettings (Twine 1)
 
@@ -221,6 +223,8 @@ blankcss:off
 | `blankcss`   | `on`/`off` | Start with blank CSS (no default styles)                                                         |
 
 The `ifid` and `zoom` settings are recognized but ignored as obsolete — use the `StoryData` passage for these values instead.
+
+Keys and values are lower-cased and trimmed, and a repeated key takes its last value. When the sources hold more than one `StorySettings` passage, the last one decides all the settings: one it leaves out, such as `obfuscate:rot13`, is off, even if an earlier passage set it.
 
 ## Special Tags
 

@@ -2,17 +2,26 @@
  * Parse lexer items into Passage[].
  * Ported from storyload.go:loadTwee().
  */
-import type { Passage, PassageMetadata, Diagnostic } from './types.js';
+import type { Passage, Diagnostic } from './types.js';
 import { ItemType } from './types.js';
 import { tweeLexer } from './lexer.js';
-import { tweeUnescape } from './escape.js';
 import { twee2ToV3 } from './twee2-compat.js';
-import { normalizeTweeSourceText } from './source-text.js';
+import { decodePassageMetadata } from './passage.js';
+import {
+  normalizeTweeSource,
+  splitTweeFields,
+  stripTrailingBlankLines,
+  trimTweeSpace,
+  tweeUnescape,
+} from './twee-syntax.js';
 
 export interface ParseOptions {
   /** Filename for diagnostics. */
   filename?: string | undefined;
-  /** Trim whitespace from passage content. Default: true. */
+  /**
+   * Trim white space at both ends of passage content. Default: true. When false, the content is kept as
+   * written except for its trailing blank lines, which the Twee 3 specification requires a reader to drop.
+   */
   trim?: boolean | undefined;
   /** Enable Twee2 compatibility. Default: false. */
   twee2Compat?: boolean | undefined;
@@ -26,16 +35,18 @@ export interface ParseResult {
 /**
  * Parse Twee source text into passages.
  *
- * The source is normalized first, as files are when they are read: a leading UTF-8 BOM is
- * removed and CRLF and bare CR line endings become LF. A BOM at the start of a later line,
- * directly before `::` (left there by concatenating files), is removed too, so that line
- * stays a passage header.
+ * The source is normalized first (see `normalizeTweeSource`): a leading UTF-8 BOM is removed, CRLF and bare CR
+ * line endings become LF, and a BOM at the start of a later line, directly before `::` (left there by
+ * concatenating files), is removed too, so that line stays a passage header.
+ *
+ * Names and tags are read as Tweego reads them: unescaped, then the name trimmed and the tags split at white
+ * space, where white space is Go's `unicode.IsSpace` (see `isTweeSpace`).
  */
 export function parseTwee(source: string, options: ParseOptions = {}): ParseResult {
   const { filename = '<inline>', trim = true, twee2Compat = false } = options;
   const diagnostics: Diagnostic[] = [];
 
-  const normalized = normalizeTweeSourceText(source);
+  const normalized = normalizeTweeSource(source);
   const tweeSource = twee2Compat ? twee2ToV3(normalized) : normalized;
 
   const passages: Passage[] = [];
@@ -43,15 +54,17 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
   let pCount = 0;
   let lastType: ItemType = ItemType.EOF;
 
+  const malformed = (line: number, problem: string): Diagnostic => ({
+    level: 'error',
+    message: `line ${line}: Malformed twee source; ${problem}.`,
+    file: filename,
+    line,
+  });
+
   for (const item of tweeLexer(tweeSource)) {
     switch (item.type) {
       case ItemType.Error:
-        diagnostics.push({
-          level: 'error',
-          message: `line ${item.line}: Malformed twee source; ${item.val}.`,
-          file: filename,
-          line: item.line,
-        });
+        diagnostics.push(malformed(item.line, item.val));
         // Fatal: return what we have
         return { passages, diagnostics };
 
@@ -71,15 +84,19 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
 
       case ItemType.Name: {
         if (!current) break;
-        const name = tweeUnescape(item.val).trim();
+        const unescaped = tweeUnescape(item.val);
+        const name = trimTweeSpace(unescaped.text);
         if (name.length === 0) {
+          diagnostics.push(malformed(item.line, 'passage with no name'));
+          return { passages, diagnostics };
+        }
+        if (unescaped.danglingBackslash) {
           diagnostics.push({
-            level: 'error',
-            message: `line ${item.line}: Malformed twee source; passage with no name.`,
+            level: 'warning',
+            message: `line ${item.line}: The passage name ${JSON.stringify(name)} ends in a backslash that escapes nothing; it is dropped, as in Tweego. Write "\\\\" for a backslash.`,
             file: filename,
             line: item.line,
           });
-          return { passages, diagnostics };
         }
         current.name = name;
         break;
@@ -88,46 +105,38 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
       case ItemType.Tags: {
         if (!current) break;
         if (lastType !== ItemType.Name) {
-          diagnostics.push({
-            level: 'error',
-            message: `line ${item.line}: Malformed twee source; optional tags block must immediately follow the passage name.`,
-            file: filename,
-            line: item.line,
-          });
+          diagnostics.push(malformed(item.line, 'optional tags block must immediately follow the passage name'));
           return { passages, diagnostics };
         }
-        // Strip the surrounding [ and ]
-        const inner = item.val.slice(1, -1);
-        current.tags = tweeUnescape(inner).split(/\s+/).filter(Boolean);
+        // Strip the surrounding [ and ]. The lexer ends a tag block only at an unescaped `]`, so its text
+        // never ends in a lone backslash.
+        current.tags = splitTweeFields(tweeUnescape(item.val.slice(1, -1)).text);
         break;
       }
 
       case ItemType.Metadata: {
         if (!current) break;
         if (lastType !== ItemType.Name && lastType !== ItemType.Tags) {
-          diagnostics.push({
-            level: 'error',
-            message: `line ${item.line}: Malformed twee source; optional metadata block must immediately follow the passage name or tags block.`,
-            file: filename,
-            line: item.line,
-          });
+          diagnostics.push(
+            malformed(item.line, 'optional metadata block must immediately follow the passage name or tags block'),
+          );
           return { passages, diagnostics };
         }
-        try {
-          // The lexer only emits a metadata item that starts with `{` and ends with its closing `}`,
-          // so a successful parse is always an object.
-          const parsed = JSON.parse(item.val) as Record<string, unknown>;
-          const meta: PassageMetadata = {};
-          for (const [key, value] of Object.entries(parsed)) {
-            if (typeof value === 'string') {
-              meta[key] = value;
-            }
+        const decoded = decodePassageMetadata(item.val);
+        if (decoded.ok) {
+          current.metadata = decoded.metadata;
+          for (const issue of decoded.issues) {
+            diagnostics.push({
+              level: 'warning',
+              message: `load ${filename}: line ${item.line}: Passage metadata: ${issue.message}.`,
+              file: filename,
+              line: item.line,
+            });
           }
-          current.metadata = meta;
-        } catch (e) {
+        } else {
           diagnostics.push({
             level: 'warning',
-            message: `load ${filename}: line ${item.line}: Malformed twee source; could not decode metadata (reason: ${e instanceof Error ? e.message : String(e)}).`,
+            message: `load ${filename}: line ${item.line}: Malformed twee source; could not decode metadata (reason: ${decoded.reason}).`,
             file: filename,
             line: item.line,
           });
@@ -137,23 +146,13 @@ export function parseTwee(source: string, options: ParseOptions = {}): ParseResu
 
       case ItemType.Content: {
         if (!current) break;
-        if (trim) {
-          current.text = item.val.trim();
-        } else {
-          // Per spec: trailing blank lines MUST be stripped regardless of trim option
-          current.text = item.val.replace(/\n\s*$/, '');
-        }
+        current.text = trim ? trimTweeSpace(item.val) : stripTrailingBlankLines(item.val);
         break;
       }
 
       default: {
         const _exhaustive: never = item.type;
-        diagnostics.push({
-          level: 'error',
-          message: `line ${item.line}: Unhandled lexer item type: ${_exhaustive}.`,
-          file: filename,
-          line: item.line,
-        });
+        diagnostics.push(malformed(item.line, `unhandled lexer item type ${String(_exhaustive)}`));
         return { passages, diagnostics };
       }
     }

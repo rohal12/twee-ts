@@ -24,11 +24,15 @@ Does not require a story format.
 
 The `StoryData` passage is written from the compiled story, so it records what `-s`/`startPassage` and `-t`/`testMode` (the `debug` option) changed, and compiling the Twee output again gives the same start passage and options. With no overrides, it is the `StoryData` passage as loaded, normalized to tab-indented JSON, plus the IFID twee-ts reports generating when the passage has none. A story without a `StoryData` passage gets one, after `StoryTitle`, only when `-s` or `-t` is given. A `StoryData` passage that is not valid JSON is written as it is.
 
-Twee has no way to escape passage text, and its parser trims passage names and splits tags at whitespace, so some stories, typically ones decompiled from HTML, cannot be written as Twee that compiles back to the same story. twee-ts writes them anyway and reports a warning naming the passage for each of these:
+Twee has no way to escape passage text, and its parser trims passage names and splits tags at whitespace, so some stories, typically ones decompiled from HTML, cannot be written as Twee that compiles back to the same story. twee-ts reads what it writes for each passage back with its Twee parser, writes the passage anyway, and reports a warning naming the passage and saying what changes, for example:
 
-- A line of passage text that starts with `::`, which Twee reads as a new passage header. This is common in stylesheets (`::selection`, `::placeholder`, `::-webkit-scrollbar`). In passages tagged `stylesheet` or `script`, such a line is written indented by one space, which leaves the CSS or JavaScript working, so the stylesheet or script reads back whole; only a template literal or a string continued across lines would see the extra space. In other passages, the line is written as it is.
+- A line of passage text that starts with `::` (after any byte order marks), which Twee reads as a new passage header. This is common in stylesheets (`::selection`, `::placeholder`, `::-webkit-scrollbar`). In passages tagged `stylesheet` or `script`, such a line is written indented by one space, which leaves the CSS or JavaScript working, so the stylesheet or script reads back whole; only a template literal or a string continued across lines would see the extra space. In other passages, the line is written as it is.
 - A passage name that is empty, has leading or trailing whitespace, or holds a line break.
 - A tag that is empty or holds whitespace (only the API, through `tagAliases`, can make one).
+- A carriage return in passage text, which Twee reads as a line break.
+- A metadata key that reads back as another one (`Position` reads as `position`).
+
+The white space at either end of passage text is not compared, since Twee readers trim it (Tweego always does).
 
 Tweego writes the same Twee without a warning.
 
@@ -38,7 +42,7 @@ Tweego writes the same Twee without a warning.
 twee-ts --decompile-twee1 -o story.twee src/
 ```
 
-Decompiles to Twee 1 notation (legacy format). The `StoryData` passage is written the same way as for Twee 3, and the same warnings are reported. Twee 1 escapes nothing in passage headers, so a name or tag holding `[`, `]`, `{`, `}` or `\` gets a warning too.
+Decompiles to Twee 1 notation (legacy format). The `StoryData` passage is written the same way as for Twee 3, and the same warnings are reported. Twee 1 escapes nothing in passage headers, so a name or tag holding `[`, `]`, `{`, `}` or `\` gets a warning too. Twee 1 has no passage metadata, so `position`, `size` and other metadata are left out, with one warning.
 
 ## Twine 2 Archive
 
@@ -90,7 +94,7 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 
 `start` is present when `StoryData` sets it or when `-s`/`startPassage` overrides it, and omitted otherwise.
 
-`StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present.
+`StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present; as in Twee output, an entry with an empty value is left out, and every key, `__proto__` included, is kept.
 
 ## Config File
 

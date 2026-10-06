@@ -126,7 +126,7 @@ describe('vite plugin: dev server details', { timeout: 30_000 }, () => {
       { sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE },
       logger,
     );
-    expect(warnings.join('\n')).toContain('[twee-ts] Replacing existing passage "Start"');
+    expect(warnings.join('\n')).toMatch(/\[twee-ts\] .*start\.tw:\d+: Replacing existing passage "Start"/);
     expect(await (await fetch(url)).text()).toContain('Hello again.');
   });
 

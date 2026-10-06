@@ -1472,8 +1472,13 @@ describe('StoryData from several sources', () => {
       outputMode: 'twee3',
     });
 
-    expect(result.diagnostics.map((d) => d.message)).toEqual([
-      'Replacing existing passage "StoryData" with duplicate.',
+    expect(result.diagnostics).toEqual([
+      {
+        level: 'warning',
+        message: 'Replacing existing passage "StoryData" with duplicate. It replaces the one from a.tw (line 1).',
+        file: 'b.tw',
+        line: 1,
+      },
     ]);
     expect(JSON.parse(result.story.passages.find((p) => p.name === 'StoryData')!.text)).toEqual({ ifid: IFID });
     expect(result.story.twine2.options.size).toBe(0);

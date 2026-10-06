@@ -225,8 +225,10 @@ function lexTags(ctx: LexerContext): StateFn {
     const r = ctx.next();
     switch (r) {
       case 0x5c: {
-        // A backslash escapes the next character, but not a line end (which is consumed, not backed up).
+        // A backslash escapes the next character, but not a line end. As in Tweego (which falls through to
+        // the line end case), the line end is backed up, so the error is reported on the header's line.
         const next = ctx.next();
+        if (next === 0x0a) ctx.backup();
         if (next === 0x0a || next === EOF) return ctx.errorf('unterminated tag block');
         break;
       }

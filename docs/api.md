@@ -218,6 +218,28 @@ const { passages, diagnostics } = parseTwee(':: Start\nHello!', { filename: 'sto
 
 `parseTwee` normalizes its input the way files are normalized when read: it strips a leading UTF-8 BOM and turns CRLF and bare CR line endings into LF. It also removes a BOM at the start of a later line directly before `::`, which joining files leaves there, so that line stays a passage header. In-memory sources passed to `compile()` get the same normalization. A `Buffer` source that is not valid UTF-8 is decoded as Windows-1252, like a file, with a warning in `diagnostics` (see [Text encoding](./getting-started#text-encoding)).
 
+Names, tags and text are read as Tweego reads them: white space is Go's (`U+0085` is white space, `U+FEFF` is not), a backslash escapes the next character, and passage metadata is decoded as described in [Differences from Tweego](./tweego-differences#reading-twee). With `trim: false`, passage text is kept as written except for its trailing blank lines.
+
+### StoryBuilder
+
+`StoryBuilder` builds a story from passages the way `compile()` does: a passage replaces an earlier one with the same name (with a warning), and the special passages `StoryTitle`, `StoryData` and `StorySettings` decide the story metadata, each from its own text alone.
+
+```typescript
+import { StoryBuilder, parseTwee } from '@rohal12/twee-ts';
+
+const builder = new StoryBuilder();
+const diagnostics = [];
+for (const passage of parseTwee(source).passages) builder.add(passage, diagnostics);
+builder.rename('Draft', 'Start', diagnostics); // keeps its place; replaces a passage named Start
+builder.remove('Notes'); // removes it, and any metadata it decided
+builder.has('Start'); // true
+const story = builder.build(); // a frozen snapshot
+```
+
+The builder's story changes only through `add()`, `rename()` and `remove()`, so its lookups, its passage list and its metadata always agree. Passages are copied in and out: `get()`, `passages` and `build()` return frozen copies, and changing a passage object after adding it changes nothing in the builder.
+
+Before 2.0, `builder.story` gave the builder's mutable story, and changes made to `builder.story.passages` directly could leave lookups wrong. To migrate, read the story with `build()`, and replace direct changes with the methods: `push` with `add()`, `splice` or `filter` with `remove()`, and an assignment to a passage's `name` with `rename()`. To reorder passages, build a new `StoryBuilder` and add them in the new order.
+
 ### HTML Decompiler
 
 ```typescript
@@ -339,6 +361,8 @@ console.log(formatLintReport(result));
 Lint checks link destinations against what Twine 2 output emits. A link is broken when no passage has its name, or when its passage is one that Twine 2 output leaves out: a passage tagged `script`, `stylesheet` or `Twine.private`, StoryData, StoryTitle, or an empty StorySettings. Such a link has an `omission` field that says why. Links to special passages that the output keeps, such as StoryInit, PassageHeader or a `widget` passage, are valid.
 
 Links are read from passage markup and, in script passages, only from JavaScript strings. Stylesheets (passages tagged `stylesheet`, and loaded `.css` files) are CSS, so they link to nothing. Passages that Twine 2 output leaves out never reach the player, so lint reads no links from `Twine.private` passages, StoryData or StoryTitle: a link in a private notes passage is not reported as broken, and it does not keep a passage from being listed as an orphan. Script passages are still read, because Twine 2 output runs them.
+
+An orphan is a story passage the player cannot reach: no chain of links leads to it from the start passage or from an info passage (StoryInit, PassageHeader, a `script` or `widget` passage, and the other passages a story format runs or shows without a link). A passage that links only to itself, or a group of passages that link only to each other, is an orphan, even though a link leads to it. Only the links listed above count, so a passage shown only through a macro such as `<<include>>` is listed as well.
 
 ### Story Inspection
 
