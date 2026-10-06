@@ -133,31 +133,20 @@ function fileStates(files: TrackedFiles): Map<string, string> {
 }
 
 /**
- * Whether a file's content was written after `time` (milliseconds since the epoch); false when it can't be
- * looked at. Only the modification time counts: the change time also moves for a file's attributes, which an
- * indexer or a virus scanner may set at any moment, and must not make a bundle that read the file look stale.
+ * The states to compare later changes with, for the files a bundle was made from: each file as it was just
+ * before the bundle read it (`observed`, noted as each module loads), else as it was before the bundle began
+ * (`before`, for a file known from the last bundle), else as it is now. An edit while the bundle was made
+ * then differs from the recorded state afterwards, and the next request makes the bundle again.
  */
-function modifiedAfter(path: string, time: number): boolean {
-  try {
-    return statSync(path).mtimeMs > time;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The states to compare later changes with, for the files a bundle was made from. A file known before the
- * bundle keeps the state it had then (`before`), so an edit while the bundle was made counts as a change. A
- * file the bundle found itself has no earlier state: when it was modified after `started`, it may have been
- * read before that edit, so it gets a state no later check matches and the next request makes the bundle again.
- */
-function settledStates(files: TrackedFiles, before: ReadonlyMap<string, string>, started: number): Map<string, string> {
+function settledStates(
+  files: TrackedFiles,
+  observed: ReadonlyMap<string, string>,
+  before: ReadonlyMap<string, string>,
+): Map<string, string> {
   const states = new Map<string, string>();
   for (const [key, path] of files) {
-    const known = before.get(key);
-    const state = known ?? fileState(path);
-    if (state === undefined) continue;
-    states.set(key, known === undefined && modifiedAfter(path, started) ? `${state}:changed during the bundle` : state);
+    const state = observed.get(key) ?? before.get(key) ?? fileState(path);
+    if (state !== undefined) states.set(key, state);
   }
   return states;
 }
@@ -262,15 +251,20 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       entryStates = fileStates(entryFiles);
       watchEntryFiles(entryFiles);
     }
-    // The files known so far, as they are before the bundle reads them: a file edited while the bundle is
-    // made then differs from this afterwards, which is what the catch-up looks for.
+    // The files known so far, as they are before the bundle begins, and each module as it is just before
+    // the bundle reads it: a file edited while the bundle is made then differs from what is recorded
+    // afterwards, which is what the catch-up looks for.
     const before = fileStates(entryFiles);
-    const started = Date.now();
-    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename);
+    const observed = new Map<string, string>();
+    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, (file) => {
+      const key = fileKey(file);
+      const state = fileState(canonicalPath(file));
+      if (state !== undefined && !observed.has(key)) observed.set(key, state);
+    });
     entry = next;
     entryStale = false;
     entryFiles = tracked(next.files);
-    entryStates = settledStates(entryFiles, before, started);
+    entryStates = settledStates(entryFiles, observed, before);
     watchEntryFiles(entryFiles);
   };
 
