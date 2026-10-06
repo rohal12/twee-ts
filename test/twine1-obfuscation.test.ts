@@ -272,7 +272,9 @@ describe('Twine 1 round trip from a nasty alphabet', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-twine1-roundtrip-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const withoutCreated = (html: string): string => html.replace(/ created="\d+"/g, '');
 

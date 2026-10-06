@@ -185,7 +185,7 @@ export function tweeUnescape(s: string): string {
         break;
       }
     }
-    result += s[i];
+    result += s.charAt(i);
   }
   return result;
 }

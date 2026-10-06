@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
 import { isExcluded, watchFilesystem } from '../src/filesystem.js';
+import type * as NodeFs from 'node:fs';
+import type * as NodePath from 'node:path';
 
 type Listener = (event: string, filename: string | null) => void;
 
 const fake = vi.hoisted(() => ({ listeners: [] as { path: string; listener: Listener }[] }));
 
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   const { EventEmitter: Emitter } = await import('node:events');
   return {
     ...actual,
@@ -23,7 +25,7 @@ vi.mock('node:fs', async (importOriginal) => {
 
 // A path module without matchesGlob, as Node.js 22.0 to 22.4 has it.
 vi.mock('node:path', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:path')>();
+  const actual = await importOriginal<typeof NodePath>();
   return { ...actual, matchesGlob: undefined };
 });
 

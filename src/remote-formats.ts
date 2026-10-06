@@ -40,7 +40,8 @@ const MAX_TIMER_DELAY = 2_147_483_647;
 /** Get the cache directory for downloaded story formats. */
 export function getCacheDir(): string {
   const xdg = process.env['XDG_CACHE_HOME'];
-  const base = xdg || join(homedir(), '.cache');
+  // An empty XDG_CACHE_HOME counts as unset, as the XDG Base Directory spec says.
+  const base = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.cache');
   return join(base, 'twee-ts', 'storyformats');
 }
 
@@ -169,7 +170,10 @@ function shareRequest<T>(
   { signal, timeout, timedOut }: WaitOptions,
   start: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  if (signal?.aborted) return Promise.reject(signal.reason);
+  if (signal?.aborted) {
+    const reason: unknown = signal.reason;
+    return Promise.reject(reason);
+  }
   const request = (sharedRequests.get(key) as SharedRequest<T> | undefined) ?? startSharedRequest(key, start);
   request.waiters++;
 
@@ -191,9 +195,15 @@ function shareRequest<T>(
       }
       reject(reason);
     };
-    const onAbort = (): void => giveUp(signal?.reason);
+    const onAbort = (): void => {
+      giveUp(signal?.reason);
+    };
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (timeout > 0 && timeout <= MAX_TIMER_DELAY) timer = setTimeout(() => giveUp(timedOut()), timeout);
+    if (timeout > 0 && timeout <= MAX_TIMER_DELAY) {
+      timer = setTimeout(() => {
+        giveUp(timedOut());
+      }, timeout);
+    }
     request.promise.then(
       (value) => {
         stopWaiting();
@@ -309,12 +319,12 @@ interface FindEntryResult {
  * Find the best matching entry in an SFA index.
  * Exact version preferred, then highest version with same major.
  */
-export function findEntry(index: SFAIndex, name: string, version: string): FindEntryResult | undefined {
+export function findEntry(index: Partial<SFAIndex>, name: string, version: string): FindEntryResult | undefined {
   return findEntryForRequest(index, { kind: 'name', name, version });
 }
 
 /** Find the best matching entry in an SFA index for a name or ID request (twine2 entries first). */
-function findEntryForRequest(index: SFAIndex, request: FormatRequest): FindEntryResult | undefined {
+function findEntryForRequest(index: Partial<SFAIndex>, request: FormatRequest): FindEntryResult | undefined {
   const candidates: FindEntryResult[] = [
     ...(index.twine2 ?? []).map((entry) => ({ entry, formatType: 'twine2' as const })),
     ...(index.twine1 ?? []).map((entry) => ({ entry, formatType: 'twine1' as const })),
@@ -352,7 +362,7 @@ function cachedFormatInfo(
  * agree. A format.js that names no format ({@link UNNAMED_FORMAT_NAME}) is allowed: such formats
  * exist, and the index entry then supplies the name it is cached under.
  */
-function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downloadUrl: string): void {
+function checkFormatIdentity(entry: DownloadEntry, data: Twine2FormatJSON, downloadUrl: string): void {
   const nameMatches = data.name === UNNAMED_FORMAT_NAME || data.name.toLowerCase() === entry.name.toLowerCase();
   if (nameMatches && sameVersion(data.version, entry.version)) return;
   throw new Error(
@@ -361,6 +371,11 @@ function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downl
   );
 }
 
+/** The parts of an index entry a download uses; an entry without checksums is downloaded unchecked. */
+type DownloadEntry = Pick<SFAIndexEntry, 'name' | 'version'> & {
+  readonly checksums?: Readonly<Record<string, string>> | undefined;
+};
+
 /**
  * Download a format, verify its checksum, check that it is the format the entry names, write it to
  * the cache shared by name and version, and return its StoryFormatInfo. Concurrent calls for one
@@ -368,7 +383,7 @@ function checkFormatIdentity(entry: SFAIndexEntry, data: Twine2FormatJSON, downl
  * entry, within its own timeout.
  */
 export async function fetchAndCacheFormat(
-  entry: SFAIndexEntry,
+  entry: DownloadEntry,
   downloadUrl: string,
   options: RemoteFetchOptions = {},
 ): Promise<StoryFormatInfo> {
@@ -377,9 +392,10 @@ export async function fetchAndCacheFormat(
   const bytes = await shareDownload(downloadUrl, options);
 
   // Verify the checksum against the bytes as served, if the entry has one.
-  const checksumKey = Object.keys(entry.checksums ?? {}).find((k) => k.endsWith('format.js'));
+  const checksums = entry.checksums ?? {};
+  const checksumKey = Object.keys(checksums).find((k) => k.endsWith('format.js'));
   if (checksumKey) {
-    const expected = entry.checksums[checksumKey];
+    const expected = checksums[checksumKey];
     if (!expected) throw new Error(`Missing checksum value for key "${checksumKey}"`);
     if (!(await verifySHA256(bytes, expected))) {
       throw new Error(`Checksum verification failed for ${entry.name} ${entry.version}`);

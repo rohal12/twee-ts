@@ -12,7 +12,10 @@ export type WordCountMethod = 'tweego' | 'whitespace';
 
 // --- Source input ---
 
-export type InlineSource = { filename: string; content: string | Buffer };
+export interface InlineSource {
+  filename: string;
+  content: string | Buffer;
+}
 export type SourceInput = string | InlineSource;
 
 // --- Compile options ---
@@ -185,7 +188,7 @@ export type ReadonlyPassage = Readonly<Omit<Passage, 'tags' | 'metadata'>> & {
 
 export type ReadonlyStory = Readonly<Omit<Story, 'passages' | 'twine1' | 'twine2'>> & {
   readonly passages: readonly ReadonlyPassage[];
-  readonly twine1: Readonly<Omit<Twine1Metadata, 'settings'>> & {
+  readonly twine1: {
     readonly settings: ReadonlyMap<string, string>;
   };
   readonly twine2: Readonly<Omit<Twine2Metadata, 'options' | 'tagColors'>> & {

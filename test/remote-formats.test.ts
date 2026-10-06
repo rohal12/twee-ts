@@ -30,15 +30,17 @@ import {
 import { compile } from '../src/compiler.js';
 import { parseFormatJSON } from '../src/format-decode.js';
 import type { CompileResult, SFAIndex, SFAIndexEntry } from '../src/types.js';
+import type * as NodeFs from 'node:fs';
 
 // lstatSync and writeFileSync pass through to the real ones unless a test stands in for
 // another process that acts between two steps of a cache write.
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   return { ...actual, lstatSync: vi.fn(actual.lstatSync), writeFileSync: vi.fn(actual.writeFileSync) };
 });
 
-const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+const realFs = await vi.importActual<typeof NodeFs>('node:fs');
+import { textOf } from './helpers/text.js';
 const mockedLstatSync = vi.mocked(fs.lstatSync);
 const mockedWriteFileSync = vi.mocked(fs.writeFileSync);
 
@@ -146,7 +148,9 @@ describe('verifySHA256', () => {
 
 describe('clearIndexCache', () => {
   it('does not throw', () => {
-    expect(() => clearIndexCache()).not.toThrow();
+    expect(() => {
+      clearIndexCache();
+    }).not.toThrow();
   });
 });
 
@@ -394,13 +398,13 @@ function stubFetch(routes: Readonly<Record<string, string>>): string[] {
   const calls: string[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string | URL | Request) => {
+    vi.fn((input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(url);
       const body = routes[url];
-      return body === undefined
-        ? new Response('missing', { status: 404, statusText: 'Not Found' })
-        : new Response(body);
+      return Promise.resolve(
+        body === undefined ? new Response('missing', { status: 404, statusText: 'Not Found' }) : new Response(body),
+      );
     }),
   );
   return calls;
@@ -410,9 +414,7 @@ function stubFetch(routes: Readonly<Record<string, string>>): string[] {
 function stubOffline(): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => {
-      throw new TypeError('offline');
-    }),
+    vi.fn(() => Promise.reject(new TypeError('offline'))),
   );
 }
 
@@ -683,12 +685,25 @@ function stubStalledFetch() {
         new Promise<Response>((resolve, reject) => {
           const signal = init?.signal ?? undefined;
           const request: StalledRequest = {
-            url: String(input),
+            url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
             signal,
-            answer: (body) => resolve(new Response(body)),
+            answer: (body) => {
+              resolve(new Response(body));
+            },
           };
-          if (signal?.aborted) return reject(signal.reason);
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          if (signal?.aborted) {
+            const reason: unknown = signal.reason;
+            reject(reason);
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => {
+              const reason: unknown = signal.reason;
+              reject(reason);
+            },
+            { once: true },
+          );
           const waiter = waiting.shift();
           if (waiter) waiter(request);
           else requests.push(request);
@@ -707,7 +722,15 @@ function stubStalledFetch() {
 function aborted(signal: AbortSignal | undefined): Promise<void> {
   if (!signal) return Promise.reject(new Error('the request has no signal'));
   if (signal.aborted) return Promise.resolve();
-  return new Promise((done) => signal.addEventListener('abort', () => done(), { once: true }));
+  return new Promise((done) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        done();
+      },
+      { once: true },
+    );
+  });
 }
 
 /** Every file under `root`, relative to it. */
@@ -739,11 +762,11 @@ describe('format cache writes racing another process', () => {
 
   it('accepts a format folder another process creates between its check and its mkdir', async () => {
     const raced = join(getCacheDir(), 'SugarCube');
-    mockedLstatSync.mockImplementation(((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+    mockedLstatSync.mockImplementation((path: fs.PathLike, options?: fs.StatOptions) => {
       const stat = realFs.lstatSync(path, options);
       if (stat === undefined && String(path) === raced) mkdirSync(raced, { recursive: true });
       return stat;
-    }) as typeof fs.lstatSync);
+    });
     stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
 
     const info = await fetchAndCacheFormat(sfaEntry('SugarCube', '2.37.3'), SUGARCUBE_URL);
@@ -754,11 +777,11 @@ describe('format cache writes racing another process', () => {
     const raced = join(getCacheDir(), 'SugarCube');
     const outside = mkdtempSync(join(tmpdir(), 'twee-ts-outside-'));
     try {
-      mockedLstatSync.mockImplementation(((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+      mockedLstatSync.mockImplementation((path: fs.PathLike, options?: fs.StatOptions) => {
         const stat = realFs.lstatSync(path, options);
         if (stat === undefined && String(path) === raced) symlinkSync(outside, raced, 'dir');
         return stat;
-      }) as typeof fs.lstatSync);
+      });
       mkdirSync(getCacheDir(), { recursive: true });
       stubFetch({ [SUGARCUBE_URL]: formatJs('SugarCube', '2.37.3') });
 
@@ -776,7 +799,7 @@ describe('format cache writes racing another process', () => {
     // Another process reads the entry while this one is part way through writing the new copy.
     const seen: unknown[] = [];
     mockedWriteFileSync.mockImplementationOnce((file, data) => {
-      realFs.writeFileSync(file, String(data).slice(0, 40));
+      realFs.writeFileSync(file, textOf(data).slice(0, 40));
       seen.push(parseFormatJSON(readFileSync(first.filename, 'utf-8'))?.source);
       realFs.writeFileSync(file, data);
     });

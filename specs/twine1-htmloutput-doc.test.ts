@@ -36,7 +36,7 @@ function minimalStory(passages: string): string {
 function extractStoreArea(html: string): string {
   // Match storeArea opening tag through end -- use greedy match so we get
   // the outer closing </div>, not an inner tiddler's </div>
-  const match = html.match(/<div id="storeArea"[^>]*>[\s\S]*<\/div>\s*$/);
+  const match = /<div id="storeArea"[^>]*>[\s\S]*<\/div>\s*$/.exec(html);
   if (!match) throw new Error('output must contain <div id="storeArea">');
   return match[0];
 }
@@ -61,7 +61,7 @@ function hasAttr(element: string, name: string): boolean {
 
 /** Extract text content between the opening and closing tags. */
 function textContent(element: string): string {
-  const match = element.match(/>([^]*)<\/div>/);
+  const match = />([^]*)<\/div>/.exec(element);
   return match?.[1] ?? '';
 }
 
@@ -160,7 +160,7 @@ describe('Twine 1 HTML Output Spec -- Root Structure', () => {
     // Spec examples show <div id="storeArea"> without a hidden attribute.
     // A spec-compliant implementation should not add attributes not in the spec.
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
-    const match = result.output.match(/<div id="storeArea"[^>]*>/);
+    const match = /<div id="storeArea"[^>]*>/.exec(result.output);
     expect(match).not.toBeNull();
     if (!match) throw new Error('expected storeArea match');
     // Spec examples do NOT include a hidden attribute
@@ -1016,7 +1016,7 @@ describe('Twine 1 HTML Output Spec -- Story Stylesheet', () => {
     const result = await compileToArchive(source);
     // Archive mode: no <head> element expected
     // But if a <head> and storyCSS/story-style exist, storyCSS must be inside <head>
-    const headMatch = result.output.match(/<head>([\s\S]*?)<\/head>/);
+    const headMatch = /<head>([\s\S]*?)<\/head>/.exec(result.output);
     if (headMatch) {
       const headContent = headMatch[1];
       if (result.output.includes('id="storyCSS"')) {
@@ -1069,7 +1069,7 @@ describe('Twine 1 HTML Output Spec -- Creator Info Comment', () => {
     // Spec: "the tool creator and version will be found inside an HTML comment
     // element within the <head> element"
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
-    const headMatch = result.output.match(/<head>([\s\S]*?)<\/head>/);
+    const headMatch = /<head>([\s\S]*?)<\/head>/.exec(result.output);
     if (headMatch) {
       const headContent = headMatch[1];
       // If there are creator comments in the output, they must be inside <head>
@@ -1706,7 +1706,7 @@ describe('Twine 1 HTML Output Spec -- Data-Size Edge Cases', () => {
 
   it('data-size is on the storeArea element itself, not a child', async () => {
     const result = await compileToArchive(minimalStory(':: Start\nHello'));
-    const storeAreaTag = result.output.match(/<div id="storeArea"[^>]*>/);
+    const storeAreaTag = /<div id="storeArea"[^>]*>/.exec(result.output);
     expect(storeAreaTag).not.toBeNull();
     if (!storeAreaTag) throw new Error('expected storeArea match');
     expect(storeAreaTag[0]).toContain('data-size=');

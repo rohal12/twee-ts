@@ -18,6 +18,7 @@ import { watchFilesystem } from '../src/filesystem.js';
 import type { WatchHandle } from '../src/filesystem.js';
 import { watch, watchWithWriteFilter } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
+import type * as NodeFs from 'node:fs';
 
 type WatchListener = (event: string, filename: string | null) => void;
 
@@ -44,7 +45,7 @@ const fake = vi.hoisted(() => ({
 // OS does, a watch follows the folder it started on, not the path: once that folder is
 // deleted or replaced, events for the path no longer reach it.
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   const { EventEmitter } = await import('node:events');
   fake.identityOf = (path: string): string | undefined => {
     try {
@@ -303,9 +304,9 @@ describe('watchFilesystem', () => {
       start([story]);
       rmSync(story, { recursive: true });
       // Windows reports a deleted watched folder as an error (EPERM) on its watch.
-      expect(() =>
-        emitError(story, Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })),
-      ).not.toThrow();
+      expect(() => {
+        emitError(story, Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }));
+      }).not.toThrow();
       expect(settle()).toEqual([undefined]);
 
       mkdirSync(story);
@@ -375,12 +376,12 @@ function buildQueue() {
   const errors: Error[] = [];
   return {
     errors,
-    onBuild(result: CompileResult): void {
+    onBuild: (result: CompileResult): void => {
       const waiter = waiting.shift();
       if (waiter) waiter(result);
       else ready.push(result);
     },
-    onError(error: Error): void {
+    onError: (error: Error): void => {
       errors.push(error);
     },
     next(): Promise<CompileResult> {
@@ -734,7 +735,13 @@ describe('watch with a build still in flight', () => {
         state.inFlight--;
       }
     });
-    return { state, firstRequested, releaseFirst: (ok = true) => releaseFirst(ok) };
+    return {
+      state,
+      firstRequested,
+      releaseFirst: (ok = true) => {
+        releaseFirst(ok);
+      },
+    };
   }
 
   /**
@@ -878,7 +885,7 @@ describe('watch with a build still in flight', () => {
     const errors: Error[] = [];
     let idle: () => void = () => {};
     const settled = new Promise<void>((done) => (idle = done));
-    controller = await watchWithWriteFilter(
+    controller = watchWithWriteFilter(
       {
         ...SLOW_FORMAT,
         sources: [story],
@@ -887,7 +894,11 @@ describe('watch with a build still in flight', () => {
         onError: (error) => errors.push(error),
       },
       () => true,
-      { onIdle: () => idle() },
+      {
+        onIdle: () => {
+          idle();
+        },
+      },
     );
     await format.firstRequested;
     writeFileSync(start, source('NEW_CONTENT'));
@@ -1017,17 +1028,23 @@ describe('watch with a source folder that goes away or is not there yet', () => 
     expect((await builds.next()).output).toContain('V1');
 
     rmSync(story, { recursive: true });
-    events(() => emit(root, 'story'));
+    events(() => {
+      emit(root, 'story');
+    });
     expect((await builds.next()).output).not.toContain('V1');
 
     mkdirSync(story);
     writeFileSync(join(story, 'a.tw'), source('V2'));
-    events(() => emit(root, 'story'));
+    events(() => {
+      emit(root, 'story');
+    });
     expect((await builds.next()).output).toContain('V2');
     expect(readFileSync(outFile, 'utf-8')).toContain('V2');
 
     writeFileSync(join(story, 'a.tw'), source('V3'));
-    events(() => emit(story, 'a.tw'));
+    events(() => {
+      emit(story, 'a.tw');
+    });
     expect((await builds.next()).output).toContain('V3');
     expect(readFileSync(outFile, 'utf-8')).toContain('V3');
     expect(builds.errors).toEqual([]);
@@ -1049,7 +1066,9 @@ describe('watch with a source folder that goes away or is not there yet', () => 
     expect((await builds.next()).output).toContain('V2');
 
     writeFileSync(join(story, 'a.tw'), source('V3'));
-    events(() => emit(story, 'a.tw'));
+    events(() => {
+      emit(story, 'a.tw');
+    });
     expect((await builds.next()).output).toContain('V3');
     expect(readFileSync(outFile, 'utf-8')).toContain('V3');
     expect(builds.errors).toEqual([]);
@@ -1064,7 +1083,9 @@ describe('watch with a source folder that goes away or is not there yet', () => 
 
     mkdirSync(story);
     writeFileSync(join(story, 'a.tw'), source('ARRIVED'));
-    events(() => emit(root, 'story'));
+    events(() => {
+      emit(root, 'story');
+    });
     expect((await builds.next()).output).toContain('ARRIVED');
     expect(readFileSync(outFile, 'utf-8')).toContain('ARRIVED');
     expect(builds.errors).toEqual([]);
@@ -1107,7 +1128,14 @@ describe('watch with a format download that never answers', () => {
       signals.push(signal);
       notify(signal);
       const pending = new Promise<Response>((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        signal.addEventListener(
+          'abort',
+          () => {
+            const reason: unknown = signal.reason;
+            reject(reason);
+          },
+          { once: true },
+        );
       });
       settled.push(
         pending.then(

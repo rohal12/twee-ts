@@ -59,7 +59,7 @@ export function validateIFID(ifid: string): string | null {
   }
 
   for (let i = 0; i < uuid.length; i++) {
-    const ch = uuid[i]!;
+    const ch = uuid.charAt(i);
     switch (i) {
       case 8:
       case 13:

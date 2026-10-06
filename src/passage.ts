@@ -59,11 +59,11 @@ export function isStoryPassage(p: ReadonlyPassage): boolean {
 }
 
 export function hasMetadataPosition(p: ReadonlyPassage): boolean {
-  return p.metadata != null && p.metadata.position != null && p.metadata.position !== '';
+  return p.metadata?.position != null && p.metadata.position !== '';
 }
 
 export function hasMetadataSize(p: ReadonlyPassage): boolean {
-  return p.metadata != null && p.metadata.size != null && p.metadata.size !== '';
+  return p.metadata?.size != null && p.metadata.size !== '';
 }
 
 export function hasAnyMetadata(p: ReadonlyPassage): boolean {
@@ -196,7 +196,8 @@ export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego
       text = text.replace(/\n/g, '');
       text = text.replace(/(?:\/%.+?%\/|\/\*.+?\*\/|<!--.+?-->)/gs, '');
       const normalized = text.normalize('NFKD');
-      const count = [...normalized].length;
+      // Code points, as Tweego counts runes.
+      const count = Array.from(normalized).length;
       if (count === 0) return 0;
       const words = Math.floor(count / 5);
       return count % 5 > 0 ? words + 1 : words;

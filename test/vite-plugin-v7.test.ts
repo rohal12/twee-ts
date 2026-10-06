@@ -8,9 +8,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
+import type * as Vite from 'vite';
 
 vi.mock('vite', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('vite')>();
+  const actual = await importOriginal<typeof Vite>();
   return { ...actual, version: '7.1.0' };
 });
 

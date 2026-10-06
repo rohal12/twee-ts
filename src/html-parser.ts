@@ -3,7 +3,7 @@
  * Ported from storyload.go:loadHTML().
  */
 import { parseDocument } from 'htmlparser2';
-import type { Passage, PassageMetadata, Diagnostic, DecompileOptions } from './types.js';
+import type { Passage, PassageMetadata, Diagnostic, DecompileOptions, Story } from './types.js';
 import {
   createStory,
   storyAdd,
@@ -18,7 +18,7 @@ import { normalizeIFID, validateIFID } from './ifid.js';
 import { isObfuscatable } from './passage.js';
 
 export interface DecompileResult {
-  story: import('./types.js').Story;
+  story: Story;
   diagnostics: Diagnostic[];
 }
 
@@ -85,7 +85,7 @@ type PassageText = (text: string) => string;
 
 function decompileTwine2(
   storyData: HtmlNode,
-  story: import('./types.js').Story,
+  story: Story,
   passageText: PassageText,
   checks: DecompileChecks,
   diagnostics: Diagnostic[],
@@ -198,6 +198,10 @@ function decompileTwine2(
         storyAdd(story, passage, diagnostics);
         break;
       }
+
+      default:
+        // Other elements inside tw-storydata are not part of the story.
+        break;
     }
   }
 
@@ -229,12 +233,7 @@ function storyDataIFIDDiagnostics(value: string): Diagnostic[] {
   ];
 }
 
-function decompileTwine1(
-  storeArea: HtmlNode,
-  story: import('./types.js').Story,
-  passageText: PassageText,
-  diagnostics: Diagnostic[],
-): void {
+function decompileTwine1(storeArea: HtmlNode, story: Story, passageText: PassageText, diagnostics: Diagnostic[]): void {
   const passages = (storeArea.children ?? []).filter(isTiddler).map((node) => tiddlerToPassage(node, passageText));
 
   // When StorySettings says `obfuscate:rot13`, Twine 1.4 (and twee-ts) ROT13-encode the name, tags and text of

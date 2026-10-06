@@ -45,14 +45,14 @@ function minimalStory(name: string, passages: string): string {
 
 /** Helper: extract the first <tw-storydata ...> opening tag from output. */
 function extractStoryDataTag(output: string): string {
-  const match = output.match(/<tw-storydata[^>]*>/);
+  const match = /<tw-storydata[^>]*>/.exec(output);
   if (!match) throw new Error('Expected <tw-storydata> tag in output');
   return match[0];
 }
 
 /** Helper: extract the full <tw-storydata>...</tw-storydata> block from output. */
 function extractStoryDataBlock(output: string): string {
-  const match = output.match(/<tw-storydata[\s\S]*?<\/tw-storydata>/);
+  const match = /<tw-storydata[\s\S]*?<\/tw-storydata>/.exec(output);
   if (!match) throw new Error('Expected <tw-storydata>...</tw-storydata> block in output');
   return match[0];
 }
@@ -139,7 +139,7 @@ describe('Twine 2 Archive Spec -- <tw-storydata> Attributes', () => {
     const tag = extractStoryDataTag(result.output);
     expect(tag).toMatch(/startnode="\d+"/);
     // The startnode must be a positive integer (per spec example: startnode="1")
-    const startnodeMatch = tag.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(tag);
     expect(startnodeMatch).not.toBeNull();
     const startnodeValue = parseInt(startnodeMatch![1]!, 10);
     expect(startnodeValue).toBeGreaterThan(0);
@@ -148,7 +148,7 @@ describe('Twine 2 Archive Spec -- <tw-storydata> Attributes', () => {
   it('startnode references a pid that exists among <tw-passagedata> elements', async () => {
     const result = await compileToArchive(minimalStory('Startnode Ref', ':: Start\nHello'));
     const tag = extractStoryDataTag(result.output);
-    const startnodeMatch = tag.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(tag);
     expect(startnodeMatch).not.toBeNull();
     const startnode = startnodeMatch![1];
     // The startnode value must match one of the pid attributes
@@ -323,7 +323,7 @@ describe('Twine 2 Archive Spec -- <style> and <script> Elements', () => {
     // All three attributes must appear on the SAME <style> element
     const result = await compileToArchive(minimalStory('Style All Attrs', ':: Start\nHello'));
     const block = extractStoryDataBlock(result.output);
-    const styleMatch = block.match(/<style[^>]*>/);
+    const styleMatch = /<style[^>]*>/.exec(block);
     if (!styleMatch) throw new Error('Expected <style> element in output');
     const styleTag = styleMatch[0];
     expect(styleTag).toContain('role="stylesheet"');
@@ -355,7 +355,7 @@ describe('Twine 2 Archive Spec -- <style> and <script> Elements', () => {
     // All three attributes must appear on the SAME <script> element
     const result = await compileToArchive(minimalStory('Script All Attrs', ':: Start\nHello'));
     const block = extractStoryDataBlock(result.output);
-    const scriptMatch = block.match(/<script[^>]*>/);
+    const scriptMatch = /<script[^>]*>/.exec(block);
     if (!scriptMatch) throw new Error('Expected <script> element in output');
     const scriptTag = scriptMatch[0];
     expect(scriptTag).toContain('role="script"');
@@ -409,21 +409,21 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
 
   it('passage has "pid" attribute with numeric value', async () => {
     const result = await compileToArchive(minimalStory('PID Test', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/pid="\d+"/);
   });
 
   it('passage has "name" attribute with the passage name', async () => {
     const result = await compileToArchive(minimalStory('Name Test', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toContain('name="Start"');
   });
 
   it('passage has "tags" attribute defaulting to empty string (per spec example: tags="")', async () => {
     const result = await compileToArchive(minimalStory('Tags Test', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     // The spec example shows tags="" for passages without tags
     expect(passageMatch[0]).toContain('tags=""');
@@ -432,7 +432,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('passage tags attribute contains space-separated tag names', async () => {
     const source = minimalStory('Tag Values', ':: Start [alpha beta]\nHello');
     const result = await compileToArchive(source);
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/tags="alpha beta"/);
   });
@@ -440,7 +440,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('passage has "position" attribute (per spec example)', async () => {
     const source = minimalStory('Pos Test', ':: Start {"position":"100,200"}\nHello');
     const result = await compileToArchive(source);
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/position="100,200"/);
   });
@@ -448,7 +448,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('passage has "size" attribute (per spec example)', async () => {
     const source = minimalStory('Size Test', ':: Start {"size":"150,100"}\nHello');
     const result = await compileToArchive(source);
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/size="150,100"/);
   });
@@ -468,14 +468,14 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
 
   it('pids start at 1 and increment (per spec example: pid="1")', async () => {
     const result = await compileToArchive(minimalStory('PID Start', ':: Start\nHello'));
-    const pidMatch = result.output.match(/pid="(\d+)"/);
+    const pidMatch = /pid="(\d+)"/.exec(result.output);
     if (!pidMatch) throw new Error('Expected pid attribute');
     expect(pidMatch[1]).toBe('1');
   });
 
   it('<tw-passagedata> has all attributes from spec example: pid, name, tags, position, size', async () => {
     const result = await compileToArchive(minimalStory('All Attrs', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     const passageTag = passageMatch[0];
     expect(passageTag).toMatch(/\bpid="/);
@@ -488,7 +488,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('passage has default "position" attribute even without explicit metadata', async () => {
     // The spec example shows position="900,400" — a position must always be present
     const result = await compileToArchive(minimalStory('Default Pos', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/position="[^"]+"/);
   });
@@ -496,7 +496,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('passage has default "size" attribute even without explicit metadata', async () => {
     // The spec example shows size="100,100" — a size must always be present
     const result = await compileToArchive(minimalStory('Default Size', ':: Start\nHello'));
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/size="[^"]+"/);
   });
@@ -504,7 +504,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('position attribute format is "x,y" with numeric values', async () => {
     const source = minimalStory('Pos Format', ':: Start {"position":"100,200"}\nHello');
     const result = await compileToArchive(source);
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/position="\d+,\d+"/);
   });
@@ -512,7 +512,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
   it('size attribute format is "w,h" with numeric values', async () => {
     const source = minimalStory('Size Format', ':: Start {"size":"150,100"}\nHello');
     const result = await compileToArchive(source);
-    const passageMatch = result.output.match(/<tw-passagedata[^>]*>/);
+    const passageMatch = /<tw-passagedata[^>]*>/.exec(result.output);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> in output');
     expect(passageMatch[0]).toMatch(/size="\d+,\d+"/);
   });
@@ -528,7 +528,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
     const result = await compileToArchive(source);
     // Inside <tw-passagedata>, double quotes in content must be escaped
     const block = extractStoryDataBlock(result.output);
-    const passageMatch = block.match(/<tw-passagedata[^>]*>([\s\S]*?)<\/tw-passagedata>/);
+    const passageMatch = /<tw-passagedata[^>]*>([\s\S]*?)<\/tw-passagedata>/.exec(block);
     if (!passageMatch) throw new Error('Expected passage content');
     expect(passageMatch[1]).toContain('He said');
     // Content should not contain unescaped quotes that break XML structure
@@ -539,7 +539,7 @@ describe('Twine 2 Archive Spec -- <tw-passagedata> Elements', () => {
     const source = minimalStory('Content Test', ':: Start\nThis is passage content');
     const result = await compileToArchive(source);
     const block = extractStoryDataBlock(result.output);
-    const passageMatch = block.match(/<tw-passagedata[^>]*>([\s\S]*?)<\/tw-passagedata>/);
+    const passageMatch = /<tw-passagedata[^>]*>([\s\S]*?)<\/tw-passagedata>/.exec(block);
     if (!passageMatch) throw new Error('Expected <tw-passagedata> with content');
     expect(passageMatch[1]).toContain('This is passage content');
   });
@@ -1182,7 +1182,7 @@ describe('Twine 2 Archive Spec -- Well-Formed Structure', () => {
     for (const m of passageTags) {
       const tag = m[0];
       // Extract all name="..." values and verify they don't contain unescaped special chars
-      const nameMatch = tag.match(/name="([^"]*)"/);
+      const nameMatch = /name="([^"]*)"/.exec(tag);
       if (nameMatch) {
         const nameVal = nameMatch[1]!;
         // Inside attribute values, & < > " must be escaped

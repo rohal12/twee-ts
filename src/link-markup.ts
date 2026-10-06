@@ -48,8 +48,13 @@ interface Reader {
 
 /** Records that the reading has looked at the characters before `pos`, and returns `result`. */
 function readTo<T>(reader: Reader, pos: number, result: T): T {
-  reader.scanned = Math.max(reader.scanned, pos);
+  markScanned(reader, pos);
   return result;
+}
+
+/** Records that the reading looked at the characters before `pos`. */
+function markScanned(reader: Reader, pos: number): void {
+  reader.scanned = Math.max(reader.scanned, pos);
 }
 
 /**
@@ -147,7 +152,8 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
     pos += 1;
     switch (ch) {
       case '\n':
-        return readTo(reader, pos, undefined);
+        markScanned(reader, pos);
+        return undefined;
       case '"': {
         const end = readQuoted(reader, pos, '"');
         if (end === undefined) {
@@ -196,7 +202,8 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
         break;
     }
   }
-  return readTo(reader, pos, undefined);
+  markScanned(reader, pos);
+  return undefined;
 }
 
 /**
@@ -212,7 +219,8 @@ function readComponent(reader: Reader, from: number, setter: boolean): Component
     pos += 1;
     switch (ch) {
       case '\n':
-        return readTo(reader, pos, undefined);
+        markScanned(reader, pos);
+        return undefined;
       case '"':
       case "'": {
         if (ch === "'" && !setter) {
@@ -238,7 +246,8 @@ function readComponent(reader: Reader, from: number, setter: boolean): Component
         break;
     }
   }
-  return readTo(reader, pos, undefined);
+  markScanned(reader, pos);
+  return undefined;
 }
 
 /** Reads a setter, the last component; returns the index after its closing `]]`. */
@@ -256,7 +265,8 @@ function componentEnd(reader: Reader, pos: number): ComponentEnd | undefined {
     case ']':
       return readTo(reader, pos + 1, { textEnd: pos - 1, next: pos + 1, last: true });
     default:
-      return readTo(reader, pos + 1, undefined);
+      markScanned(reader, pos + 1);
+      return undefined;
   }
 }
 
@@ -275,14 +285,17 @@ function readQuoted(reader: Reader, from: number, quote: string): number | undef
       return pos;
     }
     if (ch === '\n') {
-      return readTo(reader, pos, undefined);
+      markScanned(reader, pos);
+      return undefined;
     }
     if (ch === '\\') {
       if (pos >= reader.limit || text[pos] === '\n') {
-        return readTo(reader, Math.min(pos + 1, reader.limit), undefined);
+        markScanned(reader, Math.min(pos + 1, reader.limit));
+        return undefined;
       }
       pos += 1;
     }
   }
-  return readTo(reader, pos, undefined);
+  markScanned(reader, pos);
+  return undefined;
 }

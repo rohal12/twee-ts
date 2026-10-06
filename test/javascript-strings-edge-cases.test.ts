@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from '../src/javascript-strings.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 describe('evalStringLiteral edge cases', () => {
   it.each([
@@ -23,7 +24,7 @@ describe('evalStringLiteral edge cases', () => {
   ])('matches strict-mode JavaScript for %s', (_label, literal) => {
     let expected: string | undefined;
     try {
-      expected = new Function(`"use strict"; return ${literal};`)() as string;
+      expected = evaluateJavaScript(`"use strict"; return ${literal};`) as string;
     } catch {
       expected = undefined;
     }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import type { OutputMode } from '../src/types.js';
 import { compile } from '../src/compiler.js';
 import { decompileHTML } from '../src/html-parser.js';
+import { parseJsonObject } from './helpers/json.js';
 
 const MINIMAL_TWINE2_HTML = `<tw-storydata name="Test Story" startnode="1" creator="Twine" creator-version="2.0"
   ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" zoom="1"
@@ -76,15 +77,15 @@ describe('decompileHTML', () => {
     );
     const { story } = decompileHTML(html);
     expect(story.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
-    expect(JSON.parse(story.passages[0]!.text).ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(parseJsonObject(story.passages[0]!.text)['ifid']).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
   });
 
   it('prepends StoryData passage', () => {
     const { story } = decompileHTML(MINIMAL_TWINE2_HTML);
     expect(story.passages[0]?.name).toBe('StoryData');
-    const data = JSON.parse(story.passages[0]!.text);
-    expect(data.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
-    expect(data.format).toBe('SugarCube');
+    const data = parseJsonObject(story.passages[0]!.text);
+    expect(data['ifid']).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(data['format']).toBe('SugarCube');
   });
 
   it('returns error diagnostic for missing tw-storydata', () => {
@@ -257,7 +258,7 @@ describe('decompileHTML — story-level tags', () => {
     const { story } = decompileHTML(html);
     expect(story.twine2.tags).toBe('fiction adult');
     const storyData = story.passages.find((p) => p.name === 'StoryData');
-    expect(JSON.parse(storyData!.text).tags).toBe('fiction adult');
+    expect(parseJsonObject(storyData!.text)['tags']).toBe('fiction adult');
   });
 
   it('leaves tags empty when the attribute is empty or missing', () => {
@@ -272,7 +273,9 @@ describe('HTML round trips through compile()', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-roundtrip-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
 
@@ -410,7 +413,7 @@ describe('decompileHTML — story stylesheet and script names', () => {
   }
 
   for (const { element, tag, name, code } of CASES) {
-    describe(name, () => {
+    describe(`a generated ${name}`, () => {
       const html = `<tw-storydata name="Clash" startnode="2" ifid="${IFID}" hidden>
 <${element} type="text/twine-${element === 'style' ? 'css' : 'javascript'}">${code}</${element}>
 <tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">[[${name}]]</tw-passagedata>
@@ -455,7 +458,9 @@ describe('HTML round trips with passages named like the story stylesheet or scri
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-names-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const CASES = [
     { tag: 'stylesheet', name: 'Story Stylesheet', code: 'body { color: red; }' },
@@ -506,7 +511,9 @@ describe('HTML whitespace round trips through compile()', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-trim-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const SOURCE = [
     ':: StoryData',
@@ -521,7 +528,7 @@ describe('HTML whitespace round trips through compile()', () => {
   ].join('\n');
 
   for (const archive of ['twine2-archive', 'twine1-archive'] as const) {
-    describe(archive, () => {
+    describe(`output mode ${archive}`, () => {
       async function archived(): Promise<string> {
         const first = await compile({
           sources: [{ filename: 'story.tw', content: SOURCE }],

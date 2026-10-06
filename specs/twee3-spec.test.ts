@@ -14,6 +14,7 @@ import { compile } from '../src/compiler.js';
 import { tweeLexer } from '../src/lexer.js';
 import { ItemType } from '../src/types.js';
 import type { LexerItem, CompileOptions, CompileResult } from '../src/types.js';
+import { parseJsonObject } from '../test/helpers/json.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -899,7 +900,7 @@ describe('Special Passages — StoryData', () => {
       // Should still produce output (not crash)
       expect(result.output.length).toBeGreaterThan(0);
       // Should have auto-generated an IFID in the output
-      const ifidMatch = result.output.match(/ifid="([^"]+)"/);
+      const ifidMatch = /ifid="([^"]+)"/.exec(result.output);
       if (!ifidMatch) throw new Error('expected ifid attribute in output');
       const ifidValue = ifidMatch[1];
       if (!ifidValue) throw new Error('expected ifid capture group');
@@ -951,7 +952,7 @@ describe('Special Passages — StoryData', () => {
 
     it('MUST: IFID in tw-storydata ifid attribute contains only uppercase hex and dashes', async () => {
       const result = await compileInline(minimalStory(':: Start\nHello'));
-      const ifidMatch = result.output.match(/ifid="([^"]+)"/);
+      const ifidMatch = /ifid="([^"]+)"/.exec(result.output);
       if (!ifidMatch) throw new Error('expected ifid attribute in output');
       const ifidValue = ifidMatch[1];
       if (!ifidValue) throw new Error('expected ifid capture group');
@@ -1106,12 +1107,12 @@ describe('Special Passages — StoryData', () => {
       ].join('\n');
       const result = await compileInline(source);
       // Extract the startnode value and the pid of "Begin" passage
-      const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+      const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
       if (!startnodeMatch) throw new Error('expected startnode attribute');
       const startnode = startnodeMatch[1];
       // Find the pid of the "Begin" passage
-      const beginMatch = result.output.match(/<tw-passagedata[^>]*name="Begin"[^>]*pid="(\d+)"/);
-      const beginMatchAlt = result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Begin"/);
+      const beginMatch = /<tw-passagedata[^>]*name="Begin"[^>]*pid="(\d+)"/.exec(result.output);
+      const beginMatchAlt = /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Begin"/.exec(result.output);
       const beginPid = beginMatch?.[1] ?? beginMatchAlt?.[1];
       if (!beginPid) throw new Error('expected Begin passage with pid in output');
       // startnode should match the pid of "Begin"
@@ -1316,7 +1317,7 @@ describe('Special Passages — StoryData', () => {
       // Should still produce output (not crash/abort)
       expect(result.output.length).toBeGreaterThan(0);
       // Should have auto-generated a valid IFID since corrupted StoryData was discarded
-      const ifidMatch = result.output.match(/ifid="([^"]+)"/);
+      const ifidMatch = /ifid="([^"]+)"/.exec(result.output);
       if (!ifidMatch) throw new Error('expected ifid attribute in output');
       const ifidValue = ifidMatch[1];
       if (!ifidValue) throw new Error('expected ifid capture group');
@@ -1395,12 +1396,12 @@ describe('Special Passages — StoryData', () => {
     const result = await compileInline(minimalStory(':: Start\nHello'), {
       outputMode: 'twee3',
     });
-    const storyDataMatch = result.output.match(/:: StoryData\n([\s\S]*?)(?=\n:: )/);
+    const storyDataMatch = /:: StoryData\n([\s\S]*?)(?=\n:: )/.exec(result.output);
     if (!storyDataMatch) throw new Error('expected StoryData passage in twee3 output');
     const jsonContent = storyDataMatch[1];
     if (!jsonContent) throw new Error('expected StoryData JSON content capture group');
     // Must be valid JSON
-    expect(() => JSON.parse(jsonContent.trim())).not.toThrow();
+    expect(() => parseJsonObject(jsonContent.trim())).not.toThrow();
   });
 
   it('RECOMMENDED: StoryData JSON in twee3 output is line-broken and indented', async () => {
@@ -1408,7 +1409,7 @@ describe('Special Passages — StoryData', () => {
       outputMode: 'twee3',
     });
     // Find the StoryData passage content
-    const storyDataMatch = result.output.match(/:: StoryData\n([\s\S]*?)(?=\n:: )/);
+    const storyDataMatch = /:: StoryData\n([\s\S]*?)(?=\n:: )/.exec(result.output);
     if (!storyDataMatch) throw new Error('expected StoryData passage in twee3 output');
     const jsonContent = storyDataMatch[1];
     if (!jsonContent) throw new Error('expected StoryData JSON content capture group');
@@ -1508,12 +1509,12 @@ describe('Special Passages — Start', () => {
     ].join('\n');
     const result = await compileInline(source);
     // The startnode should reference the Start passage's pid
-    const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
     if (!startnodeMatch) throw new Error('expected startnode attribute');
     const startnode = startnodeMatch[1];
     const startPidMatch =
-      result.output.match(/<tw-passagedata[^>]*name="Start"[^>]*pid="(\d+)"/) ??
-      result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Start"/);
+      /<tw-passagedata[^>]*name="Start"[^>]*pid="(\d+)"/.exec(result.output) ??
+      /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Start"/.exec(result.output);
     if (!startPidMatch) throw new Error('expected Start passage with pid');
     expect(startnode).toBe(startPidMatch[1]);
   });
@@ -1534,12 +1535,12 @@ describe('Special Passages — Start', () => {
     ].join('\n');
     const result = await compileInline(source);
     // Extract startnode and "Begin" pid, verify they match
-    const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
     if (!startnodeMatch) throw new Error('expected startnode attribute');
     const startnode = startnodeMatch[1];
     const beginPidMatch =
-      result.output.match(/<tw-passagedata[^>]*name="Begin"[^>]*pid="(\d+)"/) ??
-      result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Begin"/);
+      /<tw-passagedata[^>]*name="Begin"[^>]*pid="(\d+)"/.exec(result.output) ??
+      /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Begin"/.exec(result.output);
     if (!beginPidMatch) throw new Error('expected Begin passage with pid');
     expect(startnode).toBe(beginPidMatch[1]);
   });
@@ -1560,12 +1561,12 @@ describe('Special Passages — Start', () => {
     ].join('\n');
     const result = await compileInline(source, { startPassage: 'CustomStart' });
     // Extract startnode and "CustomStart" pid, verify they match
-    const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
     if (!startnodeMatch) throw new Error('expected startnode attribute');
     const startnode = startnodeMatch[1];
     const customPidMatch =
-      result.output.match(/<tw-passagedata[^>]*name="CustomStart"[^>]*pid="(\d+)"/) ??
-      result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="CustomStart"/);
+      /<tw-passagedata[^>]*name="CustomStart"[^>]*pid="(\d+)"/.exec(result.output) ??
+      /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="CustomStart"/.exec(result.output);
     if (!customPidMatch) throw new Error('expected CustomStart passage with pid');
     expect(startnode).toBe(customPidMatch[1]);
   });
@@ -1591,12 +1592,12 @@ describe('Special Passages — Start', () => {
     ].join('\n');
     const result = await compileInline(source, { startPassage: 'CompilerStart' });
     // Compiler option must win — startnode should point to CompilerStart's pid
-    const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
     if (!startnodeMatch) throw new Error('expected startnode attribute');
     const startnode = startnodeMatch[1];
     const compilerPidMatch =
-      result.output.match(/<tw-passagedata[^>]*name="CompilerStart"[^>]*pid="(\d+)"/) ??
-      result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="CompilerStart"/);
+      /<tw-passagedata[^>]*name="CompilerStart"[^>]*pid="(\d+)"/.exec(result.output) ??
+      /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="CompilerStart"/.exec(result.output);
     if (!compilerPidMatch) throw new Error('expected CompilerStart passage with pid');
     expect(startnode).toBe(compilerPidMatch[1]);
   });
@@ -1620,7 +1621,7 @@ describe('Special Tags — script', () => {
     const source = minimalStory(':: Start\nHello\n\n:: MyScript [script]\nconsole.log("hello");');
     const result = await compileInline(source);
     // Content should be inside <script type="text/twine-javascript">...</script>
-    const scriptMatch = result.output.match(/<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
     expect(scriptMatch).not.toBeNull();
     if (scriptMatch) {
       expect(scriptMatch[1]).toContain('console.log("hello");');
@@ -1669,7 +1670,7 @@ describe('Special Tags — stylesheet', () => {
     const source = minimalStory(':: Start\nHello\n\n:: MyStyles [stylesheet]\nbody { color: red; }');
     const result = await compileInline(source);
     // Content should be inside <style type="text/twine-css">...</style>
-    const styleMatch = result.output.match(/<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
     expect(styleMatch).not.toBeNull();
     if (styleMatch) {
       expect(styleMatch[1]).toContain('body { color: red; }');
@@ -2477,9 +2478,9 @@ describe('Requirements and Recommendations — Additional Coverage', () => {
       const storyData = passages.find((p) => p.name === 'StoryData');
       if (!storyData) throw new Error('expected StoryData passage');
       // The content should be valid JSON when parsed
-      const json = JSON.parse(storyData.text);
-      expect(json.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
-      expect(json.format).toBe('SugarCube');
+      const json = parseJsonObject(storyData.text);
+      expect(json['ifid']).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+      expect(json['format']).toBe('SugarCube');
       expect(json['format-version']).toBe('2.28.2');
     });
   });
@@ -2501,7 +2502,7 @@ describe('Requirements and Recommendations — Additional Coverage', () => {
       ].join('\n');
       const result = await compileInline(source, { outputMode: 'twee3' });
       // Find IFID in the StoryData JSON in twee3 output
-      const ifidMatch = result.output.match(/"ifid"\s*:\s*"([^"]+)"/);
+      const ifidMatch = /"ifid"\s*:\s*"([^"]+)"/.exec(result.output);
       if (!ifidMatch) throw new Error('expected ifid in twee3 output');
       const ifidValue = ifidMatch[1];
       if (!ifidValue) throw new Error('expected ifid capture group');
@@ -3189,12 +3190,12 @@ describe('Start Passage — Literal Name', () => {
     ].join('\n');
     const result = await compileInline(source);
     // The startnode should reference the "Start" passage (exact case), not "start"
-    const startnodeMatch = result.output.match(/startnode="(\d+)"/);
+    const startnodeMatch = /startnode="(\d+)"/.exec(result.output);
     if (!startnodeMatch) throw new Error('expected startnode attribute');
     const startnode = startnodeMatch[1];
     const startPidMatch =
-      result.output.match(/<tw-passagedata[^>]*name="Start"[^>]*pid="(\d+)"/) ??
-      result.output.match(/<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Start"/);
+      /<tw-passagedata[^>]*name="Start"[^>]*pid="(\d+)"/.exec(result.output) ??
+      /<tw-passagedata[^>]*pid="(\d+)"[^>]*name="Start"/.exec(result.output);
     if (!startPidMatch) throw new Error('expected "Start" passage with pid');
     expect(startnode).toBe(startPidMatch[1]);
   });
@@ -3235,7 +3236,7 @@ describe('IFID Uppercase — All Output Modes', () => {
       'Hello',
     ].join('\n');
     const result = await compileInline(source, { outputMode: 'twine2-archive' });
-    const ifidMatch = result.output.match(/ifid="([^"]+)"/);
+    const ifidMatch = /ifid="([^"]+)"/.exec(result.output);
     if (!ifidMatch) throw new Error('expected ifid attribute in archive output');
     const ifidValue = ifidMatch[1];
     if (!ifidValue) throw new Error('expected ifid capture group');
@@ -3644,13 +3645,13 @@ describe('Script and Stylesheet — Element Type Specificity', () => {
     const source = minimalStory(':: Start\nHello\n\n:: JS [script]\nalert(1);');
     const result = await compileInline(source);
     // The script content should be in <script>, not <style>
-    const scriptMatch = result.output.match(/<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*type="text\/twine-javascript"[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
     expect(scriptMatch).not.toBeNull();
     if (scriptMatch) {
       expect(scriptMatch[1]).toContain('alert(1);');
     }
     // The script content should NOT be in a <style> element
-    const styleMatch = result.output.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
     if (styleMatch) {
       expect(styleMatch[1]).not.toContain('alert(1);');
     }
@@ -3660,13 +3661,13 @@ describe('Script and Stylesheet — Element Type Specificity', () => {
     const source = minimalStory(':: Start\nHello\n\n:: CSS [stylesheet]\n.red { color: red; }');
     const result = await compileInline(source);
     // The style content should be in <style>, not <script>
-    const styleMatch = result.output.match(/<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/);
+    const styleMatch = /<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
     expect(styleMatch).not.toBeNull();
     if (styleMatch) {
       expect(styleMatch[1]).toContain('.red { color: red; }');
     }
     // The style content should NOT be in a <script> element
-    const scriptMatch = result.output.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(result.output);
     if (scriptMatch) {
       expect(scriptMatch[1]).not.toContain('.red { color: red; }');
     }

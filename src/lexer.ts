@@ -173,6 +173,9 @@ function lexName(ctx: LexerContext): StateFn {
       case EOF:
         if (r !== EOF) ctx.backup();
         break outer;
+      default:
+        // Any other character is part of the name.
+        break;
     }
   }
   // Always emit a name item, even if empty.
@@ -191,9 +194,11 @@ function lexName(ctx: LexerContext): StateFn {
       ctx.pos++;
       ctx.ignore();
       return lexContent;
+    case EOF:
+    default:
+      ctx.emit(ItemType.EOF);
+      return null;
   }
-  ctx.emit(ItemType.EOF);
-  return null;
 }
 
 function lexNextOptionalBlock(ctx: LexerContext): StateFn {
@@ -218,8 +223,9 @@ function lexNextOptionalBlock(ctx: LexerContext): StateFn {
     case EOF:
       ctx.emit(ItemType.EOF);
       return null;
+    default:
+      return ctx.errorf(`illegal character '${String.fromCharCode(r)}' amid the optional blocks`);
   }
-  return ctx.errorf(`illegal character '${String.fromCharCode(r)}' amid the optional blocks`);
 }
 
 function lexTags(ctx: LexerContext): StateFn {
@@ -249,6 +255,9 @@ function lexTags(ctx: LexerContext): StateFn {
         return ctx.errorf(`unexpected left curly brace '{'`);
       case 0x7d: // }
         return ctx.errorf(`unexpected right curly brace '}'`);
+      default:
+        // Any other character is part of the tags.
+        break;
     }
   }
 }
@@ -281,6 +290,9 @@ function lexMetadata(ctx: LexerContext): StateFn {
           if (ctx.pos > ctx.start) ctx.emit(ItemType.Metadata);
           return lexNextOptionalBlock;
         }
+        break;
+      default:
+        // Any other character is part of the metadata.
         break;
     }
   }

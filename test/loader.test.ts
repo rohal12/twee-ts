@@ -16,7 +16,9 @@ describe('loadSources', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('loads .tw files as passages', () => {
     const file = join(tmpDir, 'story.tw');
@@ -265,7 +267,9 @@ describe('loadInlineSources: BOM and line-ending normalization', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   function loadInline(filename: string, content: string | Buffer): { story: Story; diagnostics: Diagnostic[] } {
     const story = freshStory();
@@ -355,7 +359,9 @@ describe('loadSources: Twine 2 HTML story name', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   const NAMED_HTML = `<tw-storydata name="Review Story" startnode="1" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" hidden>
 <tw-passagedata pid="1" name="Start" tags="" position="100,100" size="100,100">Hello</tw-passagedata>
@@ -419,7 +425,9 @@ describe('loadSourcesCached: generated passage names', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-loader-names-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function write(name: string, content: string): string {
     const file = join(dir, name);

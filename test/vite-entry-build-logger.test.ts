@@ -36,7 +36,9 @@ async function freePort(): Promise<number> {
     const probe = createNetServer();
     probe.listen(0, '127.0.0.1', () => {
       const { port } = probe.address() as AddressInfo;
-      probe.close(() => done(port));
+      probe.close(() => {
+        done(port);
+      });
     });
   });
 }
@@ -89,7 +91,7 @@ describe('vite plugin: the logger of the dev entry build', { timeout: 30_000 }, 
       name: 'test-logger-probe',
       configResolved(config) {
         // Only the entry build writes nothing.
-        if (config.build.write !== false) return;
+        if (config.build.write) return;
         sawEntryBuild = true;
         config.logger.info('entry-info');
         config.logger.warn('entry-warn');
@@ -143,8 +145,12 @@ describe('vite plugin: dev server requests and connections', { timeout: 30_000 }
     const socket = new WebSocket(url.replace('http', 'ws'), 'vite-hmr');
     try {
       await new Promise<void>((done, fail) => {
-        socket.addEventListener('open', () => done());
-        socket.addEventListener('error', () => fail(new Error('websocket failed')));
+        socket.addEventListener('open', () => {
+          done();
+        });
+        socket.addEventListener('error', () => {
+          fail(new Error('websocket failed'));
+        });
       });
       await new Promise((r) => setTimeout(r, 100));
       expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));

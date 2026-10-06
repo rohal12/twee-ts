@@ -52,7 +52,11 @@ async function startServer(route?: (url: string) => string | Uint8Array | undefi
       req,
       res,
       answer: (body) => res.end(body),
-      closed: new Promise((done) => res.once('close', () => done())),
+      closed: new Promise((done) =>
+        res.once('close', () => {
+          done();
+        }),
+      ),
     };
     const waiter = waiting.shift();
     if (waiter) waiter(held);
@@ -84,7 +88,17 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   await Promise.all(
-    servers.splice(0).map((s) => new Promise<void>((done) => (s.closeAllConnections(), s.close(() => done())))),
+    servers.splice(0).map(
+      (s) =>
+        new Promise<void>(
+          (done) => (
+            s.closeAllConnections(),
+            s.close(() => {
+              done();
+            })
+          ),
+        ),
+    ),
   );
   if (origCache !== undefined) process.env['XDG_CACHE_HOME'] = origCache;
   else delete process.env['XDG_CACHE_HOME'];
@@ -309,7 +323,9 @@ describe('a download must be the format its index entry names (#207)', () => {
     beforeEach(() => {
       const realFetch = globalThis.fetch;
       vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) =>
-        String(input).includes('videlais.github.io')
+        (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).includes(
+          'videlais.github.io',
+        )
           ? Promise.resolve(new Response(JSON.stringify({ twine1: [], twine2: [] })))
           : realFetch(input, init),
       );

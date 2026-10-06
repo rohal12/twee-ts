@@ -13,6 +13,7 @@ import {
 } from '../src/formats.js';
 import { decodeFormatJSON, parseFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, FormatRequest } from '../src/types.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'storyformats');
 
@@ -253,8 +254,13 @@ describe('relaxed format.js parsing (#154)', () => {
   /** What Twine 2 sees: it runs format.js as JavaScript. */
   function evaluate(formatJs: string): Record<string, unknown> {
     let captured: unknown;
-    const run = new Function('window', formatJs) as (window: { storyFormat: (o: unknown) => void }) => void;
-    run({ storyFormat: (o) => (captured = o) });
+    evaluateJavaScript(formatJs, {
+      window: {
+        storyFormat: (o: unknown) => {
+          captured = o;
+        },
+      },
+    });
     if (typeof captured !== 'object' || captured === null) throw new Error('format.js did not call storyFormat');
     return captured as Record<string, unknown>;
   }

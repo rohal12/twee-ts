@@ -328,7 +328,9 @@ export function watchFilesystem(
   outFilename: string,
   callback: (changedFiles?: ReadonlySet<string>) => void,
   ignore: (filename: string) => boolean = () => false,
-  onError: (error: WatchPathError) => void = () => {},
+  onError: (error: WatchPathError) => void = () => {
+    // Errors are dropped when the caller does not ask for them.
+  },
 ): WatchHandle {
   const output = outputPaths(toBuildOutputs(outFilename));
   let buildTimer: ReturnType<typeof setTimeout> | null = null;
@@ -377,7 +379,8 @@ export function watchFilesystem(
     onError(error);
   }
 
-  function startWatch(root: Root, path: string, recursive: boolean, listener: (filename: string) => void): void {
+  /** Starts one watch for `root`; false, with the error reported, when it can't be started. */
+  function startWatch(root: Root, path: string, recursive: boolean, listener: (filename: string) => void): boolean {
     try {
       // A recursive watch on a folder it can't read starts without an error on Linux, and
       // then never reports anything: check first.
@@ -392,9 +395,10 @@ export function watchFilesystem(
         if (!closed && !recheck(root, false)) report(root, e);
       });
       root.watchers.push(watcher);
+      return true;
     } catch (e) {
-      root.failed = true;
       report(root, e);
+      return false;
     }
   }
 
@@ -404,7 +408,8 @@ export function watchFilesystem(
     root.watchers = [];
     root.failed = false;
     const { anchor, self } = root.state;
-    if (anchor) {
+    const anchorStarted =
+      !anchor ||
       startWatch(root, anchor.path, false, (filename) => {
         // A file is watched through its folder, not on its own: the OS reports only the file's
         // name for a watch on the file, and an editor that saves by replacing the file would
@@ -414,8 +419,8 @@ export function watchFilesystem(
         const isFile = before === 'file' || isNamedFile(root.abs);
         if (isFile && filename !== '' && resolve(anchor.path, filename) === root.abs) fileChanged(root.abs, true);
       });
-    }
-    if (self.kind === 'dir') {
+    const selfStarted =
+      self.kind !== 'dir' ||
       startWatch(root, root.path, true, (filename) => {
         // No name: an event on the folder itself, such as its deletion.
         if (filename === '') recheck(root, true);
@@ -424,8 +429,8 @@ export function watchFilesystem(
           fileChanged(abs, isNamedFile(abs));
         }
       });
-    }
-    if (!root.failed) root.lastReport = undefined;
+    if (anchorStarted && selfStarted) root.lastReport = undefined;
+    else root.failed = true;
   }
 
   /**

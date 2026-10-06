@@ -20,7 +20,9 @@ describe('getFilenames', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'twee-ts-fs-'));
   });
-  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('collects files from a directory', () => {
     writeFileSync(join(tmpDir, 'a.tw'), '');
@@ -143,7 +145,9 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
     mkdirSync(story);
     writeFileSync(join(story, 'a.tw'), ':: Start\nHello\n');
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   const names = (filenames: readonly string[]): string[] => filenames.map((f) => relative(root, resolve(f))).sort();
 
@@ -375,7 +379,9 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
         ready.length > 0
           ? Promise.resolve(ready.shift())
           : new Promise((done, fail) => {
-              const timer = setTimeout(() => fail(new Error('no rebuild within 10 s')), 10_000);
+              const timer = setTimeout(() => {
+                fail(new Error('no rebuild within 10 s'));
+              }, 10_000);
               waiting.push((files) => {
                 clearTimeout(timer);
                 done(files);

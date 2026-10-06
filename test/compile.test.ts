@@ -6,6 +6,8 @@ import { compile, compileIncremental, compileToFile, TweeTsError } from '../src/
 import type { CompileResult, Diagnostic, FileCacheEntry } from '../src/types.js';
 import { decompileHTML } from '../src/html-parser.js';
 import { Parser } from 'htmlparser2';
+import { evaluateJavaScript } from './helpers/javascript.js';
+import { parseJsonObject } from './helpers/json.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -89,10 +91,10 @@ describe('compile', () => {
       outputMode: 'json',
     });
 
-    const json = JSON.parse(result.output);
-    expect(json.name).toBe('A Story With Metadata');
-    expect(json.ifid).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
-    expect(json.passages.length).toBeGreaterThan(0);
+    const json = parseJsonObject(result.output);
+    expect(json['name']).toBe('A Story With Metadata');
+    expect(json['ifid']).toBe('D674C58C-DEFA-4F70-B7A2-27742230C0FC');
+    expect(json['passages']).toEqual(expect.arrayContaining([expect.anything()]));
   });
 
   it('supports inline sources', async () => {
@@ -130,10 +132,10 @@ describe('compile', () => {
       outputMode: 'json',
     });
 
-    const json = JSON.parse(result.output);
-    expect(json.format).toBe('SugarCube');
+    const json = parseJsonObject(result.output);
+    expect(json['format']).toBe('SugarCube');
     expect(json['format-version']).toBe('2.37.3');
-    expect(json.start).toBe('Begin');
+    expect(json['start']).toBe('Begin');
     expect(json['tag-colors']).toEqual({ location: 'green', character: 'blue' });
   });
 
@@ -239,7 +241,9 @@ describe('compile with exclude', () => {
     writeFileSync(join(dir, 'story', 'art', 'scene.png'), Buffer.alloc(16, 7));
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('loads every media file found in a source folder by default, as Tweego does', async () => {
     const result = await compile({ ...options, sources: [join(dir, 'story')] });
@@ -290,14 +294,16 @@ describe('compile with closing tags inside scripts and styles', () => {
   /** The JavaScript a script holding `code` leaves in the page: evaluates it and returns the window it set. */
   function run(code: string): Record<string, unknown> {
     const window: Record<string, unknown> = {};
-    new Function('window', code)(window);
+    evaluateJavaScript(code, { window });
     return window;
   }
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-closing-tags-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('keeps a JavaScript source holding a closing script tag whole', async () => {
     const result = await compile({
@@ -411,7 +417,9 @@ describe('compileToFile with the output inside a source folder', () => {
     writeFileSync(start, passages('ORIGINAL_CONTENT', '\n:: Gone\nSOON_DELETED\n'));
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it.each([
     ['an absolute', (p: string) => p],
@@ -457,7 +465,9 @@ describe.skipIf(process.platform === 'win32')('compileToFile with the output rea
   beforeEach(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'twee-ts-links-')));
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   /** Builds twice, editing Start and deleting a passage in between; returns the second build. */
   async function twoBuilds(start: string, sources: string, outFile: string) {
@@ -510,7 +520,9 @@ describe('compileToFile with a named source that is the output (#157)', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'twee-ts-inplace-'));
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   it('rejects a source file that is the output and leaves it unchanged', async () => {
     const file = join(root, 'a.tw');
@@ -575,7 +587,7 @@ describe('Twee output records the effective StoryData', () => {
   }
 
   for (const outputMode of TWEE_MODES) {
-    describe(outputMode, () => {
+    describe(`output mode ${outputMode}`, () => {
       it('keeps a start passage override through a round trip', async () => {
         const { first, again } = await roundTrip(SOURCE, outputMode, { startPassage: 'Prologue' });
         expect(first.story.twine2.start).toBe('Prologue');
@@ -657,7 +669,9 @@ describe('a wrapped IFID is written as the bare UUID', () => {
     );
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function compileWrapped(outputMode: 'html' | 'twine2-archive' | 'twee3' | 'json', content = SOURCE) {
     return compile({
@@ -698,7 +712,7 @@ describe('a wrapped IFID is written as the bare UUID', () => {
 
   it('writes the bare UUID in JSON output', async () => {
     const result = await compileWrapped('json');
-    expect(JSON.parse(result.output).ifid).toBe(BARE);
+    expect(parseJsonObject(result.output)['ifid']).toBe(BARE);
   });
 
   it('writes the bare UUID into Twee StoryData, which compiles again to the same IFID', async () => {
@@ -754,7 +768,9 @@ describe('format template placeholders', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-template-placeholders-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('keeps a title holding {{STORY_DATA}} and passage text holding {{STORY_NAME}} literal', async () => {
     const result = await compile({ ...html, sources: [story('{{STORY_DATA}}', 'Hi {{STORY_NAME}} {{STORY_DATA}}')] });
@@ -836,7 +852,7 @@ describe('format template placeholders', () => {
       expect(scripts).toHaveLength(2);
       // With no `<` in the inserted literal, no HTML tokenizer state can end or extend the element early.
       expect(scripts[0]).toMatch(/^var start="[^<]*";$/);
-      expect(new Function(`${scripts[0] ?? ''}; return start;`)()).toBe(start);
+      expect(evaluateJavaScript(`${scripts[0] ?? ''}; return start;`)).toBe(start);
       expect(scripts[1]).toBe('var other = 1;');
     });
   }
@@ -892,7 +908,9 @@ describe('module and head file injection', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-head-injection-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   const CLOSING_TAGS: readonly (readonly [string, string])[] = [
     ['lowercase', '</head>'],
@@ -1095,7 +1113,9 @@ describe('compile with sources that are not valid UTF-8', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-encoding-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('reads Windows-1252 Twee and CSS files as Windows-1252, as Tweego does, and warns for each', async () => {
     const tw = join(dir, 'story.tw');
@@ -1221,7 +1241,7 @@ function twine2HTML(opts: {
   readonly style?: string;
   readonly passage?: string;
 }): string {
-  const ifid = opts.ifid === undefined ? `ifid="${IFID}"` : opts.ifid;
+  const ifid = opts.ifid ?? `ifid="${IFID}"`;
   return (
     `<tw-storydata name="${opts.name}" startnode="1" ${ifid} format="Test Format" format-version="1.0.0">` +
     (opts.style === undefined ? '' : `<style role="stylesheet" type="text/twine-css">${opts.style}</style>`) +
@@ -1241,7 +1261,9 @@ describe('passage names generated for loaded files are unique across the story',
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-generated-names-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function write(name: string, content: string | Buffer): string {
     const file = join(dir, name);
@@ -1432,7 +1454,9 @@ describe('StoryData from several sources', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-storydata-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('takes the story metadata from the last StoryData passage alone', async () => {
     const result = await compile({
@@ -1482,7 +1506,9 @@ describe('compiling a Twine 2 HTML file with a bad tw-storydata ifid', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'twee-ts-html-ifid-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   async function compileHTML(ifid: string) {
     const file = join(dir, 'story.html');

@@ -13,14 +13,16 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFileAtomic } from '../src/atomic-write.js';
+import type * as NodeFs from 'node:fs';
 
 // writeFileSync passes through to the real one unless a test makes it fail part way.
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
 });
 
-const realWriteFileSync = (await vi.importActual<typeof import('node:fs')>('node:fs')).writeFileSync;
+const realWriteFileSync = (await vi.importActual<typeof NodeFs>('node:fs')).writeFileSync;
+import { textOf } from './helpers/text.js';
 const mockedWriteFileSync = vi.mocked(fs.writeFileSync);
 
 let dir: string;
@@ -41,7 +43,7 @@ afterEach(() => {
  */
 function failNextWritePartWay(during: () => void = () => {}): void {
   mockedWriteFileSync.mockImplementationOnce((file, data) => {
-    realWriteFileSync(file, String(data).slice(0, 10));
+    realWriteFileSync(file, textOf(data).slice(0, 10));
     during();
     throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
   });
@@ -51,6 +53,7 @@ describe('writeFileAtomic failures', () => {
   it('wraps a thrown value that is not an Error, without a code', () => {
     const path = join(dir, 'out.html');
     mockedWriteFileSync.mockImplementationOnce(() => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- the case under test: a thrown value that is not an Error.
       throw 'boom';
     });
     let thrown: unknown;
@@ -69,7 +72,9 @@ describe('writeFileAtomic failures', () => {
     mockedWriteFileSync.mockImplementationOnce(() => {
       throw new Error('disk on fire');
     });
-    expect(() => writeFileAtomic(path, 'x')).toThrow(`Cannot write ${path}: disk on fire`);
+    expect(() => {
+      writeFileAtomic(path, 'x');
+    }).toThrow(`Cannot write ${path}: disk on fire`);
   });
 });
 
@@ -95,7 +100,7 @@ describe('writeFileAtomic', () => {
     writeFileSync(path, old);
     const seen: string[] = [];
     mockedWriteFileSync.mockImplementationOnce((file, data) => {
-      realWriteFileSync(file, String(data).slice(0, 10));
+      realWriteFileSync(file, textOf(data).slice(0, 10));
       seen.push(readFileSync(path, 'utf-8')); // a reader in the middle of the write
       realWriteFileSync(file, data);
     });
@@ -109,7 +114,9 @@ describe('writeFileAtomic', () => {
     writeFileSync(path, '<html>last good build</html>');
     const seen: string[] = [];
     failNextWritePartWay(() => seen.push(readFileSync(path, 'utf-8')));
-    expect(() => writeFileAtomic(path, '<html>next build</html>')).toThrow(/out\.html.*ENOSPC/);
+    expect(() => {
+      writeFileAtomic(path, '<html>next build</html>');
+    }).toThrow(/out\.html.*ENOSPC/);
     expect(seen).toEqual(['<html>last good build</html>']);
     expect(readFileSync(path, 'utf-8')).toBe('<html>last good build</html>');
     expect(readdirSync(dir)).toEqual(['out.html']);
@@ -130,7 +137,9 @@ describe('writeFileAtomic', () => {
 
   it('names the destination when its folder does not exist', () => {
     const path = join(dir, 'missing', 'out.html');
-    expect(() => writeFileAtomic(path, 'x')).toThrow(path);
+    expect(() => {
+      writeFileAtomic(path, 'x');
+    }).toThrow(path);
   });
 
   it.skipIf(process.platform === 'win32')('keeps the permissions of the file it replaces', () => {
@@ -188,7 +197,9 @@ describe('writeFileAtomic', () => {
     it('fails and keeps the link when the target folder is missing', () => {
       const link = join(dir, 'link.html');
       symlinkSync(join('missing', 'served.html'), link);
-      expect(() => writeFileAtomic(link, 'new')).toThrow(link);
+      expect(() => {
+        writeFileAtomic(link, 'new');
+      }).toThrow(link);
       expect(fs.readlinkSync(link)).toBe(join('missing', 'served.html'));
       expect(entries()).toEqual(['link.html']);
     });
@@ -196,7 +207,9 @@ describe('writeFileAtomic', () => {
     it('fails and keeps both links of a cycle', () => {
       symlinkSync('b.html', join(dir, 'a.html'));
       symlinkSync('a.html', join(dir, 'b.html'));
-      expect(() => writeFileAtomic(join(dir, 'a.html'), 'new')).toThrow(/a\.html/);
+      expect(() => {
+        writeFileAtomic(join(dir, 'a.html'), 'new');
+      }).toThrow(/a\.html/);
       expect(fs.readlinkSync(join(dir, 'a.html'))).toBe('b.html');
       expect(fs.readlinkSync(join(dir, 'b.html'))).toBe('a.html');
       expect(entries()).toEqual(['a.html', 'b.html']);

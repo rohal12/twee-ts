@@ -218,7 +218,7 @@ async function main(): Promise<void> {
     console.log('Watch mode started. Press CTRL+C to stop.');
     // As in a one-shot build, a build with errors is not written: the output file keeps
     // the last good build until a save fixes the errors.
-    await watchWithWriteFilter(
+    watchWithWriteFilter(
       {
         ...compileOptions,
         outFile: outPath,
@@ -325,7 +325,7 @@ function listFormats(formatPaths: readonly string[], useTweegoPath: boolean): vo
   }
 }
 
-function logDiagnostics(diagnostics: Array<{ level: string; message: string }>): void {
+function logDiagnostics(diagnostics: readonly { readonly level: string; readonly message: string }[]): void {
   for (const d of diagnostics) {
     if (d.level === 'error') console.error(`error: ${d.message}`);
     else console.warn(`warning: ${d.message}`);

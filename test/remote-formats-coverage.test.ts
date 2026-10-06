@@ -33,13 +33,13 @@ function stubFetch(routes: Readonly<Record<string, string>>): string[] {
   const calls: string[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string | URL | Request) => {
+    vi.fn((input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(url);
       const body = routes[url];
-      return body === undefined
-        ? new Response('missing', { status: 404, statusText: 'Not Found' })
-        : new Response(body);
+      return Promise.resolve(
+        body === undefined ? new Response('missing', { status: 404, statusText: 'Not Found' }) : new Response(body),
+      );
     }),
   );
   return calls;

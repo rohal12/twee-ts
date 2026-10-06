@@ -106,9 +106,7 @@ function hasUserInput(userConfig: UserConfig): boolean {
 
 /** Build settings naming one input, under the option name this Vite version reads. */
 function inputOnly(input: string): NonNullable<InlineConfig['build']> {
-  return (viteMajor >= 8 ? { rolldownOptions: { input } } : { rollupOptions: { input } }) as NonNullable<
-    InlineConfig['build']
-  >;
+  return viteMajor >= 8 ? { rolldownOptions: { input } } : { rollupOptions: { input } };
 }
 
 /**
@@ -125,6 +123,15 @@ function entryBuildOptions(entryPath: string): NonNullable<InlineConfig['build']
       output: { format: 'iife', entryFileNames: ENTRY_SCRIPT_NAME, assetFileNames: '[name][extname]' },
     },
   };
+}
+
+/**
+ * Removes a file from the bundle, which Rollup and Vite hand plugins as a plain object keyed by
+ * file name: deleting its key is how a plugin drops an output file.
+ */
+function removeFromBundle(bundle: Record<string, unknown>, fileName: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- the bundle object is the bundler's API.
+  delete bundle[fileName];
 }
 
 /** Removes a trailing source-map comment that points at a file (a data: URL map stays). */
@@ -149,13 +156,13 @@ function takeEntryFromBundle(bundle: Record<string, BundleItem>): EntryBundle {
         entry.script = dropFileSourceMapComment(item.code);
         for (const id of item.moduleIds) if (!id.startsWith('\0')) entry.files.add(fileOfId(id));
       }
-      delete bundle[fileName];
+      removeFromBundle(bundle, fileName);
     } else if (fileName.endsWith('.css')) {
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
       styles.push(dropFileSourceMapComment(css));
-      delete bundle[fileName];
+      removeFromBundle(bundle, fileName);
     } else if (fileName.endsWith('.map')) {
-      delete bundle[fileName];
+      removeFromBundle(bundle, fileName);
     } else {
       entry.assets.set(fileName, item.source);
     }
@@ -329,7 +336,6 @@ function toOverlayError(e: unknown): ErrorPayload['err'] {
   };
 }
 
-/** Bundles the entry for dev with the user's own Vite config, unminified, with an inline source map. */
 /**
  * The entry build's logger: its warnings go to the dev server's logger; its
  * progress lines and its own "build failed" line are dropped, because the plugin
@@ -337,11 +343,21 @@ function toOverlayError(e: unknown): ErrorPayload['err'] {
  */
 function entryBuildLogger(outer: Logger): Logger {
   return {
-    info: () => {},
-    warn: (message, options) => outer.warn(message, options),
-    warnOnce: (message, options) => outer.warnOnce(message, options),
-    error: () => {},
-    clearScreen: () => {},
+    info: () => {
+      // Progress lines are dropped.
+    },
+    warn: (message, options) => {
+      outer.warn(message, options);
+    },
+    warnOnce: (message, options) => {
+      outer.warnOnce(message, options);
+    },
+    error: () => {
+      // The plugin reports a failed bundle itself.
+    },
+    clearScreen: () => {
+      // The dev server's screen is not the entry build's to clear.
+    },
     hasErrorLogged: () => false,
     get hasWarned() {
       return outer.hasWarned;
@@ -383,10 +399,12 @@ function recordingContext(context: object, files: Set<string>): object {
     get(target, key) {
       const value: unknown = Reflect.get(target, key, target);
       if (typeof value !== 'function') return value;
-      if (key !== 'addWatchFile') return value.bind(target);
-      return (id: string) => {
+      const bound: unknown = value.bind(target);
+      if (key !== 'addWatchFile') return bound;
+      return (id: string): unknown => {
         if (!id.startsWith('\0')) files.add(fileOfId(resolve(id)));
-        return value.call(target, id);
+        const result: unknown = value.call(target, id);
+        return result;
       };
     },
   });
@@ -583,7 +601,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       async handler(outputOptions, bundle) {
         if (innerBuild) return;
         for (const [fileName, item] of Object.entries(bundle)) {
-          if (item.type === 'chunk' && item.facadeModuleId === RESOLVED_EMPTY_INPUT) delete bundle[fileName];
+          if (item.type === 'chunk' && item.facadeModuleId === RESOLVED_EMPTY_INPUT) removeFromBundle(bundle, fileName);
         }
         // Where this output writes the story and the bundle, should the bundler's own
         // settings differ from what the config said. Nothing a build writes is a source.

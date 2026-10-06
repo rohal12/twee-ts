@@ -13,6 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import { compile } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
+import { parseJsonObject } from '../test/helpers/json.js';
 
 /** Typed representation of the Twine 2 JSON output, matching the spec structure. */
 interface TwineJsonStory {
@@ -125,7 +126,7 @@ describe('Twine 2 JSON Output Spec -- Required Story Properties', () => {
       sources: [{ filename: 'test.tw', content: minimalStory(':: Start\nHello') }],
       outputMode: 'json',
     });
-    expect(() => JSON.parse(result.output)).not.toThrow();
+    expect(() => parseJsonObject(result.output)).not.toThrow();
   });
 
   it('output is a JSON object (not an array or primitive)', async () => {
@@ -1054,7 +1055,7 @@ describe('Twine 2 JSON Output Spec -- JSON String Escaping', () => {
       outputMode: 'json',
     });
     // The raw JSON string must escape newlines as \n inside the text value
-    expect(() => JSON.parse(result.output)).not.toThrow();
+    expect(() => parseJsonObject(result.output)).not.toThrow();
     const json = JSON.parse(result.output) as TwineJsonStory;
     const start = json.passages.find((p) => p.name === 'Start');
     if (!start) throw new Error('expected Start passage');
@@ -1200,8 +1201,8 @@ describe('Twine 2 JSON Output Spec -- Passages Array Requirement', () => {
     // acceptable but a diagnostic (warning/error) is expected
     const hasPassageWarning = diagnostics.some(
       (d) =>
-        (d.level === 'error' || d.level === 'warning') &&
-        (d.message.toLowerCase().includes('passage') || d.message.toLowerCase().includes('start')),
+        // Every diagnostic is a warning or an error.
+        d.message.toLowerCase().includes('passage') || d.message.toLowerCase().includes('start'),
     );
     if (json.passages.length === 0 && hasPassageWarning) {
       expect(hasPassageWarning).toBe(true);
