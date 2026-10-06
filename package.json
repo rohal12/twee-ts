@@ -1,6 +1,6 @@
 {
   "name": "@rohal12/twee-ts",
-  "version": "1.2.0",
+  "version": "0.0.0-development",
   "description": "TypeScript Twee-to-HTML compiler — a complete reimplementation of Tweego",
   "type": "module",
   "license": "Unlicense",
@@ -10,7 +10,7 @@
   "author": "Rohal12",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rohal12/twee-ts.git"
+    "url": "git+https://github.com/rohal12/twee-ts.git"
   },
   "homepage": "https://github.com/rohal12/twee-ts",
   "bugs": "https://github.com/rohal12/twee-ts/issues",
@@ -24,37 +24,71 @@
     "story-format",
     "compiler"
   ],
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "vite": [
+        "./dist/plugins/vite.d.cts"
+      ],
+      "rollup": [
+        "./dist/plugins/rollup.d.cts"
+      ]
+    }
+  },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./vite": {
-      "types": "./dist/plugins/vite.d.ts",
-      "import": "./dist/plugins/vite.js"
+      "import": {
+        "types": "./dist/plugins/vite.d.ts",
+        "default": "./dist/plugins/vite.js"
+      },
+      "require": {
+        "types": "./dist/plugins/vite.d.cts",
+        "default": "./dist/plugins/vite.cjs"
+      }
     },
     "./rollup": {
-      "types": "./dist/plugins/rollup.d.ts",
-      "import": "./dist/plugins/rollup.js"
-    }
+      "import": {
+        "types": "./dist/plugins/rollup.d.ts",
+        "default": "./dist/plugins/rollup.js"
+      },
+      "require": {
+        "types": "./dist/plugins/rollup.d.cts",
+        "default": "./dist/plugins/rollup.cjs"
+      }
+    },
+    "./schemas/*.json": "./schemas/*.json",
+    "./package.json": "./package.json"
   },
   "bin": {
     "twee-ts": "./dist/bin/twee-ts.js"
   },
   "files": [
     "dist",
-    "schemas"
+    "!dist/bin/*.d.ts",
+    "schemas",
+    "THIRD_PARTY_NOTICES",
+    "UNLICENSE"
   ],
   "scripts": {
     "build": "tsdown",
+    "check:package": "pnpm run build && node scripts/check-package.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "knip": "knip",
-    "prepublishOnly": "pnpm run typecheck && pnpm test && pnpm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "duplication": "tsx scripts/duplication.ts",
@@ -64,7 +98,7 @@
   },
   "packageManager": "pnpm@10.14.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

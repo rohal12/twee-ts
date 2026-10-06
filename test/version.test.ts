@@ -42,6 +42,13 @@ describe('findPackageVersion', () => {
 });
 
 describe('VERSION', () => {
+  // The release writes the real version into the package.json it publishes; git never holds a
+  // release number, so a build from a checkout (tests, git dependency, pnpm link) reports this
+  // marker instead of a stale release. scripts/check-package.mjs checks the published side.
+  it('is the development marker in a checkout, not a release number', () => {
+    expect(VERSION).toBe('0.0.0-development');
+  });
+
   it('is the version in the repository package.json', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string };
     expect(VERSION).toBe(pkg.version);
