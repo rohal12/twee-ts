@@ -16,11 +16,11 @@ import {
   discoverFormats,
   getFormatIdByName,
   getFormatIdByNameAndVersion,
-  parseFormatJSON,
   parseSemver,
   readFormatSource,
   semverCompare,
 } from '../src/formats.js';
+import { parseFormatJSON } from '../src/format-decode.js';
 import type { StoryFormatInfo } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');

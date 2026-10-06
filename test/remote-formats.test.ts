@@ -28,7 +28,7 @@ import {
   fetchIndex,
 } from '../src/remote-formats.js';
 import { compile } from '../src/compiler.js';
-import { parseFormatJSON } from '../src/formats.js';
+import { parseFormatJSON } from '../src/format-decode.js';
 import type { CompileResult, SFAIndex, SFAIndexEntry } from '../src/types.js';
 
 // lstatSync and writeFileSync pass through to the real ones unless a test stands in for

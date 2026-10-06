@@ -3,16 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  decodeFormatJSON,
   discoverAllFormats,
   discoverFormats,
   getFormatIdByName,
   getFormatIdByNameAndVersion,
   makeFormatId,
-  parseFormatJSON,
   readFormatSource,
   selectFormatCandidate,
 } from '../src/formats.js';
+import { decodeFormatJSON, parseFormatJSON } from '../src/format-decode.js';
 import type { Diagnostic, FormatRequest } from '../src/types.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'storyformats');

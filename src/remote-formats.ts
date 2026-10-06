@@ -19,7 +19,8 @@ import type {
   StoryFormatInfo,
   Twine2FormatJSON,
 } from './types.js';
-import { parseSemver, parseFormatJSON, makeFormatId, selectFormatCandidate, UNNAMED_FORMAT_NAME } from './formats.js';
+import { parseFormatJSON, UNNAMED_FORMAT_NAME } from './format-decode.js';
+import { parseSemver, makeFormatId, selectFormatCandidate } from './formats.js';
 import type { SelectFormatOptions } from './formats.js';
 import { sameVersion } from './semver.js';
 import { decodeText, readUTF8 } from './util.js';
