@@ -15,15 +15,9 @@ const RE_SOURCE_MAPPING_URL = /\n\/\/# sourceMappingURL=\S+\s*$/;
  */
 const BUNDLED_PACKAGES = ['htmlparser2', 'domhandler', 'domelementtype', 'entities'];
 
-const BIN_ENTRY = 'bin/twee-ts';
+const BIN_CHUNK = 'bin/twee-ts.js';
 const LEGAL_BANNER =
   '/*! @rohal12/twee-ts (Unlicense). Bundles third-party code under its own licence: see THIRD_PARTY_NOTICES. */';
-
-const library = {
-  index: 'src/index.ts',
-  'plugins/vite': 'src/plugins/vite.ts',
-  'plugins/rollup': 'src/plugins/rollup.ts',
-};
 
 /**
  * Packages whose type declarations exist only for ESM consumers (Vite 7 and later ship no CJS
@@ -90,19 +84,28 @@ const shared = {
 
 // One rolldown graph per format: every entry shares the same chunks, so the compiler (and
 // TweeTsError, and module state such as the format caches) exists once per format, whichever
-// entry point loads it.
+// entry point loads it. The entries are written out literally: knip reads them from this file.
 export default defineConfig([
   {
     ...shared,
-    entry: { ...library, [BIN_ENTRY]: 'bin/twee-ts.ts' },
+    entry: {
+      index: 'src/index.ts',
+      'plugins/vite': 'src/plugins/vite.ts',
+      'plugins/rollup': 'src/plugins/rollup.ts',
+      'bin/twee-ts': 'bin/twee-ts.ts',
+    },
     format: 'esm',
     banner: ({ fileName }) => ({
-      js: fileName === `${BIN_ENTRY}.js` ? `#!/usr/bin/env node\n${LEGAL_BANNER}` : LEGAL_BANNER,
+      js: fileName === BIN_CHUNK ? `#!/usr/bin/env node\n${LEGAL_BANNER}` : LEGAL_BANNER,
     }),
   },
   {
     ...shared,
-    entry: library,
+    entry: {
+      index: 'src/index.ts',
+      'plugins/vite': 'src/plugins/vite.ts',
+      'plugins/rollup': 'src/plugins/rollup.ts',
+    },
     format: 'cjs',
     banner: { js: LEGAL_BANNER },
   },
