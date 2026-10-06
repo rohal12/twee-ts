@@ -11,7 +11,7 @@ import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite'
 import type { FileCacheEntry } from '../types.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
 import type { BuildOutputs } from '../filesystem.js';
-import { mediaTypeFromFilename } from '../media-types.js';
+import { mediaTypeFromFilename, normalizedFileExt } from '../media-types.js';
 import { viteWaitingPage } from '../html-structure.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
@@ -75,6 +75,26 @@ function toOverlayError(e: unknown): ErrorPayload['err'] {
     ...(error.id ? { id: error.id } : {}),
     ...(error.loc ? { loc: error.loc } : {}),
   };
+}
+
+/**
+ * Media types of the files a bundle emits that Tweego's table of story media does not have: a browser
+ * refuses a worker or stylesheet served as `application/octet-stream`.
+ */
+const BUNDLE_MEDIA_TYPES: ReadonlyMap<string, string> = new Map([
+  ['js', 'text/javascript'],
+  ['mjs', 'text/javascript'],
+  ['css', 'text/css'],
+  ['json', 'application/json'],
+  ['map', 'application/json'],
+  ['wasm', 'application/wasm'],
+  ['html', 'text/html; charset=utf-8'],
+  ['txt', 'text/plain; charset=utf-8'],
+]);
+
+/** The media type the dev server gives an asset of the entry's bundle. */
+function assetMediaType(path: string): string {
+  return BUNDLE_MEDIA_TYPES.get(normalizedFileExt(path)) ?? mediaTypeFromFilename(path);
 }
 
 /**
@@ -210,7 +230,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       entryStates = fileStates(entryFiles);
       watchEntryFiles(entryFiles);
     }
-    const next = await bundleEntry(config, entryPath, 'serve');
+    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename);
     entry = next;
     entryStale = false;
     entryFiles = tracked(next.files);
@@ -349,6 +369,6 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       next();
       return;
     }
-    send(req, res, mediaTypeFromFilename(path), asset);
+    send(req, res, assetMediaType(path), asset);
   };
 }

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An authored file of a loadable type inside a source or module folder is no longer taken for an earlier build, and overwritten, because its text quotes a build mark: an earlier build is recognised by its structure (JSON output by its creator and passages, Twine 2 HTML and archives by their `tw-storydata` element, Twine 1 HTML by its store area and version text, HTML only from a `.html` or `.htm` file), so such a file is refused (`OUTPUT_IS_INPUT`) and kept (#273)
+- `new URL('./image.png', import.meta.url)` and Vite's worker URLs in a Vite `entry` give valid URLs in the story script, in dev and in both production entry builds: `import.meta.url` stands for the story page's URL. The dev server serves the files of the entry bundle (a worker, a stylesheet) with their own media types, not `application/octet-stream` (#274)
+- Saving a verified download over a damaged content directory of the format cache writes the damaged or missing files again, so the next offline build finds the format (#275)
+- A cache writer's cleanup removes the content directory its record replaced, and any other that no record names once it is older than ten minutes, and it reads the published record when it cleans up: it no longer removes the content another writer's record names or is still writing (#276)
+- A Twine 1 format downloaded from an index builds from its verified `code.js` and `userlib.js` when the cache cannot be written, and from the cached copy's verified bytes otherwise (#277)
+
 ## [2.0.0] - 2026-10-06
 
 [Migrating to 2.0](docs/migrating-to-2.md) explains each breaking change and what to do about it.
