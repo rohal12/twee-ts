@@ -144,3 +144,17 @@ describe('fontFormatHint', () => {
     expect(fontFormatHint('woff2')).toBe('woff2');
   });
 });
+
+describe('mediaTypeFromExt with inherited object keys', () => {
+  it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', '', 'unknown'])(
+    'falls back to octet-stream for %j',
+    (ext) => {
+      expect(mediaTypeFromExt(ext)).toBe('application/octet-stream');
+      expect(mediaTypeFromFilename(`probe.${ext.toUpperCase()}`)).toBe('application/octet-stream');
+    },
+  );
+
+  it('still maps a declared extension', () => {
+    expect(mediaTypeFromExt('png')).toBe('image/png');
+  });
+});

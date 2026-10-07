@@ -67,7 +67,7 @@ export function pathBelowBase(url: string, base: string): string | undefined {
   let decodedBase;
   try {
     path = decodeURIComponent(raw);
-    decodedBase = decodeURI(base);
+    decodedBase = decodeURIComponent(base);
   } catch {
     return undefined;
   }

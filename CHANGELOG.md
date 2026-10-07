@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A relative `exclude` in a config whose folder name holds glob syntax (`chapter[one]`, `chapter{one,two}`) keeps excluding: the folder's name is matched literally and only the supplied suffix is a glob (#316)
+- The Vite dev server decodes the configured `base` as it decodes the request, so a base with `%3F`, `%23` or `%2F` serves the story and bundle assets (#317)
+- A bundle asset with an extension that is an inherited object key (`.constructor`, `.__proto__`) is served as `application/octet-stream`, not an invalid `Content-Type` (#318)
 - A `null` or empty repeated `options` array in StoryData drops the slots of the earlier arrays, as Go replaces the slice, so a later `[null]` no longer brings back a cleared option (#306)
 - The Vite dev server keeps the modules a failed first entry bundle loaded, so fixing an imported module recovers the story with the watcher off, too (#269)
 - Validating where `{{STORY_DATA}}` lands in a format template walks the HTML tree with an explicit stack, so deeply nested templates no longer fail with a `RangeError` (#314)

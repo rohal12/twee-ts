@@ -44,7 +44,9 @@ const MEDIA_TYPE_MAP: Record<string, string> = {
 };
 
 export function mediaTypeFromExt(ext: string): string {
-  return MEDIA_TYPE_MAP[ext] ?? 'application/octet-stream';
+  return Object.hasOwn(MEDIA_TYPE_MAP, ext)
+    ? (MEDIA_TYPE_MAP[ext] ?? 'application/octet-stream')
+    : 'application/octet-stream';
 }
 
 export function mediaTypeFromFilename(filename: string): string {

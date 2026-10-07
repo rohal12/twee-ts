@@ -20,7 +20,7 @@ import {
   tagAliasProblem,
   validateConfig,
 } from '../src/config.js';
-import { identify } from '../src/path-identity.js';
+import { identify, matchesExclude } from '../src/path-identity.js';
 import { parseJsonObject } from './helpers/json.js';
 
 const SCHEMA_PATH = resolve(import.meta.dirname, '..', 'schemas', 'twee-ts.config.schema.json');
@@ -181,6 +181,22 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     });
     expect(rebaseConfigPaths({ output: '-' }, join(dir, 'c.json'))).toEqual({ output: '-' });
   });
+
+  it.each(['chapter[one]', 'chapter{one,two}', 'a(b)+c@d', '!draft', 'x/{a,b}/y', 'ordinary'])(
+    'keeps the config folder %s literal and only the exclude suffix a glob',
+    (name) => {
+      const folder = join(dir, name);
+      mkdirSync(join(folder, 'src'), { recursive: true });
+      mkdirSync(join(dir, 'sibling', 'src'), { recursive: true });
+      const config = rebaseConfigPaths({ exclude: ['src/**/*.tw', 'src/*.{tw,twee}'] }, join(folder, 'c.json'));
+      const exclude = config.exclude ?? [];
+      const hit = (path: string): boolean => matchesExclude(identify(path), exclude);
+      expect(hit(join(folder, 'src', 'a.tw'))).toBe(true);
+      expect(hit(join(folder, 'src', 'a.twee'))).toBe(true);
+      expect(hit(join(folder, 'src', 'a.css'))).toBe(false);
+      expect(hit(join(dir, 'sibling', 'src', 'a.tw'))).toBe(false);
+    },
+  );
 
   it('leaves a config in the working directory as it is', () => {
     const config = { sources: ['src'], output: 'out.html' };
