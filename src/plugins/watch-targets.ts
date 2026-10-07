@@ -5,8 +5,8 @@
  * watch a registered folder recursively; earlier ones see only the folder's own
  * entries. So every path is registered on its own as well.
  */
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -73,5 +73,24 @@ export function watchTargets(
     const whole = !outputs.holds(folder) && children.every((child) => child.whole);
     return whole ? { targets: [...spell(path, folder), ...held], whole } : { targets: held, whole };
   };
-  return inputs.flatMap((input) => walk(input, realPathOf(input), true).targets);
+  return inputs.flatMap((input) => [
+    ...(spelling === 'real' ? linkedAncestors(input) : []),
+    ...walk(input, realPathOf(input), true).targets,
+  ]);
+}
+
+/**
+ * The links among the folders above `path`, as authored (forward slashes), nearest last. Replacing one of them
+ * changes what the input is, and only its own location sees that.
+ */
+function linkedAncestors(path: string): string[] {
+  const links: string[] = [];
+  for (let folder = dirname(path); dirname(folder) !== folder; folder = dirname(folder)) {
+    try {
+      if (lstatSync(folder).isSymbolicLink()) links.unshift(toPosix(folder));
+    } catch {
+      // A folder that can't be read is no link to watch.
+    }
+  }
+  return links;
 }

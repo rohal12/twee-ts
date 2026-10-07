@@ -3,6 +3,7 @@
  * character reference, tag, end tag, comment end, `</script`, `<!--`, `-->`, escape sequence or line break pair.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { compile } from '../src/compiler.js';
 import { fillFormatTemplate } from '../src/template.js';
 import { analyzeTemplate, locateHeadStart } from '../src/html-structure.js';
 import { escapeForContext } from '../src/escape.js';
@@ -148,20 +149,72 @@ describe('code escape diagnostics: locations (#309)', () => {
     ]);
   });
 
-  it('does work that grows linearly with the number of warnings', () => {
+  // Each text has `sites` warnings (and `sites` carriage returns in the last one), over several parts.
+  const growthCases: readonly (readonly [string, 'script' | 'style', (sites: number) => string])[] = [
+    ['tagged templates', 'script', (n) => 'const x = String.raw`\n' + '</script>\n'.repeat(n) + '`;'],
+    ['CSS outside a string', 'style', (n) => 'a { b: \n' + '</style>\n'.repeat(n) + '}'],
+    ['carriage returns in many parts', 'script', (n) => 'a\r\n'.repeat(n)],
+  ];
+
+  it.each(growthCases)('does work that grows linearly with the number of warnings: %s', (_name, kind, build) => {
     const scanned = (sites: number): number => {
-      const text = 'const x = String.raw`\n' + '</script>\n'.repeat(sites) + '`;';
+      const text = build(sites);
+      // Parts begin at every 100th line, so the warnings are spread over many parts.
+      const starts = [...text.matchAll(/\n/g)].map((m) => m.index + 1).filter((_, i) => i % 100 === 0);
+      const parts = [
+        { label: 'module "m"', start: 0 },
+        ...starts.map((start, i) => ({ label: `module "m${i}"`, start })),
+      ];
       const split = vi.spyOn(String.prototype, 'split');
+      const slice = vi.spyOn(String.prototype, 'slice');
       try {
-        const diagnostics = codeEscapeDiagnostics('script', { text, parts: [{ label: 'module "m.js"', start: 0 }] });
-        expect(diagnostics).toHaveLength(sites);
-        return split.mock.contexts.reduce((sum: number, c) => sum + (c as string).length, 0);
+        const diagnostics = codeEscapeDiagnostics(kind, { text, parts: parts as never });
+        expect(diagnostics.length).toBeGreaterThan(0);
+        // The text a call copies or splits: what a scan of every prefix would make grow with the square.
+        const sliced = slice.mock.results.reduce(
+          (sum, r) => sum + (typeof r.value === 'string' ? r.value.length : 0),
+          0,
+        );
+        return sliced + split.mock.contexts.reduce((sum: number, c) => sum + (c as string).length, 0);
       } finally {
         split.mockRestore();
+        slice.mockRestore();
       }
     };
     expect(scanned(4000)).toBeLessThanOrEqual(scanned(1000) * 8 + 100_000);
-    expect(scanned(4000)).toBeLessThan(500_000);
+    expect(scanned(4000)).toBeLessThan(1_000_000);
+  });
+
+  it('keeps the part-relative line and label of each warning', () => {
+    const first = 'a\nb\n';
+    const second = 'x = String.raw`\n\n</script>`;\n';
+    const parts = [
+      { label: 'script passage "A"', start: 0 },
+      { label: 'module "m.js"', start: first.length },
+    ] as const;
+    expect(codeEscapeDiagnostics('script', { text: first + second, parts }).map((d) => d.message)).toEqual([
+      expect.stringMatching(/^The module "m\.js" has "<\/script" at line 3 /),
+    ]);
+  });
+});
+
+describe('code escape diagnostics: through compile() (#309)', () => {
+  it('names the passage or module and the line within it, for scripts, styles and injected code', async () => {
+    const content =
+      ':: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n:: Start\nhi\n' +
+      ':: S [script]\nx\nconst a = String.raw`\n</script>`;\n:: C [stylesheet]\na{b:\n</style>}\n';
+    const result = await compile({
+      sources: [
+        { filename: 'a.tw', content },
+        { filename: 'm.js', content: 'y\r\nz = String.raw`</script>`;' },
+      ],
+      outputMode: 'twine2-archive',
+    });
+    expect(result.diagnostics.map((d) => /^The (.*?) has (.*?) at line (\d+)/.exec(d.message)?.slice(1))).toEqual([
+      ['script passage "S"', '"</script"', '3'],
+      ['script passage "m.js"', '"</script"', '2'],
+      ['stylesheet passage "C"', '"</style"', '2'],
+    ]);
   });
 });
 

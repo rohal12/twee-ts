@@ -47,13 +47,14 @@ describe('watch targets', () => {
     symlinkSync(real, link, 'junction');
     const story = toPosix(realpathSync.native(join(real, 'story')));
     const authored = toPosix(join(link, 'story'));
-    // A path reached through a link is also registered as authored (#307).
+    // A path reached through a link is also registered as authored, with the link above it (#307).
     expect(watchTargets([authored], () => false, NO_OUTPUTS, 'real').sort()).toEqual(
       [
         story,
         `${story}/parts`,
         `${story}/parts/more.tw`,
         `${story}/start.tw`,
+        toPosix(link),
         authored,
         `${authored}/parts`,
         `${authored}/parts/more.tw`,

@@ -161,7 +161,7 @@ function isInside(file: string, folder: string): boolean {
 /** Runs the plugin's buildStart with a stand-in for Rollup's context; returns the files it registered. */
 function watchFiles(plugin: ReturnType<typeof tweeTsPlugin>, watchMode: boolean): string[] {
   const added: string[] = [];
-  plugin.buildStart.call({ addWatchFile: (id: string) => added.push(id), meta: { watchMode } });
+  plugin.buildStart.call({ addWatchFile: (id: string) => added.push(id), warn: () => {}, meta: { watchMode } });
   return added;
 }
 
