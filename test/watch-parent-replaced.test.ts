@@ -26,47 +26,52 @@ afterEach(() => {
 });
 
 describe('watch()', () => {
-  it('survives the parent of a named source becoming a file, and rebuilds when it is restored', async () => {
-    const folder = join(root, 'project');
-    mkdirSync(folder);
-    const source = join(folder, 'story.tw');
-    writeFileSync(source, STORY);
-    let builds = 0;
-    const controller = await watch({
-      sources: [source],
-      outputMode: 'json',
-      outFile: join(root, 'story.json'),
-      onBuild: () => {
-        builds++;
-      },
-      onError: () => {},
-    });
-    try {
-      await vi.waitFor(
-        () => {
-          expect(builds).toBe(1);
-        },
-        { timeout: 5000 },
-      );
-
-      renameSync(folder, join(root, 'project-old'));
-      writeFileSync(folder, 'now an ordinary file');
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      expect(uncaught).toEqual([]);
-      expect(controller.signal.aborted).toBe(false);
-
-      unlinkSync(folder);
+  // ENOTDIR is a POSIX lookup failure, and Windows does not let a watched folder be renamed away.
+  it.skipIf(process.platform === 'win32')(
+    'survives the parent of a named source becoming a file, and rebuilds when it is restored',
+    async () => {
+      const folder = join(root, 'project');
       mkdirSync(folder);
+      const source = join(folder, 'story.tw');
       writeFileSync(source, STORY);
-      await vi.waitFor(
-        () => {
-          expect(builds).toBeGreaterThan(1);
+      let builds = 0;
+      const controller = await watch({
+        sources: [source],
+        outputMode: 'json',
+        outFile: join(root, 'story.json'),
+        onBuild: () => {
+          builds++;
         },
-        { timeout: 8000 },
-      );
-      expect(uncaught).toEqual([]);
-    } finally {
-      controller.abort();
-    }
-  });
+        onError: () => {},
+      });
+      try {
+        await vi.waitFor(
+          () => {
+            expect(builds).toBe(1);
+          },
+          { timeout: 5000 },
+        );
+
+        renameSync(folder, join(root, 'project-old'));
+        writeFileSync(folder, 'now an ordinary file');
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        expect(uncaught).toEqual([]);
+        expect(controller.signal.aborted).toBe(false);
+
+        unlinkSync(folder);
+        mkdirSync(folder);
+        writeFileSync(source, STORY);
+        await vi.waitFor(
+          () => {
+            expect(builds).toBeGreaterThan(1);
+          },
+          { timeout: 8000 },
+        );
+        expect(uncaught).toEqual([]);
+      } finally {
+        controller.abort();
+      }
+    },
+    20_000,
+  );
 });
