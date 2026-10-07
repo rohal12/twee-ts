@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tag aliases keep a passage's own tags as written, a repeated tag included, whether or not an alias applies; they used to drop the repeat only when an alias added a tag (#297)
 - A StoryData or passage metadata key with `İ` or `ı` (U+0130, U+0131) no longer matches a field with `i`, as in Go's `encoding/json` and Tweego: `"İfid"` is an unknown key, not the IFID (#298)
 - A format cache writer's cleanup no longer removes the content directory that another writer, saving the same bytes again for the same origin, has just published: the directory is set aside, the record read again, and put back when the record names it, and a writer whose content is gone when it publishes writes it again (#291)
+- With a relative `base` (`'./'`) and a nested `outputFilename`, the URLs of the files the Vite `entry`'s build writes besides the story (an asset marked `?no-inline`, a worker) find the output folder, in the script and in its stylesheet, instead of a folder next to the story page; a config's own `experimental.renderBuiltUrl` decides first (#289)
+- The Vite dev server reloads for an edit to an `entry` file outside the root made before the watcher had set it up (on macOS, FSEvents starts reporting a moment after): once the file is watched, its state is compared with the bundle's (#292)
 - docs/api.md describes how `storyInspect()` and lint read links, with the forms that are read and the known gaps; the docs tests check each form against the link reader (#299)
 
 ### Fixed

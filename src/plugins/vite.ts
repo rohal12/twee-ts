@@ -29,6 +29,7 @@ import {
   bundleEntry,
   ENTRY_INPUT_NAME,
   entryInputSettings,
+  entryRenderBuiltUrl,
   entrySources,
   PLUGIN_NAME,
   removeFromBundle,
@@ -192,6 +193,19 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     // The story belongs to the client build. A server or worker
     // environment a framework adds builds no copy of it.
     applyToEnvironment: (environment) => environment.name === CLIENT,
+
+    // A build that bundles the entry inside itself finds the files it writes besides the story
+    // from the output folder (see entryRenderBuiltUrl). Its input is the client environment's, which
+    // configEnvironment below sets unless the config names one.
+    config: {
+      order: 'post',
+      handler(config, env) {
+        const client = config.environments?.[CLIENT] ?? {};
+        if (env.command !== 'build' || entryPath === undefined || namesInput(config) || namesInput(client)) return;
+        const renderBuiltUrl = entryRenderBuiltUrl(config.base, outputFilename, config.experimental?.renderBuiltUrl);
+        if (renderBuiltUrl !== undefined) config.experimental = { ...config.experimental, renderBuiltUrl };
+      },
+    },
 
     // The input of the client environment only.
     configEnvironment(name, environmentConfig, env) {

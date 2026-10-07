@@ -207,6 +207,33 @@ describe('vite plugin dependencies: dev (D4, #242)', { timeout: 30_000 }, () => 
     expect(await served(url)).toBe('two');
   });
 
+  it('reloads for an edit to a file outside the root made before the watcher set it up (#292)', async () => {
+    const kind = KINDS[0];
+    const place = PLACES[1];
+    if (kind === undefined || place === undefined) throw new Error('no such case');
+    const { root, plugins, write } = project(kind, place);
+    // The watcher sets up a file it is asked to add some time later (on macOS, FSEvents reports later still);
+    // here, much later, so the edit below comes before it and raises no event.
+    const slowWatcher: Plugin = {
+      name: 'slow-watcher',
+      configureServer(server) {
+        const add = server.watcher.add.bind(server.watcher);
+        server.watcher.add = (paths) => {
+          setTimeout(() => add(paths), 2_000);
+          return server.watcher;
+        };
+      },
+    };
+    const { server, url } = await startServer({ root, plugins: [slowWatcher, ...plugins] });
+    const send = vi.spyOn(server.ws, 'send');
+    write('two');
+    // No request is made before the reload: the plugin finds the edit once the file is watched.
+    await vi.waitFor(() => {
+      expect(reloads(send)).toBeGreaterThan(0);
+    }, SETTLED);
+    expect(await served(url)).toBe('two');
+  });
+
   it('stops watching a file outside the root the entry no longer uses', async () => {
     const kind = KINDS[0];
     const place = PLACES[1];

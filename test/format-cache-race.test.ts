@@ -152,6 +152,22 @@ describe('a cleanup and a writer that saves the replaced content again (#291)', 
     expect(usable()).toBe(true);
   });
 
+  it('leaves the entry as it is when another cleanup removed X first', () => {
+    const x = replacedByA();
+    pending.interleaves.push({
+      call: 'renameSync',
+      matches: (from, to) => from === join(keyDir(), x) && isAside(to ?? ''),
+      when: 'before',
+      run: () => {
+        rmSync(join(keyDir(), x), { recursive: true });
+      },
+    });
+    removeStaleContent(keyDir(), x);
+    expect(pending.interleaves).toEqual([]);
+    expect(readdirSync(keyDir()).filter((name) => name !== 'record.json')).toEqual([readRecord(ORIGIN)?.dir]);
+    expect(usable()).toBe(true);
+  });
+
   it('still removes the replaced content when no writer saves it again', () => {
     const x = replacedByA();
     removeStaleContent(keyDir(), x);

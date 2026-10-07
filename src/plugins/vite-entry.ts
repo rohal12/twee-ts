@@ -13,6 +13,7 @@ import type {
   LogLevel,
   Logger,
   Plugin,
+  RenderBuiltAssetUrl,
   ResolvedConfig,
   UserConfig,
 } from 'vite';
@@ -111,10 +112,45 @@ const ONE_FILE = { cssCodeSplit: false, assetsInlineLimit: (): boolean => true }
  * so the base is the story page's URL, taken up one level for each folder of a nested `outputFilename`.
  */
 function entryDefine(outputFilename: string): { readonly 'import.meta.url': string } {
-  const depth = outputFilename.split('/').length - 1;
+  const depth = folderDepth(outputFilename);
   const base =
     depth === 0 ? 'document.baseURI' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.baseURI).href`;
   return { 'import.meta.url': base };
+}
+
+/** How many folders deep `outputFilename` puts the story below the output folder. */
+function folderDepth(outputFilename: string): number {
+  return outputFilename.split('/').length - 1;
+}
+
+/**
+ * The `experimental.renderBuiltUrl` of a build that bundles the entry, given the build's `base`, the story's
+ * `outputFilename` and the configuration's own `renderBuiltUrl` (`user`, which decides first), or `user` itself
+ * when nothing changes. With a relative `base` (`''` or `'./'`), Vite makes the URL of a file the build writes
+ * besides the story (an asset marked `?no-inline`, a worker) relative to the script or stylesheet that names it.
+ * The story page holds both inline, so such a URL resolves against the page, which a nested `outputFilename` puts
+ * below the output folder the files are written to. For the entry's script, the URL is then resolved at run time
+ * against the output folder, as `import.meta.url` is (see `entryDefine`); in its stylesheet, it is a path up from
+ * the page. Every stylesheet of such a build is the entry's: the build bundles nothing else.
+ */
+export function entryRenderBuiltUrl(
+  base: string | undefined,
+  outputFilename: string,
+  user: RenderBuiltAssetUrl | undefined,
+): RenderBuiltAssetUrl | undefined {
+  const depth = folderDepth(outputFilename);
+  if ((base !== '' && base !== './') || depth === 0) return user;
+  const outputFolder = entryDefine(outputFilename)['import.meta.url'];
+  return (filename, type) => {
+    const own = user?.(filename, type);
+    if (own !== undefined) return own;
+    // As Vite writes a file name into a URL.
+    const path = filename.replaceAll('%', '%25');
+    if (type.hostType === 'js' && type.hostId === ENTRY_SCRIPT_NAME) {
+      return { runtime: `new URL(${JSON.stringify(path)}, ${outputFolder}).href` };
+    }
+    return type.hostType === 'css' ? `${'../'.repeat(depth)}${path}` : undefined;
+  };
 }
 
 /**
@@ -367,6 +403,8 @@ function entryBuildEnforcer(entryPath: string, command: ViteCommand, outputFilen
       handler(config) {
         config.build = entryBuildSettings(config.build, entryPath, command);
         config.define = { ...config.define, ...entryDefine(outputFilename) };
+        const renderBuiltUrl = entryRenderBuiltUrl(config.base, outputFilename, config.experimental?.renderBuiltUrl);
+        if (renderBuiltUrl !== undefined) config.experimental = { ...config.experimental, renderBuiltUrl };
       },
     },
     configEnvironment: {
