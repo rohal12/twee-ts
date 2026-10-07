@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readdirSync,
+  readlinkSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -390,6 +391,10 @@ interface BuildWatcher {
   close(): Promise<void>;
 }
 
+// DIAG: temporary, macOS investigation
+const DIAG: string[] = [];
+const T0 = Date.now();
+
 describe('vite plugin: build watch', { timeout: 30_000 }, () => {
   let watcher: BuildWatcher | undefined;
 
@@ -415,6 +420,7 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     watcher = started;
     await new Promise<void>((done, fail) => {
       started.on('event', (event) => {
+        DIAG.push(`${String(Date.now() - T0)} ${event.code}`); // DIAG: temporary, macOS investigation
         if (event.code === 'BUNDLE_END') void event.result?.close();
         if (event.code === 'END') done();
         if (event.code === 'ERROR') fail(new Error('the first build failed'));
@@ -493,6 +499,11 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
         .waitFor(() => {
           expect(story(out)).toContain('SECOND_TEXT');
         }, settled)
+        .catch((error: unknown) => {
+          // DIAG: temporary, macOS investigation
+          console.log('DIAG', JSON.stringify({ events: DIAG.slice(-40), link: readlinkSync(join(dir, 'story.tw')) }));
+          throw error;
+        })
         .finally(() => {
           clearInterval(again);
         });
