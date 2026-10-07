@@ -225,6 +225,14 @@ describe('plugin options: output file names (D10)', () => {
     expect(pathBelowBase('/game/%E0%A4%A.html', '/game/')).toBeUndefined();
     expect(pathBelowBase('/game/%69ndex.html', '/game/')).toBe('index.html');
   });
+
+  it.each(['/my%20game/', '/my%3Fgame/', '/my%23game/', '/my%2Fgame/', '/my%25game/', '/'])(
+    'reads a request below the encoded base %s the way Vite does',
+    (base) => {
+      expect(pathBelowBase(`${base}index.html?q=1#h`, base)).toBe('index.html');
+      expect(pathBelowBase('/elsewhere/index.html', base === '/' ? '/x/' : base)).toBeUndefined();
+    },
+  );
 });
 
 describe('plugin options: an output file name another file of the build has (D7)', () => {
