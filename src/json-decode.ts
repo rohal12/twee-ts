@@ -392,9 +392,14 @@ export interface FieldReader {
 }
 
 /** A field read with `decoder`, whose value goes to `assign` (called again for each repeated member). */
-export function field<T>(decoder: Decoder<T>, assign: (value: T) => void): FieldReader {
+export function field<T>(
+  decoder: Decoder<T>,
+  assign: (value: T) => void,
+  options?: { readonly onNull: 'keep' },
+): FieldReader {
   return {
     read(value, path, issues) {
+      if (value === null && options?.onNull === 'keep') return;
       const r = decoder(value, path, issues);
       if (r.ok) assign(r.value);
     },

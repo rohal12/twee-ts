@@ -9,6 +9,7 @@ import { join, relative } from 'node:path';
 import { watch } from 'rollup';
 import type { RollupWatcher, RollupWatcherEvent } from 'rollup';
 import { outputPaths } from '../src/filesystem.js';
+import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
@@ -45,12 +46,24 @@ describe('watch targets', () => {
     const link = join(tempDir(), 'project');
     symlinkSync(real, link, 'junction');
     const story = toPosix(realpathSync.native(join(real, 'story')));
-    expect(watchTargets([toPosix(join(link, 'story'))], () => false, NO_OUTPUTS, 'real').sort()).toEqual([
-      story,
-      `${story}/parts`,
-      `${story}/parts/more.tw`,
-      `${story}/start.tw`,
-    ]);
+    const authored = toPosix(join(link, 'story'));
+    // A path reached through a link is also registered as authored (#307).
+    expect(watchTargets([authored], () => false, NO_OUTPUTS, 'real').sort()).toEqual(
+      [
+        story,
+        `${story}/parts`,
+        `${story}/parts/more.tw`,
+        `${story}/start.tw`,
+        authored,
+        `${authored}/parts`,
+        `${authored}/parts/more.tw`,
+        `${authored}/start.tw`,
+      ].sort(),
+    );
+  });
+
+  it('keeps a literal backslash in a POSIX path and turns only the platform separator into a slash (#308)', () => {
+    expect(toPosix(`a${sep}b\\c`)).toBe(sep === '\\' ? 'a/b/c' : `a${sep}b\\c`);
   });
 
   it('registers a folder, and what it holds, when nothing below it is left out', () => {

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Repeated fields in one StoryData object or passage metadata block follow Go's `encoding/json`: a later `null` leaves an earlier string or number (`start`, `format`, `format-version`, `ifid`, `zoom`, `position`, `size`) and clears `options` and `tag-colors`; a repeated `tag-colors` object is merged into the earlier one, and a repeated `options` array decodes into the slots of the earlier one (#306)
+- Escape warnings for JavaScript and CSS find their line with a line index and binary searches instead of rescanning the text before each warning, so many warning sites no longer take quadratic time (#309)
+- The Vite and Rollup plugins keep a literal backslash in a POSIX input path (source, folder, module or head file) instead of reading it as a separator, so watching and the dev server's catch-up see edits to such files (#308)
+- `vite build --watch` also watches the authored location of an input reached through a link, so pointing a source link at another file rebuilds the story (#307)
 - Escape-site classification in JavaScript and CSS (`code-context.ts`) looks each site's literal up by binary search instead of rescanning every literal, so builds with many `</script>` or `</style>` strings no longer take quadratic time (#304)
 - A named output that becomes an authored source or module file inside a named folder while a story format is being resolved (edited, or created at a path that was empty) is rejected with `OUTPUT_IS_INPUT` before the write, and the file's bytes are kept: the folders are walked again at the write boundary (#301)
 - `watch()` follows the target of a symlinked source whose target name holds a backslash on POSIX: link targets are split with the platform's separators, as Windows still reads both spellings (#239)

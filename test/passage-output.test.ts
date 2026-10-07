@@ -11,6 +11,13 @@ import type { Passage, WordCountMethod } from '../src/types.js';
 
 const mk = (over: Partial<Passage> = {}): Passage => ({ name: 'A', tags: [], text: 'body', ...over });
 
+describe('decodePassageMetadata with a repeated position or size (#306)', () => {
+  it('keeps an earlier value that a later null repeats, and reads a first null as empty', () => {
+    const decoded = decodePassageMetadata('{"position":"1,2","position":null,"size":null}');
+    expect(decoded.ok && decoded.metadata).toEqual({ position: '1,2', size: '' });
+  });
+});
+
 describe('decodePassageMetadata', () => {
   it('keeps string values, reads null as empty and reports the values it leaves out', () => {
     expect(decodePassageMetadata('{"position":"1,2","size":null,"x":3,"y":"z"}')).toEqual({

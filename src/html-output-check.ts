@@ -131,9 +131,25 @@ export interface CodePart {
  */
 export function codeEscapeDiagnostics(kind: 'script' | 'style', code: CodeText): Diagnostic[] {
   const { text, parts } = code;
+  // Line starts are found once; each warning then costs two binary searches rather than a scan of the text.
+  const lineStarts = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) lineStarts.push(i + 1);
+  const lastAtOrBefore = (starts: readonly number[], offset: number): number => {
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if ((starts[mid] ?? 0) <= offset) low = mid;
+      else high = mid - 1;
+    }
+    return low;
+  };
+  const partStarts = parts.map((p) => p.start);
   const where = (offset: number, what: string): string => {
-    const part = parts.reduce((found, p) => (p.start <= offset ? p : found), parts[0]);
-    return `The ${part.label} has ${what} at line ${text.slice(part.start, offset).split('\n').length}`;
+    const part = parts[lastAtOrBefore(partStarts, offset)] ?? parts[0];
+    // Lines are counted from the start of the part, as the text before it is not that part's.
+    const line = lastAtOrBefore(lineStarts, offset) - lastAtOrBefore(lineStarts, part.start) + 1;
+    return `The ${part.label} has ${what} at line ${line}`;
   };
   const diagnostics: Diagnostic[] = [];
   // One warning for the first carriage return of each part.

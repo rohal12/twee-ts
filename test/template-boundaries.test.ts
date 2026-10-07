@@ -2,7 +2,7 @@
  * A value must form nothing with the template text right before or after its placeholder (issue #244 RC3): no
  * character reference, tag, end tag, comment end, `</script`, `<!--`, `-->`, escape sequence or line break pair.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fillFormatTemplate } from '../src/template.js';
 import { analyzeTemplate, locateHeadStart } from '../src/html-structure.js';
 import { escapeForContext } from '../src/escape.js';
@@ -131,6 +131,37 @@ describe('unknown variants are rejected', () => {
     // Within a script or style element, a context it does not know is one where no escaping keeps the value.
     expect(escapeForContext('x', unknown({ kind: 'script', js: { kind: 'nope' } }))).toBeUndefined();
     expect(escapeForContext('x', unknown({ kind: 'style', css: { kind: 'nope' } }))).toBeUndefined();
+  });
+});
+
+describe('code escape diagnostics: locations (#309)', () => {
+  it('numbers lines from the start of the part, across parts and carriage returns', () => {
+    const text = 'a\nb\r\nc`</script>`\nmodule\n\n`</script>`';
+    const parts = [
+      { label: 'script passage "A"', start: 0 },
+      { label: 'module "m.js"', start: text.indexOf('module') },
+    ] as const;
+    expect(codeEscapeDiagnostics('script', { text, parts }).map((d) => d.message)).toEqual([
+      'The script passage "A" has a carriage return at line 2, which the HTML parser reads as a line feed in a script element.',
+      expect.stringContaining('The script passage "A" has "</script" at line 3 '),
+      expect.stringContaining('The module "m.js" has "</script" at line 3 '),
+    ]);
+  });
+
+  it('does work that grows linearly with the number of warnings', () => {
+    const scanned = (sites: number): number => {
+      const text = 'const x = String.raw`\n' + '</script>\n'.repeat(sites) + '`;';
+      const split = vi.spyOn(String.prototype, 'split');
+      try {
+        const diagnostics = codeEscapeDiagnostics('script', { text, parts: [{ label: 'module "m.js"', start: 0 }] });
+        expect(diagnostics).toHaveLength(sites);
+        return split.mock.contexts.reduce((sum: number, c) => sum + (c as string).length, 0);
+      } finally {
+        split.mockRestore();
+      }
+    };
+    expect(scanned(4000)).toBeLessThanOrEqual(scanned(1000) * 8 + 100_000);
+    expect(scanned(4000)).toBeLessThan(500_000);
   });
 });
 
