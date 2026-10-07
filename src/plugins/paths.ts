@@ -99,9 +99,12 @@ export function createOutputRecord(storyFileName: string): OutputRecord {
   };
 }
 
-/** The path with Windows separators turned into forward slashes. */
+/**
+ * The path with the platform's separators turned into forward slashes. Only Windows has a backslash separator;
+ * on POSIX a backslash is an ordinary filename character and stays one.
+ */
 export function toPosix(path: string): string {
-  return path.replace(/\\/g, '/');
+  return sep === '\\' ? path.replaceAll('\\', '/') : path;
 }
 
 /**

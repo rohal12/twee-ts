@@ -3,7 +3,7 @@
  * Compiles .tw files and emits HTML as an asset. Compile errors fail the build
  * and emit nothing; warnings go through Rollup's warnings.
  */
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { outputPaths } from '../filesystem.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory, LocatedError } from './diagnostics.js';
@@ -42,12 +42,27 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     // inputs are read in generateBundle, outside the module graph, so they are
     // registered here: the sources, the head file and the modules, without the
     // files `exclude` leaves out (see watchTargets).
-    buildStart(this: { addWatchFile: (id: string) => void; meta: { watchMode: boolean } }) {
+    buildStart(this: {
+      addWatchFile: (id: string) => void;
+      warn: (message: string) => void;
+      meta: { watchMode: boolean };
+    }) {
       if (!this.meta.watchMode) return;
       const outputs = outputPaths(record.outputs());
       // In the platform's own form, as Rollup reports its module ids.
-      for (const target of watchTargets(resolved.inputs, resolved.excluded, outputs, 'given'))
-        this.addWatchFile(resolve(target));
+      const targets = watchTargets(resolved.inputs, resolved.excluded, outputs, 'given').map((target) =>
+        resolve(target),
+      );
+      for (const target of targets) this.addWatchFile(target);
+      // Rollup's file watcher (chokidar) reads every backslash as a separator, also on POSIX, where it is a
+      // filename character: such a file is read by each build, but an edit to it starts none.
+      const unwatchable = sep === '/' ? targets.filter((target) => target.includes('\\')) : [];
+      if (unwatchable.length > 0) {
+        this.warn(
+          `[twee-ts] Rollup's watch mode cannot watch ${unwatchable.map((target) => JSON.stringify(target)).join(', ')} ` +
+            'because the name contains a backslash; edits to it will not rebuild the story.',
+        );
+      }
     },
 
     // Runs for every output before any of them generates its bundle, when the

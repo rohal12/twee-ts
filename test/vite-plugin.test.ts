@@ -453,6 +453,48 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     expect(story(out)).toContain('ADDED_TEXT');
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'rebuilds when a source file name holds a literal backslash, as for an ordinary name (#308)',
+    async () => {
+      const dir = makeProject({ 'story\\part.tw': STORY });
+      const out = await watchBuild(
+        dir,
+        tweeTsPlugin({ sources: [join(dir, 'story\\part.tw')], format: 'test-format-1', compileOptions: COMPILE }),
+      );
+      writeFileSync(join(dir, 'story\\part.tw'), STORY.replace('Hello from the story.', 'BACKSLASH_EDIT'));
+      await vi.waitFor(() => {
+        expect(story(out)).toContain('BACKSLASH_EDIT');
+      }, settled);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'rebuilds when a source link is pointed at another file, then for edits to the new target (#307)',
+    async () => {
+      const dir = makeProject({
+        'first.tw': STORY.replace('Hello from the story.', 'FIRST_TEXT'),
+        'second.tw': STORY.replace('Hello from the story.', 'SECOND_TEXT'),
+      });
+      symlinkSync(join(dir, 'first.tw'), join(dir, 'story.tw'));
+      const out = await watchBuild(
+        dir,
+        tweeTsPlugin({ sources: [join(dir, 'story.tw')], format: 'test-format-1', compileOptions: COMPILE }),
+      );
+      expect(story(out)).toContain('FIRST_TEXT');
+
+      unlinkSync(join(dir, 'story.tw'));
+      symlinkSync(join(dir, 'second.tw'), join(dir, 'story.tw'));
+      await vi.waitFor(() => {
+        expect(story(out)).toContain('SECOND_TEXT');
+      }, settled);
+
+      writeFileSync(join(dir, 'second.tw'), STORY.replace('Hello from the story.', 'SECOND_EDITED'));
+      await vi.waitFor(() => {
+        expect(story(out)).toContain('SECOND_EDITED');
+      }, settled);
+    },
+  );
+
   it('rebuilds when a single-file source, the head file or a module changes', async () => {
     const dir = makeProject({
       'story/start.tw': STORY,

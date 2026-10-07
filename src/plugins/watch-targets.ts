@@ -5,8 +5,8 @@
  * watch a registered folder recursively; earlier ones see only the folder's own
  * entries. So every path is registered on its own as well.
  */
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -30,7 +30,7 @@ const NOTHING: Walked = { targets: [], whole: false };
 /**
  * The paths to register for the inputs (forward-slash paths): every file under
  * them that source discovery reads, but those `skip` returns true for, and no
- * path the build writes (`outputs`).
+ * path the build writes (`outputs`). With `real` spelling, a path reached through a link is registered as authored too.
  *
  * A folder is registered, with what it holds, only when watching it reports
  * nothing the story leaves out: nothing below it is skipped (an `exclude`
@@ -48,7 +48,13 @@ export function watchTargets(
   outputs: OutputPaths,
   spelling: TargetSpelling,
 ): string[] {
-  const spell = (path: string, real: string): string => (spelling === 'real' ? toPosix(real) : path);
+  // By real path, a path reached through a link is also registered as authored: replacing the link, or a link
+  // above it, changes what the input is, and only the authored location sees that.
+  const spell = (path: string, real: string): string[] => {
+    if (spelling === 'given') return [path];
+    const realSpelling = toPosix(real);
+    return toPosix(path) === realSpelling ? [realSpelling] : [realSpelling, toPosix(path)];
+  };
   const walk = (path: string, real: string, isRoot: boolean): Walked => {
     if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return NOTHING;
     let entry;
@@ -56,16 +62,35 @@ export function watchTargets(
     try {
       entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
       if (entry === undefined || outputs.isFile(entry.real)) return NOTHING;
-      if (!entry.stat.isDirectory()) return skip(path) ? NOTHING : { targets: [spell(path, entry.real)], whole: true };
+      if (!entry.stat.isDirectory()) return skip(path) ? NOTHING : { targets: spell(path, entry.real), whole: true };
       names = readdirSync(path);
     } catch {
-      return isRoot && !outputs.isDir(real) ? { targets: [spell(path, real)], whole: true } : NOTHING;
+      return isRoot && !outputs.isDir(real) ? { targets: spell(path, real), whole: true } : NOTHING;
     }
     const folder = entry.real;
     const children = names.map((name) => walk(`${path}/${name}`, join(folder, name), false));
     const held = children.flatMap((child) => child.targets);
     const whole = !outputs.holds(folder) && children.every((child) => child.whole);
-    return whole ? { targets: [spell(path, folder), ...held], whole } : { targets: held, whole };
+    return whole ? { targets: [...spell(path, folder), ...held], whole } : { targets: held, whole };
   };
-  return inputs.flatMap((input) => walk(input, realPathOf(input), true).targets);
+  return inputs.flatMap((input) => [
+    ...(spelling === 'real' ? linkedAncestors(input) : []),
+    ...walk(input, realPathOf(input), true).targets,
+  ]);
+}
+
+/**
+ * The links among the folders above `path`, as authored (forward slashes), nearest last. Replacing one of them
+ * changes what the input is, and only its own location sees that.
+ */
+function linkedAncestors(path: string): string[] {
+  const links: string[] = [];
+  for (let folder = dirname(path); dirname(folder) !== folder; folder = dirname(folder)) {
+    try {
+      if (lstatSync(folder).isSymbolicLink()) links.unshift(toPosix(folder));
+    } catch {
+      // A folder that can't be read is no link to watch.
+    }
+  }
+  return links;
 }

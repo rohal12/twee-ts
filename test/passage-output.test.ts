@@ -1,3 +1,4 @@
+import { compile } from '../src/compiler.js';
 import { describe, it, expect } from 'vitest';
 import {
   countWords,
@@ -10,6 +11,36 @@ import {
 import type { Passage, WordCountMethod } from '../src/types.js';
 
 const mk = (over: Partial<Passage> = {}): Passage => ({ name: 'A', tags: [], text: 'body', ...over });
+
+describe('decodePassageMetadata with a repeated position or size (#306)', () => {
+  it('keeps an earlier value that a later null repeats, and reads a first null as empty', () => {
+    const decoded = decodePassageMetadata('{"position":"1,2","position":null,"size":null}');
+    expect(decoded.ok && decoded.metadata).toEqual({ position: '1,2', size: '' });
+  });
+
+  it('applies that to keys that differ in letter case, and still reads another scalar as the last value', () => {
+    const decoded = decodePassageMetadata('{"Position":"1,2","position":null,"size":"3,4","SIZE":"5,6"}');
+    expect(decoded.ok && decoded.metadata).toEqual({ position: '1,2', size: '5,6' });
+  });
+
+  it('compiles the issue example as Tweego does: start, zoom, position and size survive a repeated null', async () => {
+    const result = await compile({
+      sources: [
+        {
+          filename: 'story.tw',
+          content:
+            ':: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC","start":"First","start":null,"zoom":2,"zoom":null}\n' +
+            ':: Start\nDEFAULT\n:: First {"position":"1,2","position":null,"size":"3,4","size":null}\nFIRST\n',
+        },
+      ],
+      outputMode: 'twine2-archive',
+    });
+    expect(result.output).toContain('startnode="2"');
+    expect(result.output).toContain('zoom="2"');
+    expect(result.output).toContain('position="1,2"');
+    expect(result.output).toContain('size="3,4"');
+  });
+});
 
 describe('decodePassageMetadata', () => {
   it('keeps string values, reads null as empty and reports the values it leaves out', () => {

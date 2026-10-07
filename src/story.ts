@@ -33,6 +33,9 @@ import { trimTweeSpace } from './twee-syntax.js';
 import type { DecodeIssue, DecodeIssueKind, TextDecodeResult } from './json-decode.js';
 import {
   field,
+  type Decoder,
+  type FieldReader,
+  type JsonValue,
   jsonArrayOf,
   jsonNumber,
   jsonRecordOf,
@@ -258,7 +261,9 @@ type StoryDataDecodeResult = TextDecodeResult<{ readonly ifid: IFID; readonly tw
  * `encoding/json`:
  *
  * - Keys match the field names regardless of letter case (`IFID` is `ifid`); a repeated key takes the last
- *   value. `null` reads as the field's zero value. Every field the text leaves out has its default.
+ *   value, except that a repeated `tag-colors` object is merged into the earlier one and a repeated `options`
+ *   array fills the earlier one's slots. `null` leaves a string or number as it was (its default when first), and
+ *   clears `options` and `tag-colors`. Every field the text leaves out has its default.
  * - A field of the wrong type is left out (`zoom: "2"`); Tweego stops with an error there.
  * - An unknown key is left out (as in Tweego); `tags` (the Twine 2 story tags) is read, which Tweego does not.
  * - A `zoom` of 0 is the default zoom, 1.
@@ -269,32 +274,60 @@ type StoryDataDecodeResult = TextDecodeResult<{ readonly ifid: IFID; readonly tw
 export function decodeStoryData(text: string): StoryDataDecodeResult {
   const twine2 = defaultTwine2Metadata();
   let ifid = NO_IFID;
-  const str = nullAsZero(jsonString, '');
+  // Go's decoder reads `null` into a scalar as "leave it", and into a map or slice as "clear it". A repeated
+  // map is merged into the one read before; a repeated array decodes into the slots of the one read before.
+  const scalar = <T>(decoder: Decoder<T>, assign: (value: T) => void): FieldReader =>
+    field(decoder, assign, { onNull: 'keep' });
+  const slots: string[] = [];
   const read = readObjectText(text, {
     keys: 'go',
     fields: {
-      ifid: field(str, (v) => {
+      ifid: scalar(jsonString, (v) => {
         ifid = normalizeIFID(v);
       }),
-      format: field(str, (v) => {
+      format: scalar(jsonString, (v) => {
         twine2.format = v;
       }),
-      'format-version': field(str, (v) => {
+      'format-version': scalar(jsonString, (v) => {
         twine2.formatVersion = v;
       }),
-      options: field(nullAsZero(jsonArrayOf(str), []), (v) => {
-        twine2.options = new Map(v.map((o) => [o, true]));
-      }),
-      start: field(str, (v) => {
+      options: {
+        read(value, path, issues) {
+          if (value === null) {
+            twine2.options = new Map();
+            return;
+          }
+          if (!Array.isArray(value)) {
+            jsonArrayOf(jsonString)(value, path, issues);
+            return;
+          }
+          const items: readonly JsonValue[] = value;
+          const kept = items.flatMap((item, i) => {
+            if (item === null) return [slots[i] ?? ''];
+            const r = jsonString(item, [...path, i], issues);
+            if (r.ok) slots[i] = r.value;
+            return r.ok ? [r.value] : [];
+          });
+          twine2.options = new Map(kept.map((o) => [o, true]));
+        },
+      },
+      start: scalar(jsonString, (v) => {
         twine2.start = v;
       }),
-      tags: field(str, (v) => {
+      tags: scalar(jsonString, (v) => {
         twine2.tags = v;
       }),
-      'tag-colors': field(nullAsZero(jsonRecordOf(str), new Map<string, string>()), (v) => {
-        twine2.tagColors = new Map(v);
-      }),
-      zoom: field(nullAsZero(jsonNumber, 0), (v) => {
+      'tag-colors': {
+        read(value, path, issues) {
+          if (value === null) {
+            twine2.tagColors = new Map();
+            return;
+          }
+          const r = jsonRecordOf(nullAsZero(jsonString, ''))(value, path, issues);
+          if (r.ok) twine2.tagColors = new Map([...twine2.tagColors, ...r.value]);
+        },
+      },
+      zoom: scalar(jsonNumber, (v) => {
         twine2.zoom = v === 0 ? 1 : v;
       }),
     },

@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, outputLocations, toPosix } from '../src/plugins/paths.js';
 
 describe('vite plugin path helpers', () => {
-  it('turns Windows separators into forward slashes', () => {
-    expect(toPosix('C:\\game\\src\\app\\index.ts')).toBe('C:/game/src/app/index.ts');
+  it('turns the platform separator into a forward slash: a backslash only on Windows', () => {
+    expect(toPosix('C:\\game\\src\\app\\index.ts')).toBe(
+      sep === '\\' ? 'C:/game/src/app/index.ts' : 'C:\\game\\src\\app\\index.ts',
+    );
     expect(toPosix('/game/src/app/index.ts')).toBe('/game/src/app/index.ts');
   });
 

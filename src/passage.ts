@@ -115,7 +115,9 @@ export function decodePassageMetadata(json: string): MetadataDecodeResult {
   const knownField = (name: string): FieldReader => ({
     read(value, path) {
       const fieldIssues: DecodeIssue[] = [];
-      const r = nullAsZero(jsonString, '')(value, path, fieldIssues);
+      // As in Go, `null` leaves an earlier value; a first `null` is the empty string.
+      const r =
+        value === null ? { ok: true as const, value: entries.get(name) ?? '' } : jsonString(value, path, fieldIssues);
       if (r.ok) entries.set(name, r.value);
       rejected.push(...fieldIssues.map((issue) => issue.message));
     },
