@@ -732,6 +732,20 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       diagnostics,
     );
   }
+  // The same holds for an output that became an authored file of a source or module folder while the build awaited
+  // a format (edited, or created at a path nothing was at): the folders are walked again for what they now skip.
+  if (namedOutput && outputMode === 'html') {
+    for (const group of groups) {
+      if (group.kind === 'paths') {
+        checkSkippedOutputs(getFilenames(group.paths, written, options.exclude).skippedOutputs, 'source', diagnostics);
+      }
+    }
+    checkSkippedOutputs(
+      getFilenames(options.modules ?? [], written, [], 'module').skippedOutputs,
+      'module',
+      diagnostics,
+    );
+  }
   // The story handed out is a frozen copy: it shares no object with the incremental cache (#246 S-4).
   return { output: output, story: snapshot(story), format, diagnostics, stats };
 }

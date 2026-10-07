@@ -438,6 +438,9 @@ interface RootState {
   readonly self: PathKind;
 }
 
+/** Separators in a link target: Windows reads both spellings; on POSIX a backslash is an ordinary name character. */
+const TARGET_SEPARATORS = sep === '\\' ? /[\\/]/ : '/';
+
 /** Links followed before a path counts as a cycle (Linux stops at 40 as well). */
 const MAX_LINK_DEPTH = 40;
 
@@ -461,7 +464,7 @@ function linkLocations(abs: string): string[] {
       const target = readLinkText(next) ?? '';
       const targetRoot = isAbsolute(target) ? parse(target).root : '';
       resolved = targetRoot === '' ? resolved : targetRoot;
-      rest = [...target.slice(targetRoot.length).split(/[\\/]/).filter(Boolean), ...after];
+      rest = [...target.slice(targetRoot.length).split(TARGET_SEPARATORS).filter(Boolean), ...after];
     } else {
       resolved = join(resolved, name ?? '');
       rest = after;

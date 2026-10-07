@@ -56,12 +56,31 @@ export function javaScriptContexts<R extends SourceRange>(
   if (!read.ok) return ranges.map((range) => ({ range, context: { kind: 'unparsable', reason: read.error.message } }));
   const pieces = read.value;
   return ranges.map((range) => {
-    const piece = pieces.find((p) => p.start <= range.start && range.end <= p.end);
+    const piece = enclosingPiece(pieces, range);
     if (piece === undefined) return { range, context: { kind: 'code' } };
     const { context } = piece;
     const whole = piece.start === range.start && piece.end === range.end;
     return { range, context: context.kind === 'string' ? { ...context, whole } : context };
   });
+}
+
+/**
+ * The first of `pieces` that contains `range`. `pieces` are in source order and do not overlap, so their ends do not
+ * decrease: a binary search finds the first piece that ends at or after the range, and only pieces starting at or
+ * before the range can contain it (several only when empty pieces share an offset).
+ */
+function enclosingPiece<P extends SourceRange>(pieces: readonly P[], range: SourceRange): P | undefined {
+  let low = 0;
+  let high = pieces.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((pieces[mid]?.end ?? Infinity) < range.end) low = mid + 1;
+    else high = mid;
+  }
+  for (let piece = pieces[low]; piece !== undefined && piece.start <= range.start; piece = pieces[++low]) {
+    if (piece.end >= range.end) return piece;
+  }
+  return undefined;
 }
 
 /**
@@ -129,7 +148,7 @@ function endsExpression(token: Token): boolean {
 export function cssContexts<R extends SourceRange>(source: string, ranges: readonly R[]): InContext<R, CssContext>[] {
   const pieces = cssPieces(source);
   return ranges.map((range) => {
-    const piece = pieces.find((p) => p.start <= range.start && range.end <= p.end);
+    const piece = enclosingPiece(pieces, range);
     return { range, context: piece === undefined ? { kind: 'code' } : piece.context };
   });
 }
