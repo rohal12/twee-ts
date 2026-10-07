@@ -298,11 +298,22 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // afterwards, which is what the catch-up looks for.
     const before = fileStates(entryFiles);
     const observed = new Map<string, string>();
-    const next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, (file) => {
-      const key = fileKey(file);
-      const state = fileState(canonicalPath(file));
-      if (state !== undefined && !observed.has(key)) observed.set(key, state);
-    });
+    const loaded = new Map<string, string>(); // key → path of each module the bundle loaded
+    let next: EntryBundle;
+    try {
+      next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, (file) => {
+        const key = fileKey(file);
+        const state = fileState(canonicalPath(file));
+        if (state !== undefined && !observed.has(key)) observed.set(key, state);
+        if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
+      });
+    } catch (error) {
+      // The modules the failed bundle loaded are inputs too: fixing an imported one must bundle again.
+      entryFiles = new Map([...entryFiles, ...loaded]);
+      entryStates = settledStates(entryFiles, observed, before);
+      watchEntryFiles(entryFiles);
+      throw error;
+    }
     entry = next;
     entryStale = false;
     entryFiles = tracked(next.files);

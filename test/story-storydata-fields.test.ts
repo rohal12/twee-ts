@@ -142,4 +142,13 @@ describe('decodeStoryData with repeated fields, as Go decodes them (#306)', () =
     expect(options('"options":["a"],"options":[null,null]')).toEqual(['a', '']);
     expect(options('"options":["a","b"],"options":["x"],"options":[null,null]')).toEqual(['x', 'b']);
   });
+
+  it('a repeated options array that is null or empty drops the old slots, as Go replaces the slice', () => {
+    const options = (members: string) => [...decode(members).twine2.options.keys()];
+    expect(options('"options":["debug"],"options":null,"options":[null]')).toEqual(['']);
+    expect(options('"options":["debug"],"options":[],"options":[null]')).toEqual(['']);
+    expect(options('"OPTIONS":["debug"],"options":null,"Options":[null]')).toEqual(['']);
+    expect(options('"options":["debug"],"options":[null]')).toEqual(['debug']);
+    expect(options('"options":["a","b"],"options":["x"],"options":[null,null]')).toEqual(['x', 'b']);
+  });
 });
