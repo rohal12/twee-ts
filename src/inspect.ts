@@ -31,9 +31,10 @@ export interface StoryMap {
   /**
    * Map of passage name → passage names it links to.
    * Parses `[[target]]`, `[[display->target]]`, `[[target<-display]]`, `[[display|target]]`,
-   * each with or without a setter (`[[display|target][$x to 1]]`), and SugarCube's
-   * `<<goto "target">>` / `<<link "display" "target">>`, read as SugarCube 2 reads them
-   * (see Story Inspection in docs/api.md). Links and calls in comments are not read. A script passage is
+   * each with or without a setter (`[[display|target][$x to 1]]`), SugarCube's
+   * `<<goto "target">>` / `<<link "display" "target">>` / `<<button "display" "target">>`, and
+   * elements with a `data-passage="target"` attribute, read as SugarCube 2 reads them
+   * (see "How links are read" in docs/api.md). Links and calls in comments are not read. A script passage is
    * read for links only in its strings; a stylesheet passage (including a loaded `.css` file) is
    * CSS and links to nothing. With a `target` (see `InspectOptions`), a passage that output leaves
    * out links to nothing, except a script passage, which Twine 2 output runs.
@@ -79,6 +80,8 @@ export interface BrokenLink {
  * - any of those with a setter: `[[Display Text|PassageName][$x to 1]]`
  * - `<<goto "PassageName">>`            (SugarCube macro)
  * - `<<link "Display" "PassageName">>`  (SugarCube macro)
+ * - `<<button "Display" "PassageName">>` (SugarCube macro)
+ * - `<a data-passage="PassageName">`    (any element SugarCube makes a link of)
  *
  * In link markup, the first `|`, `->` or `<-` divides the text from the passage name; image
  * markup links to the passage of its link component (`[img[pic.png][PassageName]]`). SugarCube macro arguments may be double- or
@@ -91,8 +94,8 @@ export interface BrokenLink {
  */
 function extractLinksFromText(text: string, isScript: boolean): string[] {
   const found = isScript ? findJavaScriptPassageLinks(text) : findPassageLinks(text);
-  // Link markup, then gotos, then links: the order this list has always had.
-  const ordered = (['markup', 'goto', 'link'] as const).flatMap((via) =>
+  // Link markup, then gotos, then links: the order this list has always had; then buttons and elements.
+  const ordered = (['markup', 'goto', 'link', 'button', 'data-passage'] as const).flatMap((via) =>
     found.filter((link) => link.via === via).map((link) => link.passage),
   );
   return [...new Set(ordered)];

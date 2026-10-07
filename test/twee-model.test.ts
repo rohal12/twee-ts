@@ -206,6 +206,14 @@ describe('T-05: StoryData keys match regardless of letter case, as in Tweego', (
     expect(result.output).toContain('"format-version": "3.3.0"');
   });
 
+  it.each(['İfid', 'ıfıd'])('does not read %s as the IFID: Go folds İ and ı to no ASCII letter (#298)', async (key) => {
+    const result = await build({ 'a.tw': `:: StoryData\n{"${key}":"${IFID}"}\n:: Start\nhi` });
+    expect(result.story.ifid).not.toBe(IFID);
+    expect(messages(result.diagnostics)).toContain(
+      `warning: "StoryData" $["${key}"] is not a known field; it is left out.`,
+    );
+  });
+
   it('lets the last of two spellings win, as Go does', async () => {
     const result = await build({ 'a.tw': `:: StoryData\n{"ifid":"${IFID}","format":"A","FORMAT":"B"}\n:: Start\nhi` });
     expect(result.story.twine2.format).toBe('B');

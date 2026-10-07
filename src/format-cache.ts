@@ -350,9 +350,10 @@ export function writeEntry(record: NewRecord, files: ReadonlyMap<string, Uint8Ar
   };
   const replaced = readRecordByKey(key)?.dir;
   writeAtomically(join(keyDir, RECORD_FILE), `${JSON.stringify(json, null, 2)}\n`);
-  // Another writer may have removed this content as the one its record replaced (the same bytes
-  // saved again): the record is published now, so make the directory whole under it.
-  repairContentDir(contentDir, files, hashes);
+  // Another writer's cleanup may have removed this content, or set it aside, as the one its record
+  // replaced (the same bytes saved again) before this record was published: the record is published
+  // now, so no cleanup removes the directory any more (see removeContentDir); make it whole under it.
+  writeContentDir(keyDir, contentDir, files, hashes);
   removeStaleContent(keyDir, replaced);
   return join(contentDir, record.main);
 }
@@ -429,23 +430,56 @@ const IN_FLIGHT_MS = 10 * 60 * 1000;
 /**
  * Clean up after a writer published a record that replaced the one naming the content directory
  * `replaced`: remove that directory, and any other that no record names and that is older than a
- * writer takes to publish (best effort). The published record is read now, not when the caller wrote
- * it, so a writer that was paused never removes what a later writer published, and a directory
- * another writer has just written, but not yet published, is left alone.
+ * writer takes to publish, and temporary files and directories as old (best effort). The published
+ * record is read now, not when the caller wrote it, so a writer that was paused never removes what a
+ * later writer published, and a directory another writer has just written, but not yet published,
+ * is left alone. Each directory is removed by {@link removeContentDir}, so a writer that publishes
+ * the same content again meanwhile keeps it.
  */
 export function removeStaleContent(keyDir: string, replaced: string | undefined, now = Date.now()): void {
   try {
     const current = readRecordByKey(basename(keyDir))?.dir;
     for (const name of readdirSync(keyDir)) {
-      if (!HEX64.test(name) || name === current) continue;
       const stat = lstatSync(join(keyDir, name), { throwIfNoEntry: false });
-      if (stat !== undefined && (name === replaced || now - stat.mtimeMs > IN_FLIGHT_MS)) {
-        rmSync(join(keyDir, name), { recursive: true, force: true });
+      if (stat === undefined) continue;
+      const old = now - stat.mtimeMs > IN_FLIGHT_MS;
+      if (name.startsWith(TEMP_PREFIX)) {
+        // Left by a writer or a cleanup that stopped part way.
+        if (old) rmSync(join(keyDir, name), { recursive: true, force: true });
+      } else if (HEX64.test(name) && name !== current && (name === replaced || old)) {
+        removeContentDir(keyDir, name);
       }
     }
   } catch {
     // A directory left behind only takes space; the record decides what is read.
   }
+}
+
+/**
+ * Remove the content directory `name` of the entry in `keyDir`, unless its record names it by then.
+ * The directory is renamed aside first, and the record read again: a writer that saved the same bytes
+ * again may have published a record naming it meanwhile, and then it is put back. A writer that
+ * publishes after that reading finds the directory gone and writes it again (see {@link writeEntry}),
+ * so the directory a published record names is never left missing.
+ */
+function removeContentDir(keyDir: string, name: string): void {
+  const path = join(keyDir, name);
+  const aside = join(keyDir, `${TEMP_PREFIX}removed-${process.pid}-${randomBytes(6).toString('hex')}`);
+  try {
+    renameSync(path, aside);
+  } catch {
+    // Gone already, or in use: nothing to remove now.
+    return;
+  }
+  if (readRecordByKey(basename(keyDir))?.dir === name) {
+    try {
+      renameSync(aside, path);
+      return;
+    } catch {
+      // The writer that published it has written it again: the copy set aside is not needed.
+    }
+  }
+  rmSync(aside, { recursive: true, force: true });
 }
 
 // --- Listing and clearing ---

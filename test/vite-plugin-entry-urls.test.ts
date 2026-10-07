@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
-import type { InlineConfig } from 'vite';
+import type { BuildEnvironmentOptions, InlineConfig } from 'vite';
 import { runInNewContext } from 'node:vm';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import {
@@ -115,13 +115,15 @@ interface Setup {
   readonly base: string;
   readonly outputFilename: string;
 }
-// A relative base with a nested outputFilename is left out: Vite then makes file URLs relative to the page,
-// which is not the output folder (see docs/plugins.md).
 const SETUPS: readonly Setup[] = [
   { base: '/', outputFilename: 'index.html' },
   { base: '/app/', outputFilename: 'index.html' },
   { base: './', outputFilename: 'index.html' },
   { base: '/', outputFilename: 'nested/story.html' },
+  // Vite makes file URLs relative to the page here, which is not the output folder (#289).
+  { base: './', outputFilename: 'nested/story.html' },
+  { base: './', outputFilename: 'a/b/story.html' },
+  { base: '', outputFilename: 'nested/story.html' },
 ];
 
 describe.each(SETUPS)('an entry under base $base and outputFilename $outputFilename', ({ base, outputFilename }) => {
@@ -136,8 +138,8 @@ describe.each(SETUPS)('an entry under base $base and outputFilename $outputFilen
         compileOptions: COMPILE,
       });
       const common: InlineConfig = { root: dir, base, publicDir: false, plugins: [plugin] };
-      // The page URL is where the story is deployed: under the base, which `./` leaves at the site root.
-      const deployedAt = base === './' ? '/' : base;
+      // The page URL is where the story is deployed: under the base, which a relative base leaves at the site root.
+      const deployedAt = base === './' || base === '' ? '/' : base;
 
       const problem =
         branch === 'the dev server'
@@ -146,4 +148,65 @@ describe.each(SETUPS)('an entry under base $base and outputFilename $outputFilen
       expect(problem).toBeUndefined();
     });
   });
+});
+
+describe('a relative base and a nested outputFilename (#289)', () => {
+  const OWN_INPUT = (dir: string): BuildEnvironmentOptions => ({ rolldownOptions: { input: join(dir, 'extra.js') } });
+
+  it.each(['inside the build', 'a build of its own'] as const)(
+    'gives the stylesheet a URL that finds a file that is not inlined: %s',
+    async (branch) => {
+      const dir = makeProject({
+        ...FILES,
+        'style.css': 'body { background: url("./image.png?no-inline"); }',
+        'entry.js': 'import "./style.css";\n',
+      });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        entry: join(dir, 'entry.js'),
+        outputFilename: 'nested/story.html',
+        compileOptions: COMPILE,
+      });
+      const files = await buildFiles({
+        root: dir,
+        base: './',
+        publicDir: false,
+        plugins: [plugin],
+        build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+      });
+      const html = textOf(files.get('nested/story.html'));
+      const style = /<style[^>]*id="twine-user-stylesheet"[^>]*>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
+      const url = /url\("?([^")]+)"?\)/.exec(style)?.[1] ?? '';
+      const found = new URL(url, 'http://localhost/nested/story.html').pathname.slice(1);
+      expect(url).not.toMatch(/^data:/);
+      expect(files.has(found)).toBe(true);
+    },
+  );
+
+  it.each(['inside the build', 'a build of its own'] as const)(
+    "lets the config's own renderBuiltUrl decide first: %s",
+    async (branch) => {
+      const dir = makeProject({
+        ...FILES,
+        'entry.js': 'globalThis.out = new URL("./image.png?no-inline", import.meta.url).href;\n',
+      });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        entry: join(dir, 'entry.js'),
+        outputFilename: 'nested/story.html',
+        compileOptions: COMPILE,
+      });
+      const files = await buildFiles({
+        root: dir,
+        base: './',
+        publicDir: false,
+        plugins: [plugin],
+        experimental: { renderBuiltUrl: (filename) => `https://cdn.example/${filename}` },
+        build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+      });
+      expect(userScript(textOf(files.get('nested/story.html')))).toContain('https://cdn.example/image.png');
+    },
+  );
 });

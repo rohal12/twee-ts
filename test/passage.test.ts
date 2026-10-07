@@ -59,19 +59,32 @@ describe('applyTagAliases', () => {
     expect(applyTagAliases(once, aliases)[0]).toBe(once[0]);
   });
 
-  it('is idempotent for any mapping, never duplicates, and keeps the authored tags first', () => {
+  it('is idempotent for any mapping, keeps the authored tags as written and first, and adds no tag twice', () => {
     const tag = fc.constantFrom('a', 'b', 'c', 'd', 'script', 'Twine.private', '__proto__');
     fc.assert(
-      fc.property(fc.array(fc.tuple(tag, tag), { maxLength: 6 }), fc.array(tag, { maxLength: 4 }), (pairs, tags) => {
-        const aliases = Object.fromEntries(pairs);
-        const authored = [...new Set(tags)];
-        const once = applyTagAliases([mkPassage('P', authored)], aliases)[0]!;
-        const twice = applyTagAliases([once], aliases)[0]!;
-        expect(twice.tags).toEqual(once.tags);
-        expect(new Set(once.tags).size).toBe(once.tags.length);
-        expect(once.tags.slice(0, authored.length)).toEqual(authored);
-      }),
+      fc.property(
+        fc.array(fc.tuple(tag, tag), { maxLength: 6 }),
+        fc.array(tag, { maxLength: 5 }),
+        (pairs, authored) => {
+          const aliases = Object.fromEntries(pairs);
+          const once = applyTagAliases([mkPassage('P', authored)], aliases)[0]!;
+          const twice = applyTagAliases([once], aliases)[0]!;
+          expect(twice.tags).toEqual(once.tags);
+          expect(once.tags.slice(0, authored.length)).toEqual(authored);
+          const added = once.tags.slice(authored.length);
+          expect(new Set([...authored, ...added]).size).toBe(new Set(authored).size + added.length);
+        },
+      ),
     );
+  });
+
+  it.each([
+    ['no aliases', {}, ['x', 'x']],
+    ['an alias that does not apply', { q: 'r' }, ['x', 'x']],
+    ['an alias that applies', { x: 'y' }, ['x', 'x', 'y']],
+    ['an alias onto the repeated tag', { y: 'x' }, ['x', 'x']],
+  ] as const)('keeps a tag written twice whatever the aliases, with %s (#297)', (_name, aliases, expected) => {
+    expect(applyTagAliases([mkPassage('P', ['x', 'x'])], aliases)[0]!.tags).toEqual(expected);
   });
 
   it('does not mutate original passages', () => {

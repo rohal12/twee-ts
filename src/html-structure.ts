@@ -718,6 +718,23 @@ export function scriptsJQueryRuns(html: string): RunningScript[] {
   return scripts;
 }
 
+/**
+ * The attributes of the element that SugarCube 2's `htmlTag` parser makes from a start tag it matched in passage
+ * markup (`startTag`): it sets the `innerHTML` of an element (a `div` here) to the start tag, then takes the first
+ * child, the first child of that, and so on. A start tag that gives no node (such as `<td>` outside a table) leaves
+ * the `div` itself, which has no attributes; one that gives a text node gives `undefined`. Names are as the browser
+ * parses them: lower case, and of an attribute written twice only the first.
+ */
+export function wikifiedElementAttributes(startTag: string): ReadonlyMap<string, string> | undefined {
+  let node: HtmlNode = parseFragment(FRAGMENT_CONTEXT, startTag, { scriptingEnabled: true });
+  for (let child = childrenOf(node)[0]; child !== undefined; child = childrenOf(node)[0]) node = child;
+  if (node.nodeName === '#document-fragment') return new Map();
+  if (!isElement(node)) return undefined;
+  return new Map(
+    node.attrs.map((attr) => [attr.prefix === undefined ? attr.name : `${attr.prefix}:${attr.name}`, attr.value]),
+  );
+}
+
 /** A placeholder in the text of a script or style element: its site index, and its range in that text. */
 interface CodeRange extends SourceRange {
   readonly index: number;

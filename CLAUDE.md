@@ -135,6 +135,7 @@ Follow type-first development: define data models and function signatures before
 - Test fixtures in `test/fixtures/`; shared test helpers in `test/helpers/`
 - Every test must assert something (`expect.requireAssertions` in `vitest.config.ts`), and no `expect()` may sit inside a conditional (`vitest/no-conditional-expect`): assert the outcome the spec or the code gives, unconditionally
 - Real-world validation: the `../tweego/CleanSlate/` project (605 passages, 241K words) compiles successfully
+- Browser tests (`test/vite-plugin-entry-browser.test.ts`) drive Chromium through `playwright-core`: the browser at `CHROME_PATH`, else Playwright's own Chromium, else an installed Google Chrome (the CI runners have one). Without any they are skipped locally and fail in CI
 - Add or update focused tests when changing logic; test behavior, not implementation details
 - New features need tests; bug fixes need regression tests
 

@@ -117,6 +117,7 @@
     "jscpd": "5.4.0",
     "knip": "^6.39.0",
     "parse5": "^8.0.1",
+    "playwright-core": "^1.63.0",
     "prettier": "^3.9.9",
     "rollup": "^4.64.0",
     "tsdown": "^0.23.0",

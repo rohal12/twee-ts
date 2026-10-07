@@ -420,8 +420,9 @@ export interface ObjectSpec {
 
 /**
  * Fold a key as Go's `encoding/json` folds object keys to match struct field names: ASCII letters to upper
- * case, and the non-ASCII letters whose simple case folding is an ASCII letter (`ſ` U+017F to S, `K` U+212A
- * KELVIN SIGN to K, `ı` U+0131 and `İ` U+0130 to I). Any other character is kept, which is exact for field
+ * case, and the two non-ASCII letters whose fold (`foldRune()`, the smallest rune of the `unicode.SimpleFold`
+ * orbit) is an ASCII letter: `ſ` U+017F to S and `K` U+212A KELVIN SIGN to K. `İ` U+0130 and `ı` U+0131 are
+ * orbits of their own in Go, so they match no field. Any other character is kept, which is exact for field
  * names that are ASCII, as every name here is.
  */
 export function goFoldKey(key: string): string {
@@ -435,8 +436,6 @@ export function goFoldKey(key: string): string {
 const GO_FOLD_TO_ASCII: ReadonlyMap<string, string> = new Map([
   ['ſ', 'S'],
   ['K', 'K'],
-  ['ı', 'I'],
-  ['İ', 'I'],
 ]);
 
 /**

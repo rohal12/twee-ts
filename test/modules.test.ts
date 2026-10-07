@@ -36,6 +36,68 @@ describe('loadModules', () => {
     expect(result).toContain('id="script-module-app"');
   });
 
+  describe('element ids are unique in the page (#296)', () => {
+    const ids = (html: string): string[] => [...html.matchAll(/ id="([^"]*)"/g)].map((m) => m[1]!);
+    const write = (rel: string, content: string): string => {
+      const file = join(tmpDir, rel);
+      mkdirSync(join(file, '..'), { recursive: true });
+      writeFileSync(file, content);
+      return file;
+    };
+
+    it.each([
+      ['two scripts with the same stem', ['lib/ui.js', 'vendor/ui.js'], ['script-module-ui', 'script-module-ui-2'], 1],
+      [
+        'a stylesheet and a font with the same stem',
+        ['ui.css', 'ui.woff2'],
+        ['style-module-ui', 'style-module-ui-2'],
+        1,
+      ],
+      [
+        'stems that slugify alike',
+        ['a b.css', 'a_b.css', 'a.b.css'],
+        ['style-module-a_b', 'style-module-a_b-2', 'style-module-a'],
+        1,
+      ],
+      [
+        'three with the same stem, and a stem that reads like a numbered id (slugify makes its "-" a "_")',
+        ['x/ui.js', 'ui-2.js', 'y/ui.js', 'z/ui.js'],
+        ['script-module-ui', 'script-module-ui_2', 'script-module-ui-2', 'script-module-ui-3'],
+        2,
+      ],
+      ['a script and a stylesheet with the same stem', ['ui.js', 'ui.css'], ['script-module-ui', 'style-module-ui'], 0],
+    ] as const)(
+      'gives %s different ids, the first keeping the id Tweego gives it',
+      (_name, files, expected, warnings) => {
+        const diagnostics: Diagnostic[] = [];
+        const html = loadModules(
+          files.map((f) => write(f, 'a{}')),
+          diagnostics,
+        );
+        expect(ids(html)).toEqual(expected);
+        expect(diagnostics.map((d) => d.level)).toEqual(Array<string>(warnings).fill('warning'));
+      },
+    );
+
+    it('warns naming both modules and the id given instead', () => {
+      const first = write('lib/ui.js', 'a()');
+      const second = write('vendor/ui.js', 'b()');
+      const diagnostics: Diagnostic[] = [];
+      loadModules([first, second], diagnostics);
+      expect(diagnostics).toEqual([
+        {
+          level: 'warning',
+          message: `The modules "${first}" and "${second}" would both have the element id "script-module-ui"; "${second}" has the id "script-module-ui-2" instead.`,
+        },
+      ]);
+    });
+
+    it('gives no id to an empty module, so the next module keeps its own', () => {
+      const html = loadModules([write('a/ui.js', '  '), write('b/ui.js', 'b()')]);
+      expect(ids(html)).toEqual(['script-module-ui']);
+    });
+  });
+
   it.each([
     ['script', 'js', (pos: number) => `globalThis.out="${'a'.repeat(pos)}\0b";`],
     ['style', 'css', (pos: number) => `a::before { content: "${'a'.repeat(pos)}\0b"; }`],

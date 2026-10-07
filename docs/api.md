@@ -250,7 +250,7 @@ try {
 
 ### `applyTagAliases(passages, aliases)`
 
-`applyTagAliases(passages: readonly Passage[], aliases: Record<string, string>): Passage[]` returns the passages with each alias's target tag added (see [Tag Aliases](./tag-aliases)). It returns a new array and leaves the passages passed in unchanged; a passage it changes is a new object. `compile()` applies the `tagAliases` option this way.
+`applyTagAliases(passages: readonly Passage[], aliases: Record<string, string>): Passage[]` returns the passages with each alias's target tag added after their own tags (see [Tag Aliases](./tag-aliases)). A passage's own tags are kept as written, a repeated tag included, and no tag is added twice. It returns a new array and leaves the passages passed in unchanged; a passage it changes is a new object. `compile()` applies the `tagAliases` option this way.
 
 ```typescript
 import { applyTagAliases } from '@rohal12/twee-ts';
@@ -540,6 +540,39 @@ console.log(checked.brokenLinks); // e.g. [{ from: 'Start', to: 'Logic', omissio
 ```
 
 Without a `target`, `storyInspect` describes the source passages and treats a link as broken only when no passage has its name. With `target: 'twine2'` or `target: 'twine1'`, it also reports links to passages that output leaves out (Twine 1 output leaves out only `Twine.private` passages), and reads no links from those passages, except script passages, which Twine 2 output runs. Left-out passages are never story passages, so they are never listed as dead ends or orphans, with or without a target.
+
+#### How links are read
+
+`links`, and with it lint, reads a passage's links as SugarCube 2 (2.37.3) reads them when the story plays. The table lists what counts as a link in passage markup, and what does not:
+
+| Markup                                   | Links to | Notes                                                                                                           |
+| ---------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `[[Hall]]`                               | `Hall`   | Link markup                                                                                                     |
+| `[[Go to the hall\|Hall]]`               | `Hall`   | The first `\|`, `->` or `<-` divides the text from the passage                                                  |
+| `[[Go->Hall]]`                           | `Hall`   |                                                                                                                 |
+| `[[Hall<-Go]]`                           | `Hall`   |                                                                                                                 |
+| `[[Go\|Hall][$visited to true]]`         | `Hall`   | With a setter                                                                                                   |
+| `[[Go\|"Hall"]]`                         | `Hall`   | A quoted string is taken by its value                                                                           |
+| `[img[map.png][Hall]]`                   | `Hall`   | Image markup links to the passage of its link part                                                              |
+| `<<goto "Hall">>`                        | `Hall`   | Arguments may be double- or single-quoted, or bare words                                                        |
+| `<<link "Go" "Hall">><</link>>`          | `Hall`   |                                                                                                                 |
+| `<<button "Go" "Hall">><</button>>`      | `Hall`   | `<<button>>` is `<<link>>` as a button                                                                          |
+| `<<link [[Go\|Hall]]>><</link>>`         | `Hall`   | Link markup as the first argument names the passage                                                             |
+| `<a data-passage="Hall">Go</a>`          | `Hall`   | Any element with a `data-passage` attribute, `<button>` and `<span>` too                                        |
+| `<area data-passage="Hall">`             | `Hall`   | A void element needs no end tag                                                                                 |
+| `<<set _go to '<<goto "Hall">>'>>`       | `Hall`   | Links and calls inside the strings of macro arguments, `<<script>>` bodies and `<script>` elements are read too |
+| `/* [[Hall]] */`                         | nothing  | Comments (`/* … */`, `/% … %/`, `<!-- … -->`) are skipped                                                       |
+| `<<link "Go" $next>><</link>>`           | nothing  | A passage named by a variable or an expression is known only in play                                            |
+| `<a data-passage="Hall">Go`              | nothing  | An element other than a void one needs its end tag, or SugarCube reports an error                               |
+| `<a data-passage="Hall" href="#">Go</a>` | nothing  | `data-passage` with `href` is an error in SugarCube                                                             |
+| `<a @data-passage="$next">Go</a>`        | nothing  | An attribute directive sets the passage in play                                                                 |
+| `<img data-passage="Hall">`              | nothing  | On `img`, `audio`, `video`, `source` and `track`, `data-passage` names a media passage                          |
+| `<span title="[[Hall]]">x</span>`        | nothing  | The text of a start tag is not markup                                                                           |
+| `<<include "Hall">>`                     | nothing  | Shows the passage without a link, so Hall is still an orphan unless something else links to it                  |
+
+A passage tagged `nobr` has its line breaks joined first, as SugarCube does. A script passage is JavaScript: only its strings are read, as markup (`$('#out').wiki('<<goto "Hall">>')` links to Hall), and code that builds a link while the story plays (`'<<goto "' + next + '">>'`, `Engine.play('Hall')`) names nothing. A stylesheet is CSS and links to nothing.
+
+Known differences from SugarCube: a link whose passage SugarCube evaluates because no passage has its name (`[[Go|$next]]`) is taken by its name, and so is a link SugarCube takes for a URL; macros that show or go to a passage other than `<<goto>>`, `<<link>>` and `<<button>>` (`<<include>>`, `<<actions>>`, `<<choice>>`, `<<back>>`, `<<return>>`) are not read; and a `[[`, comment or start tag inside verbatim text, a `<style>` element or an `<svg>` element is read as if it were outside it. The source (`src/sugarcube-macros.ts`) lists the rest.
 
 ## Types
 

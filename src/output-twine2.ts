@@ -76,6 +76,7 @@ export function toTwine2HTML(
 function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
   const { scripts, stylesheets } = codePassages(story);
   return [
+    ...twine2TagColors(story).diagnostics,
     ...unrepresentableTextDiagnostics(
       story,
       story.passages.filter((p) => !hasTag(p, 'Twine.private')),
@@ -84,6 +85,43 @@ function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
     ...codeEscapeDiagnostics('script', joinCode(scripts, 'script')),
     ...codeEscapeDiagnostics('style', joinCode(stylesheets, 'stylesheet')),
   ];
+}
+
+/** The named tag colors of the Twine 2 HTML output specification. */
+const NAMED_TAG_COLORS: ReadonlySet<string> = new Set(['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple']);
+/** A CSS hex color: `#` and 3, 4, 6 or 8 hex digits. */
+const HEX_TAG_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * The tag colors the Twine 2 story data carries (`<tw-tag>` elements in HTML and archives, `tag-colors` in JSON),
+ * in the story's order, as written: those whose color is one of the specification's named colors, in any ASCII case
+ * (CSS color names ignore case, and the JSON specification's example writes `Green`), or a CSS hex color. Every other
+ * color is left out, with a warning in `diagnostics`.
+ */
+export function twine2TagColors(story: ReadonlyStory): {
+  readonly colors: readonly (readonly [tag: string, color: string])[];
+  readonly diagnostics: readonly Diagnostic[];
+} {
+  const colors: (readonly [string, string])[] = [];
+  const diagnostics: Diagnostic[] = [];
+  for (const [tag, color] of story.twine2.tagColors) {
+    if (NAMED_TAG_COLORS.has(asciiLowerCase(color)) || HEX_TAG_COLOR.test(color)) {
+      colors.push([tag, color]);
+      continue;
+    }
+    diagnostics.push({
+      level: 'warning',
+      message:
+        `The color ${JSON.stringify(color)} of tag ${JSON.stringify(tag)} is not a Twine 2 tag color, ` +
+        'so it is left out. Use gray, red, orange, yellow, green, blue or purple, or a hex color (#rgb, #rgba, ' +
+        '#rrggbb or #rrggbbaa).',
+    });
+  }
+  return { colors, diagnostics };
+}
+
+function asciiLowerCase(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 }
 
 const OMITTING_TAGS: readonly OmittingTag[] = ['Twine.private', 'script', 'stylesheet'];
@@ -155,13 +193,8 @@ function getTwine2DataChunk(
     `<script role="script" id="twine-user-script" type="text/twine-javascript">${scriptContentEscape(scriptContent)}</script>`,
   );
 
-  // Tag color elements (only spec-valid colors: 7 named colors or hex values)
-  const validTagColors = new Set(['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple']);
-  const hexColorPattern = /^#[0-9a-fA-F]{3,8}$/;
-  for (const [tag, color] of story.twine2.tagColors) {
-    if (validTagColors.has(color) || hexColorPattern.test(color)) {
-      parts.push(`<tw-tag name="${attrEscape(tag)}" color="${attrEscape(color)}"></tw-tag>`);
-    }
+  for (const [tag, color] of twine2TagColors(story).colors) {
+    parts.push(`<tw-tag name="${attrEscape(tag)}" color="${attrEscape(color)}"></tw-tag>`);
   }
 
   // Normal passage elements

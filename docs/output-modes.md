@@ -54,6 +54,8 @@ twee-ts -a -o archive.html src/
 
 Outputs the `<tw-storydata>` XML block without wrapping it in a story format's HTML template. This is the format used by Twine 2's import/export feature. The output conforms to the [Twine 2 HTML Output Spec](https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-htmloutput-spec.md), including `tags`, `options`, and `<tw-tag>` elements for tag colors.
 
+A tag color is written, as it is written in `StoryData`, when it is one of the specification's named colors (`gray`, `red`, `orange`, `yellow`, `green`, `blue`, `purple`, in any letter case) or a CSS hex color of 3, 4, 6 or 8 digits (`#f80`, `#ff8800cc`). Any other color (`rgb(1,2,3)`, `#12345`, `none`) is left out with a warning. Twine 2 HTML and JSON output follow the same rule; Twee output keeps the `StoryData` passage as written.
+
 ## Twine 1 Archive
 
 ```sh
@@ -97,7 +99,7 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 }
 ```
 
-`ifid`, `format`, `format-version` and `start` are present when they are set, `tag-colors` when StoryData gives tag colors, and `zoom` when it is not 1. `start` is set by StoryData or by `-s`/`startPassage`. JSON output uses no story format: `format` and `format-version` are StoryData's, and `-f` does not change them. `creator-version` is the twee-ts version.
+`ifid`, `format` and `format-version` are present when they are set, `tag-colors` when StoryData gives tag colors that Twine 2 output writes (see [Twine 2 Archive](#twine-2-archive)), and `zoom` when it is not 1. `start` is the start passage the other output modes use: the one StoryData or `-s`/`startPassage` names, or else `Start` when the story has a passage of that name in `passages` (as the Twine 2 `startnode` points at it); it is left out only when neither applies. JSON output uses no story format: `format` and `format-version` are StoryData's, and `-f` does not change them. `creator-version` is the twee-ts version.
 
 `StoryTitle`, `StoryData`, `script`-tagged, `stylesheet`-tagged, and `Twine.private`-tagged passages are excluded from the `passages` array. Script and stylesheet content is merged into the top-level `script` and `style` fields. Passage metadata (arbitrary key-value pairs from the Twee 3 header) is included when present; as in Twee output, an entry with an empty value is left out, and every key, `__proto__` included, is kept.
 

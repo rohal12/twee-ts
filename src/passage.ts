@@ -297,10 +297,11 @@ export function freezePassage(p: Passage): Passage {
 /**
  * Apply tag aliases: for each passage carrying an alias tag, add the canonical tag if not already present. A
  * canonical tag that is itself an alias is followed (`{ a: 'b', b: 'c' }` adds `b` and `c` to a passage tagged
- * `a`), until no mapping adds anything, so cycles and self-mappings end too. Authored tags keep their place, added
- * tags follow in the order they were reached, and nothing is duplicated. Returns new passage objects where tags
- * changed; unchanged passages are returned as-is. Idempotent: the result carries every tag the mappings reach, so
- * applying the same aliases again adds nothing.
+ * `a`), until no mapping adds anything, so cycles and self-mappings end too. Authored tags are kept as written (a
+ * tag written twice stays twice, as in Tweego), whether or not an alias applies; added tags follow in the order they
+ * were reached, and none repeats a tag already there. Returns new passage objects where tags changed; unchanged
+ * passages are returned as-is. Idempotent: the result carries every tag the mappings reach, so applying the same
+ * aliases again adds nothing.
  */
 export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<Record<string, string>>): Passage[] {
   const entries = Object.entries(aliases);
@@ -315,7 +316,7 @@ export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<
       }
       grew = tags.size > before;
     }
-    return tags.size > authored ? derivePassage(p, { tags: [...tags] }) : p;
+    return tags.size > authored ? derivePassage(p, { tags: [...p.tags, ...[...tags].slice(authored)] }) : p;
   });
 }
 

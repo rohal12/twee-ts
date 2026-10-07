@@ -346,10 +346,26 @@ describe('goFoldKey', () => {
     expect(goFoldKey('format-Version')).toBe('FORMAT-VERSION');
     expect(goFoldKey('ſtart')).toBe(goFoldKey('start'));
     expect(goFoldKey('Key')).toBe(goFoldKey('key'));
-    expect(goFoldKey('ıfıd')).toBe(goFoldKey('ifid'));
-    expect(goFoldKey('İFİD')).toBe(goFoldKey('ifid'));
+    expect(goFoldKey('ıfıd')).not.toBe(goFoldKey('ifid'));
+    expect(goFoldKey('İFİD')).not.toBe(goFoldKey('ifid'));
     expect(goFoldKey('é')).not.toBe(goFoldKey('e'));
     expect(goFoldKey('ß')).toBe('ß');
+  });
+
+  it('folds exactly the code points to ASCII that Go folds to ASCII (#298)', () => {
+    // The oracle: every rune above U+007F whose Go fold (encoding/json foldRune(), the smallest rune of its
+    // unicode.SimpleFold orbit) is ASCII, listed by Go 1.24 over U+0080..U+10FFFF.
+    const goFoldsToAscii = new Map([
+      [0x17f, 'S'],
+      [0x212a, 'K'],
+    ]);
+    const got = new Map<number, string>();
+    for (let cp = 0x80; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const folded = goFoldKey(String.fromCodePoint(cp));
+      if (folded.charCodeAt(0) < 0x80) got.set(cp, folded);
+    }
+    expect(got).toEqual(goFoldsToAscii);
   });
 
   it('folds two ASCII keys alike exactly when they are equal ignoring ASCII case', () => {

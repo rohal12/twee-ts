@@ -6,6 +6,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { statSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry } from '../types.js';
@@ -31,6 +32,19 @@ export interface DevStoryOptions {
 
 /** How long after a change the story is compiled, so saves landing together compile once. */
 const DEBOUNCE_MS = 50;
+
+/**
+ * How long a file the watcher was asked to add may take to be listed as watched, and how long after that its
+ * watch may still miss an edit (macOS FSEvents starts reporting a moment after the watch is set up); see
+ * `recheckOnceWatched` in setUpDevStory.
+ */
+const WATCH_LISTED_TIMEOUT_MS = 10_000;
+const WATCH_START_MS = 500;
+
+/** Resolves after `ms`, without keeping the process alive. */
+function delay(ms: number): Promise<void> {
+  return new Promise((done) => setTimeout(done, ms).unref());
+}
 
 /**
  * The paths under the base URL the story is served at: the output file name,
@@ -238,7 +252,35 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     for (const [key] of dropped) watchedForEntry.delete(key);
     for (const [key, path] of added) watchedForEntry.set(key, path);
     if (dropped.length > 0) server.watcher.unwatch(dropped.map(([, path]) => path));
-    if (added.length > 0) server.watcher.add(added.map(([, path]) => path));
+    if (added.length > 0) {
+      server.watcher.add(added.map(([, path]) => path));
+      recheckOnceWatched(new Map(added)).catch(keepQueueAlive);
+    }
+  };
+
+  const isListed = (path: string): boolean => {
+    const watched: Readonly<Record<string, readonly string[] | undefined>> = server.watcher.getWatched();
+    return watched[dirname(path)]?.includes(basename(path)) ?? false;
+  };
+
+  // The watcher sets up a file it is asked to add some time later, and raises no event for an edit made
+  // before that (on macOS, FSEvents starts reporting a moment later still). Once it lists the files, and a
+  // moment after, their states are compared with the bundle's, and a change counts as one it reported.
+  const recheckOnceWatched = async (files: TrackedFiles): Promise<void> => {
+    if (config.server.watch === null) return; // No watcher: the catch-up before serving sees every change.
+    const deadline = Date.now() + WATCH_LISTED_TIMEOUT_MS;
+    while (!closed && Date.now() < deadline && ![...files.values()].every(isListed)) await delay(DEBOUNCE_MS);
+    await delay(WATCH_START_MS);
+    if (closed) return;
+    // In the queue, so the states are those of the last bundle, not of one under way.
+    queue = queue
+      .then(() => {
+        const now = fileStates(files);
+        const then = new Map([...entryStates].filter(([key]) => files.has(key)));
+        for (const key of filesChanged(then, now)) if (watchedForEntry.has(key)) noteChange(key);
+      })
+      .catch(keepQueueAlive);
+    await queue;
   };
 
   const bundle = async (): Promise<void> => {
@@ -305,6 +347,18 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     }
   };
 
+  // A change to a file the story or the entry is made from: compiled with the others that land with it.
+  const noteChange = (changed: string): void => {
+    if (closed) return;
+    pending.add(changed);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const files = pending;
+      pending = new Set();
+      queue = queue.then(() => rebuild(files)).catch(keepQueueAlive);
+    }, DEBOUNCE_MS);
+  };
+
   await rebuild(new Set(), true);
 
   server.watcher.on('all', (event, path) => {
@@ -314,13 +368,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
     if ((!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed)) return;
-    pending.add(changed);
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      const files = pending;
-      pending = new Set();
-      queue = queue.then(() => rebuild(files)).catch(keepQueueAlive);
-    }, DEBOUNCE_MS);
+    noteChange(changed);
   });
 
   // The watcher can miss changes, or be off (`server.watch: null`). When a folder
