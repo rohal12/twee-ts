@@ -168,6 +168,23 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
     };
   }
 
+  it.skipIf(process.platform === 'win32')(
+    'to a target outside the link folder whose name holds a backslash (a POSIX name character)',
+    async () => {
+      mkdirSync(join(root, 'aliases'));
+      const target = join(root, 'back\\slash.tw');
+      const link = join(root, 'aliases', 'story.tw');
+      writeFileSync(target, story('BEFORE'));
+      symlinkSync(target, link);
+      const w = await startWatch(link);
+      await w.built('BEFORE');
+      await w.primed(target);
+      writeFileSync(target, story('EDITED'));
+      await w.built('EDITED');
+      expect(w.events()).toBeGreaterThan(1);
+    },
+  );
+
   it('to a target in the same folder, through edits, replacement, deletion, re-creation and retargeting', async () => {
     mkdirSync(join(root, 'links'));
     const target = join(root, 'links', 'actual.tw');

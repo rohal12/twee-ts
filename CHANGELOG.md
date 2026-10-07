@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Escape-site classification in JavaScript and CSS (`code-context.ts`) looks each site's literal up by binary search instead of rescanning every literal, so builds with many `</script>` or `</style>` strings no longer take quadratic time (#304)
+- A named output that becomes an authored source or module file inside a named folder while a story format is being resolved (edited, or created at a path that was empty) is rejected with `OUTPUT_IS_INPUT` before the write, and the file's bytes are kept: the folders are walked again at the write boundary (#301)
+- `watch()` follows the target of a symlinked source whose target name holds a backslash on POSIX: link targets are split with the platform's separators, as Windows still reads both spellings (#239)
 - A build writes over an output of its own, inside a source or module folder, only while the file holds exactly what was written: its content is checked as well as its size, inode and modification time, so a same-size edit in place that restores the modification time makes it the author's file (`OUTPUT_IS_INPUT`, bytes kept) (#285)
 - The Vite dev server's catch-up sees an entry file or import edited while the entry was bundled, with no watcher or a missed event: the states it compares are those from before the bundle read the files, and a file the bundle found itself and that changed during it is bundled again on the next request (#286)
 - `--list-formats` leaves out cached Story Formats Archive downloads when `useDefaultFormatIndices` is `false`, unless the same index is configured in `formatIndices`, as a build resolves formats (#287)

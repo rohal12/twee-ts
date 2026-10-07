@@ -73,3 +73,51 @@ describe('cssContexts', () => {
     expect(css('a\\" X', 'X')).toEqual({ kind: 'code' });
   });
 });
+
+describe('many escape sites (#304)', () => {
+  const sites = (source: string, needle: string) => {
+    const found: { start: number; end: number }[] = [];
+    for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + needle.length)) {
+      found.push({ start: at, end: at + needle.length });
+    }
+    return found;
+  };
+
+  it('classifies each of many sites like the first containing literal, in linear time', () => {
+    const count = 80_000;
+    const source = 'void "</script>";\n'.repeat(count);
+    const ranges = sites(source, '</script>');
+    const started = performance.now();
+    const contexts = javaScriptContexts(source, ranges);
+    const elapsed = performance.now() - started;
+    expect(contexts).toHaveLength(count);
+    expect(contexts.every((c) => c.context.kind === 'string')).toBe(true);
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  it('does the same for CSS', () => {
+    const count = 80_000;
+    const source = '.a::after { content: "</style>"; }\n'.repeat(count);
+    const ranges = sites(source, '</style>');
+    const started = performance.now();
+    const contexts = cssContexts(source, ranges);
+    const elapsed = performance.now() - started;
+    expect(contexts.every((c) => c.context.kind === 'string')).toBe(true);
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  it('keeps boundary and mixed code/literal semantics', () => {
+    const source = 'a("</x>"); b = c; /* </x> */ ``';
+    const ranges = [
+      ...sites(source, '</x>'),
+      { start: 0, end: 1 },
+      { start: 2, end: 8 },
+      { start: 1, end: 8 },
+      { start: 2, end: 9 },
+      { start: source.length, end: source.length },
+      { start: source.length - 1, end: source.length - 1 },
+    ];
+    const kinds = javaScriptContexts(source, ranges).map((c) => c.context.kind);
+    expect(kinds).toEqual(['string', 'block-comment', 'code', 'string', 'code', 'code', 'code', 'template']);
+  });
+});
