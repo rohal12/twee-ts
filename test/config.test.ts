@@ -371,3 +371,27 @@ describe('JSON Schema', () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe('tag alias names follow the Twee whitespace grammar', () => {
+  const spaces = [
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+  ];
+  const tag = (name: string): { tagAliases: Record<string, string> } => ({ tagAliases: { library: name } });
+
+  it.each(spaces)('rejects U+%s inside, before and after an alias target and key', (unit) => {
+    const ch = String.fromCodePoint(unit);
+    for (const name of [`a${ch}b`, `${ch}a`, `a${ch}`, ch]) {
+      expect(validateConfig(tag(name))).not.toEqual([]);
+      expect(validateConfig({ tagAliases: { [name]: 'script' } })).not.toEqual([]);
+    }
+  });
+
+  it.each(['script', 'a﻿b', 'script﻿', 'né', '日本', '​'])('accepts the single tag %j', (name) => {
+    expect(validateConfig(tag(name))).toEqual([]);
+    expect(validateConfig({ tagAliases: { [name]: 'script' } })).toEqual([]);
+  });
+
+  it('rejects the empty name', () => {
+    expect(validateConfig(tag(''))).not.toEqual([]);
+  });
+});
