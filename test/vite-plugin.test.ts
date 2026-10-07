@@ -497,12 +497,12 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
       const again = setInterval(retarget, 250);
       await vi
         .waitFor(() => {
-          expect(story(out)).toContain('SECOND_TEXT');
+          // DIAG: temporary, macOS investigation
+          const diag = JSON.stringify({ events: DIAG.slice(-40), link: readlinkSync(join(dir, 'story.tw')) });
+          expect(story(out), `DIAG ${diag}`).toContain('SECOND_TEXT');
         }, settled)
         .finally(() => {
           clearInterval(again);
-          // DIAG: temporary, macOS investigation
-          console.log('DIAG', JSON.stringify({ events: DIAG.slice(-40), link: readlinkSync(join(dir, 'story.tw')) }));
         });
 
       writeFileSync(join(dir, 'second.tw'), STORY.replace('Hello from the story.', 'SECOND_EDITED'));

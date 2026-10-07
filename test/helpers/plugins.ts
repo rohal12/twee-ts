@@ -112,7 +112,8 @@ export function tempDir(): string {
 /** Closes the servers started and removes the projects made since the last call; for afterEach. */
 export async function cleanUp(): Promise<void> {
   await Promise.all([...servers.splice(0), ...watchers.splice(0)].map((closable) => closable.close()));
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // Windows may hold a folder's handles a moment after a watcher closes, so removing it is retried.
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** Every file below `dir`, but in node_modules and .git. */
