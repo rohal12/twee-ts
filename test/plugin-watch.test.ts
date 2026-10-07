@@ -47,20 +47,27 @@ describe('watch targets', () => {
     symlinkSync(real, link, 'junction');
     const story = toPosix(realpathSync.native(join(real, 'story')));
     const authored = toPosix(join(link, 'story'));
-    // A path reached through a link is also registered as authored, with the link above it (#307).
+    // The link above the input is registered as authored too (#307).
     expect(watchTargets([authored], () => false, NO_OUTPUTS, 'real').sort()).toEqual(
-      [
-        story,
-        `${story}/parts`,
-        `${story}/parts/more.tw`,
-        `${story}/start.tw`,
-        toPosix(link),
-        authored,
-        `${authored}/parts`,
-        `${authored}/parts/more.tw`,
-        `${authored}/start.tw`,
-      ].sort(),
+      [story, `${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`, toPosix(link)].sort(),
     );
+  });
+
+  it('leaves out a link above the input whose target holds a build output, so writing it starts no build', () => {
+    const real = makeProject({ 'story/start.tw': STORY });
+    const link = join(tempDir(), 'project');
+    symlinkSync(real, link, 'junction');
+    const outputs = outputPaths({ files: [], dirs: [join(real, 'dist')] });
+    expect(watchTargets([toPosix(join(link, 'story'))], () => false, outputs, 'real')).not.toContain(toPosix(link));
+  });
+
+  it('registers an input that does not exist yet by its spelling, with the link above it', () => {
+    const real = makeProject({ 'story/start.tw': STORY });
+    const link = join(tempDir(), 'project');
+    symlinkSync(real, link, 'junction');
+    const targets = watchTargets([toPosix(join(link, 'later.tw'))], () => false, NO_OUTPUTS, 'real');
+    expect(targets).toContain(toPosix(link));
+    expect(targets.some((target) => target.endsWith('/later.tw'))).toBe(true);
   });
 
   it('keeps a literal backslash in a POSIX path and turns only the platform separator into a slash (#308)', () => {
