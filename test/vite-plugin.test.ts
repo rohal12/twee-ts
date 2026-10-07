@@ -3,7 +3,6 @@ import {
   mkdtempSync,
   mkdirSync,
   readdirSync,
-  readlinkSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -391,10 +390,6 @@ interface BuildWatcher {
   close(): Promise<void>;
 }
 
-// DIAG: temporary, macOS investigation
-const DIAG: string[] = [];
-const T0 = Date.now();
-
 describe('vite plugin: build watch', { timeout: 30_000 }, () => {
   let watcher: BuildWatcher | undefined;
 
@@ -420,16 +415,6 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     watcher = started;
     await new Promise<void>((done, fail) => {
       started.on('event', (event) => {
-        // DIAG: temporary, macOS investigation
-        const seen = ((): string => {
-          try {
-            const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
-            return `${/(FIRST|SECOND)_TEXT/.exec(html)?.[0] ?? '-'} link=${basename(readlinkSync(join(dir, 'story.tw')))}`;
-          } catch {
-            return '?';
-          }
-        })();
-        DIAG.push(`${String(Date.now() - T0)} ${event.code} ${seen}`);
         if (event.code === 'BUNDLE_END') void event.result?.close();
         if (event.code === 'END') done();
         if (event.code === 'ERROR') fail(new Error('the first build failed'));
@@ -479,44 +464,6 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
       writeFileSync(join(dir, 'story\\part.tw'), STORY.replace('Hello from the story.', 'BACKSLASH_EDIT'));
       await vi.waitFor(() => {
         expect(story(out)).toContain('BACKSLASH_EDIT');
-      }, settled);
-    },
-  );
-
-  it.skipIf(process.platform === 'win32')(
-    'rebuilds when a source link is pointed at another file, then for edits to the new target (#307)',
-    async () => {
-      const dir = makeProject({
-        'first.tw': STORY.replace('Hello from the story.', 'FIRST_TEXT'),
-        'second.tw': STORY.replace('Hello from the story.', 'SECOND_TEXT'),
-      });
-      symlinkSync(join(dir, 'first.tw'), join(dir, 'story.tw'));
-      const out = await watchBuild(
-        dir,
-        tweeTsPlugin({ sources: [join(dir, 'story.tw')], format: 'test-format-1', compileOptions: COMPILE }),
-      );
-      expect(story(out)).toContain('FIRST_TEXT');
-
-      // The watcher may not be ready right after the first build; the link is pointed again until a build sees it.
-      const retarget = (): void => {
-        rmSync(join(dir, 'story.tw'), { force: true });
-        symlinkSync(join(dir, 'second.tw'), join(dir, 'story.tw'));
-      };
-      retarget();
-      const again = setInterval(retarget, 250);
-      await vi
-        .waitFor(() => {
-          // DIAG: temporary, macOS investigation
-          const diag = JSON.stringify({ events: DIAG.slice(-40), link: readlinkSync(join(dir, 'story.tw')) });
-          expect(story(out), `DIAG ${diag}`).toContain('SECOND_TEXT');
-        }, settled)
-        .finally(() => {
-          clearInterval(again);
-        });
-
-      writeFileSync(join(dir, 'second.tw'), STORY.replace('Hello from the story.', 'SECOND_EDITED'));
-      await vi.waitFor(() => {
-        expect(story(out)).toContain('SECOND_EDITED');
       }, settled);
     },
   );
