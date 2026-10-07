@@ -47,7 +47,7 @@ describe('watch targets', () => {
     symlinkSync(real, link, 'junction');
     const story = toPosix(realpathSync.native(join(real, 'story')));
     const authored = toPosix(join(link, 'story'));
-    // The link above the input is registered by its own location too (#307).
+    // The link above the input is registered as authored too (#307).
     expect(watchTargets([authored], () => false, NO_OUTPUTS, 'real').sort()).toEqual(
       [story, `${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`, toPosix(link)].sort(),
     );

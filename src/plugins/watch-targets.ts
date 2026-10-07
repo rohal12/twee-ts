@@ -6,7 +6,7 @@
  * entries. So every path is registered on its own as well.
  */
 import { lstatSync, readdirSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -30,7 +30,7 @@ const NOTHING: Walked = { targets: [], whole: false };
 /**
  * The paths to register for the inputs (forward-slash paths): every file under
  * them that source discovery reads, but those `skip` returns true for, and no
- * path the build writes (`outputs`). With `real` spelling, a path that is a link, and each link above an input, is also registered by its own location.
+ * path the build writes (`outputs`). With `real` spelling, a path that is a link, and each link above an input, is registered as authored too.
  *
  * A folder is registered, with what it holds, only when watching it reports
  * nothing the story leaves out: nothing below it is skipped (an `exclude`
@@ -48,13 +48,12 @@ export function watchTargets(
   outputs: OutputPaths,
   spelling: TargetSpelling,
 ): string[] {
-  // By real path, a path that is a link itself is also registered by its own location: replacing the link
-  // changes what the input is, and only the link's location sees that. The watchers report real paths, so the
-  // location is spelled by the real path of the folder that holds the link, plus the link's own name.
+  // By real path, a path that is a link itself is also registered as authored: replacing the link changes what
+  // the input is, and only its own location sees that.
   const spell = (path: string, real: string): string[] => {
     if (spelling === 'given') return [path];
     const realSpelling = toPosix(real);
-    return isLink(path) ? [realSpelling, linkLocation(path)] : [realSpelling];
+    return toPosix(path) !== realSpelling && isLink(path) ? [realSpelling, toPosix(path)] : [realSpelling];
   };
   const walk = (path: string, real: string, isRoot: boolean): Walked => {
     if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return NOTHING;
@@ -80,21 +79,16 @@ export function watchTargets(
   ]);
 }
 
-/** Where a link is, as the watchers report it: the real path of the folder that holds it, plus its own name. */
-function linkLocation(path: string): string {
-  return toPosix(join(realPathOf(dirname(path)), basename(path)));
-}
-
 /**
- * The links among the folders above `path`, by their location (see `linkLocation()`), nearest last. Replacing one
- * of them changes what the input is, and only its own location sees that. A link directly in the root of the file
- * system (`/var` on macOS) is the system's own alias and is left out, as is a link to a folder that holds a build
- * output, since watching it whole would rebuild for what the build writes.
+ * The links among the folders above `path`, as authored (forward slashes), nearest last. Replacing one of them
+ * changes what the input is, and only its own location sees that. A link directly in the root of the file system
+ * (`/var` on macOS) is the system's own alias and is left out, as is a link to a folder that holds a build output,
+ * since watching it whole would rebuild for what the build writes.
  */
 function linkedAncestors(path: string, outputs: OutputPaths): string[] {
   const links: string[] = [];
   for (let folder = dirname(path); dirname(dirname(folder)) !== dirname(folder); folder = dirname(folder)) {
-    if (isLink(folder) && !outputs.holds(realPathOf(folder))) links.unshift(linkLocation(folder));
+    if (isLink(folder) && !outputs.holds(realPathOf(folder))) links.unshift(toPosix(folder));
   }
   return links;
 }

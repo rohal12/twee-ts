@@ -4,29 +4,22 @@
  * (Vite build, Rollup) or the dev server's request catch-up, and is paired with an ordinary-path control.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Plugin } from 'vite';
 import { watch } from 'rollup';
 import type { RollupWatcher } from 'rollup';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { tweeTsPlugin as rollupTweeTs } from '../src/plugins/rollup.js';
-import {
-  cleanUp,
-  COMPILE,
-  makeProject,
-  recorderPlugin,
-  registeredFor,
-  startBuildWatch,
-  startServer,
-  storyWith,
-} from './helpers/plugins.js';
+import { cleanUp, COMPILE, makeProject, startBuildWatch, startServer, storyWith } from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
 const settled = { timeout: 20_000, interval: 100 };
 const posixOnly = process.platform === 'win32';
+// On macOS the bundler's watcher (rolldown-notify, fsevent.rs) registers a link by `path.canonicalize()`, the real path
+// of its target, and handles an event only when its path starts with a registered path, so replacing the link (an event
+// at the link's own path) raises none there; Linux reports it. See "Build watch" in docs/plugins.md.
+const noRelinkWatch = process.platform !== 'linux';
 
 /** Applies `change` every 250 ms until `check` passes: a watcher may not be ready right after the first build. */
 async function applyUntil(change: () => void, check: () => void): Promise<void> {
@@ -55,7 +48,7 @@ interface Sources {
 }
 
 /** A Vite build watch of `layout` in the project at `dir`; resolves to the story's path. */
-async function watchStory(dir: string, layout: Sources, extra: Plugin[] = []): Promise<string> {
+async function watchStory(dir: string, layout: Sources): Promise<string> {
   const outDir = join(dir, 'dist');
   await startBuildWatch({
     root: dir,
@@ -70,7 +63,6 @@ async function watchStory(dir: string, layout: Sources, extra: Plugin[] = []): P
           ...(layout.headFile === undefined ? {} : { headFile: join(dir, layout.headFile) }),
         },
       }),
-      ...extra,
     ],
   });
   return join(outDir, 'index.html');
@@ -203,75 +195,47 @@ describe(
 );
 
 describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => {
-  // EXPERIMENT E2 (temporary, macOS investigation): the fixture and steps of the single-link test of
-  // vite-plugin.test.ts, run in this file with this file's helper.
-  it.skipIf(posixOnly)('EXPERIMENT E2: the single-link fixture, retargeted once, then an edit', async () => {
-    const dir = makeProject({ 'first.tw': storyWith('FIRST_TEXT'), 'second.tw': storyWith('SECOND_TEXT') });
-    symlinkSync(join(dir, 'first.tw'), join(dir, 'story.tw'));
-    const probe: string[] = [];
-    const out = await watchStory(dir, { sources: ['story.tw'] }, [recorderPlugin(probe)]);
-    expect(text(out)).toContain('FIRST_TEXT');
-    probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
-    await applyUntil(
-      () => {
-        relink(join(dir, 'story.tw'), join(dir, 'second.tw'));
-      },
-      () => {
-        expect(text(out)).toContain('SECOND_TEXT');
-      },
-    );
-    console.log(`PROBE E2@plugin-input-spelling.test.ts ${JSON.stringify(probe)}`);
-    await applyUntil(
-      () => {
-        writeFileSync(join(dir, 'second.tw'), storyWith('SECOND_EDITED'));
-      },
-      () => {
-        expect(text(out)).toContain('SECOND_EDITED');
-      },
-    );
-  });
+  it.skipIf(noRelinkWatch)(
+    'follows a source file link through repeated retargets, a dangling link and edits',
+    async () => {
+      const dir = makeProject({
+        'one.tw': storyWith('ONE_TEXT'),
+        'two.tw': storyWith('TWO_TEXT'),
+        'three.tw': storyWith('THREE_TEXT'),
+      });
+      symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
+      const out = await watchStory(dir, { sources: ['story.tw'] });
+      expect(text(out)).toContain('ONE_TEXT');
 
-  it.skipIf(posixOnly)('follows a source file link through repeated retargets, a dangling link and edits', async () => {
-    const dir = makeProject({
-      'one.tw': storyWith('ONE_TEXT'),
-      'two.tw': storyWith('TWO_TEXT'),
-      'three.tw': storyWith('THREE_TEXT'),
-    });
-    symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
-    const probe: string[] = [];
-    const out = await watchStory(dir, { sources: ['story.tw'] }, [recorderPlugin(probe)]);
-    expect(text(out)).toContain('ONE_TEXT');
-    probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
+      const retarget = (name: string, expected: string) =>
+        applyUntil(
+          () => {
+            relink(join(dir, 'story.tw'), join(dir, name));
+          },
+          () => {
+            expect(text(out)).toContain(expected);
+          },
+        );
+      await retarget('two.tw', 'TWO_TEXT');
+      await retarget('three.tw', 'THREE_TEXT');
 
-    const retarget = (name: string, expected: string) =>
-      applyUntil(
+      // A link that dangles fails the build; pointing it at a story again recovers, and the old targets stay quiet.
+      relink(join(dir, 'story.tw'), join(dir, 'missing.tw'));
+      await new Promise((done) => setTimeout(done, 500));
+      await retarget('one.tw', 'ONE_TEXT');
+
+      await applyUntil(
         () => {
-          relink(join(dir, 'story.tw'), join(dir, name));
+          writeFileSync(join(dir, 'one.tw'), storyWith('ONE_EDITED'));
         },
         () => {
-          expect(text(out)).toContain(expected);
+          expect(text(out)).toContain('ONE_EDITED');
         },
       );
-    await retarget('two.tw', 'TWO_TEXT');
-    console.log(`PROBE fuller@plugin-input-spelling.test.ts (after the first retarget) ${JSON.stringify(probe)}`);
-    await retarget('three.tw', 'THREE_TEXT');
+    },
+  );
 
-    // A link that dangles fails the build; pointing it at a story again recovers, and the old targets stay quiet.
-    relink(join(dir, 'story.tw'), join(dir, 'missing.tw'));
-    await new Promise((done) => setTimeout(done, 500));
-    await retarget('one.tw', 'ONE_TEXT');
-
-    await applyUntil(
-      () => {
-        writeFileSync(join(dir, 'one.tw'), storyWith('ONE_EDITED'));
-      },
-      () => {
-        expect(text(out)).toContain('ONE_EDITED');
-      },
-    );
-  });
-
-  it.skipIf(posixOnly)(
+  it.skipIf(noRelinkWatch)(
     'rebuilds when a source folder link is retargeted, then for edits in the new folder',
     async () => {
       const dir = makeProject({ 'first/start.tw': storyWith('FIRST_DIR'), 'second/start.tw': storyWith('SECOND_DIR') });
@@ -297,7 +261,7 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
     },
   );
 
-  it.skipIf(posixOnly)('rebuilds when a module link or a head file link is retargeted', async () => {
+  it.skipIf(noRelinkWatch)('rebuilds when a module link or a head file link is retargeted', async () => {
     const dir = makeProject({
       'story/start.tw': storyWith('x'),
       'mod-a.js': 'window.marker = "MOD_A";',
@@ -327,7 +291,7 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
     );
   });
 
-  it.skipIf(posixOnly)('rebuilds when a link above the source folder is retargeted', async () => {
+  it.skipIf(noRelinkWatch)('rebuilds when a link above the source folder is retargeted', async () => {
     const dir = makeProject({ 'a/story/start.tw': storyWith('UNDER_A'), 'b/story/start.tw': storyWith('UNDER_B') });
     mkdirSync(join(dir, 'x'));
     symlinkSync(join(dir, 'a'), join(dir, 'x/parent'));
@@ -354,40 +318,5 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
         expect(text(out)).toContain('PLAIN_TWO');
       },
     );
-  });
-});
-
-describe('vite build watch: a project spelled through an OS path alias (#307)', { timeout: 40_000 }, () => {
-  const created: string[] = [];
-  afterEach(() => {
-    for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  it.skipIf(posixOnly).each([
-    ['as the system creates it (an alias on macOS: /var)', false],
-    ['by its canonical path (/private/var on macOS)', true],
-  ] as const)('rebuilds when a source link is retargeted, project spelled %s', async (label, canonical) => {
-    const made = mkdtempSync(join(tmpdir(), 'twee-ts-alias-'));
-    created.push(made);
-    const dir = canonical ? realpathSync.native(made) : made;
-    writeFileSync(join(dir, 'one.tw'), storyWith('ONE_TEXT'));
-    writeFileSync(join(dir, 'two.tw'), storyWith('TWO_TEXT'));
-    symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
-    const probe: string[] = [];
-    const out = await watchStory(dir, { sources: ['story.tw'] }, [recorderPlugin(probe)]);
-    probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
-    expect(text(out)).toContain('ONE_TEXT');
-    try {
-      await applyUntil(
-        () => {
-          relink(join(dir, 'story.tw'), join(dir, 'two.tw'));
-        },
-        () => {
-          expect(text(out)).toContain('TWO_TEXT');
-        },
-      );
-    } finally {
-      console.log(`PROBE alias-pair [${label}] dir=${dir} ${JSON.stringify(probe)}`);
-    }
   });
 });
