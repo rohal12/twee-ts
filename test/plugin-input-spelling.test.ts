@@ -4,7 +4,8 @@
  * (Vite build, Rollup) or the dev server's request catch-up, and is paired with an ordinary-path control.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Plugin } from 'vite';
 import { watch } from 'rollup';
@@ -353,5 +354,40 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
         expect(text(out)).toContain('PLAIN_TWO');
       },
     );
+  });
+});
+
+describe('vite build watch: a project spelled through an OS path alias (#307)', { timeout: 40_000 }, () => {
+  const created: string[] = [];
+  afterEach(() => {
+    for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it.skipIf(posixOnly).each([
+    ['as the system creates it (an alias on macOS: /var)', false],
+    ['by its canonical path (/private/var on macOS)', true],
+  ] as const)('rebuilds when a source link is retargeted, project spelled %s', async (label, canonical) => {
+    const made = mkdtempSync(join(tmpdir(), 'twee-ts-alias-'));
+    created.push(made);
+    const dir = canonical ? realpathSync.native(made) : made;
+    writeFileSync(join(dir, 'one.tw'), storyWith('ONE_TEXT'));
+    writeFileSync(join(dir, 'two.tw'), storyWith('TWO_TEXT'));
+    symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
+    const probe: string[] = [];
+    const out = await watchStory(dir, { sources: ['story.tw'] }, [recorderPlugin(probe)]);
+    probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
+    expect(text(out)).toContain('ONE_TEXT');
+    try {
+      await applyUntil(
+        () => {
+          relink(join(dir, 'story.tw'), join(dir, 'two.tw'));
+        },
+        () => {
+          expect(text(out)).toContain('TWO_TEXT');
+        },
+      );
+    } finally {
+      console.log(`PROBE alias-pair [${label}] dir=${dir} ${JSON.stringify(probe)}`);
+    }
   });
 });
