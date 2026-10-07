@@ -331,16 +331,20 @@ function headStartCandidates(doc: HtmlDocument): number[] {
 
 /**
  * Where content goes to come last in the head of `html`: before the closing head tag that ends the head (as Tweego
- * places it); without one, where the head ends implicitly; with no head start tag either, where the parser creates
- * the head. Each place but the first is checked by parsing the document with a probe element there. `undefined` when
+ * places it, when an element put there lands in the head); without one, where the head ends implicitly; with no head start tag either, where the parser creates
+ * the head. Each place is checked by parsing the document with a probe element there. `undefined` when
  * no place puts elements into the head.
  */
 export function locateHeadEnd(html: string, doc: HtmlDocument = parseHtml(html)): HeadPlacement | undefined {
   const head = documentHead(doc);
   if (head === undefined) return undefined;
   const endTag = head.sourceCodeLocation?.endTag;
-  if (endTag !== undefined) return { offset: endTag.startOffset, how: 'end-tag' };
   const key = structureKey(doc);
+  // A closing head tag the parser ignores (inside an open template element, say) is still recorded as the head's
+  // end tag, so it counts only where an element put there really lands in the head.
+  if (endTag !== undefined && insertsIntoHead(html, key, endTag.startOffset, PROBE)) {
+    return { offset: endTag.startOffset, how: 'end-tag' };
+  }
   const how = head.sourceCodeLocation ? 'implicit-end' : 'implied-start';
   const offset = headEndCandidates(doc, head).find((candidate) => insertsIntoHead(html, key, candidate, PROBE));
   return offset === undefined ? undefined : { offset, how };

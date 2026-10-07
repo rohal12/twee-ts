@@ -93,6 +93,18 @@ const template = fc
       '<script>var n = "{{STORY_NAME}}";</script></body></html>',
   );
 
+describe('P1/P2: a closing head tag the parser ignores', () => {
+  // The `</head>` inside the open template is ignored by the parser but recorded as the head's end tag.
+  const template =
+    '<html><head><title>{{STORY_NAME}}</title><template></head><!--</head><body>' +
+    '<div id="storeArea" data-size="STORY_SIZE" hidden>"STORY"</div>{{STORY_DATA}}' +
+    '<script>var n = "{{STORY_NAME}}";</script></body></html>';
+
+  it('never puts the modules or the head file into the template element', () => {
+    expect(failures('random', template)).toEqual([]);
+  });
+});
+
 describe('P1/P2: insertions into random templates', { timeout: 120_000 }, () => {
   it('place every insertion where it belongs and leave the rest of the document as it was', () => {
     fc.assert(
