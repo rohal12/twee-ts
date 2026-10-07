@@ -78,6 +78,8 @@ When the head file content does not stay in the head (it holds text or body elem
 
 A font module (`.ttf`, `.otf`, `.woff`, `.woff2`) becomes an `@font-face` rule whose `font-family` is the file name up to its first dot (`My.Font.woff2` gives `My`), written as a CSS string, so quotes, backslashes and line breaks in the name are escaped.
 
+Each module element gets an id from its file name up to its first dot, as in Tweego: `script-module-ui` for `ui.js`, `style-module-ui` for `ui.css` and for a font `ui.woff2` (each run of spaces, control characters and ASCII punctuation other than `_` becomes one `_`). When an earlier module already has that id (`lib/ui.js` and `vendor/ui.js`, or `ui.css` and `ui.woff2`), the later one gets `-2`, `-3` and so on after it (`script-module-ui-2`), with a warning, so the ids in the page stay unique. Tweego gives both the same id.
+
 ### Compilation Behavior
 
 | Flag                         | Description                                                                      |

@@ -33,7 +33,7 @@ import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
 import { generateIFID } from './ifid.js';
-import { toTwine2HTML, toTwine2Archive } from './output-twine2.js';
+import { toTwine2HTML, toTwine2Archive, twine2TagColors } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { loadHeadContent } from './modules.js';
@@ -662,7 +662,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       break;
 
     case 'json':
-      output = storyToJSON(story);
+      output = storyToJSON(story, startName, diagnostics);
       break;
 
     case 'html': {
@@ -753,8 +753,11 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
 /**
  * Serialize a Story to JSON per the Twine 2 JSON Output Specification (v1.0):
  * https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md
+ * `start` is the start passage the other output modes use (`startName`): the one StoryData or the options name,
+ * else the default `Start` when the JSON lists a passage of that name. `tag-colors` holds the tag colors Twine 2
+ * output writes; `diagnostics` receives a warning for each color left out (see `twine2TagColors()`).
  */
-function storyToJSON(story: Story): string {
+function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[]): string {
   // Gather script and stylesheet content, excluding them from passages.
   const scripts: string[] = [];
   const stylesheets: string[] = [];
@@ -781,14 +784,17 @@ function storyToJSON(story: Story): string {
     }
   }
 
+  const tagColors = twine2TagColors(story);
+  diagnostics.push(...tagColors.diagnostics);
+  const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {
     name: story.name,
     ...(story.ifid ? { ifid: story.ifid } : {}),
     ...(story.twine2.format ? { format: story.twine2.format } : {}),
     ...(story.twine2.formatVersion ? { 'format-version': story.twine2.formatVersion } : {}),
-    ...(story.twine2.start ? { start: story.twine2.start } : {}),
-    ...(story.twine2.tagColors.size > 0 ? { 'tag-colors': Object.fromEntries(story.twine2.tagColors) } : {}),
+    ...(start ? { start } : {}),
+    ...(tagColors.colors.length > 0 ? { 'tag-colors': Object.fromEntries(tagColors.colors) } : {}),
     ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
     creator: CREATOR_NAME,
     'creator-version': VERSION,

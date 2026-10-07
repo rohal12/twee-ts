@@ -1,7 +1,7 @@
 /**
- * Reads SugarCube 2 macro calls and link markup the way SugarCube 2.37.3 does, so the link check
- * sees the same passage names that `[[…]]` links, `<<link>>` and `<<goto>>` use when the story
- * plays.
+ * Reads SugarCube 2 macro calls, link markup and HTML start tags the way SugarCube 2.37.3 does, so
+ * the link check sees the same passage names that `[[…]]` links, `<<link>>`, `<<button>>`,
+ * `<<goto>>` and elements with a `data-passage` attribute use when the story plays.
  *
  * Each step follows a part of SugarCube's macro parser:
  * - `findMacroTags` finds where a tag starts and ends (the parser's `lookahead` pattern);
@@ -20,7 +20,7 @@
  */
 import { SUBSTITUTION, evalStringLiteral, javaScriptStrings } from './javascript-strings.js';
 import type { ScriptMode } from './javascript-strings.js';
-import { scriptsJQueryRuns } from './html-structure.js';
+import { scriptsJQueryRuns, wikifiedElementAttributes } from './html-structure.js';
 import { LINE_TERMINATORS, isLineTerminator } from './js-chars.js';
 import { readSquareBracketedMarkup } from './link-markup.js';
 
@@ -48,13 +48,16 @@ export type MacroArg =
   /** A variable, an expression, `setup`/`settings`, a boolean or `undefined`. */
   | { readonly type: 'other' };
 
-/** The macros whose calls name a passage. */
-type PassageLinkMacro = 'goto' | 'link';
+/** The macros whose calls name a passage. SugarCube registers `<<button>>` with `<<link>>`'s handler. */
+type PassageLinkMacro = 'goto' | 'link' | 'button';
 
-/** A passage named by link markup (`[[…]]`) or by a `<<link>>` or `<<goto>>` call. */
+/**
+ * A passage named by link markup (`[[…]]`), by a `<<link>>`, `<<button>>` or `<<goto>>` call, or by the
+ * `data-passage` attribute of an element.
+ */
 export interface PassageLink {
-  /** What names it: link markup, or a call of that macro. */
-  readonly via: 'markup' | PassageLinkMacro;
+  /** What names it: link markup, a call of that macro, or an element's `data-passage` attribute. */
+  readonly via: 'markup' | 'data-passage' | PassageLinkMacro;
   readonly passage: string;
 }
 
@@ -65,7 +68,7 @@ type LexedArg =
   | { readonly kind: 'markup'; readonly text: string }
   | { readonly kind: 'word'; readonly text: string };
 
-/** A tag, and where a `<<link` or `<<goto` first appears unquoted in its arguments, if it does. */
+/** A tag, and where a `<<link`, `<<button` or `<<goto` first appears unquoted in its arguments, if it does. */
 export interface ScannedTag {
   readonly tag: MacroTag;
   readonly innerCall: number | undefined;
@@ -124,22 +127,24 @@ const MAX_STRING_DEPTH = 10;
 
 /**
  * What one reading of a passage carries down into the strings it reads: how deep it is, how much
- * the `<<script>>` closer search has left to read (see `scriptBodyCloser`), and how much the
- * reading of link and image markup has (see `readSquareBracketedMarkup`).
+ * the `<<script>>` closer search has left to read (see `scriptBodyCloser`), how much the
+ * reading of link and image markup has (see `readSquareBracketedMarkup`), and how much the reading
+ * of HTML start tags and the search for their end tags have (see `htmlTagReader`).
  */
 interface ReadContext {
   readonly depth: number;
   readonly budget: { left: number };
   readonly markupBudget: { left: number };
+  readonly tagBudget: { left: number };
 }
 
 /**
- * A context for reading `text`: the closer search, and the markup reading, may each read four
- * times it, plus an allowance.
+ * A context for reading `text`: the closer search, the markup reading and the HTML tag reading may
+ * each read four times it, plus an allowance.
  */
 function readContext(text: string): ReadContext {
   const allowance = (): { left: number } => ({ left: 4 * text.length + 100_000 });
-  return { depth: 0, budget: allowance(), markupBudget: allowance() };
+  return { depth: 0, budget: allowance(), markupBudget: allowance(), tagBudget: allowance() };
 }
 
 function deeper(context: ReadContext): ReadContext {
@@ -256,14 +261,14 @@ export function tagMatcher(
   };
 }
 
-/** Whether a `<<link` or `<<goto` tag, and not a longer macro name, starts at `pos`. */
+/** Whether a `<<link`, `<<button` or `<<goto` tag, and not a longer macro name, starts at `pos`. */
 function startsPassageLinkCall(text: string, pos: number): boolean {
   if (!text.startsWith('<<', pos)) {
     return false;
   }
   NAME_RE.lastIndex = pos + 2;
   const name = NAME_RE.exec(text)?.[0];
-  return name === 'link' || name === 'goto';
+  return name !== undefined && isPassageLinkMacro(name);
 }
 
 /** The kind of argument part that opens at `pos`, if one does. */
@@ -542,22 +547,24 @@ function passageName(arg: MacroArg): string | undefined {
 }
 
 /**
- * The argument that names the passage in a `<<link>>` or `<<goto>>` call:
- * - `<<link linkText [passageName]>>`, unless the first argument is link or image markup, which
- *   then names the passage itself and any further argument is ignored;
+ * The argument that names the passage in a `<<link>>`, `<<button>>` or `<<goto>>` call:
+ * - `<<link linkText [passageName]>>` and `<<button linkText [passageName]>>`, unless the first
+ *   argument is link or image markup, which then names the passage itself and any further
+ *   argument is ignored;
  * - `<<goto passageName>>`.
  *
  * In text built from a template literal, a bare word with a `${…}` in it may become several
  * words in play, so no argument after it is known.
  */
 function passageArgument(macro: PassageLinkMacro, lexed: readonly LexedArg[]): MacroArg | undefined {
-  const index = macro === 'link' ? 1 : 0;
+  const index = macro === 'goto' ? 0 : 1;
   if (lexed.slice(0, index + 1).some((arg) => arg.kind === 'word' && arg.text.includes(SUBSTITUTION))) {
     return undefined;
   }
   const args = lexed.map(argValue);
   switch (macro) {
-    case 'link': {
+    case 'link':
+    case 'button': {
       const [label, passage] = args;
       // A `null` label makes SugarCube throw, as it reads `null` as markup.
       return label === undefined || label.type === 'markup' || label.type === 'null' ? undefined : passage;
@@ -572,10 +579,10 @@ function passageArgument(macro: PassageLinkMacro, lexed: readonly LexedArg[]): M
 }
 
 function isPassageLinkMacro(name: string): name is PassageLinkMacro {
-  return name === 'goto' || name === 'link';
+  return name === 'goto' || name === 'link' || name === 'button';
 }
 
-/** The passage a `<<link>>` or `<<goto>>` tag names itself, if it can be known before play. */
+/** The passage a `<<link>>`, `<<button>>` or `<<goto>>` tag names itself, if it can be known before play. */
 function ownPassageLink(tag: MacroTag, lexed: readonly LexedArg[]): PassageLink | undefined {
   if (!isPassageLinkMacro(tag.name)) {
     return undefined;
@@ -623,7 +630,7 @@ function markupArgumentLinks(raw: string): PassageLink[] {
 }
 
 /**
- * The passages a tag names: its own, if it is a `<<link>>` or `<<goto>>` call, then those of its
+ * The passages a tag names: its own, if it is a `<<link>>`, `<<button>>` or `<<goto>>` call, then those of its
  * link markup arguments (`<<button [[Go|Room]]>>`), and those of the links and calls inside the
  * strings of its arguments, which the macro may print or pass on
  * (`<<set _out to '<<link "Go" "Room">><</link>>'>>`). The arguments of the macros SugarCube
@@ -659,7 +666,7 @@ function tagPassageLinks(tag: MacroTag, context: ReadContext): PassageLink[] {
 }
 
 /**
- * The passage named by a `<<link>>` or `<<goto>>` that appears unquoted inside another tag's
+ * The passage named by a `<<link>>`, `<<button>>` or `<<goto>>` that appears unquoted inside another tag's
  * arguments, at `start`. SugarCube never sees such an outer "tag" when its `<<` lies in text it
  * reads as something else, such as verbatim text (`{{{<<if}}}`); the call inside it then runs.
  * The call ends where the outer tag ends.
@@ -673,13 +680,13 @@ function innerPassageLink(
   return inner === undefined || lexed === undefined ? undefined : ownPassageLink(inner, lexed);
 }
 
-// Where link or image markup, a comment, a `<script>` element or italics can start, as SugarCube's
-// parsers match them: the markup whose text is read apart from the walk. `//` is here only because
-// it comes first, as in SugarCube: `//*` is italics.
-const REGION_OPEN_RE = /\[\[[^[]|\[[<>]?[Ii][Mm][Gg]\[|\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]/g;
-const HAS_SCRIPT_OPEN_RE = /<[Ss][Cc][Rr][Ii][Pp][Tt]/;
+// Where link or image markup, a comment, a `<script>` element, another HTML start tag or italics can
+// start, as SugarCube's parsers match them: the markup whose text is read apart from the walk. `//`
+// is here only because it comes first, as in SugarCube: `//*` is italics.
+const REGION_OPEN_RE = /\[\[[^[]|\[[<>]?[Ii][Mm][Gg]\[|\/\/|\/\*|\/%|<!--|<[Ss][Cc][Rr][Ii][Pp][Tt]|<[A-Za-z]/g;
+const HAS_TAG_OPEN_RE = /<[A-Za-z]/;
 const HAS_IMAGE_OPEN_RE = /\[[<>]?[Ii][Mm][Gg]\[/;
-type RegionKind = 'markup' | '//' | CommentKind | 'script';
+type RegionKind = 'markup' | '//' | CommentKind | 'script' | 'tag';
 
 function regionKind(opener: string): RegionKind {
   if (opener.startsWith('[')) {
@@ -692,8 +699,166 @@ function regionKind(opener: string): RegionKind {
     case '<!--':
       return opener;
     default:
-      return 'script';
+      // `<script`, or `<` and the first letter of another tag name.
+      return opener.length === 2 ? 'tag' : 'script';
   }
+}
+
+// SugarCube's `Patterns.htmlTagName`: an element name, or a custom element name.
+const CUSTOM_ELEMENT_NAME_CHAR = String.raw`(?:[\-.0-9A-Z_a-z\xB7\xC0-\xD6\xD8-\xF6\xF8-\u037D\u037F-\u1FFF\u200C\u200D\u203F\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])`;
+const HTML_TAG_NAME_RE = new RegExp(
+  `[A-Za-z](?:${CUSTOM_ELEMENT_NAME_CHAR}*-${CUSTOM_ELEMENT_NAME_CHAR}*|[0-9A-Za-z]*)`,
+  'y',
+);
+// The parts of SugarCube's `htmlTag` pattern after the name: an attribute name, and an unquoted value.
+const ATTRIBUTE_NAME_RE = /[^\u0000-\u001F\u007F-\u009F\s"'>/=]+/y;
+const UNQUOTED_VALUE_RE = /[^\s"'=<>`]+/y;
+const TAG_SPACES_RE = /\s*/y;
+/**
+ * The openers of the parsers SugarCube tries before `htmlTag` where a start tag can be: `<html>`
+ * (`verbatimHtml`), `<nowiki>` (`verbatimText`), and `<style` and `<svg` (`styleTag` and `svgTag`,
+ * which go on to the next `>`).
+ */
+const OTHER_TAG_OPENER_RE = /<(?:[Hh][Tt][Mm][Ll]>|[Nn][Oo][Ww][Ii][Kk][Ii]>|[Ss][Tt][Yy][Ll][Ee]|[Ss][Vv][Gg])/y;
+/** The `htmlTag` parser's `mediaTags`: a `data-passage` on them names a media passage, not a link. */
+const MEDIA_TAGS: ReadonlySet<string> = new Set(['audio', 'img', 'source', 'track', 'video']);
+/** The `htmlTag` parser's `voidTags`, which need no end tag. */
+const VOID_TAGS: ReadonlySet<string> = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'keygen',
+  'link',
+  'menuitem',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+
+/** An HTML start tag that SugarCube's `htmlTag` parser matches: its tag name as written, and where it ends. */
+interface HtmlStartTag {
+  readonly name: string;
+  readonly end: number;
+}
+
+/**
+ * The start tag that SugarCube's `htmlTag` pattern matches at `start` in `text`, if it does:
+ * `<` and a tag name, then attributes, each after white space, with an optional value (`=` and a
+ * double- or single-quoted string, or an unquoted one), then optional white space, an optional
+ * `/` and `>`. The pattern can only match one way, so it is read in one pass. `spend` is told how
+ * many characters were read.
+ */
+function htmlStartTagAt(text: string, start: number, spend: (characters: number) => void): HtmlStartTag | undefined {
+  HTML_TAG_NAME_RE.lastIndex = start + 1;
+  const name = HTML_TAG_NAME_RE.exec(text)?.[0];
+  if (name === undefined) return undefined;
+  // How far the reading has looked.
+  let reach = start + 1 + name.length;
+  const sticky = (re: RegExp, at: number): number => {
+    re.lastIndex = at;
+    const end = re.exec(text) === null ? at : re.lastIndex;
+    reach = Math.max(reach, end);
+    return end;
+  };
+  const scanned = (end: number | undefined): HtmlStartTag | undefined => {
+    spend(Math.max(reach, end ?? 0) - start);
+    return end === undefined ? undefined : { name, end };
+  };
+  for (let pos = reach; ;) {
+    const spaced = sticky(TAG_SPACES_RE, pos);
+    if (text[spaced] === '>') return scanned(spaced + 1);
+    if (text.startsWith('/>', spaced)) return scanned(spaced + 2);
+    const nameEnd = sticky(ATTRIBUTE_NAME_RE, spaced);
+    if (spaced === pos || nameEnd === spaced) return scanned(undefined);
+    pos = nameEnd;
+    const equals = sticky(TAG_SPACES_RE, pos);
+    if (text[equals] !== '=') continue;
+    const valueStart = sticky(TAG_SPACES_RE, equals + 1);
+    const quote = text[valueStart];
+    const quoted = quote === '"' || quote === "'";
+    const valueEnd = quoted ? text.indexOf(quote, valueStart + 1) + 1 : sticky(UNQUOTED_VALUE_RE, valueStart);
+    if (valueEnd <= valueStart) {
+      // No closing quote, or no value: the `=` can start nothing the pattern allows.
+      reach = quoted ? text.length : reach;
+      return scanned(undefined);
+    }
+    pos = valueEnd;
+  }
+}
+
+/**
+ * Returns a function that reads the HTML start tag at a position the walk reaches, as SugarCube's
+ * `htmlTag` parser reads it, giving where the walk goes on and the passage that the element's
+ * `data-passage` attribute names, if it names one. Positions must come in increasing order. All
+ * start tags read, and all end tag searches, in one reading of a passage stop once they have read
+ * four times as many characters as the passage has, plus an allowance (`budget`, see
+ * `readContext`); on input built to make them read more, the start tags after that are read as
+ * markup. That keeps the time linear.
+ */
+function htmlTagReader(
+  text: string,
+  budget: { left: number },
+): (start: number) => {
+  readonly link: PassageLink | undefined;
+  readonly end: number;
+} {
+  const spend = (characters: number): void => {
+    budget.left -= characters;
+  };
+  // For each tag name, where the last search for its end tag found it (-1: none).
+  const endTags = new Map<string, number>();
+  const hasEndTag = (name: string, from: number): boolean => {
+    const known = endTags.get(name);
+    if (known === -1 || (known !== undefined && known >= from)) return known !== -1;
+    // SugarCube builds the end tag pattern from the name as it is, ignoring case.
+    const re = new RegExp(`<\\/${name}\\s*>`, 'gi');
+    re.lastIndex = from;
+    const found = re.exec(text)?.index ?? -1;
+    spend((found === -1 ? text.length : found) - from);
+    endTags.set(name, found);
+    return found !== -1;
+  };
+  return (start) => {
+    OTHER_TAG_OPENER_RE.lastIndex = start;
+    const tag = budget.left < 0 || OTHER_TAG_OPENER_RE.test(text) ? undefined : htmlStartTagAt(text, start, spend);
+    if (tag === undefined) {
+      // Not a start tag `htmlTag` reads: read on as markup.
+      return { link: undefined, end: start + 1 };
+    }
+    const name = tag.name.toLowerCase();
+    const markup = text.slice(start, tag.end);
+    const isVoid = VOID_TAGS.has(name) || markup.endsWith('/>');
+    const passage = MEDIA_TAGS.has(name) || (!isVoid && !hasEndTag(name, start)) ? undefined : dataPassage(markup);
+    return { link: passage === undefined ? undefined : { via: 'data-passage', passage }, end: tag.end };
+  };
+}
+
+/**
+ * The passage that the `data-passage` attribute of the element a start tag (`markup`) makes
+ * names, as SugarCube's `htmlTag` parser follows it: none when the element has no such attribute,
+ * also has an `href` (an error), or its value is empty, and none known before play when an
+ * attribute directive (`@name` or `sc-eval:name`) sets `data-passage` from an expression. A
+ * directive that sets `href` or `data-setter` is an error, so it names none either.
+ */
+function dataPassage(markup: string): string | undefined {
+  // An attribute name is never written with character references, so one without this text has none.
+  if (!/data-passage/i.test(markup)) return undefined;
+  const attributes = wikifiedElementAttributes(markup);
+  const value = attributes?.get('data-passage');
+  if (attributes === undefined || value === undefined || attributes.has('href')) return undefined;
+  const directed = [...attributes.keys()].map((name) =>
+    name.startsWith('@') ? name.slice(1) : name.startsWith('sc-eval:') ? name.slice(8) : undefined,
+  );
+  if (directed.some((name) => name === 'data-passage' || name === 'href' || name === 'data-setter')) return undefined;
+  const passage = linkDestination(value);
+  return passage === '' ? undefined : passage;
 }
 
 // SugarCube's `(?:.|\n)*?` doesn't cross the other line terminators.
@@ -872,10 +1037,10 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
 }
 
 /**
- * The passages that link markup (`[[…]]`) and `<<link>>` and `<<goto>>` calls in passage markup
- * name, in the order they come. Calls whose passage is known only in play (a variable or an
- * expression) are left out. A tag's own passage comes before those that its arguments name, as
- * link markup or inside strings.
+ * The passages that link markup (`[[…]]`), `<<link>>`, `<<button>>` and `<<goto>>` calls, and
+ * elements with a `data-passage` attribute in passage markup name, in the order they come. Calls
+ * whose passage is known only in play (a variable or an expression) are left out. A tag's own
+ * passage comes before those that its arguments name, as link markup or inside strings.
  *
  * The markup is walked in order, as SugarCube's wikifier walks it, with a tag tried at each
  * `<<` the walk reaches, and link or image markup read at each `[[` or `[img[`; markup SugarCube
@@ -888,8 +1053,12 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  * (see `findJavaScriptPassageLinks`). A `<script>` element is read as jQuery and the browser run
  * it when SugarCube inserts it (see `scriptsJQueryRuns`): a classic script as sloppy-mode code, a
  * `type="module"` script as module code, and one that does not run (a template or JSON `type`, a
- * `src`, a classic script marked `nomodule`) not at all. Everything else, verbatim text included,
- * is read as markup.
+ * `src`, a classic script marked `nomodule`) not at all. Any other HTML start tag that SugarCube's
+ * `htmlTag` parser matches is read as that parser reads it (see `htmlTagReader`): its text is
+ * not markup, and the element the browser makes of it is a link when it has a `data-passage`
+ * attribute, no `href`, a non-empty passage known before play, is no media element (`img`,
+ * `audio`, `video`, `source`, `track`), and is void or has an end tag later in the text. Its
+ * content is read on as markup. Everything else, verbatim text included, is read as markup.
  *
  * Where this differs from SugarCube:
  * - a link whose passage SugarCube evaluates, because no passage has its name, is taken by its
@@ -899,8 +1068,14 @@ function append(links: PassageLink[], more: readonly PassageLink[]): void {
  *   holds a `/`, `.`, `?` or `#`, is still read as naming a passage;
  * - a comment or a `<<script>>` body is skipped whole, even where `parseBody` ends a container
  *   such as `<<if>>` at a closing tag inside it and the rest then runs;
- * - a `[[`, `/*`, `<!--` or `<script` inside other markup that holds no call, such as verbatim
- *   text or a `<style>` element, still starts link markup, a comment or an element;
+ * - a `[[`, `/*`, `<!--`, `<script` or other start tag inside other markup that holds no call,
+ *   such as verbatim text or a `<style>` element, still starts link markup, a comment or an
+ *   element, and a start tag of `<html>`, `<nowiki>`, `<style>` or `<svg>` is read as markup, so
+ *   an element with a `data-passage` inside an `<svg>` is read as one outside it (SugarCube
+ *   follows only an `<a>` there, also one with an `href`);
+ * - an element is read as the content of a `div`, wherever it is (SugarCube reads it as the
+ *   content of the element the markup is put in), and a `data-passage` whose value is an
+ *   expression is taken by its text, as a link's passage is;
  * - a `<<` in such other markup still starts a tag. When that tag runs over a `<<link` or
  *   `<<goto` outside the parts of its arguments that the tag pattern reads as units, that call
  *   is still read (see `innerPassageLink`), even where the tag's arguments would be JavaScript,
@@ -924,7 +1099,7 @@ export function findPassageLinks(text: string): PassageLink[] {
 function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
   if (
     context.depth > MAX_STRING_DEPTH ||
-    (!text.includes('<<') && !text.includes('[[') && !HAS_SCRIPT_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
+    (!text.includes('<<') && !text.includes('[[') && !HAS_TAG_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
   ) {
     return [];
   }
@@ -933,6 +1108,7 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
   const matchInnerTagAt = tagMatcher(text);
   const readComment = commentReader(text);
   const readScriptElement = scriptElementReader(text);
+  const readHtmlTag = htmlTagReader(text, context.tagBudget);
   let findScriptCloser: ((opener: MacroTag) => MacroTag | undefined) | undefined;
   const links: PassageLink[] = [];
 
@@ -977,6 +1153,13 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
           scriptElementPassageLinks(text.slice(start, element.close + 9), element.openerEnd - start, context),
         );
         return element.close + 9;
+      }
+      case 'tag': {
+        const tag = readHtmlTag(start);
+        if (tag.link !== undefined) {
+          links.push(tag.link);
+        }
+        return tag.end;
       }
       default: {
         const _exhaustive: never = kind;
@@ -1048,11 +1231,12 @@ export function findJavaScriptPassageLinks(source: string): PassageLink[] {
  * a `[` before `\[` or a line continuation, `\x5b`, `\u005b`, `\u{` or the octal `\133`. A value
  * holding image markup (`[img[`, `[<img[`, `[>img[`): the source holds a `[` (or one of its
  * escapes, above) followed by an `i`, by `<` or `>` and an `i`, or by an escape. Or a value
- * holding a `<script>` element, whose own strings can make `<<` or `[[` from escapes the outer
- * string encodes.
+ * holding an HTML start tag, such as an element with a `data-passage` attribute or a `<script>`
+ * element, whose own strings can make `<<` or `[[` from escapes the outer string encodes: the `<`
+ * is written as above, and the source holds `<` followed by a letter or a `\`, or one of its escapes.
  */
 const MAY_HOLD_LINK_RE = new RegExp(
-  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<script|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133|\[[<>]?[i\\]`,
+  String.raw`<<|<\\|\\x3c|\\u003c|\\u\{|\\0?74|<[a-z]|\[\[|\[\\[[${LINE_TERMINATORS}]|\\x5b|\\u005b|\\133|\[[<>]?[i\\]`,
   'i',
 );
 

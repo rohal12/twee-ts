@@ -248,8 +248,13 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
     expect(json.start).toBe('Begin');
   });
 
-  it('start: omitted when not defined in StoryData', async () => {
+  it('start: the default Start passage when StoryData defines none, as Twine 2 HTML starts there (#295)', async () => {
     const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
+    expect(json.start).toBe('Start');
+  });
+
+  it('start: omitted when StoryData defines none and there is no Start passage', async () => {
+    const { json } = await compileToJSON(minimalStory(':: Begin\nHello'));
     expect(json.start).toBeUndefined();
   });
 
@@ -1208,7 +1213,7 @@ describe('Twine 2 JSON Output Spec -- Partial Story Encoding', () => {
   });
 
   it('optional properties are omitted when not defined (partial encoding)', async () => {
-    const { json } = await compileToJSON(minimalStory(':: Start\nHello'));
+    const { json } = await compileToJSON(minimalStory(':: Begin\nHello'));
     // These are all Optional per spec and should be absent when not in StoryData
     expect(json.format).toBeUndefined();
     expect(json['format-version']).toBeUndefined();

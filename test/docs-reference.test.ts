@@ -5,6 +5,7 @@
  * - docs/configuration.md's tables and complete reference list exactly the config keys, with the
  *   types and defaults the config schema gives them;
  * - docs/api.md names every function the package exports, and its type list is every exported type;
+ * - docs/api.md's table of how links are read gives the passages the link reader finds in each form;
  * - every page is in the VitePress sidebar.
  * The option interfaces shown in docs/api.md and docs/plugins.md are checked against the exported
  * types by test/docs-snippets.test.ts (`docs-test: mirror`).
@@ -16,6 +17,7 @@ import { codeBlocks, codeSpans, documentFiles, docName, REPO, tables } from './h
 import { OPTIONS, parseCliArgs, usageText } from '../src/cli-request.js';
 import { CONFIG_KEYS, CONFIG_SPEC } from '../src/config.js';
 import { isKnownFileType } from '../src/media-types.js';
+import { findPassageLinks } from '../src/sugarcube-macros.js';
 
 const read = (doc: string): string => readFileSync(join(REPO, doc), 'utf8');
 
@@ -167,6 +169,22 @@ describe('docs/api.md', () => {
       .filter((n) => n !== '');
     // A name exported as a value and a type (ItemType) may be listed too.
     expect(names.filter((n) => !values.includes(n)).sort()).toEqual([...types].sort());
+  });
+});
+
+describe('docs/api.md, How links are read', () => {
+  const table = tables(read('docs/api.md')).find((t) => t.heading === 'How links are read');
+
+  it('lists the markup forms, link and no link', () => {
+    expect(table?.header.slice(0, 2)).toEqual(['Markup', 'Links to']);
+    expect(table?.rows.length).toBeGreaterThan(10);
+  });
+
+  it.each(table?.rows.map((row) => [row[0] ?? '', row[1] ?? '']) ?? [])('%s links to %s', (markup, target) => {
+    const [code] = codeSpans(markup).map((span) => span.replaceAll('\\|', '|'));
+    expect(findPassageLinks(code ?? '').map((link) => link.passage)).toEqual(
+      codeSpans(target).map((span) => span.replaceAll('\\|', '|')),
+    );
   });
 });
 

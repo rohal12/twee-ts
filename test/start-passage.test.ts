@@ -57,9 +57,25 @@ describe('effective starting passage in JSON output and the returned story', () 
     expect(result.story.twine2.start).toBe('Begin');
   });
 
-  it('still omits start from JSON when neither StoryData nor an option sets it', async () => {
+  it.each([
+    ['StoryData names the start', storyData(',"start":"Begin"') + twoRooms, 'Begin', '2'],
+    ['StoryData names none, and there is a Start passage', storyData() + twoRooms, 'Start', '1'],
+    ['StoryData names none, and there is no Start passage', storyData() + ':: Begin\nWelcome', undefined, ''],
+    [
+      'StoryData names none, and Start is a script passage',
+      storyData() + ':: Start [script]\nx = 1;\n\n:: Begin\nWelcome',
+      undefined,
+      '',
+    ],
+  ])('writes the start passage the archive starts at when %s (#295)', async (_name, content, start, node) => {
+    const json = await compile({ sources: [source(content)], outputMode: 'json' });
+    const archive = await compile({ sources: [source(content)], outputMode: 'twine2-archive' });
+    expect(parseJsonObject(json.output)['start']).toBe(start);
+    expect(startnode(archive.output)).toBe(node);
+  });
+
+  it('leaves the story model start unset when nothing names it', async () => {
     const result = await compile({ sources: [source(storyData() + twoRooms)], outputMode: 'json' });
-    expect(JSON.parse(result.output)).not.toHaveProperty('start');
     expect(result.story.twine2.start).toBe('');
   });
 
