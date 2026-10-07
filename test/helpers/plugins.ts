@@ -9,7 +9,9 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { build, createServer, version } from 'vite';
-import type { InlineConfig, ViteDevServer } from 'vite';
+import type { InlineConfig, Plugin, ViteDevServer } from 'vite';
+import { outputPaths } from '../../src/filesystem.js';
+import { watchTargets } from '../../src/plugins/watch-targets.js';
 
 const FORMATS = join(__dirname, '..', 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -222,3 +224,31 @@ export function writeViteConfig(dir: string, body: string): string {
 
 /** vi.waitFor options for state that settles after file-system events. */
 export const SETTLED = { timeout: 15_000, interval: 50 };
+
+/**
+ * TEMPORARY (macOS investigation): a plugin that records, with milliseconds since `start`, every build, every watch
+ * event the bundler's watcher delivers (`watchChange`) and the files registered for watching when a build ends.
+ */
+export function recorderPlugin(log: string[], start = Date.now()): Plugin {
+  const at = (): string => String(Date.now() - start).padStart(5);
+  return {
+    name: 'recorder',
+    buildStart() {
+      log.push(`${at()} buildStart`);
+    },
+    watchChange(id, change) {
+      log.push(`${at()} watchChange ${change.event} ${id}`);
+    },
+    buildEnd() {
+      const getWatchFiles: unknown = Reflect.get(this, 'getWatchFiles');
+      const files: unknown = typeof getWatchFiles === 'function' ? Reflect.apply(getWatchFiles, this, []) : 'n/a';
+      log.push(`${at()} buildEnd watching=${JSON.stringify(files)}`);
+    },
+  };
+}
+
+/** TEMPORARY (macOS investigation): what the plugin registers for watching, for an input and an output folder. */
+export function registeredFor(input: string, outDir: string): string {
+  const outputs = outputPaths({ files: [], dirs: [outDir] });
+  return `registered(real)=${JSON.stringify(watchTargets([input], () => false, outputs, 'real'))}`;
+}

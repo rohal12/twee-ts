@@ -25,7 +25,14 @@ import {
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { toPosix } from '../src/plugins/paths.js';
-import { buildWatchSeesFolders, watcherReady, serverUrl } from './helpers/plugins.js';
+import {
+  buildWatchSeesFolders,
+  watcherReady,
+  serverUrl,
+  startBuildWatch,
+  recorderPlugin,
+  registeredFor,
+} from './helpers/plugins.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -465,6 +472,92 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
       await vi.waitFor(() => {
         expect(story(out)).toContain('BACKSLASH_EDIT');
       }, settled);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'rebuilds when a source link is pointed at another file, then for edits to the new target (#307)',
+    async () => {
+      const dir = makeProject({
+        'first.tw': STORY.replace('Hello from the story.', 'FIRST_TEXT'),
+        'second.tw': STORY.replace('Hello from the story.', 'SECOND_TEXT'),
+      });
+      symlinkSync(join(dir, 'first.tw'), join(dir, 'story.tw'));
+      const probe: string[] = [];
+      const out = await watchBuild(
+        dir,
+        tweeTsPlugin({ sources: [join(dir, 'story.tw')], format: 'test-format-1', compileOptions: COMPILE }),
+        join(dir, 'dist'),
+        [recorderPlugin(probe)],
+      );
+      expect(story(out)).toContain('FIRST_TEXT');
+      probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
+
+      // The watcher may not be ready right after the first build; the link is pointed again until a build sees it.
+      const retarget = (): void => {
+        rmSync(join(dir, 'story.tw'), { force: true });
+        symlinkSync(join(dir, 'second.tw'), join(dir, 'story.tw'));
+      };
+      retarget();
+      const again = setInterval(retarget, 250);
+      await vi
+        .waitFor(() => {
+          expect(story(out)).toContain('SECOND_TEXT');
+        }, settled)
+        .finally(() => {
+          clearInterval(again);
+          console.log(`PROBE original@vite-plugin.test.ts ${JSON.stringify(probe)}`);
+        });
+
+      writeFileSync(join(dir, 'second.tw'), STORY.replace('Hello from the story.', 'SECOND_EDITED'));
+      await vi.waitFor(() => {
+        expect(story(out)).toContain('SECOND_EDITED');
+      }, settled);
+    },
+  );
+
+  // EXPERIMENT E1 (temporary, macOS investigation): the scenario of plugin-input-spelling.test.ts, run in this file
+  // after the other watchers, with that file's helper (startBuildWatch).
+  it.skipIf(process.platform === 'win32')(
+    'EXPERIMENT E1: a source link retargeted twice, via startBuildWatch',
+    async () => {
+      const dir = makeProject({
+        'one.tw': storyWith('ONE_TEXT'),
+        'two.tw': storyWith('TWO_TEXT'),
+        'three.tw': storyWith('THREE_TEXT'),
+      });
+      symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
+      const probe: string[] = [];
+      await startBuildWatch({
+        root: dir,
+        build: { outDir: join(dir, 'dist') },
+        plugins: [
+          tweeTsPlugin({ sources: [join(dir, 'story.tw')], format: 'test-format-1', compileOptions: COMPILE }),
+          recorderPlugin(probe),
+        ],
+      });
+      const out = join(dir, 'dist', 'index.html');
+      expect(story(out)).toContain('ONE_TEXT');
+      probe.push('first build done', registeredFor(join(dir, 'story.tw'), join(dir, 'dist')));
+      for (const [target, expected] of [
+        ['two.tw', 'TWO_TEXT'],
+        ['three.tw', 'THREE_TEXT'],
+      ] as const) {
+        const retarget = (): void => {
+          rmSync(join(dir, 'story.tw'), { force: true });
+          symlinkSync(join(dir, target), join(dir, 'story.tw'));
+        };
+        retarget();
+        const again = setInterval(retarget, 250);
+        await vi
+          .waitFor(() => {
+            expect(story(out)).toContain(expected);
+          }, settled)
+          .finally(() => {
+            clearInterval(again);
+          });
+      }
+      console.log(`PROBE E1@vite-plugin.test.ts ${JSON.stringify(probe)}`);
     },
   );
 
