@@ -618,3 +618,57 @@ describe.skipIf(process.platform === 'win32')('CLI in a symlinked project folder
     expect(html).not.toContain('SOON_DELETED');
   });
 });
+
+describe.skipIf(process.platform === 'win32')('config in a folder named with glob syntax (#316)', () => {
+  const story = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n:: Start\nHELLO';
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-config-glob-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['chapter[one]', 'chapter[one]X'],
+    ['chapter{one,two}', 'chapter{oneXtwo}'],
+    ['chapter\\one', 'chapter/one'],
+    ['!chapter', 'Xchapter'],
+    ['normal', 'normalX'],
+  ])('API and CLI exclude only the config folder %s own draft, not a near-match sibling %s', async (name, near) => {
+    const folder = join(root, name);
+    const other = join(root, near);
+    mkdirSync(join(folder, 'src'), { recursive: true });
+    mkdirSync(join(other, 'src'), { recursive: true });
+    writeFileSync(join(folder, 'src', 'start.tw'), story);
+    writeFileSync(join(folder, 'src', 'private.tw'), ':: PrivateDraft\nSHOULD_BE_EXCLUDED');
+    writeFileSync(join(other, 'src', 'private.tw'), ':: SiblingPassage\nSHOULD_BE_INCLUDED');
+    const configPath = join(folder, 'twee-ts.config.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        sources: ['src', `../${near}/src/private.tw`],
+        exclude: ['src/private.tw'],
+        outputMode: 'json',
+      }),
+    );
+    const { compile, loadConfigFile } = await import('../src/index.js');
+    const names = (json: string): string[] =>
+      (JSON.parse(json) as { passages: { name: string }[] }).passages.map((p) => p.name).sort();
+    // The folder is below the working directory for the API, and the CLI runs from the root.
+    const previous = process.cwd();
+    process.chdir(root);
+    let api;
+    try {
+      api = await compile(loadConfigFile(configPath) as Parameters<typeof compile>[0]);
+    } finally {
+      process.chdir(previous);
+    }
+    const cli = runCli(root, ['-c', configPath]);
+    expect(cli.status).toBe(0);
+    expect(names(api.output)).toEqual(['SiblingPassage', 'Start']);
+    expect(api.diagnostics).toEqual([]);
+    expect(names(cli.stdout)).toEqual(['SiblingPassage', 'Start']);
+  });
+});

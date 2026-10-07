@@ -7,7 +7,7 @@
  * options that conflict, tag aliases, and subcommands (only as the first word, never after `--`).
  */
 import { parseArgs } from 'node:util';
-import type { OutputMode, TweeTsConfig, WordCountMethod } from './types.js';
+import type { ExcludeGlob, OutputMode, TweeTsConfig, WordCountMethod } from './types.js';
 import { tagAliasProblem } from './config.js';
 
 /** A command line that can't be run, with what to tell the user. The CLI prints it and exits with status 2. */
@@ -322,7 +322,7 @@ export interface ResolvedBuild {
   readonly output: string;
   readonly options: {
     readonly outputMode: OutputMode;
-    readonly exclude?: readonly string[] | undefined;
+    readonly exclude?: readonly (string | ExcludeGlob)[] | undefined;
     readonly formatId?: string | undefined;
     readonly startPassage?: string | undefined;
     readonly formatPaths?: readonly string[] | undefined;

@@ -182,21 +182,30 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     expect(rebaseConfigPaths({ output: '-' }, join(dir, 'c.json'))).toEqual({ output: '-' });
   });
 
-  it.each(['chapter[one]', 'chapter{one,two}', 'a(b)+c@d', '!draft', 'x/{a,b}/y', 'ordinary'])(
-    'keeps the config folder %s literal and only the exclude suffix a glob',
-    (name) => {
-      const folder = join(dir, name);
-      mkdirSync(join(folder, 'src'), { recursive: true });
-      mkdirSync(join(dir, 'sibling', 'src'), { recursive: true });
-      const config = rebaseConfigPaths({ exclude: ['src/**/*.tw', 'src/*.{tw,twee}'] }, join(folder, 'c.json'));
-      const exclude = config.exclude ?? [];
-      const hit = (path: string): boolean => matchesExclude(identify(path), exclude);
-      expect(hit(join(folder, 'src', 'a.tw'))).toBe(true);
-      expect(hit(join(folder, 'src', 'a.twee'))).toBe(true);
-      expect(hit(join(folder, 'src', 'a.css'))).toBe(false);
-      expect(hit(join(dir, 'sibling', 'src', 'a.tw'))).toBe(false);
-    },
-  );
+  it.each([
+    ['chapter[one]', 'chapter[one]X'],
+    ['chapter{one,two}', 'chapter{oneXtwo}'],
+    ['chapter{one,two}', 'chapterone'],
+    ['chapter\\one', 'chapter/one'],
+    ['a(b)+c@d', 'a(b)+c@e'],
+    ['!draft', 'Xdraft'],
+    ['x/{a,b}/y', 'x/{a.b}/y'],
+    ['x*y', 'xzy'],
+    ['ordinary', 'ordinaryX'],
+  ])('keeps the config folder %s literal and only the exclude suffix a glob (not %s)', (name, near) => {
+    const folder = join(dir, name);
+    mkdirSync(join(folder, 'src'), { recursive: true });
+    mkdirSync(join(dir, near, 'src'), { recursive: true });
+    const config = rebaseConfigPaths({ exclude: ['src/**/*.tw', 'src/*.{tw,twee}'] }, join(folder, 'c.json'));
+    const exclude = config.exclude ?? [];
+    const hit = (path: string): boolean => matchesExclude(identify(path), exclude);
+    expect(hit(join(folder, 'src', 'a.tw'))).toBe(true);
+    expect(hit(join(folder, 'src', 'a.twee'))).toBe(true);
+    expect(hit(join(folder, 'src', 'a.TW'))).toBe(true);
+    expect(hit(join(folder, 'src', 'a.css'))).toBe(false);
+    expect(hit(join(dir, near, 'src', 'a.tw'))).toBe(false);
+    expect(hit(join(dir, 'sibling', 'src', 'a.tw'))).toBe(false);
+  });
 
   it('leaves a config in the working directory as it is', () => {
     const config = { sources: ['src'], output: 'out.html' };

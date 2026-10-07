@@ -19,7 +19,7 @@ import { identify, isKeyInside, matchesExclude } from './path-identity.js';
 import type { PathIdentity } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
-import type { Diagnostic } from './types.js';
+import type { Diagnostic, ExcludeGlob } from './types.js';
 import { attributeOf, documentTextContains, findStoreArea, findStoryData, parseHtml } from './html-structure.js';
 import { JsonObject, parseJSON } from './json-decode.js';
 import type { JsonValue } from './json-decode.js';
@@ -31,7 +31,7 @@ import type { JsonValue } from './json-decode.js';
  * absolute paths. A leading `./` in a glob is dropped. The extension is matched without case, and on a
  * case-insensitive volume the whole path.
  */
-export function isExcluded(filename: string, exclude: readonly string[]): boolean {
+export function isExcluded(filename: string, exclude: readonly (string | ExcludeGlob)[]): boolean {
   if (exclude.length === 0) return false;
   return matchesExclude(identify(filename), exclude);
 }
@@ -205,7 +205,7 @@ function compareNames(a: string, b: string): number {
 export function getFilenames(
   pathnames: readonly string[],
   outputs?: BuildOutputs | string,
-  exclude: readonly string[] = [],
+  exclude: readonly (string | ExcludeGlob)[] = [],
   role: Extract<InputRole, 'source' | 'module'> = 'source',
 ): FilenamesResult {
   const files: DiscoveredFile[] = [];

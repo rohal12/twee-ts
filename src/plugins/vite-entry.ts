@@ -4,7 +4,7 @@
  * it can (see entryInputSettings), and otherwise, and always in dev, with a
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
-import { isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { build, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
   BuildEnvironmentOptions,
@@ -478,7 +478,11 @@ function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
  * which sees the final plugin list, including the plugins Vite resolves per
  * environment (`applyToEnvironment`) after `configResolved`.
  */
-function recordWatchFiles(files: Set<string>, onLoad: ((file: string) => void) | undefined): Plugin {
+function recordWatchFiles(
+  files: Set<string>,
+  onLoad: ((file: string) => void) | undefined,
+  onResolve: ((authored: string) => void) | undefined,
+): Plugin {
   return {
     name: `${PLUGIN_NAME}:record-watch-files`,
     // Called for each module just before its file is read, so a caller can note the file's state as the
@@ -488,6 +492,22 @@ function recordWatchFiles(files: Set<string>, onLoad: ((file: string) => void) |
       handler(id) {
         const file = fileOfId(id);
         if (onLoad !== undefined && isAbsolute(file) && !id.startsWith('\0')) onLoad(file);
+        return null;
+      },
+    },
+    // Where each relative or absolute import is spelled, before the bundler follows a link to its target:
+    // a caller then sees a link that is retargeted, which the target's own path never shows. It resolves
+    // nothing itself. (An import by an alias, a bare name or without its extension is not seen.)
+    resolveId: {
+      order: 'pre',
+      handler(source, importer) {
+        if (onResolve === undefined || source.startsWith('\0') || (importer?.startsWith('\0') ?? false)) return null;
+        const authored = isAbsolute(source)
+          ? source
+          : importer !== undefined && isAbsolute(importer) && /^\.\.?[/\\]/.test(source)
+            ? resolve(dirname(fileOfId(importer)), source)
+            : undefined;
+        if (authored !== undefined) onResolve(fileOfId(authored));
         return null;
       },
     },
@@ -547,6 +567,7 @@ export async function bundleEntry(
   command: ViteCommand,
   outputFilename: string,
   onLoad?: (file: string) => void,
+  onResolve?: (authored: string) => void,
 ): Promise<EntryBundle> {
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
@@ -564,7 +585,11 @@ export async function bundleEntry(
     customLogger: entryBuildLogger(config.logger),
     clearScreen: false,
     publicDir: false,
-    plugins: [...plugins, entryBuildEnforcer(entryPath, command, outputFilename), recordWatchFiles(watchFiles, onLoad)],
+    plugins: [
+      ...plugins,
+      entryBuildEnforcer(entryPath, command, outputFilename),
+      recordWatchFiles(watchFiles, onLoad, onResolve),
+    ],
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).
   const [result] = [await build(inline)].flat();

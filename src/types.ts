@@ -20,6 +20,14 @@ export type SourceInput = string | InlineSource;
 
 // --- Compile options ---
 
+/** A glob that leaves out the files below a folder, with the folder kept apart from the glob. */
+export interface ExcludeGlob {
+  /** A folder (relative to the working directory, or absolute), read literally, never as a glob. */
+  readonly base: string;
+  /** The glob, matched against the file's path below `base`. */
+  readonly glob: string;
+}
+
 /**
  * The options of `compile()` and the functions built on it. Only `sources` is required; an optional
  * property set to `undefined` means the same as leaving it out.
@@ -43,8 +51,10 @@ export interface CompileOptions {
   /**
    * Glob patterns for files to leave out of `sources`, matched against each file's
    * path relative to the working directory (as `stats.files` lists it). Not the modules or head file.
+   * An {@link ExcludeGlob} matches against the path below its own folder instead (a config file's globs
+   * come that way when its folder's name holds glob characters).
    */
-  exclude?: readonly string[] | undefined;
+  exclude?: readonly (string | ExcludeGlob)[] | undefined;
   /** Output mode. Default: 'html'. */
   outputMode?: OutputMode | undefined;
   /** Story format ID (e.g. 'sugarcube-2'). Default: StoryData's format, else 'sugarcube-2'. */

@@ -6,8 +6,8 @@
  * keeps the two equal, so the schema an editor checks with and the checks twee-ts makes cannot drift apart.
  */
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
-import type { Diagnostic, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
+import { dirname, isAbsolute, join, sep } from 'node:path';
+import type { Diagnostic, ExcludeGlob, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
 import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { identify } from './path-identity.js';
@@ -428,21 +428,17 @@ export function configJsonSchema(): Record<string, unknown> {
 }
 
 /**
- * A folder's name as a glob that matches only that name. Node's glob matching has no working backslash
- * escape, so each metacharacter becomes a one-character class; a leading `!` (negation) and, in a name
- * with braces, the commas that would make a brace list become a one-character wildcard.
+ * A glob relative to the folder `dir` (as reported, relative to the working directory or absolute). A
+ * folder whose name holds glob syntax (or a backslash, which is a name character on POSIX) stays apart
+ * from the glob as an {@link ExcludeGlob}: Node's glob matching has no working escape, so no spelling of
+ * such a name inside a glob matches that name and nothing else.
  */
-function literalGlob(dir: string): string {
-  const classed = dir.replace(/[[\]{}()*?+@]/g, '[$&]');
-  const unlisted = dir.includes('{') ? classed.replace(/,/g, '?') : classed;
-  return unlisted.replace(/^!/, '?');
-}
-
-/** A glob relative to the folder `dir` (as reported, relative to the working directory or absolute). */
-function rebaseGlob(dir: string, glob: string): string {
+function rebaseGlob(dir: string, glob: string): string | ExcludeGlob {
   const pattern = glob.replace(/^\.[/\\]/, '');
   if (isAbsolute(pattern)) return pattern;
-  return `${literalGlob(dir.replace(/\\/g, '/').replace(/\/$/, ''))}/${pattern}`;
+  // On Windows the separators of `dir` are backslashes, and `/` is the glob's own.
+  const spelled = sep === '\\' ? dir.replace(/\\/g, '/') : dir;
+  return /[[\]{}()*?+@!,\\]/.test(spelled) ? { base: dir, glob: pattern } : `${spelled.replace(/\/$/, '')}/${pattern}`;
 }
 
 /**
@@ -460,7 +456,9 @@ export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): Twe
   return {
     ...config,
     ...(sources === undefined ? {} : { sources: sources.map(rebase) }),
-    ...(exclude === undefined ? {} : { exclude: exclude.map((glob) => rebaseGlob(dir, glob)) }),
+    ...(exclude === undefined
+      ? {}
+      : { exclude: exclude.map((glob) => (typeof glob === 'string' ? rebaseGlob(dir, glob) : glob)) }),
     ...(output === undefined ? {} : { output: rebase(output) }),
     ...(modules === undefined ? {} : { modules: modules.map(rebase) }),
     ...(headFile === undefined ? {} : { headFile: rebase(headFile) }),
