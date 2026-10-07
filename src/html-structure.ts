@@ -189,34 +189,46 @@ function structureKey(
     const start = node.sourceCodeLocation?.startOffset;
     return start !== undefined && start >= from && start < to;
   };
-  const write = (node: ParentNode): void => {
-    for (const child of node.childNodes) {
-      if (inserted(child)) continue;
-      if ('value' in child) {
-        text = (text ?? '') + editText(child.value);
-        continue;
+  // An explicit stack, so that the depth of the document does not decide the depth of the call stack. A task is a
+  // node to write or a step to run after the nodes before it (the closing of an element, a template's content).
+  type Task = ChildNode | (() => void);
+  const stack: Task[] = [...doc.childNodes].reverse();
+  const visit = (child: ChildNode): void => {
+    if (inserted(child)) return;
+    if ('value' in child) {
+      text = (text ?? '') + editText(child.value);
+      return;
+    }
+    flushText();
+    if (isElement(child)) {
+      parts.push(`<${child.namespaceURI} ${child.tagName}${JSON.stringify(child.attrs)}>`);
+      const content = templateContent(child);
+      const steps: Task[] = [...child.childNodes];
+      if (content !== undefined) {
+        steps.push(
+          () => parts.push('<#content>'),
+          ...content.childNodes,
+          () => {
+            flushText();
+            parts.push('</#content>');
+          },
+        );
       }
-      flushText();
-      if (isElement(child)) {
-        parts.push(`<${child.namespaceURI} ${child.tagName}${JSON.stringify(child.attrs)}>`);
-        write(child);
-        const content = templateContent(child);
-        if (content !== undefined) {
-          parts.push('<#content>');
-          write(content);
-          flushText();
-          parts.push('</#content>');
-        }
+      steps.push(() => {
         flushText();
         parts.push('</>');
-      } else if ('data' in child) {
-        parts.push(`#comment${JSON.stringify(child.data)}`);
-      } else {
-        parts.push(`#doctype${JSON.stringify([child.name, child.publicId, child.systemId])}`);
-      }
+      });
+      for (const step of steps.reverse()) stack.push(step);
+    } else if ('data' in child) {
+      parts.push(`#comment${JSON.stringify(child.data)}`);
+    } else {
+      parts.push(`#doctype${JSON.stringify([child.name, child.publicId, child.systemId])}`);
     }
   };
-  write(doc);
+  for (let task = stack.pop(); task !== undefined; task = stack.pop()) {
+    if (typeof task === 'function') task();
+    else visit(task);
+  }
   flushText();
   return parts.join('\n');
 }

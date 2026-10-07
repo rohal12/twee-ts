@@ -91,6 +91,26 @@ describe('vite plugin dev: a timestamp-preserving edit with no watcher (#270)', 
   });
 });
 
+describe('vite plugin dev: a module imported by an entry that fails its first bundle (#269)', () => {
+  const ENTRY = 'import { value } from "./dep.js"; globalThis.probe = value;\n';
+
+  it.each([
+    ['inside the root, with a watcher', true, true],
+    ['inside the root, with no watcher', true, false],
+    ['outside the root, with no watcher', false, false],
+  ])('recovers when the imported module is corrected (%s)', async (_name, inside, watcher) => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      ...(inside ? { 'app/main.js': ENTRY, 'app/dep.js': 'export const value = ;\n' } : {}),
+    });
+    const app = inside ? join(root, 'app') : makeProject({ 'main.js': ENTRY, 'dep.js': 'export const value = ;\n' });
+    const url = await start(root, join(app, 'main.js'), watcher);
+    expect(await page(url)).not.toContain('tw-storydata');
+    writeFileSync(join(app, 'dep.js'), 'export const value = "RECOVERED";\n');
+    await expect.poll(() => page(url), { timeout: 10_000, interval: 100 }).toContain('RECOVERED');
+  });
+});
+
 describe('vite plugin dev: an entry file edited while it is bundled, with no watcher (#286)', () => {
   /** Whether a module id names `file`: Vite's ids use forward slashes, also on Windows. */
   const names = (id: string, file: string): boolean => id.replaceAll('\\', '/') === file.replaceAll('\\', '/');

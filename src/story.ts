@@ -294,6 +294,7 @@ export function decodeStoryData(text: string): StoryDataDecodeResult {
       options: {
         read(value, path, issues) {
           if (value === null) {
+            slots.length = 0;
             twine2.options = new Map();
             return;
           }
@@ -302,6 +303,8 @@ export function decodeStoryData(text: string): StoryDataDecodeResult {
             return;
           }
           const items: readonly JsonValue[] = value;
+          // Go replaces the slice with a new empty one for `[]`, so its old slots are gone.
+          if (items.length === 0) slots.length = 0;
           const kept = items.flatMap((item, i) => {
             if (item === null) return [slots[i] ?? ''];
             const r = jsonString(item, [...path, i], issues);

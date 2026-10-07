@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `null` or empty repeated `options` array in StoryData drops the slots of the earlier arrays, as Go replaces the slice, so a later `[null]` no longer brings back a cleared option (#306)
+- The Vite dev server keeps the modules a failed first entry bundle loaded, so fixing an imported module recovers the story with the watcher off, too (#269)
+- Validating where `{{STORY_DATA}}` lands in a format template walks the HTML tree with an explicit stack, so deeply nested templates no longer fail with a `RangeError` (#314)
 - Repeated fields in one StoryData object or passage metadata block follow Go's `encoding/json`: a later `null` leaves an earlier string or number (`start`, `format`, `format-version`, `ifid`, `zoom`, `position`, `size`) and clears `options` and `tag-colors`; a repeated `tag-colors` object is merged into the earlier one, and a repeated `options` array decodes into the slots of the earlier one (#306)
 - Escape warnings for JavaScript and CSS find their line with a line index and binary searches instead of rescanning the text before each warning, so many warning sites no longer take quadratic time (#309)
 - The Vite and Rollup plugins keep a literal backslash in a POSIX input path (source, folder, module or head file) instead of reading it as a separator, so watching and the dev server's catch-up see edits to such files (#308)
