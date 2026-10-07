@@ -709,6 +709,22 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
   // Nothing is delivered, or written by the caller, for a build that was aborted meanwhile.
   options.signal?.throwIfAborted();
+  // The output may have been moved (a link retargeted) while the build awaited a format: the file it will be
+  // written to is checked again, against every input, as the last step before the caller writes it.
+  if (namedOutput) {
+    checkNamedInputs(
+      [
+        ...namedInputs(options, extraInputs),
+        ...(format ? formatInputs(format) : []),
+        ...walked
+          .flatMap((group) => (group.kind === 'files' ? group.files : []))
+          .map((file) => ({ role: 'source' as const, path: file.path })),
+        ...modules.files.map((file) => ({ role: 'module' as const, path: file.path })),
+      ],
+      outputPaths(written),
+      diagnostics,
+    );
+  }
   // The story handed out is a frozen copy: it shares no object with the incremental cache (#246 S-4).
   return { output: output, story: snapshot(story), format, diagnostics, stats };
 }
