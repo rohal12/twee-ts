@@ -295,6 +295,19 @@ export function getFilenames(
   return { filenames: files.map((f) => f.path), files, diagnostics, outputSources, skippedOutputs };
 }
 
+/**
+ * What `lstat` finds at `path`, or undefined when there is nothing it can look at: a missing path (ENOENT), a
+ * path below a file (ENOTDIR), a folder it may not search (EACCES), a link loop (ELOOP). The watcher asks this
+ * while the file system changes under it, and treats all of them as "not there yet".
+ */
+function lstatIfReadable(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whether `path` is itself a symbolic link; false when it can't be looked at (the caller already has that cause). */
 function isSymbolicLink(path: string): boolean {
   try {
@@ -441,7 +454,7 @@ function linkLocations(abs: string): string[] {
   for (let hops = 0; rest.length > 0;) {
     const [name, ...after] = rest;
     const next = join(resolved, name ?? '');
-    const stat = lstatSync(next, { throwIfNoEntry: false });
+    const stat = lstatIfReadable(next);
     if (stat?.isSymbolicLink() === true && hops < MAX_LINK_DEPTH) {
       hops++;
       if (!locations.includes(next)) locations.push(next);
@@ -645,7 +658,7 @@ export function watchFilesystem(
       }
       // A dangling link (an editor's lock file, `.#a.tw`) is no source, unless the last build read a
       // file through it before its target went.
-      if (lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+      if (lstatIfReadable(abs)?.isSymbolicLink() === true) {
         if (lastInputs.has(id.display)) scheduleBuild();
         return;
       }
@@ -769,7 +782,7 @@ export function watchFilesystem(
         const root = roots[i];
         if (root?.tracked !== true) continue;
         if (wanted.has(root.abs)) wanted.delete(root.abs);
-        else if (lstatSync(root.abs, { throwIfNoEntry: false }) !== undefined) {
+        else if (lstatIfReadable(root.abs) !== undefined) {
           // Still there but no longer an input (excluded, say): stop watching it. One that went away is
           // still waited for: Node's recursive watch on Linux may not report a link created again in its
           // place.

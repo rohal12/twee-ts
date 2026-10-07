@@ -60,6 +60,16 @@ export function splitTweeFields(s: string): string[] {
   return fields;
 }
 
+/** Whether `s` is one tag as a Twee header reads it: not empty and without white space (see `isTweeSpace`). */
+export function isTweeTag(s: string): boolean {
+  return (
+    s.length > 0 &&
+    splitTweeFields(s).length === 1 &&
+    !isTweeSpace(s.charCodeAt(0)) &&
+    !isTweeSpace(s.charCodeAt(s.length - 1))
+  );
+}
+
 // --- Escaping in passage headers ---
 
 /**

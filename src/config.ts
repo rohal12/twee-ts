@@ -14,6 +14,7 @@ import { identify } from './path-identity.js';
 import { failureOfError, inputProblem } from './input-policy.js';
 import type { InputDiscovery } from './input-policy.js';
 import { TweeTsError } from './errors.js';
+import { isTweeTag } from './twee-syntax.js';
 import { JsonObject, field, formatJsonPath, ownRecord, parseJSON, readObject } from './json-decode.js';
 import type { Decoder, DecodeIssue, FieldReader, JsonPath, JsonValue } from './json-decode.js';
 
@@ -29,9 +30,8 @@ const VALID_OUTPUT_MODES: readonly OutputMode[] = [
 ];
 const VALID_WORD_COUNT_METHODS: readonly WordCountMethod[] = ['tweego', 'whitespace'];
 
-/** A tag name: at least one character and no whitespace, since Twee separates tags with spaces. */
-const TAG_PATTERN = '^\\S+$';
-const TAG_RE = new RegExp(TAG_PATTERN, 'u');
+/** A tag name: at least one character and no Twee whitespace (see `isTweeSpace`), since Twee separates tags with it. */
+const TAG_PATTERN = '^[^\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+$';
 
 /** What one config key may hold, as the JSON schema states it. */
 type FieldSpec = { readonly description: string; readonly default?: unknown } & (
@@ -225,8 +225,8 @@ const SCHEMA_KEY = '$schema';
 
 /** Why a tag alias can't be used, or undefined when it can. The CLI's --tag-alias checks the same. */
 export function tagAliasProblem(alias: string, target: string): string | undefined {
-  if (!TAG_RE.test(alias)) return `the alias "${alias}" must be a non-empty tag name without whitespace`;
-  if (!TAG_RE.test(target))
+  if (!isTweeTag(alias)) return `the alias "${alias}" must be a non-empty tag name without whitespace`;
+  if (!isTweeTag(target))
     return `the target "${target}" of alias "${alias}" must be a non-empty tag name without whitespace`;
   return undefined;
 }

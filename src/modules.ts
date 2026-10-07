@@ -15,12 +15,16 @@ import { fillFormatTemplate } from './template.js';
  * Load modules and return HTML tags to inject at the end of the head. `diagnostics` receives a warning for each
  * module that is not valid UTF-8 (it is read as Windows-1252), an error for text HTML cannot carry (U+0000, lone
  * surrogates), a warning for code that escaping it for its element changes (see `codeEscapeDiagnostics()`), and a
- * warning for each module whose element id another module already has (see `moduleIds()`).
+ * warning for each module whose element id another module already has (see `moduleIds()`). A caller that loads
+ * the modules of one page in several calls passes the same `idFor` to each, so the ids stay unique across them.
  */
-export function loadModules(filenames: string[], diagnostics?: Diagnostic[]): string {
+export function loadModules(
+  filenames: string[],
+  diagnostics?: Diagnostic[],
+  idFor: ModuleIdFor = moduleIds(diagnostics),
+): string {
   const processed = new Set<string>();
   const headTags: string[] = [];
-  const idFor = moduleIds(diagnostics);
 
   for (const filename of filenames) {
     if (processed.has(filename)) continue;
@@ -53,7 +57,7 @@ export function loadModules(filenames: string[], diagnostics?: Diagnostic[]): st
 }
 
 /** Gives a module element its id from the id its file stem gives (`base`), unique in the page. */
-type ModuleIdFor = (base: string, filename: string) => string;
+export type ModuleIdFor = (base: string, filename: string) => string;
 
 /**
  * The ids of a page's module elements. A module gets the id its file stem gives, as in Tweego
@@ -61,7 +65,7 @@ type ModuleIdFor = (base: string, filename: string) => string;
  * that id (two files with the same stem, or stems that slugify alike), it gets the first free id of `<id>-2`,
  * `<id>-3` and so on instead, and `diagnostics` receives a warning naming both modules.
  */
-function moduleIds(diagnostics?: Diagnostic[]): ModuleIdFor {
+export function moduleIds(diagnostics?: Diagnostic[]): ModuleIdFor {
   const owners = new Map<string, string>();
   return (base, filename) => {
     let id = base;
@@ -115,11 +119,16 @@ function loadModuleFont(filename: string, idFor: ModuleIdFor): string | null {
  * Load the module tags and head file content to inject into the head (see `placeHead()`), joined by newlines,
  * or `''` when there is nothing to inject.
  */
-export function loadHeadContent(modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
+export function loadHeadContent(
+  modulePaths: string[],
+  headFile?: string,
+  diagnostics?: Diagnostic[],
+  idFor?: ModuleIdFor,
+): string {
   const parts: string[] = [];
 
   if (modulePaths.length > 0) {
-    const modules = loadModules(modulePaths, diagnostics).trim();
+    const modules = loadModules(modulePaths, diagnostics, idFor).trim();
     if (modules.length > 0) parts.push(modules);
   }
 

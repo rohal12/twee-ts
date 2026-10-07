@@ -13,7 +13,7 @@ import { javaScriptContexts, cssContexts } from './code-context.js';
 import type { JavaScriptContext } from './code-context.js';
 import { scriptEscapeSites, styleEscapeSites } from './escape.js';
 import type { EscapeSite } from './escape.js';
-import { splitTweeFields } from './twee-syntax.js';
+import { isTweeTag, splitTweeFields } from './twee-syntax.js';
 
 /** Matches a code point HTML cannot carry: U+0000 or a lone surrogate. */
 const UNREPRESENTABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -31,6 +31,18 @@ export function unrepresentableTextDiagnostic(what: string, text: string): Diagn
   };
 }
 
+/** A list of diagnostics and a function that adds the error for text HTML cannot carry (see `unrepresentableTextDiagnostic()`). */
+function textChecker(): { readonly diagnostics: Diagnostic[]; readonly check: (what: string, text: string) => void } {
+  const diagnostics: Diagnostic[] = [];
+  return {
+    diagnostics,
+    check(what, text) {
+      const diagnostic = unrepresentableTextDiagnostic(what, text);
+      if (diagnostic !== undefined) diagnostics.push(diagnostic);
+    },
+  };
+}
+
 /**
  * Errors for the text of `story` and of the passages it writes (`passages`) that HTML cannot carry: names, tags,
  * passage text, the layout metadata the output mode writes (`layout`: Twine 2 writes `position` and `size`, Twine 1
@@ -41,11 +53,7 @@ export function unrepresentableTextDiagnostics(
   passages: readonly ReadonlyPassage[],
   layout: readonly ('position' | 'size')[],
 ): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
-  const check = (what: string, text: string): void => {
-    const diagnostic = unrepresentableTextDiagnostic(what, text);
-    if (diagnostic !== undefined) diagnostics.push(diagnostic);
-  };
+  const { diagnostics, check } = textChecker();
   check('The story name', story.name);
   check('The story tags', story.twine2.tags);
   for (const [tag, color] of story.twine2.tagColors) {
@@ -69,6 +77,30 @@ export function unrepresentableTextDiagnostics(
             'tags are written space-separated, so it would not read back as this tag.',
         });
       }
+    }
+  }
+  return diagnostics;
+}
+
+/**
+ * Errors for the Twine 2 story fields (`format`, `format-version` and `options` of `tw-storydata`) that HTML cannot
+ * carry. Only the options that are on are written, space-separated, so an active option that is empty or holds white
+ * space (as Twee splits tags) would read back as other options. Options that are off are not written and not checked.
+ */
+export function twine2StoryFieldDiagnostics(story: ReadonlyStory): Diagnostic[] {
+  const { diagnostics, check } = textChecker();
+  check('The story format name', story.twine2.format);
+  check('The story format version', story.twine2.formatVersion);
+  for (const [option, on] of story.twine2.options) {
+    if (!on) continue;
+    check(`The story option "${option}"`, option);
+    if (!isTweeTag(option)) {
+      diagnostics.push({
+        level: 'error',
+        message:
+          `The story option ${JSON.stringify(option)} is empty or contains white space; ` +
+          'options are written space-separated, so it would not read back as this option.',
+      });
     }
   }
   return diagnostics;
