@@ -420,7 +420,16 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     watcher = started;
     await new Promise<void>((done, fail) => {
       started.on('event', (event) => {
-        DIAG.push(`${String(Date.now() - T0)} ${event.code}`); // DIAG: temporary, macOS investigation
+        // DIAG: temporary, macOS investigation
+        const seen = ((): string => {
+          try {
+            const html = readFileSync(join(outDir, 'index.html'), 'utf-8');
+            return `${/(FIRST|SECOND)_TEXT/.exec(html)?.[0] ?? '-'} link=${basename(readlinkSync(join(dir, 'story.tw')))}`;
+          } catch {
+            return '?';
+          }
+        })();
+        DIAG.push(`${String(Date.now() - T0)} ${event.code} ${seen}`);
         if (event.code === 'BUNDLE_END') void event.result?.close();
         if (event.code === 'END') done();
         if (event.code === 'ERROR') fail(new Error('the first build failed'));
