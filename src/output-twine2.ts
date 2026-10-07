@@ -15,7 +15,11 @@ import { passageToPassagedata, hasTag } from './passage.js';
 import { readFormatSource } from './formats.js';
 import { storyDataProbe } from './html-structure.js';
 import { fillFormatTemplate } from './template.js';
-import { codeEscapeDiagnostics, unrepresentableTextDiagnostics } from './html-output-check.js';
+import {
+  codeEscapeDiagnostics,
+  twine2StoryFieldDiagnostics,
+  unrepresentableTextDiagnostics,
+} from './html-output-check.js';
 import type { CodePart, CodeText } from './html-output-check.js';
 import { VERSION } from './version.js';
 
@@ -45,9 +49,9 @@ export function toTwine2HTML(
   options?: { readonly sourceInfo?: boolean; readonly head?: string; readonly diagnostics?: Diagnostic[] },
 ): string {
   const template = readFormatSource(format, options?.diagnostics);
-  options?.diagnostics?.push(...twine2DataDiagnostics(story));
   // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
   const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
+  options?.diagnostics?.push(...twine2DataDiagnostics(built));
   const filled = fillFormatTemplate({
     template,
     placeholders: [
@@ -77,6 +81,7 @@ function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
   const { scripts, stylesheets } = codePassages(story);
   return [
     ...twine2TagColors(story).diagnostics,
+    ...twine2StoryFieldDiagnostics(story),
     ...unrepresentableTextDiagnostics(
       story,
       story.passages.filter((p) => !hasTag(p, 'Twine.private')),

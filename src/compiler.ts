@@ -36,7 +36,7 @@ import { generateIFID } from './ifid.js';
 import { toTwine2HTML, toTwine2Archive, twine2TagColors } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
-import { loadHeadContent } from './modules.js';
+import { loadHeadContent, moduleIds } from './modules.js';
 import { startPassageDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
 import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
@@ -475,7 +475,12 @@ function fatalInput(problem: InputProblem, diagnostics: readonly Diagnostic[]): 
 function readFailure(path: string, e: unknown): InputFailure {
   const failure = failureOfError(e);
   if (failure !== 'missing') return failure;
-  return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true ? 'dangling-link' : 'missing';
+  try {
+    return lstatSync(path).isSymbolicLink() ? 'dangling-link' : 'missing';
+  } catch {
+    // Nothing to look at (it is missing, or below a file): missing.
+    return 'missing';
+  }
 }
 
 /**
@@ -497,6 +502,8 @@ function readHeadFile(path: string, diagnostics: Diagnostic[]): string {
 function moduleTags(files: readonly DiscoveredFile[], diagnostics: Diagnostic[]): string {
   const seen = new Set<string>();
   const tags: string[] = [];
+  // One id namespace for the page, kept across the single-module loads below.
+  const idFor = moduleIds(diagnostics);
   for (const file of files) {
     if (seen.has(file.key)) continue;
     seen.add(file.key);
@@ -508,7 +515,7 @@ function moduleTags(files: readonly DiscoveredFile[], diagnostics: Diagnostic[])
       continue;
     }
     try {
-      const tag = loadHeadContent([file.path], undefined, diagnostics);
+      const tag = loadHeadContent([file.path], undefined, diagnostics, idFor);
       if (tag.length > 0) tags.push(tag);
     } catch (e) {
       const diagnostic = problemDiagnostic(
