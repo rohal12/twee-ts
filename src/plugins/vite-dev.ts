@@ -5,8 +5,8 @@
  * overlay.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { statSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry } from '../types.js';
@@ -16,7 +16,7 @@ import { mediaTypeFromFilename, normalizedFileExt } from '../media-types.js';
 import { viteWaitingPage } from '../html-structure.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
-import { canonicalPath, fileKey, isViteConfigTemp, keyWithin } from './paths.js';
+import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { bundleEntry, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
 
@@ -136,6 +136,16 @@ function tracked(paths: Iterable<string>): TrackedFiles {
   return new Map([...paths].map((path) => [fileKey(path), canonicalPath(path)]));
 }
 
+/**
+ * The key of the file `authored` reaches, when it reaches it through a link (somewhere along the path, or
+ * at the end of it): the one case where the file's own path says nothing of a change of target.
+ * undefined for a path with no link in it, and for one that reaches nothing.
+ */
+function linkKey(authored: string): string | undefined {
+  if (!existsSync(authored)) return undefined;
+  return canonicalPath(authored) === toPosix(resolve(authored)) ? undefined : fileKey(authored);
+}
+
 /** The state of each of `files`, by key, for telling later which changed (see filesChanged). */
 function fileStates(files: TrackedFiles): Map<string, string> {
   const states = new Map<string, string>();
@@ -208,6 +218,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // later bundle fails, so that fixing one of them (inside the root or not) bundles it again.
   let entryFiles: TrackedFiles = new Map();
   let entryStates = new Map<string, string>();
+  // Where the entry and its imports are spelled when that reaches a file through a link, with the key of
+  // the file each reached when the bundle read it: retargeting a link changes the key, not the target.
+  let entryLinks = new Map<string, string>();
   // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
   const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
@@ -242,6 +255,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // import brings it back.
   const touchesEntry = (key: string): boolean =>
     entryPath !== undefined && (entryFiles.has(key) || (entryStale && keyWithin(key, [root])));
+
+  // Whether a link the entry is spelled through now reaches another file (or none) than the bundle read.
+  const linkMoved = (): boolean => [...entryLinks].some(([spelled, key]) => linkKey(spelled) !== key);
 
   // Watches the entry's files outside the root, and stops watching those it no longer uses.
   const watchEntryFiles = (files: TrackedFiles): void => {
@@ -286,6 +302,12 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const bundle = async (): Promise<void> => {
     if (entryPath === undefined) return;
     entryStale = true;
+    const spelled = new Map<string, string>(); // authored path → key, of each link the bundle went through
+    const noteSpelling = (authored: string): void => {
+      const key = linkKey(authored);
+      if (key !== undefined && !spelled.has(authored)) spelled.set(authored, key);
+    };
+    noteSpelling(entryPath);
     if (entry === undefined) {
       // No good bundle yet, so the configured entry is the one file known to matter: watch it
       // (it may lie outside the root) and note its state, so that fixing it bundles again.
@@ -301,16 +323,24 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     const loaded = new Map<string, string>(); // key → path of each module the bundle loaded
     let next: EntryBundle;
     try {
-      next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, (file) => {
-        const key = fileKey(file);
-        const state = fileState(canonicalPath(file));
-        if (state !== undefined && !observed.has(key)) observed.set(key, state);
-        if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
-      });
+      next = await bundleEntry(
+        config,
+        entryPath,
+        'serve',
+        options.outputFilename,
+        (file) => {
+          const key = fileKey(file);
+          const state = fileState(canonicalPath(file));
+          if (state !== undefined && !observed.has(key)) observed.set(key, state);
+          if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
+        },
+        noteSpelling,
+      );
     } catch (error) {
       // The modules the failed bundle loaded are inputs too: fixing an imported one must bundle again.
       entryFiles = new Map([...entryFiles, ...loaded]);
       entryStates = settledStates(entryFiles, observed, before);
+      entryLinks = new Map([...entryLinks, ...spelled]);
       watchEntryFiles(entryFiles);
       throw error;
     }
@@ -318,6 +348,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     entryStale = false;
     entryFiles = tracked(next.files);
     entryStates = settledStates(entryFiles, observed, before);
+    entryLinks = spelled;
     watchEntryFiles(entryFiles);
   };
 
@@ -334,7 +365,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // The compile cache trusts modification times, which a quick save may leave
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
-      if (entryStale || [...changed].some(touchesEntry)) await bundle();
+      if (entryStale || linkMoved() || [...changed].some(touchesEntry)) await bundle();
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       html = dev.injectClient(story.output, base);
@@ -378,7 +409,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // reacting to it would bundle again, and again.
     if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
-    if ((!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed)) return;
+    if ((!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed) && !linkMoved()) return;
     noteChange(changed);
   });
 
@@ -395,7 +426,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       await queue;
       const changed = filesChanged(compiledInputs, storyInputFiles());
       for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
-      if (changed.size === 0) return;
+      if (changed.size === 0 && !linkMoved()) return;
       // Changes the watcher did report, still waiting out the debounce, go into the same compile.
       for (const file of pending) changed.add(file);
       pending = new Set();

@@ -56,6 +56,7 @@ export { ItemType } from './types.js';
 // Types
 export type {
   CompileOptions,
+  ExcludeGlob,
   CompileToFileOptions,
   DecompileOptions,
   WatchOptions,

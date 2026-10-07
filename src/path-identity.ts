@@ -51,6 +51,7 @@
  */
 import { lstatSync, opendirSync, readlinkSync, realpathSync } from 'node:fs';
 import * as nodePath from 'node:path';
+import type { ExcludeGlob } from './types.js';
 /** A path flavour: `path.posix` or `path.win32`. */
 export type PathFlavour = typeof nodePath.posix;
 
@@ -108,7 +109,7 @@ export interface PathIdentifier {
   /** Whether `inner` is `outer` or inside it, comparing keys. */
   isSameOrInside(inner: string, outer: string): boolean;
   /** Whether the file is matched by one of the exclude globs. See the module comment. */
-  matchesExclude(identity: PathIdentity, globs: readonly string[]): boolean;
+  matchesExclude(identity: PathIdentity, globs: readonly (string | ExcludeGlob)[]): boolean;
   /** Forgets which volumes were found case-insensitive (a volume may have been remounted). */
   clearCache(): void;
 }
@@ -350,15 +351,29 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
     };
   }
 
-  function matchesExclude(identity: PathIdentity, globs: readonly string[]): boolean {
+  function matchesExclude(identity: PathIdentity, globs: readonly (string | ExcludeGlob)[]): boolean {
     if (globs.length === 0) return false;
     const { matchesGlob } = flavour;
     const realRel = flavour.relative(resolvePath(tidy(cwd()), 0).canonical, identity.canonical);
     const relative = [identity.display, ...(isInsideRelative(realRel, flavour) ? [realRel] : [])];
     const absolute = [identity.absolute, identity.canonical];
-    return globs.some((glob) => {
+    const fold = (text: string): string => (identity.caseInsensitive ? foldCase(text) : text);
+    /** The file's paths below a literal folder: its spelling and its real path, each against the folder. */
+    const below = (base: string): string[] => {
+      const baseAbsolute = tidy(flavour.resolve(tidy(cwd()), base));
+      const pairs: [string, string][] = [
+        [baseAbsolute, identity.absolute],
+        [resolvePath(baseAbsolute, 0).canonical, identity.canonical],
+      ];
+      return pairs
+        .map(([from, to]) => flavour.relative(fold(from), fold(to)))
+        .filter((rel) => rel !== '' && isInsideRelative(rel, flavour));
+    };
+    return globs.some((rule) => {
+      const glob = typeof rule === 'string' ? rule : rule.glob;
       const pattern = glob.replace(/^\.[/\\]/, '');
-      const candidates = flavour.isAbsolute(pattern) ? absolute : relative;
+      const absolutePattern = flavour.isAbsolute(pattern);
+      const candidates = absolutePattern ? absolute : typeof rule === 'string' ? relative : below(rule.base);
       if (identity.caseInsensitive) {
         const folded = foldCase(pattern);
         return candidates.some((candidate) => matchesGlob(foldCase(candidate), folded));
@@ -402,7 +417,7 @@ export function isSameOrInside(inner: string, outer: string): boolean {
 }
 
 /** Whether one of `globs` excludes the file. See the module comment. */
-export function matchesExclude(identity: PathIdentity, globs: readonly string[]): boolean {
+export function matchesExclude(identity: PathIdentity, globs: readonly (string | ExcludeGlob)[]): boolean {
   return defaultIdentifier.matchesExclude(identity, globs);
 }
 

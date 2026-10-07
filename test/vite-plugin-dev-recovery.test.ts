@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { statSync, utimesSync, writeFileSync } from 'node:fs';
+import { statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'vite';
 import type { Plugin, ViteDevServer } from 'vite';
@@ -189,4 +189,55 @@ describe('vite plugin dev: an entry file edited while it is bundled, with no wat
     const url = await startWith(root, entry, [editDuring(dep, dep, 'export const value = "AFTER";\n')]);
     expect(await page(url)).toContain('AFTER');
   });
+});
+
+describe.skipIf(process.platform === 'win32')('vite plugin dev: a retargeted link in the entry graph (#320)', () => {
+  const marker = (name: string): string => `globalThis.probe = "ENTRY_${name}";\n`;
+  const seen = async (url: string): Promise<string[]> => {
+    const html = await page(url);
+    return ['A', 'B', 'C'].filter((name) => html.includes(`ENTRY_${name}`));
+  };
+  const retarget = (link: string, target: string): void => {
+    unlinkSync(link);
+    symlinkSync(target, link);
+  };
+
+  const layouts: readonly (readonly [string, Readonly<Record<string, string>>, string, string])[] = [
+    // name, files, the link to retarget (relative to the project), what it points at after
+    ['the entry itself is a link', { 'a.js': marker('A'), 'b.js': marker('B') }, 'entry.js', 'b.js'],
+    [
+      'a module the entry imports is a link',
+      { 'a.js': marker('A'), 'b.js': marker('B'), 'entry.js': "import './dependency.js';\n" },
+      'dependency.js',
+      'b.js',
+    ],
+    [
+      'a folder the entry imports through is a link',
+      {
+        'one/lib.js': marker('A'),
+        'two/lib.js': marker('B'),
+        'entry.js': "import './lib/lib.js';\n",
+      },
+      'lib',
+      'two',
+    ],
+  ];
+
+  it.each(layouts.flatMap((layout) => [true, false].map((watcher) => [...layout, watcher] as const)))(
+    'bundles the new target when %s (watcher: %s)',
+    async (_name, files, link, after, watcher) => {
+      const root = makeProject({ 'story/start.tw': STORY, ...files });
+      const initial = link === 'entry.js' ? 'a.js' : link === 'dependency.js' ? 'a.js' : 'one';
+      symlinkSync(initial, join(root, link));
+      const url = await start(root, join(root, 'entry.js'), watcher);
+      expect(await seen(url)).toEqual(['A']);
+      retarget(join(root, link), after);
+      // A request after the retarget is served the new bundle, with no other edit and no restart.
+      await expect.poll(() => seen(url), { timeout: 10_000, interval: 200 }).toEqual(['B']);
+      writeFileSync(join(root, 'story/start.tw'), storyWith('Changed.'));
+      await expect.poll(async () => (await page(url)).includes('Changed.'), { timeout: 10_000 }).toBe(true);
+      expect(await seen(url)).toEqual(['B']);
+    },
+    60_000,
+  );
 });

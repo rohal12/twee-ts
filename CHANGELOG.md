@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A relative `exclude` in a config whose folder name holds glob syntax (`chapter[one]`, `chapter{one,two}`) keeps excluding: the folder's name is matched literally and only the supplied suffix is a glob (#316)
+- Module and head file content is no longer put inside an open `<template>` element in a format template's head: a closing head tag the parser ignores there is not taken as the end of the head, so the content goes where it stays in the head, or the template is reported to have no place for it
+- The Vite dev server bundles the entry again when a link it is spelled through (the entry itself, a relative or absolute import, or a folder an import passes through) is retargeted, with the watcher on or off, instead of serving the old target's bundle until a restart (#320)
+- A relative `exclude` in a config whose folder name holds glob syntax (`chapter[one]`, `chapter{one,two}`, `!chapter`, a POSIX backslash) keeps excluding exactly that folder's files: the config returns such a glob as `{ base, glob }` (new type `ExcludeGlob`), the folder is matched literally and only the supplied suffix is a glob, so a near-match sibling is no longer excluded (#316)
 - The Vite dev server decodes the configured `base` as it decodes the request, so a base with `%3F`, `%23` or `%2F` serves the story and bundle assets (#317)
 - A bundle asset with an extension that is an inherited object key (`.constructor`, `.__proto__`) is served as `application/octet-stream`, not an invalid `Content-Type` (#318)
 - A `null` or empty repeated `options` array in StoryData drops the slots of the earlier arrays, as Go replaces the slice, so a later `[null]` no longer brings back a cleared option (#306)

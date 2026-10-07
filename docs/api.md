@@ -99,7 +99,7 @@ All options for `compile()`. Only `sources` is required. Each optional property 
 ```typescript
 interface CompileOptions {
   sources: readonly SourceInput[];
-  exclude?: readonly string[]; // globs for source files to leave out
+  exclude?: readonly (string | ExcludeGlob)[]; // globs for source files to leave out
   outputMode?: OutputMode; // default: 'html'
   formatId?: string; // default: StoryData's format, else 'sugarcube-2'
   startPassage?: string; // default: StoryData's start, else 'Start'
@@ -488,7 +488,7 @@ console.log(errors, unknown, json);
 ```
 
 - `loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConfig | null` reads `twee-ts.config.json` (`CONFIG_FILENAME`) in `dir` (default: the working directory); `null` when there is none. `loadConfigFile(filePath: string, diagnostics?: Diagnostic[]): TweeTsConfig` reads the file named.
-- Paths in the file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the config file's folder; both functions return them rebased onto the working directory, as the CLI uses them.
+- Paths in the file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the config file's folder; both functions return them rebased onto the working directory, as the CLI uses them. An `exclude` glob of a config whose folder name holds glob syntax (`chapter[one]`, `chapter{one,two}`) comes back as `{ base, glob }` (`ExcludeGlob`): the folder is read literally and only `glob` is matched, against the file's path below it.
 - They throw a `TweeTsError`: `INPUT_UNAVAILABLE` when the file can't be read, `INVALID_OPTIONS` when it is not valid JSON or fails `validateConfig()`. The optional `diagnostics` array collects warnings that leave the config usable: keys the config does not define (other than `$schema`), a key given twice, and a file that is not valid UTF-8. A config file may start with a byte order mark and may be UTF-16.
 - `validateConfig(data: unknown): string[]` returns the errors (empty when valid); `unknownConfigKeyWarnings(data: unknown): string[]` the unknown keys; `scaffoldConfig(): string` the config `--init` writes.
 
@@ -589,6 +589,7 @@ import type {
   DecompileOptions,
   DecompileResult,
   Diagnostic,
+  ExcludeGlob,
   FileCacheEntry,
   IFID,
   InlineSource,
