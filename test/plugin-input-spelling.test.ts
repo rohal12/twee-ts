@@ -16,8 +16,9 @@ afterEach(cleanUp);
 
 const settled = { timeout: 20_000, interval: 100 };
 const posixOnly = process.platform === 'win32';
-// macOS's file watcher resolves a registered link to its target, so replacing the link raises no event there (see
-// "Build watch" in docs/plugins.md); Linux reports it.
+// On macOS the bundler's watcher (rolldown-notify, fsevent.rs) registers a link by `path.canonicalize()`, the real path
+// of its target, and handles an event only when its path starts with a registered path, so replacing the link (an event
+// at the link's own path) raises none there; Linux reports it. See "Build watch" in docs/plugins.md.
 const noRelinkWatch = process.platform !== 'linux';
 
 /** Applies `change` every 250 ms until `check` passes: a watcher may not be ready right after the first build. */

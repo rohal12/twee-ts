@@ -468,7 +468,9 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     },
   );
 
-  // macOS's watcher resolves a registered link to its target, so replacing the link raises no event there.
+  // Linux only: on macOS the bundler's watcher (rolldown-notify, fsevent.rs) registers a link by `path.canonicalize()`
+  // and handles an event only when its path starts with a registered path, so replacing the link raises none there
+  // (see "Build watch" in docs/plugins.md).
   it.skipIf(process.platform !== 'linux')(
     'rebuilds when a source link is pointed at another file, then for edits to the new target (#307)',
     async () => {
