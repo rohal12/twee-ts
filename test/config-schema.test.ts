@@ -182,17 +182,21 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     expect(rebaseConfigPaths({ output: '-' }, join(dir, 'c.json'))).toEqual({ output: '-' });
   });
 
-  it.each([
-    ['chapter[one]', 'chapter[one]X'],
-    ['chapter{one,two}', 'chapter{oneXtwo}'],
-    ['chapter{one,two}', 'chapterone'],
-    ['chapter\\one', 'chapter/one'],
-    ['a(b)+c@d', 'a(b)+c@e'],
-    ['!draft', 'Xdraft'],
-    ['x/{a,b}/y', 'x/{a.b}/y'],
-    ['x*y', 'xzy'],
-    ['ordinary', 'ordinaryX'],
-  ])('keeps the config folder %s literal and only the exclude suffix a glob (not %s)', (name, near) => {
+  // A backslash separates folders, and `*` can't name one, on Windows.
+  const posixOnly = (name: string): boolean => process.platform !== 'win32' || !/[\\*]/.test(name);
+  it.each(
+    [
+      ['chapter[one]', 'chapter[one]X'],
+      ['chapter{one,two}', 'chapter{oneXtwo}'],
+      ['chapter{one,two}', 'chapterone'],
+      ['chapter\\one', 'chapter/one'],
+      ['a(b)+c@d', 'a(b)+c@e'],
+      ['!draft', 'Xdraft'],
+      ['x/{a,b}/y', 'x/{a.b}/y'],
+      ['x*y', 'xzy'],
+      ['ordinary', 'ordinaryX'],
+    ].filter(([name]) => posixOnly(name ?? '')) as [string, string][],
+  )('keeps the config folder %s literal and only the exclude suffix a glob (not %s)', (name, near) => {
     const folder = join(dir, name);
     mkdirSync(join(folder, 'src'), { recursive: true });
     mkdirSync(join(dir, near, 'src'), { recursive: true });
