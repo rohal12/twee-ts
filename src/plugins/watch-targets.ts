@@ -53,7 +53,12 @@ export function watchTargets(
   const spell = (path: string, real: string): string[] => {
     if (spelling === 'given') return [path];
     const realSpelling = toPosix(real);
-    return toPosix(path) !== realSpelling && isLink(path) ? [realSpelling, toPosix(path)] : [realSpelling];
+    if (toPosix(path) === realSpelling || !isLink(path)) return [realSpelling];
+    // macOS's watcher resolves a registered link to its target and sees no event when the link is replaced; the
+    // replacement shows in the folder that holds the link.
+    return process.platform === 'darwin'
+      ? [realSpelling, toPosix(path), toPosix(dirname(path))]
+      : [realSpelling, toPosix(path)];
   };
   const walk = (path: string, real: string, isRoot: boolean): Walked => {
     if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return NOTHING;
@@ -88,7 +93,9 @@ export function watchTargets(
 function linkedAncestors(path: string, outputs: OutputPaths): string[] {
   const links: string[] = [];
   for (let folder = dirname(path); dirname(dirname(folder)) !== dirname(folder); folder = dirname(folder)) {
-    if (isLink(folder) && !outputs.holds(realPathOf(folder))) links.unshift(toPosix(folder));
+    if (!isLink(folder) || outputs.holds(realPathOf(folder))) continue;
+    links.unshift(toPosix(folder));
+    if (process.platform === 'darwin') links.unshift(toPosix(dirname(folder)));
   }
   return links;
 }

@@ -468,8 +468,7 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
     },
   );
 
-  // macOS's watcher resolves a registered link to its target, so replacing the link raises no event there.
-  it.skipIf(process.platform !== 'linux')(
+  it.skipIf(process.platform === 'win32')(
     'rebuilds when a source link is pointed at another file, then for edits to the new target (#307)',
     async () => {
       const dir = makeProject({

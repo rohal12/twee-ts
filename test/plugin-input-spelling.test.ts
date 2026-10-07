@@ -16,9 +16,6 @@ afterEach(cleanUp);
 
 const settled = { timeout: 20_000, interval: 100 };
 const posixOnly = process.platform === 'win32';
-// macOS's file watcher resolves a registered link to its target, so replacing the link raises no event there (see
-// "Build watch" in docs/plugins.md); Linux reports it.
-const noRelinkWatch = process.platform !== 'linux';
 
 /** Applies `change` every 250 ms until `check` passes: a watcher may not be ready right after the first build. */
 async function applyUntil(change: () => void, check: () => void): Promise<void> {
@@ -194,47 +191,44 @@ describe(
 );
 
 describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => {
-  it.skipIf(noRelinkWatch)(
-    'follows a source file link through repeated retargets, a dangling link and edits',
-    async () => {
-      const dir = makeProject({
-        'one.tw': storyWith('ONE_TEXT'),
-        'two.tw': storyWith('TWO_TEXT'),
-        'three.tw': storyWith('THREE_TEXT'),
-      });
-      symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
-      const out = await watchStory(dir, { sources: ['story.tw'] });
-      expect(text(out)).toContain('ONE_TEXT');
+  it.skipIf(posixOnly)('follows a source file link through repeated retargets, a dangling link and edits', async () => {
+    const dir = makeProject({
+      'one.tw': storyWith('ONE_TEXT'),
+      'two.tw': storyWith('TWO_TEXT'),
+      'three.tw': storyWith('THREE_TEXT'),
+    });
+    symlinkSync(join(dir, 'one.tw'), join(dir, 'story.tw'));
+    const out = await watchStory(dir, { sources: ['story.tw'] });
+    expect(text(out)).toContain('ONE_TEXT');
 
-      const retarget = (name: string, expected: string) =>
-        applyUntil(
-          () => {
-            relink(join(dir, 'story.tw'), join(dir, name));
-          },
-          () => {
-            expect(text(out)).toContain(expected);
-          },
-        );
-      await retarget('two.tw', 'TWO_TEXT');
-      await retarget('three.tw', 'THREE_TEXT');
-
-      // A link that dangles fails the build; pointing it at a story again recovers, and the old targets stay quiet.
-      relink(join(dir, 'story.tw'), join(dir, 'missing.tw'));
-      await new Promise((done) => setTimeout(done, 500));
-      await retarget('one.tw', 'ONE_TEXT');
-
-      await applyUntil(
+    const retarget = (name: string, expected: string) =>
+      applyUntil(
         () => {
-          writeFileSync(join(dir, 'one.tw'), storyWith('ONE_EDITED'));
+          relink(join(dir, 'story.tw'), join(dir, name));
         },
         () => {
-          expect(text(out)).toContain('ONE_EDITED');
+          expect(text(out)).toContain(expected);
         },
       );
-    },
-  );
+    await retarget('two.tw', 'TWO_TEXT');
+    await retarget('three.tw', 'THREE_TEXT');
 
-  it.skipIf(noRelinkWatch)(
+    // A link that dangles fails the build; pointing it at a story again recovers, and the old targets stay quiet.
+    relink(join(dir, 'story.tw'), join(dir, 'missing.tw'));
+    await new Promise((done) => setTimeout(done, 500));
+    await retarget('one.tw', 'ONE_TEXT');
+
+    await applyUntil(
+      () => {
+        writeFileSync(join(dir, 'one.tw'), storyWith('ONE_EDITED'));
+      },
+      () => {
+        expect(text(out)).toContain('ONE_EDITED');
+      },
+    );
+  });
+
+  it.skipIf(posixOnly)(
     'rebuilds when a source folder link is retargeted, then for edits in the new folder',
     async () => {
       const dir = makeProject({ 'first/start.tw': storyWith('FIRST_DIR'), 'second/start.tw': storyWith('SECOND_DIR') });
@@ -260,7 +254,7 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
     },
   );
 
-  it.skipIf(noRelinkWatch)('rebuilds when a module link or a head file link is retargeted', async () => {
+  it.skipIf(posixOnly)('rebuilds when a module link or a head file link is retargeted', async () => {
     const dir = makeProject({
       'story/start.tw': storyWith('x'),
       'mod-a.js': 'window.marker = "MOD_A";',
@@ -290,7 +284,7 @@ describe('vite build watch: links to inputs (#307)', { timeout: 40_000 }, () => 
     );
   });
 
-  it.skipIf(noRelinkWatch)('rebuilds when a link above the source folder is retargeted', async () => {
+  it.skipIf(posixOnly)('rebuilds when a link above the source folder is retargeted', async () => {
     const dir = makeProject({ 'a/story/start.tw': storyWith('UNDER_A'), 'b/story/start.tw': storyWith('UNDER_B') });
     mkdirSync(join(dir, 'x'));
     symlinkSync(join(dir, 'a'), join(dir, 'x/parent'));
