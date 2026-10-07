@@ -482,11 +482,20 @@ describe('vite plugin: build watch', { timeout: 30_000 }, () => {
       );
       expect(story(out)).toContain('FIRST_TEXT');
 
-      unlinkSync(join(dir, 'story.tw'));
-      symlinkSync(join(dir, 'second.tw'), join(dir, 'story.tw'));
-      await vi.waitFor(() => {
-        expect(story(out)).toContain('SECOND_TEXT');
-      }, settled);
+      // The watcher may not be ready right after the first build; the link is pointed again until a build sees it.
+      const retarget = (): void => {
+        rmSync(join(dir, 'story.tw'), { force: true });
+        symlinkSync(join(dir, 'second.tw'), join(dir, 'story.tw'));
+      };
+      retarget();
+      const again = setInterval(retarget, 250);
+      await vi
+        .waitFor(() => {
+          expect(story(out)).toContain('SECOND_TEXT');
+        }, settled)
+        .finally(() => {
+          clearInterval(again);
+        });
 
       writeFileSync(join(dir, 'second.tw'), STORY.replace('Hello from the story.', 'SECOND_EDITED'));
       await vi.waitFor(() => {

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { chmodSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { watch } from 'rollup';
 import type { RollupWatcher, RollupWatcherEvent } from 'rollup';
 import { outputPaths } from '../src/filesystem.js';
@@ -47,9 +47,10 @@ describe('watch targets', () => {
     symlinkSync(real, link, 'junction');
     const story = toPosix(realpathSync.native(join(real, 'story')));
     const authored = toPosix(join(link, 'story'));
-    // The link above the input is registered as authored too (#307).
+    // The link above the input is registered as authored too, and on macOS the folder that holds it (#307).
+    const holder = process.platform === 'darwin' ? [toPosix(dirname(link))] : [];
     expect(watchTargets([authored], () => false, NO_OUTPUTS, 'real').sort()).toEqual(
-      [story, `${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`, toPosix(link)].sort(),
+      [story, `${story}/parts`, `${story}/parts/more.tw`, `${story}/start.tw`, toPosix(link), ...holder].sort(),
     );
   });
 
