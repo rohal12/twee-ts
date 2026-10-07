@@ -116,28 +116,34 @@ const SETUPS = [
   { base: './', outputFilename: 'nested/story.html' },
 ] as const;
 
-describe.runIf(browser !== undefined || process.env['CI'] !== undefined)('an entry’s worker in Chromium (#290)', () => {
-  describe.each(SETUPS)('under base $base, as $outputFilename', ({ base, outputFilename }) => {
-    it.each(BRANCHES)('loads and posts its message back: %s', async (branch) => {
-      const dir = makeProject(FILES);
-      const plugin = tweeTsPlugin({
-        sources: [join(dir, 'story')],
-        format: 'runner-1',
-        entry: join(dir, 'entry.js'),
-        outputFilename,
-        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+// A test builds the story and loads it in Chromium, waiting up to 15 s for the worker; the first of them also pays
+// for the browser's first page, so the default 5 s limit is shorter than the wait inside it.
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'an entry’s worker in Chromium (#290)',
+  { timeout: 60_000 },
+  () => {
+    describe.each(SETUPS)('under base $base, as $outputFilename', ({ base, outputFilename }) => {
+      it.each(BRANCHES)('loads and posts its message back: %s', async (branch) => {
+        const dir = makeProject(FILES);
+        const plugin = tweeTsPlugin({
+          sources: [join(dir, 'story')],
+          format: 'runner-1',
+          entry: join(dir, 'entry.js'),
+          outputFilename,
+          compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+        });
+        const common: InlineConfig = { root: dir, base, publicDir: false, plugins: [plugin], logLevel: 'silent' };
+        // A relative base deploys the story at the site root.
+        const deployedAt = base === './' ? '/' : base;
+        let origin: string;
+        if (branch === 'the dev server') {
+          origin = (await startServer({ ...common, server: { watch: null } })).url;
+        } else {
+          const own = branch === 'a build of its own' ? { rolldownOptions: { input: join(dir, 'extra.js') } } : {};
+          origin = await serveBuild(await buildFiles({ ...common, build: own }), deployedAt);
+        }
+        expect(await workerOutcome(`${origin}${deployedAt}${outputFilename}`)).toBe('worker:42');
       });
-      const common: InlineConfig = { root: dir, base, publicDir: false, plugins: [plugin], logLevel: 'silent' };
-      // A relative base deploys the story at the site root.
-      const deployedAt = base === './' ? '/' : base;
-      let origin: string;
-      if (branch === 'the dev server') {
-        origin = (await startServer({ ...common, server: { watch: null } })).url;
-      } else {
-        const own = branch === 'a build of its own' ? { rolldownOptions: { input: join(dir, 'extra.js') } } : {};
-        origin = await serveBuild(await buildFiles({ ...common, build: own }), deployedAt);
-      }
-      expect(await workerOutcome(`${origin}${deployedAt}${outputFilename}`)).toBe('worker:42');
     });
-  });
-});
+  },
+);
