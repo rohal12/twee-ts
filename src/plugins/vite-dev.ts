@@ -76,6 +76,17 @@ export function pathBelowBase(url: string, base: string): string | undefined {
 }
 
 /** Served until the first successful compile, so the overlay has a page to appear on. */
+/** The reload message for a rebuilt story: limited to the story's pages unless Vite's client could not match them. */
+export function reloadPayload(base: string, outputFilename: string): { type: 'full-reload'; path?: string } {
+  let decoded: string;
+  try {
+    decoded = decodeURI(base);
+  } catch {
+    return { type: 'full-reload' };
+  }
+  return decoded === base ? { type: 'full-reload', path: `/${outputFilename}` } : { type: 'full-reload' };
+}
+
 function waitingPage(base: string): string {
   return viteWaitingPage(`${base}@vite/client`);
 }
@@ -382,8 +393,10 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       html = dev.injectClient(story.output, base);
       lastError = undefined;
-      // A path tells the client to reload only the pages showing the story.
-      if (!initial) server.ws.send({ type: 'full-reload', path: `/${options.outputFilename}` });
+      // A path tells the client to reload only the pages showing the story. Vite's client compares it with the
+      // decoded page path and the base as configured, so under a base that has percent-encoded characters
+      // (spaces, non-ASCII) the comparison never matches; then every page reloads instead.
+      if (!initial) server.ws.send(reloadPayload(base, options.outputFilename));
     } catch (e) {
       lastError = toOverlayError(e);
       config.logger.error(`[twee-ts] ${lastError.message}`);
