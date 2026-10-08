@@ -568,6 +568,9 @@ export async function bundleEntry(
   outputFilename: string,
   onLoad?: (file: string) => void,
   onResolve?: (authored: string) => void,
+  // The files the entry build's plugins add with `addWatchFile` and the modules of its graph, filled in
+  // also when the build fails, so a caller keeps them (they are the files whose fixing bundles it again).
+  watchFiles = new Set<string>(),
 ): Promise<EntryBundle> {
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
@@ -575,7 +578,6 @@ export async function bundleEntry(
     .filter(isPlugin)
     .filter((plugin) => plugin.name !== PLUGIN_NAME && appliesTo(plugin, command, user, env))
     .map((plugin) => asEntryBuildPlugin(plugin, command));
-  const watchFiles = new Set<string>();
   const inline: InlineConfig = {
     ...withoutExcludedKeys(user),
     configFile: false,

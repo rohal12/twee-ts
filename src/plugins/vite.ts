@@ -36,7 +36,7 @@ import {
   takeEntryFromBundle,
 } from './vite-entry.js';
 import type { BundleItem, EntryBundle } from './vite-entry.js';
-import { watchTargets } from './watch-targets.js';
+import { importWatchTargets, watchTargets } from './watch-targets.js';
 import { isRecord } from '../util.js';
 
 export type { PluginCompileOptions } from './options.js';
@@ -240,14 +240,35 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }
       }
       if (entryPath === undefined || bundlesEntryInside(config)) return;
+      // What the entry build read is registered whether it succeeds or fails: a failed bundle is
+      // recovered by fixing one of these files, which no other input of the build includes.
+      const watched = new Set<string>();
+      const authored = new Set<string>([entryPath]);
+      const registerEntryInputs = (): void => {
+        if (!this.meta.watchMode) return;
+        for (const file of watched) this.addWatchFile(canonicalPath(file));
+        const outputs = outputPaths(allOutputs(config));
+        for (const target of importWatchTargets(authored, outputs)) this.addWatchFile(target);
+      };
+      watched.add(entryPath);
       let bundle: EntryBundle;
       try {
-        bundle = await bundleEntry(config, entryPath, 'build', outputFilename);
+        bundle = await bundleEntry(
+          config,
+          entryPath,
+          'build',
+          outputFilename,
+          (file) => watched.add(file),
+          (spelling) => authored.add(spelling),
+          watched,
+        );
       } catch (e) {
+        registerEntryInputs();
         return this.error(fatalError(e));
       }
       ownBuilds.set(this.environment, bundle);
-      if (this.meta.watchMode) for (const file of bundle.files) this.addWatchFile(canonicalPath(file));
+      for (const file of bundle.files) watched.add(file);
+      registerEntryInputs();
       return undefined;
     },
 
