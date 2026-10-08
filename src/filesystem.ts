@@ -610,11 +610,14 @@ export function watchFilesystem(
       const files = pendingFullBuild || pendingFiles.size === 0 ? undefined : new Set(pendingFiles);
       pendingFiles.clear();
       pendingFullBuild = false;
-      // A recursive watch can keep its registration on a file an editor's atomic save replaced and
-      // report nothing of later edits (Node on Linux, #325): start the watches that saw events again
+      // Node's recursive watch on Linux keeps its registration on a file an editor's atomic save
+      // replaced and reports nothing of later edits (#325): start the watches that saw events again
       // before this build reads the files, so the files at their paths now are the ones watched.
-      for (const root of roots) {
-        if (root.dirty && !root.tracked && root.state.self.kind === 'dir') arm(root);
+      // The native recursive watches of macOS and Windows follow the path and are left alone.
+      if (process.platform === 'linux') {
+        for (const root of roots) {
+          if (root.dirty && !root.tracked && root.state.self.kind === 'dir') arm(root);
+        }
       }
       callback(files);
     }, delay);
