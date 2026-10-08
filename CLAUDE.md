@@ -216,6 +216,10 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 | `test:`  | Adding/updating tests      |
 | `chore:` | Tooling, CI, dependencies  |
 
+### Closing issues
+
+A PR that resolves an issue must say so with a closing keyword, or merging leaves the issue open: put `Fixes #N` (one line per issue) in the PR body, and in the commit message footer when you write the commit. A bare mention such as "(#325)" closes nothing. Check the body of any PR that already exists, including one created from the UI, before ending the task; add the keywords yourself. Leave an issue out only when the PR fixes part of it, and say what remains in the PR body.
+
 ## PR review guidelines
 
 Whole-compiler review sweeps follow [docs/compiler-validation.md](docs/compiler-validation.md): cover every review
