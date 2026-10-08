@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { writeFileSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import type { InlineConfig, Plugin } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { ENTRY_BUILD_EXCLUDED_KEYS } from '../src/plugins/vite-entry.js';
@@ -357,7 +357,7 @@ describe('vite plugin entry: quiet entry builds (D1)', () => {
     const dir = project("out.v = 'one';\n");
     const printed = await runNode(
       `import { createServer } from 'vite';
-       import { writeFileSync } from 'node:fs';
+       import { readdirSync, writeFileSync } from 'node:fs';
        import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};
        const server = await createServer({ configFile: false, root: process.env.PROJECT, logLevel: 'silent',
          server: { host: '127.0.0.1', port: 0 }, plugins: [tweeTsPlugin(${options(dir, 'index.html')})] });
@@ -403,31 +403,107 @@ describe('vite plugin entry: a config file with the plugin given inline', () => 
   );
 });
 
+/** The files under `dir`, without Vite's own dependency cache. */
+function listing(dir: string): string[] {
+  return readdirSync(dir, { recursive: true })
+    .map(String)
+    .filter((name) => !name.startsWith('.vite'))
+    .sort();
+}
+
 describe('vite plugin entry: public assets (#327)', () => {
-  const ENTRY = "import logo from '/logo.svg?url';\nout.logo = logo;\n";
-  const PUBLIC = { 'public/logo.svg': '<svg xmlns="http://www.w3.org/2000/svg"></svg>' };
+  const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+  const EXTRA = { 'extra.js': "console.log('extra');\n" };
 
-  it('resolves a public ?url import in dev, under the base', { timeout: 30_000 }, async () => {
-    const dir = project(ENTRY, PUBLIC);
-    const { url } = await startServer({
-      root: dir,
-      base: '/game/',
-      plugins: [tweeTsPlugin(pluginOptions(dir))],
-    });
-    const html = await (await fetch(`${url}/game/`)).text();
-    expect(runEntry(userScript(html))).toEqual({ logo: '/game/logo.svg' });
-    expect((await fetch(`${url}/game/logo.svg`)).status).toBe(200);
-  });
+  /** Each way an entry refers to a public file; `style` reads the stylesheet instead of the script. */
+  const USES = {
+    'a ?url import': { entry: "import logo from '/logo.svg?url';\nout.logo = logo;\n", style: false },
+    'new URL()': { entry: "out.logo = new URL('/logo.svg', import.meta.url).pathname;\n", style: false },
+    'a CSS url()': { entry: "import './main.css';\n", style: true },
+  } as const;
+  const CSS = "body { background-image: url('/logo.svg'); }\n";
 
-  it('resolves it in a production build that bundles the entry separately', { timeout: 30_000 }, async () => {
-    const dir = project(ENTRY, { ...PUBLIC, 'extra.js': "console.log('extra');\n" });
-    const result = await buildResult({
+  /** Where the public folder is, as `publicDir` is given (undefined: Vite's default). */
+  const PUBLIC_DIRS = [
+    { name: 'the default publicDir', folder: 'public', publicDir: undefined },
+    { name: 'a custom publicDir', folder: 'static', publicDir: 'static' },
+  ] as const;
+
+  type Branch = 'dev' | 'inside the build' | 'a build of its own';
+  const BRANCHES: readonly Branch[] = ['dev', 'inside the build', 'a build of its own'];
+
+  /** What the entry produced under `branch`: its script's result, or its stylesheet's text. */
+  async function observe(branch: Branch, dir: string, base: string, extra: InlineConfig, style: boolean) {
+    const config: InlineConfig = {
       root: dir,
-      base: '/game/',
+      base,
       logLevel: 'silent',
-      build: { rolldownOptions: { input: join(dir, 'extra.js') } },
+      ...extra,
       plugins: [tweeTsPlugin(pluginOptions(dir))],
+      ...(branch === 'a build of its own' ? { build: { rolldownOptions: { input: join(dir, 'extra.js') } } } : {}),
+    };
+    let html: string;
+    let files: Map<string, string | Uint8Array> | undefined;
+    if (branch === 'dev') {
+      const { url } = await startServer(config);
+      html = await (await fetch(url + (base.startsWith('/') ? base : '/'))).text();
+    } else {
+      files = await buildFiles(config);
+      html = textOf(files.get('index.html'));
+    }
+    const sheet = /<style[^>]*id="twine-user-stylesheet"[^>]*>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
+    return { observed: style ? sheet : userScript(html), files };
+  }
+
+  describe.each(Object.entries(USES))('%s', (_use, { entry, style }) => {
+    describe.each(PUBLIC_DIRS)('with $name', ({ folder, publicDir }) => {
+      it.each(['/', '/game/'])(
+        'finds the public file the same in dev and both builds, under base %s',
+        { timeout: 60_000 },
+        async (base) => {
+          const results = [];
+          for (const branch of BRANCHES) {
+            const dir = project(entry, { [`${folder}/logo.svg`]: LOGO, 'app/main.css': CSS, ...EXTRA });
+            const extra: InlineConfig = publicDir === undefined ? {} : { publicDir: join(dir, publicDir) };
+            results.push(await observe(branch, dir, base, extra, style));
+          }
+          const [dev, inside, own] = results;
+          const expected = `${base}logo.svg`;
+          expect(dev?.observed).toContain(expected);
+          expect(inside?.observed).toContain(expected);
+          expect(own?.observed).toContain(expected);
+        },
+      );
     });
-    expect(result).toEqual({ logo: '/game/logo.svg' });
   });
+
+  it(
+    'serves the public file through the dev server, and the entry build writes nothing',
+    { timeout: 30_000 },
+    async () => {
+      const dir = project("import logo from '/logo.svg?url';\nout.logo = logo;\n", { 'public/logo.svg': LOGO });
+      const before = listing(dir);
+      const { url } = await startServer({
+        root: dir,
+        base: '/game/',
+        plugins: [tweeTsPlugin(pluginOptions(dir))],
+      });
+      const html = await (await fetch(`${url}/game/`)).text();
+      expect(runEntry(userScript(html))).toEqual({ logo: '/game/logo.svg' });
+      const asset = await fetch(`${url}/game/logo.svg`);
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe(LOGO);
+      expect(listing(dir)).toEqual(before);
+    },
+  );
+
+  it.each(BRANCHES)(
+    'with publicDir disabled leaves a CSS public url alone, the same everywhere: %s',
+    { timeout: 60_000 },
+    async (branch) => {
+      const dir = project("import './main.css';\n", { 'public/logo.svg': LOGO, 'app/main.css': CSS, ...EXTRA });
+      const { observed } = await observe(branch, dir, '/game/', { publicDir: false }, true);
+      expect(observed).toMatch(/url\('?\/logo\.svg'?\)/);
+    },
+  );
 });
