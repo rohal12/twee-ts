@@ -40,11 +40,10 @@ async function watchSeparateEntry(dir: string, entry: string): Promise<{ events:
     events.push(event.code);
     if (event.code === 'BUNDLE_END') void event.result?.close();
   });
-  await vi
-    .waitFor(() => {
-      expect(events).toContain('END');
-    }, SETTLED)
-    .catch(() => vi.waitFor(() => expect(events).toContain('ERROR'), SETTLED));
+  // The first build ends, or fails.
+  await vi.waitFor(() => {
+    if (!events.includes('END') && !events.includes('ERROR')) throw new Error('the first build has not finished');
+  }, SETTLED);
   return { events, story: () => readFileSync(join(dir, 'out/story.html'), 'utf-8') };
 }
 

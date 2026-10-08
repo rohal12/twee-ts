@@ -89,6 +89,7 @@ export function watchTargets(
  */
 export function importWatchTargets(authored: Iterable<string>, outputs: OutputPaths): string[] {
   const targets = new Set<string>();
+  const missing: string[] = [];
   for (const spelling of authored) {
     if (existsSync(spelling)) {
       if (toPosix(realPathOf(spelling)) === toPosix(spelling)) continue;
@@ -96,11 +97,27 @@ export function importWatchTargets(authored: Iterable<string>, outputs: OutputPa
       if (isLink(spelling)) targets.add(toPosix(spelling));
       continue;
     }
-    let folder = dirname(spelling);
-    while (!existsSync(folder) && dirname(folder) !== folder) folder = dirname(folder);
-    if (existsSync(folder) && !outputs.holds(realPathOf(folder))) targets.add(toPosix(folder));
+    missing.push(spelling);
+  }
+  for (const folder of missingImportFolders(missing)) {
+    if (!outputs.holds(realPathOf(folder))) targets.add(toPosix(folder));
   }
   return [...targets];
+}
+
+/**
+ * The nearest folder that exists, for each of the paths in `authored` that reaches nothing: where creating that
+ * file (or the folders above it) shows. Of a path that exists there is none.
+ */
+export function missingImportFolders(authored: Iterable<string>): string[] {
+  const folders = new Set<string>();
+  for (const spelling of authored) {
+    if (existsSync(spelling)) continue;
+    let folder = dirname(spelling);
+    while (!existsSync(folder) && dirname(folder) !== folder) folder = dirname(folder);
+    if (existsSync(folder)) folders.add(folder);
+  }
+  return [...folders];
 }
 
 /**

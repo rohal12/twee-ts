@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'vite';
 import type { Plugin, ViteDevServer } from 'vite';
@@ -16,12 +16,18 @@ afterEach(async () => {
 
 /** Starts a dev server for the project at `root`; with `watcher: false`, `server.watch` is null. */
 async function start(root: string, entry: string, watcher = true): Promise<string> {
+  return startWith(root, entry, undefined, watcher);
+}
+
+/** Like start(), with `extra` among the user's plugins, which the entry build runs too. */
+async function startWith(root: string, entry: string, extra?: Plugin, watcher = false): Promise<string> {
   server = await createServer({
     configFile: false,
     root,
     logLevel: 'silent',
     server: { host: '127.0.0.1', port: 0, ...(watcher ? {} : { watch: null }) },
     plugins: [
+      ...(extra === undefined ? [] : [extra]),
       tweeTsPlugin({ sources: [join(root, 'story')], format: 'test-format-1', entry, compileOptions: COMPILE }),
     ],
   });
@@ -108,6 +114,77 @@ describe('vite plugin dev: a module imported by an entry that fails its first bu
     expect(await page(url)).not.toContain('tw-storydata');
     writeFileSync(join(app, 'dep.js'), 'export const value = "RECOVERED";\n');
     await expect.poll(() => page(url), { timeout: 10_000, interval: 100 }).toContain('RECOVERED');
+  });
+});
+
+describe('vite plugin dev: an import that does not exist when the entry is bundled (#269)', () => {
+  const ENTRY = 'import { value } from "./later.js"; globalThis.probe = value;\n';
+  const CREATED = 'export const value = "RECOVERED";\n';
+
+  it.each([
+    ['inside the root, with a watcher', true, true],
+    ['inside the root, with no watcher', true, false],
+    ['outside the root, with a watcher', false, true],
+    ['outside the root, with no watcher', false, false],
+  ])(
+    'recovers when the import is created (%s)',
+    async (_name, inside, watcher) => {
+      const root = makeProject({ 'story/start.tw': STORY, ...(inside ? { 'app/main.js': ENTRY } : {}) });
+      const app = inside ? join(root, 'app') : makeProject({ 'main.js': ENTRY });
+      const url = await start(root, join(app, 'main.js'), watcher);
+      expect(await page(url)).not.toContain('tw-storydata');
+      writeFileSync(join(app, 'later.js'), CREATED);
+      await expect.poll(() => page(url), { timeout: 10_000, interval: 100 }).toContain('RECOVERED');
+    },
+    30_000,
+  );
+
+  it('recovers when the import is created in a folder that did not exist, with no watcher', async () => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      'app/main.js': 'import "./lib/deep/later.js";\n',
+    });
+    const url = await start(root, join(root, 'app/main.js'), false);
+    expect(await page(url)).not.toContain('tw-storydata');
+    mkdirSync(join(root, 'app/lib/deep'), { recursive: true });
+    writeFileSync(join(root, 'app/lib/deep/later.js'), 'globalThis.probe = "RECOVERED";\n');
+    expect(await page(url)).toContain('RECOVERED');
+  });
+
+  it('recovers when an import added after a good bundle is created, with no watcher', async () => {
+    const root = makeProject({ 'story/start.tw': STORY, 'app/main.js': 'globalThis.probe = "GOOD";\n' });
+    const entry = join(root, 'app/main.js');
+    const url = await start(root, entry, false);
+    expect(await page(url)).toContain('GOOD');
+    writeFileSync(entry, ENTRY);
+    expect(await page(url)).toContain('GOOD'); // the last good story stays while the new bundle fails
+    writeFileSync(join(root, 'app/later.js'), CREATED);
+    expect(await page(url)).toContain('RECOVERED');
+  });
+});
+
+describe('vite plugin dev: a file a plugin watches while the entry fails its first bundle (#269)', () => {
+  it('recovers when that file is corrected, with no watcher', async () => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      'app/main.js': 'import data from "virtual:data"; globalThis.probe = data;\n',
+      'data.txt': 'BROKEN',
+    });
+    const data = join(root, 'data.txt');
+    const url = await startWith(root, join(root, 'app/main.js'), {
+      name: 'test-failing-data',
+      resolveId: (id) => (id === 'virtual:data' ? '\0virtual:data' : undefined),
+      load(id) {
+        if (id !== '\0virtual:data') return undefined;
+        this.addWatchFile(data);
+        const text = readFileSync(data, 'utf-8').trim();
+        if (text === 'BROKEN') throw new Error('data is broken');
+        return `export default ${JSON.stringify(text)};`;
+      },
+    });
+    expect(await page(url)).not.toContain('tw-storydata');
+    writeFileSync(data, 'RECOVERED');
+    expect(await page(url)).toContain('RECOVERED');
   });
 });
 

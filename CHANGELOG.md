@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vite build --watch` with an entry the build bundles separately registers the entry, the modules and plugin-watched files of a bundle that failed (so correcting a syntax error, or creating a missing import in a folder that holds no build output, builds again), and the authored location of every import that goes through a link, so retargeting such a link rebuilds (#322, #307)
+- The Vite dev server also keeps the files a failed entry bundle's plugins watch and the folder where an unresolved import would be created, so creating the missing file recovers the story with the watcher on or off, also when the failure follows a good bundle (#269)
+- The Vite and Rollup plugins accept the `{ base, glob }` excludes the types declare and `loadConfigFile()` returns, and refuse malformed objects with `INVALID_OPTIONS` (#323)
+- A format template holding a very wide `<template>` (150000 child elements) no longer overflows the stack when `{{STORY_DATA}}` is validated (#314)
 - Module and head file content is no longer put inside an open `<template>` element in a format template's head: a closing head tag the parser ignores there is not taken as the end of the head, so the content goes where it stays in the head, or the template is reported to have no place for it
 - The Vite dev server bundles the entry again when a link it is spelled through (the entry itself, a relative or absolute import, or a folder an import passes through) is retargeted, with the watcher on or off, instead of serving the old target's bundle until a restart (#320)
 - A relative `exclude` in a config whose folder name holds glob syntax (`chapter[one]`, `chapter{one,two}`, `!chapter`, a POSIX backslash) keeps excluding exactly that folder's files: the config returns such a glob as `{ base, glob }` (new type `ExcludeGlob`), the folder is matched literally and only the supplied suffix is a glob, so a near-match sibling is no longer excluded (#316)
