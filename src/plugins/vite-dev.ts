@@ -202,6 +202,13 @@ function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<st
  * the story, which the plugin installs after Vite's internal middlewares (host
  * check, CORS, base), so they apply to the story as to any page.
  */
+/** The assets each story instance of a dev server currently serves, so instances can see each other's names. */
+const devAssets = new WeakMap<ViteDevServer, Set<() => ReadonlyMap<string, string | Uint8Array> | undefined>>();
+
+function sameBytes(a: string | Uint8Array, b: string | Uint8Array): boolean {
+  return Buffer.from(a).equals(Buffer.from(b));
+}
+
 export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions): Promise<Connect.NextHandleFunction> {
   const { options, cache } = dev;
   const config = server.config;
@@ -225,6 +232,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let html = '';
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
+  const instances = devAssets.get(server) ?? new Set();
+  devAssets.set(server, instances);
+  instances.add(() => entry?.assets);
   let entryStale = true; // bundle again on the next rebuild
   // The files the entry was last bundled from, and their states then, kept while a
   // later bundle fails, so that fixing one of them (inside the root or not) bundles it again.
@@ -513,6 +523,19 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     if (asset === undefined) {
       next();
       return;
+    }
+    // Another instance emitting the same name with other bytes: the production build rejects that, and the dev
+    // server must not pick one by plugin order.
+    for (const other of instances) {
+      const theirs = other()?.get(path);
+      if (theirs !== undefined && !sameBytes(theirs, asset)) {
+        const message = `twee-ts: the entry emits ${path}, a file the build already writes; rename one of them.`;
+        config.logger.error(`[twee-ts] ${message}`);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end(message);
+        return;
+      }
     }
     send(req, res, assetMediaType(path), asset);
   };

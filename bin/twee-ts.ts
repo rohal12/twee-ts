@@ -371,6 +371,12 @@ const SCAFFOLD_FILES: readonly ScaffoldFile[] = [
 `,
   },
   {
+    path: 'src/StoryTitle.tw',
+    content: () => `:: StoryTitle
+My Story
+`,
+  },
+  {
     path: 'src/Start.tw',
     content: () => `:: Start
 Welcome to your new Twine story!

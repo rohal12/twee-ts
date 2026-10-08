@@ -51,7 +51,9 @@ export interface EntryBundle {
 export function entrySources(entry: EntryBundle | undefined): InlineSource[] {
   if (entry === undefined) return [];
   return [
-    { filename: ENTRY_SCRIPT_NAME, content: entry.script },
+    // The leading `;` ends an unterminated statement of the script passage before it, which would otherwise take
+    // the entry's opening parenthesis as a call.
+    { filename: ENTRY_SCRIPT_NAME, content: `;${entry.script}` },
     ...(entry.style === '' ? [] : [{ filename: ENTRY_STYLE_NAME, content: entry.style }]),
   ];
 }

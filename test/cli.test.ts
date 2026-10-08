@@ -124,6 +124,21 @@ describe('CLI --init', () => {
     expect(r.stdout).not.toContain('Skipped');
   });
 
+  it('gives the scaffold a story title, which SugarCube needs to start (#333)', () => {
+    expect(runCli(dir, ['--init']).status).toBe(0);
+    expect(readFileSync(join(dir, 'src', 'StoryTitle.tw'), 'utf-8')).toBe(':: StoryTitle\nMy Story\n');
+    const compiled = runCli(dir, ['-d', '-o', 'story.tw']);
+    expect(compiled.status).toBe(0);
+    expect(readFileSync(join(dir, 'story.tw'), 'utf-8')).toContain(':: StoryTitle\nMy Story');
+  });
+
+  it('keeps an existing StoryTitle.tw (#333)', () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'StoryTitle.tw'), ':: StoryTitle\nMine\n');
+    expect(runCli(dir, ['--init']).status).toBe(0);
+    expect(readFileSync(join(dir, 'src', 'StoryTitle.tw'), 'utf-8')).toBe(':: StoryTitle\nMine\n');
+  });
+
   it('keeps every file when run a second time', () => {
     expect(runCli(dir, ['--init']).status).toBe(0);
     const before = [configPath(), storyDataPath(), startPath()].map((p) => readFileSync(p, 'utf-8'));

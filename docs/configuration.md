@@ -166,6 +166,7 @@ This creates:
 
 - `twee-ts.config.json` with `$schema`, `sources` (`["src/"]`) and `output` (`"story.html"`)
 - `src/StoryData.tw` with a generated IFID
+- `src/StoryTitle.tw` with the title `My Story` (SugarCube refuses to start a story without one)
 - `src/Start.tw` with a starter passage
 
 and reports:
@@ -175,6 +176,7 @@ Initializing new twee-ts project...
 Created:
   twee-ts.config.json
   src/StoryData.tw
+  src/StoryTitle.tw
   src/Start.tw
 
 Run: npx @rohal12/twee-ts
