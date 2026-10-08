@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Folder watch mode keeps seeing edits to a file that an editor saved by replacing it: the recursive watches that saw events are started again before the next build, since on Linux the old registration stayed on the replaced file and later edits left the output stale (#325)
+- The Vite dev server also bundles the entry again when a link imported without its file extension (`import './dependency'` for a `dependency.ts` link) is retargeted: the import is noted at the file the resolver chose (#320)
 - `vite build --watch` with an entry the build bundles separately registers the entry, the modules and plugin-watched files of a bundle that failed (so correcting a syntax error, or creating a missing import in a folder that holds no build output, builds again), and the authored location of every import that goes through a link, so retargeting such a link rebuilds (#322, #307)
 - The Vite dev server also keeps the files a failed entry bundle's plugins watch and the folder where an unresolved import would be created, so creating the missing file recovers the story with the watcher on or off, also when the failure follows a good bundle (#269)
 - The Vite and Rollup plugins accept the `{ base, glob }` excludes the types declare and `loadConfigFile()` returns, and refuse malformed objects with `INVALID_OPTIONS` (#323)
