@@ -30,6 +30,7 @@ import {
   ENTRY_INPUT_NAME,
   entryInputSettings,
   entryRenderBuiltUrl,
+  entryCollisionMessage,
   entrySources,
   PLUGIN_NAME,
   removeFromBundle,
@@ -310,9 +311,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
           if (!bundlesEntryInside(config)) {
             for (const [fileName, source] of entry?.assets ?? []) {
               if (Object.hasOwn(bundle, fileName)) {
-                return this.error(
-                  `twee-ts: the entry emits ${fileName}, a file the build already writes; rename one of them.`,
-                );
+                return this.error(entryCollisionMessage(fileName));
               }
               this.emitFile({ type: 'asset', fileName, source });
             }

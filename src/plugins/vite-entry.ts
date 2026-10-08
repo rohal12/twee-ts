@@ -47,6 +47,11 @@ export interface EntryBundle {
   readonly assets: ReadonlyMap<string, string | Uint8Array>;
 }
 
+/** The error for a file the entry emits under a name the build (or another story's entry) already writes. */
+export function entryCollisionMessage(fileName: string): string {
+  return `twee-ts: the entry emits ${fileName}, a file the build already writes; rename one of them.`;
+}
+
 /** The entry's script and stylesheet as inline sources of the story (none without an entry). */
 export function entrySources(entry: EntryBundle | undefined): InlineSource[] {
   if (entry === undefined) return [];

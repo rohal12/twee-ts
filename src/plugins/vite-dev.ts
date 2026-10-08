@@ -17,7 +17,7 @@ import { viteWaitingPage } from '../html-structure.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
-import { bundleEntry, entrySources, PLUGIN_NAME } from './vite-entry.js';
+import { bundleEntry, entryCollisionMessage, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
 import { missingImportFolders } from './watch-targets.js';
 
@@ -529,7 +529,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     for (const other of instances) {
       const theirs = other()?.get(path);
       if (theirs !== undefined && !sameBytes(theirs, asset)) {
-        const message = `twee-ts: the entry emits ${path}, a file the build already writes; rename one of them.`;
+        const message = entryCollisionMessage(path);
         config.logger.error(`[twee-ts] ${message}`);
         res.statusCode = 500;
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
