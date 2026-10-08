@@ -5,7 +5,7 @@
  * watch a registered folder recursively; earlier ones see only the folder's own
  * entries. So every path is registered on its own as well.
  */
-import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
@@ -77,6 +77,47 @@ export function watchTargets(
     ...(spelling === 'real' ? linkedAncestors(input, outputs) : []),
     ...walk(input, realPathOf(input), true).targets,
   ]);
+}
+
+/**
+ * The paths to register, besides the real paths of the files a bundle read, so that the build watch sees what
+ * changes how the entry's imports resolve: each spelling (absolute) of an import that reaches a file through a
+ * link, as authored, with the links above it (replacing one changes the file the import reads); and for a spelling
+ * that reaches nothing, the nearest folder that exists, where creating the file shows (a bundle that failed for a
+ * missing import). A folder that holds a build output is left out, since the watcher would report what the build
+ * writes there and rebuild for ever: a file created straight in it is read with the next build something else starts.
+ */
+export function importWatchTargets(authored: Iterable<string>, outputs: OutputPaths): string[] {
+  const targets = new Set<string>();
+  const missing: string[] = [];
+  for (const spelling of authored) {
+    if (existsSync(spelling)) {
+      if (toPosix(realPathOf(spelling)) === toPosix(spelling)) continue;
+      for (const link of linkedAncestors(spelling, outputs)) targets.add(link);
+      if (isLink(spelling)) targets.add(toPosix(spelling));
+      continue;
+    }
+    missing.push(spelling);
+  }
+  for (const folder of missingImportFolders(missing)) {
+    if (!outputs.holds(realPathOf(folder))) targets.add(toPosix(folder));
+  }
+  return [...targets];
+}
+
+/**
+ * The nearest folder that exists, for each of the paths in `authored` that reaches nothing: where creating that
+ * file (or the folders above it) shows. Of a path that exists there is none.
+ */
+export function missingImportFolders(authored: Iterable<string>): string[] {
+  const folders = new Set<string>();
+  for (const spelling of authored) {
+    if (existsSync(spelling)) continue;
+    let folder = dirname(spelling);
+    while (!existsSync(folder) && dirname(folder) !== folder) folder = dirname(folder);
+    if (existsSync(folder)) folders.add(folder);
+  }
+  return [...folders];
 }
 
 /**

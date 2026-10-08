@@ -205,14 +205,13 @@ function structureKey(
       const content = templateContent(child);
       const steps: Task[] = [...child.childNodes];
       if (content !== undefined) {
-        steps.push(
-          () => parts.push('<#content>'),
-          ...content.childNodes,
-          () => {
-            flushText();
-            parts.push('</#content>');
-          },
-        );
+        // One push per node: spreading a list into the call would pass an argument for each child of a wide template.
+        steps.push(() => parts.push('<#content>'));
+        for (const node of content.childNodes) steps.push(node);
+        steps.push(() => {
+          flushText();
+          parts.push('</#content>');
+        });
       }
       steps.push(() => {
         flushText();

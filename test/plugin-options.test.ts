@@ -8,6 +8,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fc from 'fast-check';
 import { posix, win32 } from 'node:path';
 import { join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { rollup } from 'rollup';
 import { TweeTsError } from '../src/compiler.js';
 import { outputFilenameProblem, resolvePluginOptions } from '../src/plugins/options.js';
@@ -58,6 +60,21 @@ describe.each(PLUGINS)('%s plugin options', (kind, create) => {
       /`compileOptions.formatId` is not accepted; set the plugin's `format` option instead/,
     ],
     ['exclude as a string', { sources: ['s'], compileOptions: { exclude: '*.png' } }, /`compileOptions.exclude`/],
+    [
+      'an exclude object without a glob',
+      { sources: ['s'], compileOptions: { exclude: [{ base: 'p' }] } },
+      /`compileOptions.exclude` must be an array of non-empty strings or `\{ base, glob \}` objects/,
+    ],
+    [
+      'an exclude object with an empty base',
+      { sources: ['s'], compileOptions: { exclude: [{ base: '', glob: '*.png' }] } },
+      /`compileOptions.exclude`/,
+    ],
+    [
+      'an exclude object with another key',
+      { sources: ['s'], compileOptions: { exclude: [{ base: 'p', glob: '*.png', extra: 1 }] } },
+      /`compileOptions.exclude`/,
+    ],
     ['modules with a number', { sources: ['s'], compileOptions: { modules: [1] } }, /`compileOptions.modules`/],
     ['an empty headFile', { sources: ['s'], compileOptions: { headFile: '' } }, /`compileOptions.headFile`/],
   ])('refuses %s with a TweeTsError naming the option', (_case, options, message) => {
@@ -73,6 +90,14 @@ describe.each(PLUGINS)('%s plugin options', (kind, create) => {
     );
   });
 
+  it('accepts mixed string and { base, glob } excludes, as loadConfigFile() returns them (#323)', () => {
+    const options = {
+      sources: ['s'],
+      compileOptions: { exclude: ['**/*.png', { base: '/tmp/project[1]', glob: '**/draft.tw' }] },
+    };
+    expect(create(options)).toHaveProperty('name', 'twee-ts');
+  });
+
   it('accepts the documented options', () => {
     const options = {
       sources: ['story'],
@@ -81,6 +106,22 @@ describe.each(PLUGINS)('%s plugin options', (kind, create) => {
       compileOptions: { exclude: ['**/*.png'], modules: ['m.js'], headFile: 'head.html', trim: true },
     };
     expect(create(options)).toHaveProperty('name', 'twee-ts');
+  });
+});
+
+describe('plugin options: excludes with a literal base (#323)', () => {
+  it.each(['vite', 'rollup'] as const)('the %s plugin leaves out what an { base, glob } exclude matches', (kind) => {
+    const base = mkdtempSync(join(tmpdir(), 'twee-ts-exclude-[1]-'));
+    try {
+      const resolved = resolvePluginOptions(kind, {
+        sources: [base],
+        compileOptions: { exclude: [{ base, glob: 'draft.tw' }] },
+      });
+      expect(resolved.excluded(join(base, 'draft.tw'))).toBe(true);
+      expect(resolved.excluded(join(base, 'start.tw'))).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

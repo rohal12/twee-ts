@@ -44,4 +44,9 @@ describe('compile with a deeply nested format template (#314)', () => {
     const result = await build('<template>'.repeat(20_000), '</template>'.repeat(20_000));
     expect(result.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('is in text'));
   }, 60_000);
+
+  it('accepts a template of 150000 sibling elements, whose children cannot be passed as call arguments', async () => {
+    const result = await build(`<template>${'<i></i>'.repeat(150_000)}</template>`, '');
+    expect(result.diagnostics.filter((d) => d.level === 'error')).toEqual([]);
+  }, 60_000);
 });

@@ -19,6 +19,7 @@ import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { bundleEntry, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
+import { missingImportFolders } from './watch-targets.js';
 
 /** What the dev server needs from the plugin. */
 export interface DevStoryOptions {
@@ -221,6 +222,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // Where the entry and its imports are spelled when that reaches a file through a link, with the key of
   // the file each reached when the bundle read it: retargeting a link changes the key, not the target.
   let entryLinks = new Map<string, string>();
+  // Folders where an import the last failed bundle could not resolve would be created (its nearest existing
+  // folder), by key; they are among entryFiles, whose state changes when a file is created in one.
+  let entryMissingFolders: string[] = [];
   // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
   const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
@@ -254,7 +258,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // last one failed, also anything in the project, so that creating a missing
   // import brings it back.
   const touchesEntry = (key: string): boolean =>
-    entryPath !== undefined && (entryFiles.has(key) || (entryStale && keyWithin(key, [root])));
+    entryPath !== undefined && (entryFiles.has(key) || (entryStale && keyWithin(key, [root, ...entryMissingFolders])));
 
   // Whether a link the entry is spelled through now reaches another file (or none) than the bundle read.
   const linkMoved = (): boolean => [...entryLinks].some(([spelled, key]) => linkKey(spelled) !== key);
@@ -303,7 +307,10 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     if (entryPath === undefined) return;
     entryStale = true;
     const spelled = new Map<string, string>(); // authored path → key, of each link the bundle went through
+    const authoredPaths = new Set<string>(); // every import path as authored
+    const watchFiles = new Set<string>(); // what the bundle's plugins watch, and its modules
     const noteSpelling = (authored: string): void => {
+      authoredPaths.add(authored);
       const key = linkKey(authored);
       if (key !== undefined && !spelled.has(authored)) spelled.set(authored, key);
     };
@@ -335,10 +342,14 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
           if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
         },
         noteSpelling,
+        watchFiles,
       );
     } catch (error) {
-      // The modules the failed bundle loaded are inputs too: fixing an imported one must bundle again.
-      entryFiles = new Map([...entryFiles, ...loaded]);
+      // The modules the failed bundle loaded, and the files its plugins watch, are inputs too: fixing an
+      // imported one must bundle again. So is the place of an import it could not resolve: creating it must.
+      const folders = missingImportFolders(authoredPaths);
+      entryMissingFolders = folders.map(fileKey);
+      entryFiles = new Map([...entryFiles, ...loaded, ...tracked(watchFiles), ...tracked(folders)]);
       entryStates = settledStates(entryFiles, observed, before);
       entryLinks = new Map([...entryLinks, ...spelled]);
       watchEntryFiles(entryFiles);
@@ -349,6 +360,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     entryFiles = tracked(next.files);
     entryStates = settledStates(entryFiles, observed, before);
     entryLinks = spelled;
+    entryMissingFolders = [];
     watchEntryFiles(entryFiles);
   };
 
