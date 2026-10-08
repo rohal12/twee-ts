@@ -5,7 +5,7 @@
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
 import { readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { build, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
   BuildEnvironmentOptions,
@@ -65,7 +65,12 @@ export type BundleItem =
       readonly name: string;
       readonly moduleIds: readonly string[];
     }
-  | { readonly type: 'asset'; readonly source: string | Uint8Array };
+  | {
+      readonly type: 'asset';
+      readonly source: string | Uint8Array;
+      /** The source files the bundler made the asset from (the bundler's own stylesheet names no file). */
+      readonly originalFileNames?: readonly string[] | undefined;
+    };
 
 /** The bundler options of a build (Rolldown's, under Vite 8). */
 type BundlerOptions = NonNullable<BuildEnvironmentOptions['rolldownOptions']>;
@@ -190,9 +195,18 @@ export function removeFromBundle(bundle: Record<string, unknown>, fileName: stri
 }
 
 /**
+ * Whether an asset is a file the entry imported as a URL (`theme.css?url`), not the stylesheet the bundler made
+ * of the entry's CSS. The bundler names the files an asset came from; for its own stylesheet that is a bare
+ * output name (`style.css`), for an imported file the file's path.
+ */
+function isImportedFile(item: Extract<BundleItem, { type: 'asset' }>): boolean {
+  return (item.originalFileNames ?? []).some((name) => isAbsolute(name) || win32.isAbsolute(name));
+}
+
+/**
  * Takes the entry out of a bundle: its entry chunk (the one named `inputName`,
  * when the entry is one input of the user's build; the only one, from the
- * entry's own build), every stylesheet, and the map files, which the story
+ * entry's own build), every stylesheet it made of the entry's CSS (a CSS file imported as a URL stays an asset), and the map files, which the story
  * cannot ship. The chunk is found by its input's name, not by its module's
  * path, which the bundler may spell another way (a root reached through a
  * link is read by its real path). Anything else the bundler emitted for it
@@ -210,7 +224,7 @@ export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputNam
       script = dropFileSourceMapComment(item.code);
       for (const id of item.moduleIds) if (!id.startsWith('\0')) files.add(fileOfId(id));
       removeFromBundle(bundle, fileName);
-    } else if (fileName.endsWith('.css')) {
+    } else if (fileName.endsWith('.css') && !isImportedFile(item)) {
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
       styles.push(dropFileSourceMapComment(css));
       removeFromBundle(bundle, fileName);

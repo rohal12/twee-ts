@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A CSS file an `entry` imports as a URL (`import url from './theme.css?url'`, also `?url&no-inline`) stays a file of the build and is no longer added to the Story Stylesheet, in dev, inside a production build and in a separately bundled one; a stylesheet imported for its effect still applies (#331)
 - The Vite dev server reloads an open story page after a rebuild under a `base` with a space or non-ASCII character (`/my game/`, `/café/`): Vite encodes such a base and its client could not match the page-limited reload message, so the page stayed stale; the message now carries no page path then and every page reloads (#329)
 
 - Saving a story format to the shared download cache retries a rename that Windows refuses for a moment (EPERM) because another process has the file open, as writing build output already did, instead of dropping the entry with a warning

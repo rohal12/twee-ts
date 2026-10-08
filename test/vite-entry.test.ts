@@ -32,6 +32,18 @@ describe('takeEntryFromBundle', () => {
     expect(Object.keys(bundle).sort()).toEqual(['keep.png', 'lazy.js', 'other.js']);
   });
 
+  it('keeps a CSS file imported as a URL as an asset, and takes the stylesheet the bundler made', () => {
+    const bundle: Record<string, BundleItem> = {
+      'style.css': { type: 'asset', source: '.own{}', originalFileNames: ['style.css'] },
+      'theme.css': { type: 'asset', source: '.theme{}', originalFileNames: ['/p/theme.css', '/p/theme.css'] },
+      'win.css': { type: 'asset', source: '.win{}', originalFileNames: ['C:\\p\\win.css'] },
+    };
+    const entry = takeEntryFromBundle(bundle);
+    expect(entry.style).toBe('.own{}');
+    expect([...entry.assets.keys()]).toEqual(['theme.css', 'win.css']);
+    expect(Object.keys(bundle)).toEqual(['theme.css', 'win.css']);
+  });
+
   it('takes the only entry chunk of the entry’s own build, keeping an inline source map', () => {
     const inline = 'X\n//# sourceMappingURL=data:application/json;base64,e30=';
     const bundle: Record<string, BundleItem> = { 'twee-ts-entry.js': chunk('main', true, inline) };
