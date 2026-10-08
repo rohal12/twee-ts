@@ -502,17 +502,23 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     writeFileSync(deep, ':: Deep\none\n');
     const builds = watchBuilds([story]);
     await builds.next();
+    // A build reports the file, or is a full one: macOS FSEvents may deliver the folder's creation (made just
+    // before the watch began) as an event of the folder, which schedules a full build.
+    const reports = (changed: ReadonlySet<string> | undefined, file: string): boolean =>
+      changed === undefined || changed.has(relative(process.cwd(), file));
     for (const file of [start, deep, start]) {
       const temp = join(dirname(file), '.save.swp');
       const replaced = await builds.firstChange((n) => {
         writeFileSync(temp, `:: Start\nSaved ${n}\n`);
         renameSync(temp, file);
       });
-      expect(replaced).toContain(relative(process.cwd(), file));
+      expect(reports(replaced, file)).toBe(true);
       // Two later in-place edits, after the replacement.
       for (const text of ['Later', 'Latest']) {
-        writeFileSync(file, `:: Start\n${text}\n`);
-        expect(await builds.next()).toContain(relative(process.cwd(), file));
+        const edited = await builds.firstChange((n) => {
+          writeFileSync(file, `:: Start\n${text} ${n}\n`);
+        });
+        expect(reports(edited, file)).toBe(true);
       }
     }
   });
