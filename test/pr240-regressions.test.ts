@@ -205,6 +205,9 @@ describe.skipIf(!LINKS)('#239: watch follows an individually named source link',
     await expect.poll(() => w.events(), { timeout: 10_000 }).toBeGreaterThan(before);
     writeFileSync(target, story('RECREATED'));
     await w.built('RECREATED');
+    // Re-creating the target set the watches up again, and macOS's FSEvents stream misses a change made before
+    // it is running: wait until it reports changes to the target before retargeting the link.
+    await w.primed(target);
     const other = join(root, 'other', 'story.tw');
     mkdirSync(join(root, 'other'));
     writeFileSync(other, story('RETARGETED'));
