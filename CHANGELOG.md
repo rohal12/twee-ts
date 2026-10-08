@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Vite dev server reloads an open story page after a rebuild under a `base` with a space or non-ASCII character (`/my game/`, `/café/`): Vite encodes such a base and its client could not match the page-limited reload message, so the page stayed stale; the message now carries no page path then and every page reloads (#329)
+
 - Saving a story format to the shared download cache retries a rename that Windows refuses for a moment (EPERM) because another process has the file open, as writing build output already did, instead of dropping the entry with a warning
 - The separately bundled `entry` keeps Vite's public-asset resolution: a public file (`/logo.svg?url`, `new URL('/logo.svg', import.meta.url)`, CSS `url('/logo.svg')`) resolves in dev and in production builds that bundle the entry on their own, and follows `base`; the entry build uses the outer build's `publicDir` and still copies no public file (#327)
 - Folder watch mode keeps seeing edits to a file that an editor saved by replacing it: on Linux the recursive watches that saw events are started again before the next build, since the old registration stayed on the replaced file and later edits left the output stale (#325)

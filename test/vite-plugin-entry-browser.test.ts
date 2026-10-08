@@ -12,12 +12,13 @@
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 import type { Browser, LaunchOptions } from 'playwright-core';
 import type { InlineConfig } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { STORY, buildFiles, cleanUp, makeProject, startServer } from './helpers/plugins.js';
+import { COMPILE, STORY, buildFiles, cleanUp, makeProject, startServer, storyWith } from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
@@ -144,6 +145,46 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
         }
         expect(await workerOutcome(`${origin}${deployedAt}${outputFilename}`)).toBe('worker:42');
       });
+    });
+  },
+);
+
+/** A page function, as source (the tests have no DOM types), that tells whether the first passage reads `text`. */
+const passageIs = (text: string): string =>
+  `document.querySelector('tw-passagedata')?.textContent === ${JSON.stringify(text)}`;
+
+// An open story page reloads after an edit under every base, including ones Vite encodes (#329).
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'a story page reloading after an edit in Chromium (#329)',
+  { timeout: 60_000 },
+  () => {
+    it.each([
+      ['/', 'story.html'],
+      ['/game/', 'nested/index.html'],
+      ['/my game/', 'story.html'],
+      ['/café/', 'story.html'],
+      ['/café/', 'nested/index.html'],
+      ['/my%20game/', 'index.html'],
+    ])('under base %s, as %s', async (base, outputFilename) => {
+      if (browser === undefined) throw new Error('No Chromium could be launched: set CHROME_PATH.');
+      const dir = makeProject({ 'story.tw': storyWith('Before edit') });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story.tw')],
+        outputFilename,
+        format: 'test-format-1',
+        compileOptions: COMPILE,
+      });
+      const { server, url } = await startServer({ root: dir, base, publicDir: false, plugins: [plugin] });
+      const page = await browser.newPage();
+      try {
+        await page.goto(`${url}${server.config.base}${outputFilename}`);
+        await page.waitForFunction(passageIs('Before edit'));
+        writeFileSync(join(dir, 'story.tw'), storyWith('After edit'));
+        await page.waitForFunction(passageIs('After edit'), undefined, { timeout: 15_000 });
+        expect(await page.locator('tw-passagedata').textContent()).toBe('After edit');
+      } finally {
+        await page.close();
+      }
     });
   },
 );

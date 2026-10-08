@@ -14,6 +14,7 @@ import {
   type ViteDevServer,
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
+import { reloadPayload } from '../src/plugins/vite-dev.js';
 import { compileJavaScript } from './helpers/javascript.js';
 import { watcherReady, serverUrl } from './helpers/plugins.js';
 
@@ -430,5 +431,17 @@ describe('vite plugin: the client script in the served head', { timeout: 30_000 
   it('still falls back to the start of the page without a head tag', async () => {
     const html = await serveTemplate('<body>{{STORY_DATA}}</body>');
     expect(html.startsWith('<script type="module" src="/@vite/client"></script>')).toBe(true);
+  });
+});
+
+describe('reloadPayload (#329)', () => {
+  it.each([
+    ['/', 'story.html', { type: 'full-reload', path: '/story.html' }],
+    ['/game/', 'nested/index.html', { type: 'full-reload', path: '/nested/index.html' }],
+    ['/my%20game/', 'story.html', { type: 'full-reload' }],
+    ['/caf%C3%A9/', 'story.html', { type: 'full-reload' }],
+    ['/100%/', 'story.html', { type: 'full-reload' }],
+  ])('base %s, output %s', (base, outputFilename, expected) => {
+    expect(reloadPayload(base, outputFilename)).toEqual(expected);
   });
 });
