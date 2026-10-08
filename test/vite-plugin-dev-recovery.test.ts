@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { createServer } from 'vite';
 import type { Plugin, ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
@@ -289,6 +289,18 @@ describe.skipIf(process.platform === 'win32')('vite plugin dev: a retargeted lin
       'b.js',
     ],
     [
+      'a module the entry imports without its extension is a link to a TypeScript file',
+      { 'a.ts': marker('A'), 'b.ts': marker('B'), 'entry.js': "import './dependency';\n" },
+      'dependency.ts',
+      'b.ts',
+    ],
+    [
+      'a module the entry imports without its extension is a link to a JavaScript file',
+      { 'a.js': marker('A'), 'b.js': marker('B'), 'entry.js': "import './dependency';\n" },
+      'dependency.js',
+      'b.js',
+    ],
+    [
       'a folder the entry imports through is a link',
       {
         'one/lib.js': marker('A'),
@@ -304,7 +316,7 @@ describe.skipIf(process.platform === 'win32')('vite plugin dev: a retargeted lin
     'bundles the new target when %s (watcher: %s)',
     async (_name, files, link, after, watcher) => {
       const root = makeProject({ 'story/start.tw': STORY, ...files });
-      const initial = link === 'entry.js' ? 'a.js' : link === 'dependency.js' ? 'a.js' : 'one';
+      const initial = link === 'entry.js' ? 'a.js' : link.startsWith('dependency') ? `a${extname(link)}` : 'one';
       symlinkSync(initial, join(root, link));
       const url = await start(root, join(root, 'entry.js'), watcher);
       expect(await seen(url)).toEqual(['A']);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { basename, join, parse, relative, resolve } from 'node:path';
+import { basename, dirname, join, parse, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   chmodSync,
@@ -493,6 +493,34 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     expect(replaced).toEqual(new Set([relative(process.cwd(), start)]));
     writeFileSync(start, ':: Start\nThree\n');
     expect(await builds.next()).toEqual(new Set([relative(process.cwd(), start)]));
+  });
+
+  it('keeps seeing edits to a file in a watched folder that an editor saved by replacing it (#325)', async () => {
+    const nested = join(story, 'nested');
+    mkdirSync(nested);
+    const deep = join(nested, 'deep.tw');
+    writeFileSync(deep, ':: Deep\none\n');
+    const builds = watchBuilds([story]);
+    await builds.next();
+    // A build reports the file, or is a full one: macOS FSEvents may deliver the folder's creation (made just
+    // before the watch began) as an event of the folder, which schedules a full build.
+    const reports = (changed: ReadonlySet<string> | undefined, file: string): boolean =>
+      changed === undefined || changed.has(relative(process.cwd(), file));
+    for (const file of [start, deep, start]) {
+      const temp = join(dirname(file), '.save.swp');
+      const replaced = await builds.firstChange((n) => {
+        writeFileSync(temp, `:: Start\nSaved ${n}\n`);
+        renameSync(temp, file);
+      });
+      expect(reports(replaced, file)).toBe(true);
+      // Two later in-place edits, after the replacement.
+      for (const text of ['Later', 'Latest']) {
+        const edited = await builds.firstChange((n) => {
+          writeFileSync(file, `:: Start\n${text} ${n}\n`);
+        });
+        expect(reports(edited, file)).toBe(true);
+      }
+    }
   });
 
   it('does not rebuild for a change to a file of a type it does not build for', async () => {

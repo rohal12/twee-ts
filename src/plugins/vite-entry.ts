@@ -4,7 +4,8 @@
  * it can (see entryInputSettings), and otherwise, and always in dev, with a
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { readdirSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { build, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
   BuildEnvironmentOptions,
@@ -470,6 +471,34 @@ function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
   return overrides.size === 0 ? plugin : withOverrides(plugin, overrides);
 }
 
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+
+/**
+ * The file beside `spelled` whose name continues it with an extension (`dependency` → `dependency.ts`)
+ * and which is, or links to, `resolved`: the path the resolver took for an import written without one.
+ */
+function spelledAs(spelled: string, resolved: string): string | undefined {
+  let target: string;
+  let names: string[];
+  try {
+    target = realpathSync(resolved);
+    names = readdirSync(dirname(spelled));
+  } catch {
+    return undefined;
+  }
+  const prefix = `${basename(spelled)}.`;
+  return names
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => join(dirname(spelled), name))
+    .find((candidate) => {
+      try {
+        return realpathSync(candidate) === target;
+      } catch {
+        return false;
+      }
+    });
+}
+
 /**
  * Collects the files the entry build's plugins add with `addWatchFile`. These
  * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
@@ -497,17 +526,27 @@ function recordWatchFiles(
     },
     // Where each relative or absolute import is spelled, before the bundler follows a link to its target:
     // a caller then sees a link that is retargeted, which the target's own path never shows. It resolves
-    // nothing itself. (An import by an alias, a bare name or without its extension is not seen.)
+    // nothing itself. An import without its extension is noted at the file the resolver chose for it (the
+    // entry of its folder that is, or links to, that file). (An import by an alias or a bare name is not seen.)
     resolveId: {
       order: 'pre',
-      handler(source, importer) {
+      async handler(source, importer, options) {
         if (onResolve === undefined || source.startsWith('\0') || (importer?.startsWith('\0') ?? false)) return null;
         const authored = isAbsolute(source)
           ? source
           : importer !== undefined && isAbsolute(importer) && /^\.\.?[/\\]/.test(source)
             ? resolve(dirname(fileOfId(importer)), source)
             : undefined;
-        if (authored !== undefined) onResolve(fileOfId(authored));
+        if (authored === undefined) return null;
+        const spelled = fileOfId(authored);
+        onResolve(spelled);
+        if (!isFile(spelled)) {
+          const chosen = await this.resolve(source, importer, { ...options, skipSelf: true });
+          if (chosen !== null && !chosen.external) {
+            const found = spelledAs(spelled, fileOfId(chosen.id));
+            if (found !== undefined) onResolve(found);
+          }
+        }
         return null;
       },
     },

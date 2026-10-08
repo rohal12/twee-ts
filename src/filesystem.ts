@@ -519,6 +519,8 @@ interface Root {
   failed: boolean;
   /** The last failure reported, so that one that persists is reported once. */
   lastReport: string | undefined;
+  /** Whether the recursive watch saw an event since it was started, so a file may have been replaced under it. */
+  dirty: boolean;
 }
 
 /** How long watch mode waits for changes to settle before it builds. */
@@ -608,6 +610,15 @@ export function watchFilesystem(
       const files = pendingFullBuild || pendingFiles.size === 0 ? undefined : new Set(pendingFiles);
       pendingFiles.clear();
       pendingFullBuild = false;
+      // Node's recursive watch on Linux keeps its registration on a file an editor's atomic save
+      // replaced and reports nothing of later edits (#325): start the watches that saw events again
+      // before this build reads the files, so the files at their paths now are the ones watched.
+      // The native recursive watches of macOS and Windows follow the path and are left alone.
+      if (process.platform === 'linux') {
+        for (const root of roots) {
+          if (root.dirty && !root.tracked && root.state.self.kind === 'dir') arm(root);
+        }
+      }
       callback(files);
     }, delay);
   }
@@ -624,6 +635,7 @@ export function watchFilesystem(
       folders: state.self.kind === 'dir' ? foldersUnder(abs) : new Set(),
       failed: false,
       lastReport: undefined,
+      dirty: false,
     };
   };
   const roots: Root[] = pathnames.map((path) => makeRoot(path, false));
@@ -706,6 +718,7 @@ export function watchFilesystem(
     for (const w of root.watchers) w.close();
     root.watchers = [];
     root.failed = false;
+    root.dirty = false;
     const { anchors, self } = root.state;
     const anchorsStarted = anchors.map((anchor) =>
       startWatch(root, anchor.path, false, (filename) => {
@@ -724,7 +737,10 @@ export function watchFilesystem(
       startWatch(root, root.path, true, (filename) => {
         // No name: an event on the folder itself, such as its deletion.
         if (filename === '') recheck(root, true);
-        else changedBelow(root, resolve(root.abs, filename));
+        else {
+          root.dirty = true;
+          changedBelow(root, resolve(root.abs, filename));
+        }
       });
     if (anchorsStarted.every(Boolean) && selfStarted) root.lastReport = undefined;
     else root.failed = true;
