@@ -610,6 +610,12 @@ export function watchFilesystem(
       const files = pendingFullBuild || pendingFiles.size === 0 ? undefined : new Set(pendingFiles);
       pendingFiles.clear();
       pendingFullBuild = false;
+      // The folders this build is about to read: an event for a folder may have been delivered as one for
+      // a file in it (FSEvents merges them), so the folder was never added, and its later move out would
+      // look like the deletion of an unknown path (#337).
+      for (const root of roots) {
+        if (root.state.self.kind === 'dir') root.folders = foldersUnder(root.abs);
+      }
       // Node's recursive watch on Linux keeps its registration on a file an editor's atomic save
       // replaced and reports nothing of later edits (#325): start the watches that saw events again
       // before this build reads the files, so the files at their paths now are the ones watched.
