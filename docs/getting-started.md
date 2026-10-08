@@ -23,6 +23,7 @@ your-project/
 ├── twee-ts.config.json
 ├── src/
 │   ├── StoryData.tw
+│   ├── StoryTitle.tw
 │   └── Start.tw
 ```
 
