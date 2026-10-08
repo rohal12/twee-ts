@@ -125,6 +125,21 @@ function checkStringList(kind: PluginKind, value: unknown, name: string): void {
   }
 }
 
+/** Whether `value` is an `ExcludeGlob`: exactly a non-empty `base` and a non-empty `glob`, both strings. */
+function isExcludeGlob(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    ['base', 'glob'].every((key) => typeof value[key] === 'string' && value[key] !== '')
+  );
+}
+
+function checkExclude(kind: PluginKind, value: unknown): void {
+  if (!Array.isArray(value) || value.some((item) => (typeof item !== 'string' ? !isExcludeGlob(item) : item === ''))) {
+    fail(kind, '`compileOptions.exclude` must be an array of non-empty strings or `{ base, glob }` objects.');
+  }
+}
+
 /**
  * Checks the options as a JavaScript caller may pass them, whatever their type
  * says: an object with only the accepted option names, each of the right type.
@@ -152,9 +167,9 @@ function checkOptions(kind: PluginKind, options: unknown): void {
       fail(kind, `\`compileOptions.${key}\` is not accepted; set the plugin's \`${own}\` option instead.`);
     }
   }
-  for (const key of ['exclude', 'modules']) {
-    if (compileOptions[key] !== undefined) checkStringList(kind, compileOptions[key], `compileOptions.${key}`);
-  }
+  if (compileOptions['exclude'] !== undefined) checkExclude(kind, compileOptions['exclude']);
+  if (compileOptions['modules'] !== undefined)
+    checkStringList(kind, compileOptions['modules'], 'compileOptions.modules');
   checkString(kind, compileOptions['headFile'], 'compileOptions.headFile');
   // The compiler checks the other compile options itself.
 }
