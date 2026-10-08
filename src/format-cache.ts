@@ -23,6 +23,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, st
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { StoryFormatInfo } from './types.js';
+import { renameWithRetry } from './atomic-write.js';
 import { errorText, formatInfoFromJSON, formatNameKey, makeFormatId } from './formats.js';
 import { isRecord } from './util.js';
 
@@ -299,12 +300,15 @@ function ensurePlainDirectory(dir: string): void {
   }
 }
 
-/** Write `data` to `path` through a temporary file renamed into place. */
+/**
+ * Write `data` to `path` through a temporary file renamed into place. Several processes share the cache, and on
+ * Windows a rename over a file another process has open fails for a moment (EPERM), so it is retried.
+ */
 function writeAtomically(path: string, data: string | Uint8Array): void {
   const temp = join(dirname(path), `${TEMP_PREFIX}${process.pid}-${randomBytes(6).toString('hex')}`);
   try {
     writeFileSync(temp, data, { flag: 'wx' });
-    renameSync(temp, path);
+    renameWithRetry(temp, path);
   } catch (e) {
     rmSync(temp, { force: true });
     throw e;
@@ -382,7 +386,7 @@ function writeContentDir(
   try {
     mkdirSync(temp);
     for (const [file, bytes] of files) writeFileSync(join(temp, file), bytes, { flag: 'wx' });
-    renameSync(temp, contentDir);
+    renameWithRetry(temp, contentDir);
   } catch (e) {
     rmSync(temp, { recursive: true, force: true });
     // Another process put content there meanwhile (the name is a hash of it): check it like any other.
