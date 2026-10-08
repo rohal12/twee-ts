@@ -402,3 +402,32 @@ describe('vite plugin entry: a config file with the plugin given inline', () => 
     },
   );
 });
+
+describe('vite plugin entry: public assets (#327)', () => {
+  const ENTRY = "import logo from '/logo.svg?url';\nout.logo = logo;\n";
+  const PUBLIC = { 'public/logo.svg': '<svg xmlns="http://www.w3.org/2000/svg"></svg>' };
+
+  it('resolves a public ?url import in dev, under the base', { timeout: 30_000 }, async () => {
+    const dir = project(ENTRY, PUBLIC);
+    const { url } = await startServer({
+      root: dir,
+      base: '/game/',
+      plugins: [tweeTsPlugin(pluginOptions(dir))],
+    });
+    const html = await (await fetch(`${url}/game/`)).text();
+    expect(runEntry(userScript(html))).toEqual({ logo: '/game/logo.svg' });
+    expect((await fetch(`${url}/game/logo.svg`)).status).toBe(200);
+  });
+
+  it('resolves it in a production build that bundles the entry separately', { timeout: 30_000 }, async () => {
+    const dir = project(ENTRY, { ...PUBLIC, 'extra.js': "console.log('extra');\n" });
+    const result = await buildResult({
+      root: dir,
+      base: '/game/',
+      logLevel: 'silent',
+      build: { rolldownOptions: { input: join(dir, 'extra.js') } },
+      plugins: [tweeTsPlugin(pluginOptions(dir))],
+    });
+    expect(result).toEqual({ logo: '/game/logo.svg' });
+  });
+});

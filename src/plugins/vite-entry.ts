@@ -276,7 +276,7 @@ export const ENTRY_BUILD_EXCLUDED_KEYS: Readonly<Record<string, string>> = {
   logLevel: 'set so the entry build prints no progress lines',
   customLogger: 'the entry build reports through the outer logger',
   clearScreen: 'the entry build never clears the screen',
-  publicDir: 'the entry build copies no public files',
+  publicDir: 'set to the outer build’s resolved public directory, which the entry build resolves from but never copies',
   server: 'configures the dev server, not a build',
   preview: 'configures the preview server, not a build',
   builder: 'would build every environment instead of the entry',
@@ -625,7 +625,8 @@ export async function bundleEntry(
     logLevel: entryBuildLogLevel(config.logLevel),
     customLogger: entryBuildLogger(config.logger),
     clearScreen: false,
-    publicDir: false,
+    // Public files stay resolvable (`/logo.svg`, base rewriting); `copyPublicDir: false` keeps them uncopied.
+    publicDir: config.publicDir || false,
     plugins: [
       ...plugins,
       entryBuildEnforcer(entryPath, command, outputFilename),
