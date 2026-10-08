@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
@@ -49,6 +49,42 @@ describe('watchFilesystem and an event without a file name', () => {
     } finally {
       handle.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watchFilesystem and a folder whose creation event was only seen as one for a file in it (#337)', () => {
+  it('schedules a full build when that folder is moved out afterwards', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const base = mkdtempSync(join(tmpdir(), 'twee-ts-fs-gaps-'));
+    const dir = join(base, 'src');
+    const outside = join(base, 'outside');
+    mkdirSync(dir);
+    mkdirSync(outside);
+    const builds: (ReadonlySet<string> | undefined)[] = [];
+    const handle = watchFilesystem(
+      [dir],
+      join(base, 'out.html'),
+      (files) => builds.push(files),
+      () => false,
+    );
+    try {
+      const own = fake.listeners.find((l) => l.path === dir);
+      expect(own).toBeDefined();
+      // The folder and its file appear; the only event delivered names the file (FSEvents merges them).
+      mkdirSync(join(dir, 'd3'));
+      writeFileSync(join(dir, 'd3', 'in.tw'), ':: P\nx\n');
+      own?.listener('rename', join('d3', 'in.tw'));
+      vi.advanceTimersByTime(500);
+      expect(builds).toHaveLength(2);
+      // The folder is moved out, and the event names the folder, which is gone.
+      renameSync(join(dir, 'd3'), join(outside, 'd3'));
+      own?.listener('rename', 'd3');
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([undefined, expect.any(Set), undefined]);
+    } finally {
+      handle.close();
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });
