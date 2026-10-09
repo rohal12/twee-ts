@@ -27,7 +27,6 @@ const MARKUP = fc.constantFrom(
   '!',
   '-',
   '>',
-  '[',
   ']',
   '|',
   'a',
@@ -43,6 +42,8 @@ const MARKUP = fc.constantFrom(
   '-->',
 );
 const markup = fc.array(MARKUP, { maxLength: 16 }).map((t) => t.join(''));
+/** Markup the old expressions and SugarCube's link grammar read alike: no arrows, setters, line ends or nested brackets in links. */
+const sharedGrammar = markup.filter((s) => !/->|<-|\]\[|\n|\[\[[^\]]*\[/.test(s));
 
 describe('stripComments', () => {
   it('removes comments as Tweego does (differential against its expression)', () => {
@@ -91,11 +92,29 @@ describe("countTextWords 'tweego'", () => {
 describe("countTextWords 'whitespace'", () => {
   it('counts what the markup expressions leave (differential)', () => {
     fc.assert(
-      fc.property(markup, (s) => {
+      fc.property(sharedGrammar, (s) => {
         expect(countTextWords(s, 'whitespace')).toBe(whitespaceOracle(s));
       }),
       { numRuns: 20_000 },
     );
+  });
+
+  it.each([
+    '[[Continue|The Second Passage]]',
+    '[[Continue->The Second Passage]]',
+    '[[The Second Passage<-Continue]]',
+    '[[Continue|The Second Passage][$score = 1]]',
+    '[[Continue->The Second Passage][$score = 1]]',
+    '[[The Second Passage<-Continue][$name to "a b" + [1, 2]]]',
+  ])('counts only the label of %s', (link) => {
+    expect(countTextWords(link, 'whitespace')).toBe(1);
+    expect(countTextWords(`${link} Done`, 'whitespace')).toBe(2);
+  });
+
+  it('counts a bare link as its passage name and leaves malformed links alone', () => {
+    expect(countTextWords('[[The Second Passage]]', 'whitespace')).toBe(3);
+    expect(countTextWords('[[a b->c d', 'whitespace')).toBe(3);
+    expect(countTextWords('[[a b->c d][$x', 'whitespace')).toBe(3);
   });
 
   it('keeps link text and drops macros and tags', () => {

@@ -22,6 +22,11 @@ export interface SquareBracketedMarkup {
    * if a passage has that name, and otherwise evaluates it.
    */
   readonly link: string | undefined;
+  /**
+   * What a link displays, untrimmed: its text component, which is the whole of `[[Link]]`. Undefined for image
+   * markup.
+   */
+  readonly label: string | undefined;
   /** Index just past the closing `]]`. */
   readonly end: number;
 }
@@ -109,12 +114,12 @@ function readMarkup(reader: Reader, start: number): SquareBracketedMarkup | unde
       if (setterEnd === undefined) {
         return undefined;
       }
-      return { type, link: linkName(core.link), end: setterEnd };
+      return { type, link: linkName(core.link), label: core.label, end: setterEnd };
     }
-    return { type, link: linkName(core.link), end: core.end.next };
+    return { type, link: linkName(core.link), label: core.label, end: core.end.next };
   }
   if (core.end.last) {
-    return { type, link: undefined, end: core.end.next };
+    return { type, link: undefined, label: undefined, end: core.end.next };
   }
   // An image's link component, then perhaps a setter.
   const linkEnd = readComponent(reader, core.end.next, false);
@@ -123,10 +128,10 @@ function readMarkup(reader: Reader, start: number): SquareBracketedMarkup | unde
   }
   const link = linkName(text.slice(core.end.next, linkEnd.textEnd));
   if (linkEnd.last) {
-    return { type, link, end: linkEnd.next };
+    return { type, link, label: undefined, end: linkEnd.next };
   }
   const setterEnd = readSetter(reader, linkEnd.next);
-  return setterEnd === undefined ? undefined : { type, link, end: setterEnd };
+  return setterEnd === undefined ? undefined : { type, link, label: undefined, end: setterEnd };
 }
 
 /** The link component as SugarCube keeps it: trimmed, and without a leading `~`. */
@@ -138,24 +143,30 @@ function linkName(component: string): string {
 /**
  * Reads the first components: the text and the link of link markup, or the title and the source
  * of image markup, divided by the first delimiter. `link` is the text of the link (or source)
- * component, untrimmed.
+ * component, untrimmed; `label` is the text (or title) component, untrimmed.
  */
-function readCoreComponents(reader: Reader, from: number): { link: string; end: ComponentEnd } | undefined {
+function readCoreComponents(
+  reader: Reader,
+  from: number,
+): { link: string; label: string; end: ComponentEnd } | undefined {
   const { text } = reader;
-  const split: { delimiter: 'none' | 'ltr' | 'rtl'; componentStart: number; link: string | undefined } = {
-    delimiter: 'none',
-    componentStart: from,
-    link: undefined,
-  };
+  const split: {
+    delimiter: 'none' | 'ltr' | 'rtl';
+    componentStart: number;
+    labelEnd: number | undefined;
+    link: string | undefined;
+  } = { delimiter: 'none', componentStart: from, labelEnd: undefined, link: undefined };
   const end = scanComponent(reader, from, '"', (ch, pos) => {
     if (split.delimiter !== 'none') {
       return pos;
     }
     if (ch === '|') {
       split.delimiter = 'ltr';
+      split.labelEnd = pos - 1;
       split.componentStart = pos;
     } else if (ch === '-' && text[pos] === '>') {
       split.delimiter = 'ltr';
+      split.labelEnd = pos - 1;
       split.componentStart = pos + 1;
     } else if (ch === '<' && text[pos] === '-') {
       split.delimiter = 'rtl';
@@ -165,7 +176,9 @@ function readCoreComponents(reader: Reader, from: number): { link: string; end: 
     return Math.max(pos, split.componentStart);
   });
   // With `<-`, the link came first and this component is the text.
-  return end === undefined ? undefined : { link: split.link ?? text.slice(split.componentStart, end.textEnd), end };
+  if (end === undefined) return undefined;
+  const rest = text.slice(split.componentStart, end.textEnd);
+  return { link: split.link ?? rest, label: split.delimiter === 'ltr' ? text.slice(from, split.labelEnd) : rest, end };
 }
 
 /**

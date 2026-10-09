@@ -84,7 +84,28 @@ describe('readSquareBracketedMarkup', () => {
   });
 
   it('starts where it is told to', () => {
-    expect(readSquareBracketedMarkup('ab [[Room]] cd', 3)).toEqual({ type: 'link', link: 'Room', end: 11 });
+    expect(readSquareBracketedMarkup('ab [[Room]] cd', 3)).toEqual({
+      type: 'link',
+      link: 'Room',
+      label: 'Room',
+      end: 11,
+    });
+  });
+
+  it.each([
+    ['[[Continue|The Second Passage]]', 'Continue'],
+    ['[[Continue->The Second Passage]]', 'Continue'],
+    ['[[The Second Passage<-Continue]]', 'Continue'],
+    ['[[Continue|The Second Passage][$score = 1]]', 'Continue'],
+    ['[[Continue->The Second Passage][$score = 1]]', 'Continue'],
+    ['[[The Second Passage<-Continue][$a = "]" + [1]]]', 'Continue'],
+    ['[[Room]]', 'Room'],
+  ])('reads the label of %s', (text, label) => {
+    expect(readSquareBracketedMarkup(text, 0)?.label).toBe(label);
+  });
+
+  it('has no label for image markup', () => {
+    expect(readSquareBracketedMarkup('[img[a.png]]', 0)?.label).toBeUndefined();
   });
 
   it('reads no further than its budget, and spends what it reads', () => {

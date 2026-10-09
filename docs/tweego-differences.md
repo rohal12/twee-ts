@@ -30,6 +30,8 @@ Go was not available when this list was made, so the comparisons come from readi
 
 **D-10. Media and font files whose names start with a dot.** A media passage and a font family are named after the file up to its first dot, as in Tweego (`bg.night.png` gives `bg`). A name that starts with a dot keeps its leading dots and ends at the next one (`.hidden.png` gives `.hidden`); Tweego gives such a file an empty name.
 
+**D-18. Script passages are joined with a statement boundary.** When a story has several scripts (`.js` files or `[script]` passages), twee-ts ends each but the last on a line of its own followed by `;`, in Twine 2 HTML, Twine 2 archive and JSON output. Tweego joins them as they are, so a source without a final semicolon followed by one that starts with `(`, `[`, a regular expression or a template literal runs together into one statement. A script is therefore a list of whole statements; one that continues in the next script passage is not supported. A single script and stylesheets are written as before.
+
 ## Twee output
 
 **D-11. The written Twee is checked.** Each passage is read back with the Twee reader; twee-ts warns about each passage that would read back differently and says why (a text line that starts with `::`, a name with surrounding white space or a line break, a tag with white space, and in Twee 1 the characters it cannot escape). In stylesheet and script passages, a text line that would read as a header is indented by one space. Twee 1 output warns once that it leaves out passage metadata. Tweego writes the same Twee without warnings.
