@@ -8,12 +8,17 @@
  * pattern, a name the wildcards leave out), which only bundles again for nothing. The calls are read with acorn as Vite reads them: patterns are
  * string literals, template literals without expressions, or arrays of those; `base` and `exhaustive` are literal
  * options. A call written otherwise is one Vite rejects, and the bundle fails before its scope matters.
+ *
+ * Code that is a module is read whole, so only real calls count. Code that is not (yet) one, as a plugin may hand
+ * on a component file or TypeScript it transforms later, is read the way Vite's import-glob reads every module:
+ * each `import.meta.glob(` in the text, with TypeScript type arguments allowed, is read on its own as a call.
+ * Text in a comment or a string that reads as a call then adds a scope too, which only costs a bundle for nothing.
  */
 import { readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, ObjectExpression, Options, SpreadElement } from 'acorn';
+import { tokTypes } from 'acorn';
 import { AcornParser, trySyntax } from '../js-syntax.js';
-import type { SyntaxRead } from '../js-syntax.js';
 import { isRecord } from '../util.js';
 import { fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
@@ -97,27 +102,93 @@ function optionOf(options: ObjectExpression | undefined, name: string): unknown 
   return undefined;
 }
 
-/** The glob calls of a module's code, or the syntax error that stopped acorn reading it. */
-export function globCalls(code: string): SyntaxRead<GlobCall[]> {
+/** The call a glob call's arguments make. */
+function callOf(args: readonly (Expression | SpreadElement)[]): GlobCall {
+  const [first, second] = args;
+  const patterns = (first === undefined ? [] : first.type === 'ArrayExpression' ? first.elements : [first])
+    .map(stringOf)
+    .filter((pattern) => pattern !== undefined);
+  const options = second?.type === 'ObjectExpression' ? second : undefined;
+  const base = optionOf(options, 'base');
+  return {
+    patterns,
+    base: typeof base === 'string' ? base : undefined,
+    exhaustive: optionOf(options, 'exhaustive') === true,
+  };
+}
+
+/** Where Vite's import-glob finds a call in a module's text: the callee, any TypeScript type arguments, `(`. */
+const GLOB_CALL_START = /\bimport\.meta\.glob(?:<\w+>)?\s*\(/g;
+
+/**
+ * The end (offset just past it) of the argument list that opens at `paren`, as acorn's tokenizer reads the text from
+ * there: past strings, template literals, regular expressions and comments that hold parentheses. Undefined when the
+ * list does not close, or the text cannot be tokenized.
+ */
+function argumentsEnd(code: string, paren: number): number | undefined {
+  const read = trySyntax(() => {
+    let depth = 0;
+    for (const token of AcornParser.tokenizer(code.slice(paren), MODULE_OPTIONS)) {
+      if (token.type === tokTypes.parenL) depth += 1;
+      else if (token.type === tokTypes.parenR) depth -= 1;
+      if (depth === 0) return paren + token.end;
+    }
+    return undefined;
+  });
+  return read.ok ? read.value : undefined;
+}
+
+/** `text` read as one expression, which must take all of it; undefined when acorn reads it otherwise. */
+function wholeExpression(text: string, options: Readonly<Options>): AnyNode | undefined {
+  const read = trySyntax(() => AcornParser.parseExpressionAt(text, 0, options));
+  return read.ok && read.value.end === text.length ? read.value : undefined;
+}
+
+/**
+ * The call whose callee starts at `start` and whose argument list opens at `paren`, read on its own, up to the end
+ * of its argument list: as a call expression, or, with type arguments between the two (which JavaScript reads as
+ * comparisons), as its argument list in parentheses. Undefined when acorn reads neither.
+ */
+function callAt(code: string, start: number, paren: number): GlobCall | undefined {
+  const end = argumentsEnd(code, paren);
+  if (end === undefined) return undefined;
+  const call = wholeExpression(code.slice(start, end), MODULE_OPTIONS);
+  if (call?.type === 'CallExpression' && isGlobCallee(call.callee)) return callOf(call.arguments);
+  const list = wholeExpression(code.slice(paren, end), { ...MODULE_OPTIONS, preserveParens: true });
+  if (list?.type !== 'ParenthesizedExpression') return undefined;
+  const { expression } = list;
+  return callOf(expression.type === 'SequenceExpression' ? expression.expressions : [expression]);
+}
+
+/** The glob calls of a module's code, and where each call is that could not be read (by offset). */
+export interface GlobReading {
+  readonly calls: readonly GlobCall[];
+  readonly unreadable: readonly number[];
+}
+
+/** The glob calls of a module's code: read whole when it is a module, else each call on its own. */
+export function globCalls(code: string): GlobReading {
   const parsed = trySyntax(() => AcornParser.parse(code, MODULE_OPTIONS));
-  if (!parsed.ok) return parsed;
-  const calls: GlobCall[] = [];
-  for (const node of nodesOf(parsed.value)) {
-    if (node.type !== 'CallExpression' || !isGlobCallee(node.callee)) continue;
-    const [first, second] = node.arguments;
-    if (first === undefined) continue;
-    const patterns = (first.type === 'ArrayExpression' ? first.elements : [first])
-      .map(stringOf)
-      .filter((pattern) => pattern !== undefined);
-    const options = second?.type === 'ObjectExpression' ? second : undefined;
-    const base = optionOf(options, 'base');
-    calls.push({
-      patterns,
-      base: typeof base === 'string' ? base : undefined,
-      exhaustive: optionOf(options, 'exhaustive') === true,
-    });
+  if (parsed.ok) {
+    const calls = [...nodesOf(parsed.value)].flatMap((node) =>
+      node.type === 'CallExpression' && isGlobCallee(node.callee) ? [callOf(node.arguments)] : [],
+    );
+    return { calls, unreadable: [] };
   }
-  return { ok: true, value: calls };
+  const calls: GlobCall[] = [];
+  const unreadable: number[] = [];
+  for (const match of code.matchAll(GLOB_CALL_START)) {
+    const call = callAt(code, match.index, match.index + match[0].length - 1);
+    if (call === undefined) unreadable.push(match.index);
+    else calls.push(call);
+  }
+  return { calls, unreadable };
+}
+
+/** Where `offset` is in `code`, as `line:column`, both from 1. */
+function lineColumn(code: string, offset: number): string {
+  const lines = code.slice(0, offset).split('\n');
+  return `${String(lines.length)}:${String((lines.at(-1)?.length ?? 0) + 1)}`;
 }
 
 /** Characters that make a segment of a pattern match more than its own name (picomatch's, and its escape). */
@@ -285,7 +356,7 @@ async function resolveGlob(context: GlobHookContext, pattern: string, importer: 
 
 /**
  * The scopes of the glob calls in a module's code, read in a plugin's transform hook, whose `context` resolves an
- * alias or `#` pattern as Vite's import-glob would; a module acorn cannot read is reported with a warning and has
+ * alias or `#` pattern as Vite's import-glob would; a call acorn cannot read is reported with a warning and has
  * none.
  */
 export async function moduleGlobScopes(
@@ -295,17 +366,17 @@ export async function moduleGlobScopes(
   root: string,
 ): Promise<GlobScope[]> {
   if (!mayHoldGlob(code)) return [];
-  const calls = globCalls(code);
-  if (!calls.ok) {
+  const { calls, unreadable } = globCalls(code);
+  if (unreadable.length > 0) {
+    const where = unreadable.map((offset) => lineColumn(code, offset)).join(', ');
     context.warn(
-      `twee-ts could not read the import.meta.glob() calls of ${id} (${calls.error.message}); ` +
-        'files added to their folders are bundled the next time something else changes.',
+      `twee-ts could not read the import.meta.glob() call at ${where} of ${id}; ` +
+        'files added to its folders are bundled the next time something else changes.',
     );
-    return [];
   }
   const file = id.replace(/[?#].*$/s, '');
   const importer = isAbsolute(file) && !id.startsWith('\0') ? file : undefined;
   const resolver: GlobResolver = (pattern) => resolveGlob(context, pattern, id);
-  const scopes = await Promise.all(calls.value.map((call) => scopesOf(call, importer, root, resolver)));
+  const scopes = await Promise.all(calls.map((call) => scopesOf(call, importer, root, resolver)));
   return scopes.flat();
 }

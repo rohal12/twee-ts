@@ -25,33 +25,62 @@ afterEach(cleanUp);
 
 const call = (patterns: string[], base?: string, exhaustive = false): GlobCall => ({ patterns, base, exhaustive });
 
+/** Glob calls in module code, and the calls each reads as. */
+const MODULE_CALLS: readonly (readonly [string, GlobCall[]])[] = [
+  ["import.meta.glob('./a/*.js')", [call(['./a/*.js'])]],
+  ['import.meta.glob(`./a/*.js`)', [call(['./a/*.js'])]],
+  ["import.meta.glob(['./a/*.js', '!./a/b.js'])", [call(['./a/*.js', '!./a/b.js'])]],
+  ["import.meta.glob('./*.js', { base: './a', eager: true })", [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { 'base': '/a', exhaustive: true })", [call(['./*.js'], '/a', true)]],
+  ["import.meta.glob('./a/*.js', { exhaustive: false })", [call(['./a/*.js'])]],
+  ["import.meta.glob('./a/*.js',)", [call(['./a/*.js'])]],
+  ["import.meta.glob ( './a/*.js' ).then((m) => m)", [call(['./a/*.js'])]],
+  [
+    "const x = () => import.meta.glob('./a/*.js'); const y = import.meta.glob('./b/*');",
+    [call(['./a/*.js']), call(['./b/*'])],
+  ],
+  // Not a pattern Vite takes (no argument, an expression): no scope comes of it, and Vite fails the bundle.
+  ['import.meta.glob()', [call([])]],
+  ['import.meta.glob(`./${x}/*.js`, { base: dir })', [call([])]],
+  ["import.meta.glob(['./a/*.js', 1, ...more])", [call(['./a/*.js'])]],
+  ["import.meta.glob('./a/*.js', { ['base']: './b', [key]: 1, ...rest })", [call(['./a/*.js'])]],
+  // Not a glob call.
+  ["import.meta.globEager('./a/*.js'); import.meta['glob']('./b/*.js'); x.glob('./c/*')", []],
+];
+
+/** Text no JavaScript parser reads, which makes the code around it no module. */
+const NOT_A_MODULE = '\n<template><div v-if="a < b">@@</div></template>\n';
+
 describe('globCalls', () => {
-  it.each([
-    ["import.meta.glob('./a/*.js')", [call(['./a/*.js'])]],
-    ['import.meta.glob(`./a/*.js`)', [call(['./a/*.js'])]],
-    ["import.meta.glob(['./a/*.js', '!./a/b.js'])", [call(['./a/*.js', '!./a/b.js'])]],
-    ["import.meta.glob('./*.js', { base: './a', eager: true })", [call(['./*.js'], './a')]],
-    ["import.meta.glob('./*.js', { 'base': '/a', exhaustive: true })", [call(['./*.js'], '/a', true)]],
-    ["import.meta.glob('./a/*.js', { exhaustive: false })", [call(['./a/*.js'])]],
-    [
-      "const x = () => import.meta.glob('./a/*.js'); const y = import.meta.glob('./b/*');",
-      [call(['./a/*.js']), call(['./b/*'])],
-    ],
-    ['import.meta.glob()', []],
-    // Not a pattern Vite takes: no scope comes of it, and Vite fails the bundle.
-    ['import.meta.glob(`./${x}/*.js`, { base: dir })', [call([])]],
-    ["import.meta.glob(['./a/*.js', 1, ...more])", [call(['./a/*.js'])]],
-    ["import.meta.glob('./a/*.js', { ['base']: './b', [key]: 1, ...rest })", [call(['./a/*.js'])]],
-    // Not a glob call.
-    ["import.meta.globEager('./a/*.js'); import.meta['glob']('./b/*.js'); x.glob('./c/*')", []],
-    ['\'import.meta.glob("./a/*.js")\'', []],
-  ])('reads %s', (code, expected) => {
-    expect(globCalls(`export function f() {}\n${code}`)).toEqual({ ok: true, value: expected });
+  it.each(MODULE_CALLS)('reads the module %s whole', (code, expected) => {
+    expect(globCalls(`export function f() {}\n${code}`)).toEqual({ calls: expected, unreadable: [] });
   });
 
-  it('reports code acorn cannot read', () => {
-    const read = globCalls("import.meta.glob<Mod>('./a/*.ts') as Record<string, Mod>");
-    expect(read.ok).toBe(false);
+  it.each(MODULE_CALLS)('reads %s alike in text that is no module', (code, expected) => {
+    expect(globCalls(`${NOT_A_MODULE}${code}${NOT_A_MODULE}`)).toEqual({ calls: expected, unreadable: [] });
+  });
+
+  it('counts only real calls in a module', () => {
+    const code = "// import.meta.glob('./old/*.js')\nconst s = 'import.meta.glob(\"./b/*.js\")';";
+    expect(globCalls(code)).toEqual({ calls: [], unreadable: [] });
+  });
+
+  it.each([
+    ["const x = import.meta.glob<Mod>('./a/*.ts') as Record<string, Mod>;", [call(['./a/*.ts'])]],
+    ["const x: Record<string, unknown> = import.meta.glob('./a/*.ts', { eager: true });", [call(['./a/*.ts'])]],
+    [
+      "<script setup lang=\"ts\">\nconst w = import.meta.glob<Widget>(['./w/*.vue', '!./w/x.vue'], { base: './a' });\n</script>",
+      [call(['./w/*.vue', '!./w/x.vue'], './a')],
+    ],
+    // As Vite's import-glob reads such text, a call in a comment counts too.
+    ["type T = string;\n// import.meta.glob('./old/*.js')", [call(['./old/*.js'])]],
+  ])('reads the calls of the TypeScript or component text %s', (code, expected) => {
+    expect(globCalls(code)).toEqual({ calls: expected, unreadable: [] });
+  });
+
+  it('reports where a call it cannot read is', () => {
+    const code = "type T = string;\nimport.meta.glob(./a/*.js); import.meta.glob('./b/*.js');\nimport.meta.glob(";
+    expect(globCalls(code)).toEqual({ calls: [call(['./b/*.js'])], unreadable: [17, 75] });
   });
 });
 
@@ -231,12 +260,19 @@ describe('moduleGlobScopes', () => {
     expect(context.warn).not.toHaveBeenCalled();
   });
 
-  it('warns about a module acorn cannot read', async () => {
+  it.skipIf(process.platform === 'win32')('reads the calls of text that is no module', async () => {
     const context = hookContext();
-    const code = "const x: Record<string, unknown> = import.meta.glob('./a/*.ts');";
-    expect(await moduleGlobScopes(context, code, '/p/a.ts', '/p')).toEqual([]);
-    expect(context.warn).toHaveBeenCalledWith(
-      expect.stringContaining('could not read the import.meta.glob() calls of /p/a.ts'),
+    const code = "const x: Record<string, unknown> = import.meta.glob<Mod>('./w/*.ts');";
+    expect((await moduleGlobScopes(context, code, '/p/a.ts', '/p')).map((s) => s.dir)).toEqual(['/p/w']);
+    expect(context.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('warns about a call it cannot read, and keeps the others', async () => {
+    const context = hookContext();
+    const code = "type T = string;\n  import.meta.glob(./a/*.ts);\nimport.meta.glob('./w/*.ts');";
+    expect((await moduleGlobScopes(context, code, '/p/a.ts', '/p')).map((s) => s.dir)).toEqual(['/p/w']);
+    expect(context.warn).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining('could not read the import.meta.glob() call at 2:3 of /p/a.ts'),
     );
   });
 

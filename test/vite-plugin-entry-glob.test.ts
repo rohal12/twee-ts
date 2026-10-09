@@ -205,7 +205,7 @@ describe.each([
 });
 
 /** Starts `vite build --watch` for `dir`; `separate` bundles the entry in a build of its own. */
-async function watchBuild(dir: string, separate: boolean): Promise<() => unknown> {
+async function watchBuild(dir: string, separate: boolean, after: Plugin[] = []): Promise<() => unknown> {
   const started: unknown = await build({
     configFile: false,
     root: dir,
@@ -218,6 +218,7 @@ async function watchBuild(dir: string, separate: boolean): Promise<() => unknown
         outputFilename: 'story.html',
         compileOptions: COMPILE,
       }),
+      ...after,
     ],
     build: {
       watch: {},
@@ -248,6 +249,38 @@ describe.each([
       const dir = globProject(FORMS.lazy.call);
       write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
       const found = await watchBuild(dir, separate);
+      expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+      write(join(dir, 'app/widgets/b.js'), "export default 'B';");
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
+      }, SETTLED);
+    },
+    30_000,
+  );
+
+  // A component-like file that a plugin after twee-ts makes JavaScript: inside the build, twee-ts sees its text
+  // before that plugin does, and reads the glob call in it on its own, with its TypeScript type argument.
+  it.runIf(buildWatchSeesFolders)(
+    'builds again for a glob in a module that is JavaScript only after a later plugin',
+    async () => {
+      const dir = globProject('list');
+      write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
+      write(join(dir, 'app/entry.js'), "import list from './list.component'; out.found = list;");
+      write(
+        join(dir, 'app/list.component'),
+        "<component>\nexport default Object.keys(import.meta.glob<string>('./widgets/*.js')).sort();\n</component>\n",
+      );
+      const component: Plugin = {
+        name: 'component',
+        transform(code, id) {
+          if (!id.endsWith('.component')) return undefined;
+          return {
+            code: code.replace(/<\/?component>/g, '').replace('<string>', ''),
+            moduleType: 'js',
+          };
+        },
+      };
+      const found = await watchBuild(dir, separate, [component]);
       expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
