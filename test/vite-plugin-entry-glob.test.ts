@@ -210,8 +210,9 @@ describe.each([
     await expect
       .poll(read, { timeout: 10_000, interval: 100 })
       .toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
-    // With a watcher, a request may catch up with the new file before the watcher reports it, which then bundles
-    // the entry once more: the count only has to grow.
+    // A late watcher event for a file the bundle already read bundles nothing more (#343, see
+    // vite-plugin-dev-late-events.test.ts), but the watcher may report the file created and then written: the count
+    // only has to grow.
     expect(bundles).toBeGreaterThan(initial);
   }, 30_000);
 });
