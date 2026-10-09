@@ -2,7 +2,7 @@
  * What the compiler and the Vite plugin put into a story format's page, and the plugin's entry
  * builds, as the build in dist/ does them. Matrix groups HEAD, VITE and DEPS (see cases.ts).
  */
-import { readFileSync, renameSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { build, createServer, version } from 'vite';
@@ -248,6 +248,26 @@ async function expectBuildWatchFollows(root: string): Promise<void> {
 
 const widget = (root: string, name: string): string => join(root, 'app', 'widgets', name);
 
+/**
+ * Expects the dev server (with no watcher unless `watcher`) to follow a file added to a folder that a recursive glob
+ * of `app/widgets` reaches through a link, `app/widgets/shared`, to `shared` (a junction on Windows).
+ */
+function expectDevFollowsLink(root: string, watcher = false): Promise<void> {
+  const pluginOptions = globProject(root, "Object.keys(import.meta.glob('./widgets/**/*.js'))", ['a.js']);
+  const shared = join(root, 'shared');
+  mkdirSync(shared);
+  write(join(shared, 'one.js'), 'export default 1;');
+  symlinkSync(shared, widget(root, 'shared'), 'junction');
+  return expectDevFollows(
+    root,
+    pluginOptions,
+    () => write(join(shared, 'two.js'), 'export default 2;'),
+    ['./widgets/a.js', './widgets/shared/one.js'],
+    ['./widgets/a.js', './widgets/shared/one.js', './widgets/shared/two.js'],
+    watcher,
+  );
+}
+
 defineContracts(
   'DEPS',
   {
@@ -299,6 +319,8 @@ defineContracts(
         true,
       ),
     'build watch glob gains a file': expectBuildWatchFollows,
+    'dev recursive glob gains a file in a linked folder': (root) => expectDevFollowsLink(root),
+    'dev watcher recursive glob gains a file in a linked folder': (root) => expectDevFollowsLink(root, true),
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {

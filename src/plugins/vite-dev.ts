@@ -20,8 +20,8 @@ import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { bundleEntry, entryCollisionMessage, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
-import { scopeAdmits, scopeId, scopeListing, scopeWatchTargets } from './vite-glob.js';
-import type { GlobScope } from './vite-glob.js';
+import { readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
+import type { GlobScope, ScopeContents } from './vite-glob.js';
 import { missingImportFolders } from './watch-targets.js';
 
 /** What the dev server needs from the plugin. */
@@ -299,10 +299,10 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // folder), by key; they are among entryFiles, whose state changes when a file is created in one.
   let entryMissingFolders: string[] = [];
   // The scope of each glob pattern of the entry's modules (see vite-glob.ts), by scopeId, and what was in each
-  // when the bundle read it: a file added, removed or renamed there may change what the glob selects. Kept, as
-  // entryFiles are, while a later bundle fails.
+  // when the bundle read it (with the folders it reached through links): a file added, removed or renamed there
+  // may change what the glob selects. Kept, as entryFiles are, while a later bundle fails.
   let entryGlobs = new Map<string, GlobScope>();
-  let globStates = new Map<string, string>();
+  let globStates = new Map<string, ScopeContents>();
   // Each module of the last good bundle as it read it, by key: a watcher event for one that is still byte for byte
   // and state for state what the bundle read reports a change the bundle already has (#343). Kept only with a
   // watcher; the catch-up compares states alone.
@@ -347,11 +347,12 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const linkMoved = (): boolean => [...entryLinks].some(([spelled, key]) => linkKey(spelled) !== key);
 
   // Whether what is in the scope of one of the entry's globs differs from what the bundle read there.
-  const globsChanged = (): boolean => [...entryGlobs].some(([id, scope]) => scopeListing(scope) !== globStates.get(id));
+  const globsChanged = (): boolean =>
+    [...entryGlobs].some(([id, scope]) => readScope(scope).listing !== globStates.get(id)?.listing);
 
   // Whether adding or removing the file or folder at `path` may change what one of the entry's globs selects.
   const inGlobScope = (path: string, isDir: boolean): boolean =>
-    [...entryGlobs.values()].some((scope) => scopeAdmits(scope, path, isDir));
+    [...entryGlobs].some(([id, scope]) => scopeAdmits(scope, path, isDir, globStates.get(id)?.linked ?? []));
 
   // What the watcher watches for the entry: its files, and the folders of its globs (or the nearest above each
   // that exists, where creating it shows).
@@ -424,8 +425,8 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // The scopes of the globs this bundle reads, each with what was in it just before Vite read it (so a file
     // added while the bundle is made differs from it afterwards), and what was in the known ones before it began.
     const globs = new Map<string, GlobScope>();
-    const globsRead = new Map<string, string>();
-    const globsBefore = new Map([...entryGlobs].map(([id, scope]) => [id, scopeListing(scope)]));
+    const globsRead = new Map<string, ScopeContents>();
+    const globsBefore = new Map([...entryGlobs].map(([id, scope]) => [id, readScope(scope)]));
     // The files known so far, as they are before the bundle begins, and each module as it is just before
     // the bundle reads it: a file edited while the bundle is made then differs from what is recorded
     // afterwards, which is what the catch-up looks for.
@@ -450,7 +451,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
           const id = scopeId(scope);
           if (globs.has(id)) return;
           globs.set(id, scope);
-          globsRead.set(id, scopeListing(scope));
+          globsRead.set(id, readScope(scope));
         },
       });
     } catch (error) {
