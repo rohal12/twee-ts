@@ -3,7 +3,7 @@
  * `vite build --watch` bundle it again, as a fresh build would, though the new file was in no earlier bundle.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { build } from 'vite';
 import type { Plugin } from 'vite';
@@ -170,6 +170,109 @@ describe.each([
   }, 30_000);
 });
 
+/** A link at `path` to the folder `target`: a junction on Windows, which needs no privilege, as for the other tests. */
+const linkFolder = (target: string, path: string): void => {
+  mkdirSync(dirname(path), { recursive: true });
+  symlinkSync(target, path, 'junction');
+};
+
+/** A recursive glob of `app/levels`, whose subfolder `shared` is a link (#341, reopened). */
+const LINKED_CALL = "Object.keys(import.meta.glob('./levels/**/*.js'))";
+
+describe.each([
+  ['with a watcher', true],
+  ['with no watcher', false],
+])('vite plugin dev: a recursive entry glob through a linked folder (#341) %s', (_name, watcher) => {
+  const expectFound = async (read: () => Promise<unknown>, expected: unknown): Promise<void> => {
+    if (watcher) await expect.poll(read, { timeout: 10_000, interval: 100 }).toEqual(expected);
+    else expect(await read()).toEqual(expected);
+  };
+
+  /** A project globbing `app/levels/**`, with `app/levels/shared` a link to `target` (or to `shared` in the root). */
+  const linkedProject = (target?: string): { root: string; shared: string } => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      'app/entry.js': entryWith(LINKED_CALL),
+      'app/levels/own.js': 'export default 0;',
+    });
+    const shared = target ?? join(root, 'shared');
+    mkdirSync(shared, { recursive: true });
+    linkFolder(shared, join(root, 'app/levels/shared'));
+    return { root, shared };
+  };
+
+  it.each([
+    ['inside the root', false],
+    ['outside the root', true],
+  ])(
+    'follows files added to and removed from a linked folder %s',
+    async (_where, outside) => {
+      const { root, shared } = linkedProject(outside ? makeProject({}) : undefined);
+      write(join(shared, 'one.js'), 'export default 1;');
+      const read = await serve(root, watcher);
+      expect(await read()).toEqual(['./levels/own.js', './levels/shared/one.js']);
+      write(join(shared, 'two.js'), 'export default 2;');
+      await expectFound(read, ['./levels/own.js', './levels/shared/one.js', './levels/shared/two.js']);
+      write(join(shared, 'deep/three.js'), 'export default 3;');
+      await expectFound(read, [
+        './levels/own.js',
+        './levels/shared/deep/three.js',
+        './levels/shared/one.js',
+        './levels/shared/two.js',
+      ]);
+      unlinkSync(join(shared, 'one.js'));
+      await expectFound(read, ['./levels/own.js', './levels/shared/deep/three.js', './levels/shared/two.js']);
+      renameSync(join(shared, 'two.js'), join(shared, 'renamed.js'));
+      await expectFound(read, ['./levels/own.js', './levels/shared/deep/three.js', './levels/shared/renamed.js']);
+    },
+    30_000,
+  );
+
+  it('includes the first file of a linked folder that was empty', async () => {
+    const { root, shared } = linkedProject();
+    const read = await serve(root, watcher);
+    expect(await read()).toEqual(['./levels/own.js']);
+    write(join(shared, 'first.js'), 'export default 1;');
+    await expectFound(read, ['./levels/own.js', './levels/shared/first.js']);
+  }, 30_000);
+
+  it.each([
+    ['the same names', { 'one.js': "export default 'new';" }, ['0', 'new']],
+    ['other names', { 'two.js': "export default 'two';" }, ['0', 'two']],
+    ['nothing', {}, ['0']],
+  ])(
+    'follows a linked folder retargeted to one holding %s',
+    async (_what, files, expected) => {
+      const { root, shared } = linkedProject();
+      write(
+        join(root, 'app/entry.js'),
+        entryWith(
+          "Object.values(import.meta.glob('./levels/**/*.js', { eager: true, import: 'default' })).map(String)",
+        ),
+      );
+      write(join(shared, 'one.js'), "export default 'old';");
+      const other = makeProject(files);
+      const read = await serve(root, watcher);
+      expect(await read()).toEqual(['0', 'old']);
+      rmSync(join(root, 'app/levels/shared'));
+      linkFolder(other, join(root, 'app/levels/shared'));
+      await expectFound(read, expected);
+    },
+    30_000,
+  );
+
+  it('stops at a link back to a folder above, as Vite does', async () => {
+    const { root, shared } = linkedProject();
+    write(join(shared, 'one.js'), 'export default 1;');
+    linkFolder(join(root, 'app/levels'), join(shared, 'loop'));
+    const read = await serve(root, watcher);
+    const initial = await read();
+    expect(initial).toContain('./levels/shared/one.js');
+    write(join(shared, 'two.js'), 'export default 2;');
+    await expectFound(read, [...(initial as string[]), './levels/shared/two.js'].sort());
+  }, 30_000);
+});
+
 describe.each([
   ['with a watcher', true],
   ['with no watcher', false],
@@ -266,6 +369,23 @@ describe.each([
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
         expect(found()).toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
+      }, SETTLED);
+    },
+    30_000,
+  );
+
+  it.runIf(buildWatchSeesFolders)(
+    'builds again with a file added to a folder a recursive glob reaches through a link',
+    async () => {
+      const dir = globProject(LINKED_CALL);
+      const shared = makeProject({ 'one.js': 'export default 1;' });
+      linkFolder(shared, join(dir, 'app/levels/shared'));
+      write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
+      const found = await watchBuild(dir, separate);
+      expect(found()).toEqual(['./levels/shared/one.js']);
+      write(join(shared, 'two.js'), 'export default 2;');
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['./levels/shared/one.js', './levels/shared/two.js']);
       }, SETTLED);
     },
     30_000,

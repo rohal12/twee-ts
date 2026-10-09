@@ -11,6 +11,7 @@ import type { Plugin } from 'vite';
 import {
   globCalls,
   moduleGlobScopes,
+  readScope,
   scopeAdmits,
   scopeId,
   scopeListing,
@@ -18,7 +19,7 @@ import {
   scopeWatchTargets,
 } from '../src/plugins/vite-glob.js';
 import type { GlobCall, GlobScope } from '../src/plugins/vite-glob.js';
-import { toPosix } from '../src/plugins/paths.js';
+import { canonicalPath, fileKey, toPosix } from '../src/plugins/paths.js';
 import { cleanUp, makeProject } from './helpers/plugins.js';
 
 afterEach(cleanUp);
@@ -203,11 +204,73 @@ describe('scopeListing and scopeAdmits', () => {
     ]);
   });
 
-  it('lists a link as a file, without following it', () => {
+  it('follows a link to a folder in a deep scope, listed with its target, and reports the folder', () => {
     const dir = toPosix(tree());
-    symlinkSync(join(dir, 'w/sub'), join(dir, 'w/linked'), 'junction');
-    expect(scopeListing(scope(`${dir}/w`, { deep: true }))).toContain('f:linked');
-    expect(scopeListing(scope(`${dir}/w`, { deep: true }))).not.toContain('linked/d.js');
+    const outside = toPosix(makeProject({ 'e.js': '', 'deeper/g.js': '' }));
+    symlinkSync(outside, join(dir, 'w/linked'), 'junction');
+    const read = readScope(scope(`${dir}/w`, { deep: true, suffix: '.js' }));
+    expect(read.listing.split('\n')).toEqual([
+      'f:C.JS',
+      'f:a.js',
+      `l:linked>${canonicalPath(outside)}`,
+      'd:linked/deeper',
+      'f:linked/deeper/g.js',
+      'f:linked/e.js',
+      'd:sub',
+      'f:sub/d.js',
+    ]);
+    expect(read.linked).toEqual([canonicalPath(outside)]);
+  });
+
+  it('lists a folder reached again through a link only once, so a link back above ends', () => {
+    const dir = toPosix(tree());
+    symlinkSync(join(dir, 'w'), join(dir, 'w/sub/up'), 'junction');
+    symlinkSync(join(dir, 'w/sub'), join(dir, 'w/again'), 'junction');
+    const read = readScope(scope(`${dir}/w`, { deep: true, suffix: '.js' }));
+    expect(read.listing.split('\n')).toEqual([
+      'f:C.JS',
+      'f:a.js',
+      `l:again>${canonicalPath(join(dir, 'w/sub'))}`,
+      'f:again/d.js',
+      `l:again/up>${canonicalPath(join(dir, 'w'))}`,
+      'd:sub',
+      'f:sub/d.js',
+      `l:sub/up>${canonicalPath(join(dir, 'w'))}`,
+    ]);
+    expect(read.linked).toEqual([canonicalPath(join(dir, 'w/sub'))]);
+  });
+
+  // A link to a file needs a privilege on Windows, which a junction (a link to a folder) does not.
+  it.skipIf(process.platform === 'win32')(
+    'lists a link to a file, or to nothing, as a file, and does not follow a link in a shallow scope',
+    () => {
+      const dir = toPosix(tree());
+      symlinkSync(join(dir, 'w/a.js'), join(dir, 'w/file-link.js'));
+      symlinkSync(join(dir, 'w/none'), join(dir, 'w/dangling.js'));
+      symlinkSync(join(dir, 'w/sub'), join(dir, 'w/folder-link.js'), 'junction');
+      expect(scopeListing(scope(`${dir}/w`, { suffix: '.js' })).split('\n')).toEqual([
+        'f:C.JS',
+        'f:a.js',
+        'f:dangling.js',
+        'f:file-link.js',
+      ]);
+      expect(readScope(scope(`${dir}/w`, { suffix: '.js' })).linked).toEqual([]);
+    },
+  );
+
+  it('admits what is added below a linked folder, however the path spells it, in a deep scope only', () => {
+    const dir = tree();
+    const outside = makeProject({ 'e.js': '' });
+    symlinkSync(outside, join(dir, 'w/linked'), 'junction');
+    const deep = scope(toPosix(join(dir, 'w')), { deep: true, suffix: '.js' });
+    const { linked } = readScope(deep);
+    expect(scopeAdmits(deep, join(outside, 'new.js'), false, linked)).toBe(true);
+    expect(scopeAdmits(deep, join(outside, 'sub/new.js'), false, linked)).toBe(true);
+    expect(scopeAdmits(deep, join(dir, 'w/linked/new.js'), false, linked)).toBe(true);
+    expect(scopeAdmits(deep, outside, true, linked)).toBe(true);
+    expect(scopeAdmits(deep, join(outside, 'new.ts'), false, linked)).toBe(false);
+    expect(scopeAdmits(deep, join(outside, 'new.js'), false, [])).toBe(false);
+    expect(scopeAdmits({ ...deep, deep: false }, join(outside, 'new.js'), false, linked)).toBe(false);
   });
 
   it('lists a missing folder as missing, and an empty one as empty', () => {
@@ -234,7 +297,7 @@ describe('scopeListing and scopeAdmits', () => {
   ])('%s (folder: %s) in %o: %s', (path, isDir, inScope, expected) => {
     const dir = tree();
     const at = { ...inScope, dir: toPosix(join(dir, inScope.dir)) };
-    expect(scopeAdmits(at, join(dir, path), isDir)).toBe(expected);
+    expect(scopeAdmits(at, join(dir, path), isDir, [])).toBe(expected);
   });
 });
 
@@ -243,6 +306,14 @@ describe('scopeWatchTargets', () => {
     const dir = toPosix(makeProject({ 'w/a.js': '' }));
     const scopes = [scope(`${dir}/w`), scope(`${dir}/w`, { deep: true }), scope(`${dir}/later/deep`)];
     expect(scopeWatchTargets(scopes)).toEqual([`${dir}/w`, dir]);
+  });
+
+  it('watches the folders a deep scope reaches through links', () => {
+    const dir = toPosix(makeProject({ 'w/a.js': '' }));
+    const outside = makeProject({ 'e.js': '' });
+    symlinkSync(outside, join(dir, 'w/linked'), 'junction');
+    expect(scopeWatchTargets([scope(`${dir}/w`, { deep: true })])).toEqual([`${dir}/w`, canonicalPath(outside)]);
+    expect(scopeWatchTargets([scope(`${dir}/w`)])).toEqual([`${dir}/w`]);
   });
 });
 
@@ -345,13 +416,21 @@ const CALLS = [
   "'../shared/*'",
   "'@shared/**/*.js'",
   "['./widgets/sub/*.js', '/shared/*.json']",
+  "'./widgets/linked/*.js'",
 ];
+
+/** Links of the differential project (link → target, relative to its root): one to a folder, one back above. */
+const LINKS = [
+  ['app/widgets/linked', 'shared/nested'],
+  ['app/widgets/sub/up', 'app/widgets'],
+] as const;
 
 describe('scopes against Vite’s import-glob', () => {
   it.each(CALLS)('every file import.meta.glob(%s) matches lies in its scopes', async (args) => {
     const root = makeProject(
       Object.fromEntries(FILES.map((file) => [file, file.endsWith('.json') ? '{}' : 'export default 1;'])),
     );
+    for (const [link, target] of LINKS) symlinkSync(join(root, target), join(root, link), 'junction');
     const entry = join(root, 'app/entry.js');
     // With the options of the call, eager: every match becomes a module of the bundle.
     const [patterns, options = ''] = args.split(/, (?=\{)/);
@@ -380,12 +459,13 @@ describe('scopes against Vite’s import-glob', () => {
     expect(matched.length).toBeGreaterThan(0);
     expect(scopes.length).toBeGreaterThan(0);
     for (const file of matched) {
-      const holding = scopes.filter((s) => scopeAdmits(s, file, false));
+      const holding = scopes.filter((s) => scopeAdmits(s, file, false, readScope(s).linked));
       expect(holding, `${relative(root, file)} is in no scope`).not.toEqual([]);
+      // Vite names a file reached through a link by its real path, which the listing spells through the link.
       const listed = holding.some((s) =>
         scopeListing(s)
           .split('\n')
-          .includes(`f:${toPosix(relative(s.dir, file))}`),
+          .some((line) => line.startsWith('f:') && fileKey(join(s.dir, line.slice(2))) === fileKey(file)),
       );
       expect(listed, `${relative(root, file)} is listed in no scope`).toBe(true);
     }

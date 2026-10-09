@@ -14,13 +14,13 @@
  * each `import.meta.glob(` in the text, with TypeScript type arguments allowed, is read on its own as a call.
  * Text in a comment or a string that reads as a call then adds a scope too, which only costs a bundle for nothing.
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, ObjectExpression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
 import { AcornParser, trySyntax } from '../js-syntax.js';
 import { isRecord } from '../util.js';
-import { fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
+import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
 
 /**
@@ -278,14 +278,37 @@ function admits(scope: GlobScope, name: string, isDir: boolean): boolean {
   return name.toLowerCase().endsWith(scope.suffix);
 }
 
+/** What was in a scope when it was read (see readScope). */
+export interface ScopeContents {
+  /**
+   * A string that changes when a file the glob may match is added to the scope, removed from it or renamed in it,
+   * or a linked folder in it is retargeted, and stays the same otherwise.
+   */
+  readonly listing: string;
+  /** The folders a deep scope reaches through links, by real path (forward slashes). */
+  readonly linked: readonly string[];
+}
+
+/** The real path (forward slashes) of the folder the link at `path` leads to; undefined for a link to anything else. */
+function linkedFolder(path: string): string | undefined {
+  try {
+    return statSync(path).isDirectory() ? canonicalPath(path) : undefined;
+  } catch {
+    return undefined; // A dangling link.
+  }
+}
+
 /**
- * What is in a scope, as a string that changes when a file the glob may match is added to it, removed from it or
- * renamed in it, and stays the same otherwise: the files of its folder that `admits` lets through, and for a deep
- * scope the folders below it and theirs. A link is listed as a file, and not followed. A scope whose folder does
- * not exist (yet) lists as missing.
+ * What is in a scope: the files of its folder that `admits` lets through, and for a deep scope the folders below
+ * it and theirs. A link to a folder is followed, as Vite's import-glob follows it, and listed with its target, so
+ * retargeting it shows; a folder already listed (a link back to a folder above, or a second link to one) is not
+ * listed again, as Vite's crawler does not crawl it again. A link to a file is listed as a file. A scope whose folder
+ * does not exist (yet) lists as missing.
  */
-export function scopeListing(scope: GlobScope): string {
+export function readScope(scope: GlobScope): ScopeContents {
   const entries: string[] = [];
+  const linked = new Set<string>();
+  const visited = new Set<string>();
   const list = (dir: string, prefix: string): boolean => {
     let found;
     try {
@@ -293,36 +316,57 @@ export function scopeListing(scope: GlobScope): string {
     } catch {
       return false;
     }
+    visited.add(fileKey(dir));
     for (const entry of found.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-      const isDir = entry.isDirectory();
-      if (!admits(scope, entry.name, isDir)) continue;
       const path = `${prefix}${entry.name}`;
-      entries.push(`${isDir ? 'd' : 'f'}:${path}`);
+      const target = entry.isSymbolicLink() ? linkedFolder(join(dir, entry.name)) : undefined;
+      const isDir = entry.isDirectory() || target !== undefined;
+      if (!admits(scope, entry.name, isDir)) continue;
+      entries.push(target === undefined ? `${isDir ? 'd' : 'f'}:${path}` : `l:${path}>${target}`);
+      if (target !== undefined) {
+        if (visited.has(fileKey(target))) continue;
+        linked.add(target);
+      }
       if (isDir) list(join(dir, entry.name), `${path}/`);
     }
     return true;
   };
-  return list(scope.dir, '') ? entries.join('\n') : '\0missing';
+  const listing = list(scope.dir, '') ? entries.join('\n') : '\0missing';
+  return { listing, linked: [...linked] };
+}
+
+/** What is in a scope, as readScope lists it. */
+export function scopeListing(scope: GlobScope): string {
+  return readScope(scope).listing;
 }
 
 /**
  * Whether adding or removing the file (or folder, `isDir`) at `path` may change what the glob of `scope` matches:
- * it is in the scope and `admits` lets it through, or it is the scope's folder itself. Folders are compared by
- * identity key, so one is recognised however the path spells it.
+ * it is in the scope, or in one of the folders it reaches through links (`linked`, see readScope), and `admits`
+ * lets it through, or it is one of those folders itself. Folders are compared by identity key, so one is
+ * recognised however the path spells it, through a link or not.
  */
-export function scopeAdmits(scope: GlobScope, path: string, isDir: boolean): boolean {
-  const folder = fileKey(scope.dir);
-  if (fileKey(path) === folder) return true;
+export function scopeAdmits(scope: GlobScope, path: string, isDir: boolean, linked: readonly string[]): boolean {
+  const folders = [scope.dir, ...(scope.deep ? linked : [])].map(fileKey);
+  if (folders.includes(fileKey(path))) return true;
   const parent = fileKey(dirname(path));
-  return (scope.deep ? keyWithin(parent, [folder]) : parent === folder) && admits(scope, basename(path), isDir);
+  return (scope.deep ? keyWithin(parent, folders) : parent === folders[0]) && admits(scope, basename(path), isDir);
 }
 
 /**
  * The folders a watcher watches for `scopes`: each scope's folder, or, for one that does not exist, the nearest
- * folder above it that does, where creating it shows.
+ * folder above it that does, where creating it shows; and the folders a deep scope reaches through links, which a
+ * watcher of the scope's folder may not follow.
  */
 export function scopeWatchTargets(scopes: Iterable<GlobScope>): string[] {
-  return [...new Set([...scopes].map(({ dir }) => toPosix(missingImportFolders([dir])[0] ?? dir)))];
+  return [
+    ...new Set(
+      [...scopes].flatMap((scope) => [
+        toPosix(missingImportFolders([scope.dir])[0] ?? scope.dir),
+        ...readScope(scope).linked,
+      ]),
+    ),
+  ];
 }
 
 /**
