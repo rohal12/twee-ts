@@ -177,23 +177,35 @@ describe.each([
   it('bundles the entry again only for a file the glob may match', async () => {
     const root = globProject(FORMS.lazy.call);
     let bundles = 0;
+    const events: string[] = [];
     const counter: Plugin = {
       name: 'count-entry-bundles',
       buildStart() {
         bundles += 1;
       },
+      configureServer(server) {
+        server.watcher.on('all', (event, path) => events.push(`${event} ${toPosix(relative(root, path))}`));
+      },
     };
     const read = await serve(root, watcher, [counter]);
     expect(await read()).toEqual(['./widgets/a.js', './widgets/skip.js']);
-    const initial = bundles;
+    // With a watcher, until the count holds still: macOS FSEvents may report the project's own files, written just
+    // before the watcher started, a moment later, and an event for a file the entry uses bundles it again.
+    const pause = (): Promise<void> => new Promise((done) => setTimeout(done, watcher ? 1000 : 0));
+    let initial = -1;
+    while (initial !== bundles) {
+      initial = bundles;
+      await pause();
+    }
+    events.length = 0;
     // Another extension, an editor's swap file, a folder the glob does not reach into, a folder elsewhere.
     for (const file of ['widgets/notes.md', 'widgets/.a.js.swp', 'widgets/sub/c.js', 'other/x.js']) {
       write(join(root, 'app', file), 'export default 1;');
     }
     // Long enough for the watcher to report them, and for a rebuild they started to begin.
-    await new Promise((done) => setTimeout(done, watcher ? 1000 : 0));
+    await pause();
     expect(await read()).toEqual(['./widgets/a.js', './widgets/skip.js']);
-    expect(bundles).toBe(initial);
+    expect(bundles, `bundled again after ${JSON.stringify(events)}`).toBe(initial);
     write(join(root, 'app/widgets/b.js'), "export default 'B';");
     await expect
       .poll(read, { timeout: 10_000, interval: 100 })
