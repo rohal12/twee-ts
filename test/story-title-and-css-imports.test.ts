@@ -63,6 +63,8 @@ describe('ineffective @import rules (#352)', () => {
       0,
     ],
     ['an import inside a block', ['@media print { @import "x.css"; }'], 0],
+    ['an escaped brace in a selector before an import', ['.a\\{ b {}\n' + IMPORT], 1],
+    ['an escaped character in a leading import', ['@import url(x\\;y);\na {}'], 0],
     ['a layered block before an import', ['@layer a { p {} }\n' + IMPORT], 1],
   ] as const)('%s', (_name, texts, count) => {
     const found = ineffectiveImportDiagnostics(sheets(...texts));
