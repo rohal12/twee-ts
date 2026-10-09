@@ -19,6 +19,8 @@ import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { bundleEntry, entryCollisionMessage, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
+import { scopeAdmits, scopeId, scopeListing, scopeWatchTargets } from './vite-glob.js';
+import type { GlobScope } from './vite-glob.js';
 import { missingImportFolders } from './watch-targets.js';
 
 /** What the dev server needs from the plugin. */
@@ -275,6 +277,11 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // Folders where an import the last failed bundle could not resolve would be created (its nearest existing
   // folder), by key; they are among entryFiles, whose state changes when a file is created in one.
   let entryMissingFolders: string[] = [];
+  // The scope of each glob pattern of the entry's modules (see vite-glob.ts), by scopeId, and what was in each
+  // when the bundle read it: a file added, removed or renamed there may change what the glob selects. Kept, as
+  // entryFiles are, while a later bundle fails.
+  let entryGlobs = new Map<string, GlobScope>();
+  let globStates = new Map<string, string>();
   // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
   const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
@@ -313,6 +320,18 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // Whether a link the entry is spelled through now reaches another file (or none) than the bundle read.
   const linkMoved = (): boolean => [...entryLinks].some(([spelled, key]) => linkKey(spelled) !== key);
 
+  // Whether what is in the scope of one of the entry's globs differs from what the bundle read there.
+  const globsChanged = (): boolean => [...entryGlobs].some(([id, scope]) => scopeListing(scope) !== globStates.get(id));
+
+  // Whether adding or removing the file or folder at `path` may change what one of the entry's globs selects.
+  const inGlobScope = (path: string, isDir: boolean): boolean =>
+    [...entryGlobs.values()].some((scope) => scopeAdmits(scope, path, isDir));
+
+  // What the watcher watches for the entry: its files, and the folders of its globs (or the nearest above each
+  // that exists, where creating it shows).
+  const entryWatchTargets = (): TrackedFiles =>
+    new Map([...entryFiles, ...tracked(scopeWatchTargets(entryGlobs.values()))]);
+
   // Watches the entry's files outside the root, and stops watching those it no longer uses.
   const watchEntryFiles = (files: TrackedFiles): void => {
     const added = [...files].filter(
@@ -345,9 +364,13 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // In the queue, so the states are those of the last bundle, not of one under way.
     queue = queue
       .then(() => {
-        const now = fileStates(files);
-        const then = new Map([...entryStates].filter(([key]) => files.has(key)));
+        const own = new Map([...files].filter(([key]) => entryFiles.has(key)));
+        const now = fileStates(own);
+        const then = new Map([...entryStates].filter(([key]) => own.has(key)));
         for (const key of filesChanged(then, now)) if (watchedForEntry.has(key)) noteChange(key);
+        // A glob's folder: what is in it, against what the bundle read there.
+        const [folder] = [...files.keys()].filter((key) => !own.has(key) && watchedForEntry.has(key));
+        if (folder !== undefined && globsChanged()) noteChange(folder);
       })
       .catch(keepQueueAlive);
     await queue;
@@ -370,8 +393,13 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // (it may lie outside the root) and note its state, so that fixing it bundles again.
       entryFiles = tracked([entryPath]);
       entryStates = fileStates(entryFiles);
-      watchEntryFiles(entryFiles);
+      watchEntryFiles(entryWatchTargets());
     }
+    // The scopes of the globs this bundle reads, each with what was in it just before Vite read it (so a file
+    // added while the bundle is made differs from it afterwards), and what was in the known ones before it began.
+    const globs = new Map<string, GlobScope>();
+    const globsRead = new Map<string, string>();
+    const globsBefore = new Map([...entryGlobs].map(([id, scope]) => [id, scopeListing(scope)]));
     // The files known so far, as they are before the bundle begins, and each module as it is just before
     // the bundle reads it: a file edited while the bundle is made then differs from what is recorded
     // afterwards, which is what the catch-up looks for.
@@ -380,20 +408,22 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     const loaded = new Map<string, string>(); // key → path of each module the bundle loaded
     let next: EntryBundle;
     try {
-      next = await bundleEntry(
-        config,
-        entryPath,
-        'serve',
-        options.outputFilename,
-        (file) => {
+      next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, {
+        watchFiles,
+        onLoad: (file) => {
           const key = fileKey(file);
           const state = fileState(canonicalPath(file));
           if (state !== undefined && !observed.has(key)) observed.set(key, state);
           if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
         },
-        noteSpelling,
-        watchFiles,
-      );
+        onResolve: noteSpelling,
+        onGlob: (scope) => {
+          const id = scopeId(scope);
+          if (globs.has(id)) return;
+          globs.set(id, scope);
+          globsRead.set(id, scopeListing(scope));
+        },
+      });
     } catch (error) {
       // The modules the failed bundle loaded, and the files its plugins watch, are inputs too: fixing an
       // imported one must bundle again. So is the place of an import it could not resolve: creating it must.
@@ -402,7 +432,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       entryFiles = new Map([...entryFiles, ...loaded, ...tracked(watchFiles), ...tracked(folders)]);
       entryStates = settledStates(entryFiles, observed, before);
       entryLinks = new Map([...entryLinks, ...spelled]);
-      watchEntryFiles(entryFiles);
+      entryGlobs = new Map([...entryGlobs, ...globs]);
+      globStates = new Map([...globsBefore, ...globsRead]);
+      watchEntryFiles(entryWatchTargets());
       throw error;
     }
     entry = next;
@@ -411,7 +443,9 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     entryStates = settledStates(entryFiles, observed, before);
     entryLinks = spelled;
     entryMissingFolders = [];
-    watchEntryFiles(entryFiles);
+    entryGlobs = globs;
+    globStates = globsRead;
+    watchEntryFiles(entryWatchTargets());
   };
 
   // `initial`: the compile at server start. No page is open yet, and Vite would
@@ -427,7 +461,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // The compile cache trusts modification times, which a quick save may leave
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
-      if (entryStale || linkMoved() || [...changed].some(touchesEntry)) await bundle();
+      if (entryStale || linkMoved() || globsChanged() || [...changed].some(touchesEntry)) await bundle();
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       html = dev.injectClient(story.output, base);
@@ -468,12 +502,16 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   await rebuild(new Set(), true);
 
   server.watcher.on('all', (event, path) => {
-    if (event !== 'add' && event !== 'change' && event !== 'unlink') return;
     // Loading the config for the entry build writes and deletes one of these;
     // reacting to it would bundle again, and again.
     if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
-    if ((!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed) && !linkMoved()) return;
+    // A file or folder added to or removed from a glob's scope may change what the glob selects.
+    const regrouped = event !== 'change' && inGlobScope(path, event === 'addDir' || event === 'unlinkDir');
+    if (event !== 'add' && event !== 'change' && event !== 'unlink' && !regrouped) return;
+    if (!regrouped && (!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed) && !linkMoved()) {
+      return;
+    }
     noteChange(changed);
   });
 
@@ -490,7 +528,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       await queue;
       const changed = filesChanged(compiledInputs, storyInputFiles());
       for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
-      if (changed.size === 0 && !linkMoved()) return;
+      if (changed.size === 0 && !linkMoved() && !globsChanged()) return;
       // Changes the watcher did report, still waiting out the debounce, go into the same compile.
       for (const file of pending) changed.add(file);
       pending = new Set();

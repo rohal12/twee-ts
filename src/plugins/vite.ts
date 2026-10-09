@@ -17,7 +17,7 @@ import type { FileCacheEntry } from '../types.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
-import type { BuildOutputs } from '../filesystem.js';
+import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
 import { resolvePluginOptions } from './options.js';
@@ -37,6 +37,8 @@ import {
   takeEntryFromBundle,
 } from './vite-entry.js';
 import type { BundleItem, EntryBundle } from './vite-entry.js';
+import { moduleGlobScopes, scopeWatchTargets } from './vite-glob.js';
+import type { GlobScope } from './vite-glob.js';
 import { importWatchTargets, watchTargets } from './watch-targets.js';
 import { isRecord } from '../util.js';
 
@@ -136,6 +138,18 @@ function mergeOutputs(a: BuildOutputs, b: BuildOutputs): BuildOutputs {
 /** Adds Vite's client to the page, first in its head, so reloads and the error overlay reach it. */
 function injectViteClient(html: string, base: string): string {
   return insertViteClient(html, `${base}@vite/client`);
+}
+
+/**
+ * What `vite build --watch` is told to watch for the entry's globs: each glob's folder (or the nearest one above it
+ * that exists), by real path, as the bundler's watcher reports it. A folder that holds a build output is left out,
+ * since the watcher would report what the build writes there and rebuild for ever: a file added to it is bundled
+ * with the next build something else starts.
+ */
+function globWatchTargets(scopes: Iterable<GlobScope>, outputs: OutputPaths): string[] {
+  return scopeWatchTargets(scopes)
+    .map(canonicalPath)
+    .filter((folder) => !outputs.holds(folder));
 }
 
 /** Whether a resolved config is a build of the client, the only build that carries the story. */
@@ -245,24 +259,23 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // recovered by fixing one of these files, which no other input of the build includes.
       const watched = new Set<string>();
       const authored = new Set<string>([entryPath]);
+      const globs: GlobScope[] = [];
       const registerEntryInputs = (): void => {
         if (!this.meta.watchMode) return;
         for (const file of watched) this.addWatchFile(canonicalPath(file));
         const outputs = outputPaths(allOutputs(config));
         for (const target of importWatchTargets(authored, outputs)) this.addWatchFile(target);
+        for (const target of globWatchTargets(globs, outputs)) this.addWatchFile(target);
       };
       watched.add(entryPath);
       let bundle: EntryBundle;
       try {
-        bundle = await bundleEntry(
-          config,
-          entryPath,
-          'build',
-          outputFilename,
-          (file) => watched.add(file),
-          (spelling) => authored.add(spelling),
-          watched,
-        );
+        bundle = await bundleEntry(config, entryPath, 'build', outputFilename, {
+          watchFiles: watched,
+          onLoad: (file) => watched.add(file),
+          onResolve: (spelling) => authored.add(spelling),
+          onGlob: (scope) => globs.push(scope),
+        });
       } catch (e) {
         registerEntryInputs();
         return this.error(fatalError(e));
@@ -278,6 +291,19 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     watchChange(id) {
       const changed = fileKey(id);
       for (const key of [...cache.keys()]) if (fileKey(key) === changed) cache.delete(key);
+    },
+
+    // `vite build --watch` with the entry bundled inside the build: Vite's import-glob reads the files a glob
+    // matches when it bundles, and registers none of the folders it read, so a file added to one starts no
+    // build. Each glob's folder is registered here, as the module comes past on its way to the import-glob.
+    transform: {
+      filter: { code: 'import.meta.glob' },
+      async handler(code, id) {
+        const config = configOf(this);
+        if (!this.meta.watchMode || !isStoryBuild(config) || !bundlesEntryInside(config)) return;
+        const scopes = await moduleGlobScopes(this, code, id, config.root);
+        for (const target of globWatchTargets(scopes, outputPaths(allOutputs(config)))) this.addWatchFile(target);
+      },
     },
 
     resolveId(id) {
