@@ -196,12 +196,35 @@ function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<st
 }
 
 /**
- * Sets up the story in `server`: the first compile, the watcher, and a
- * middleware that notes each request's URL before Vite's own middlewares
- * rewrite it. Resolves, after the first compile, to the middleware that serves
- * the story, which the plugin installs after Vite's internal middlewares (host
- * check, CORS, base), so they apply to the story as to any page.
+ * The names of Vite's middlewares that answer a request with a file: from the public folder, the module
+ * transform, the files of the root and the file system, and the HTML fallback.
  */
+const VITE_FILE_MIDDLEWARES: ReadonlySet<string> = new Set([
+  'viteServePublicMiddleware',
+  'viteTriggerLazyBundlingMiddleware',
+  'viteMemoryFilesMiddleware',
+  'viteTransformMiddleware',
+  'viteServeRawFsMiddleware',
+  'viteServeStaticMiddleware',
+  'viteHtmlFallbackMiddleware',
+  'viteIndexHtmlMiddleware',
+]);
+
+/**
+ * Installs the story's route (see setUpDevStory) among `middlewares`, as the plugin's post hook does: after Vite's
+ * checks of a request (host, CORS, proxy, base), so they apply to the story as to any page, and before the first
+ * of its middlewares that serve files. A build writes the story and the entry's assets over a public file of the
+ * same name, and a static host serves nothing else at their paths, so the dev server must not answer them with a
+ * file from the public folder or the root (#339). Appended when none of those middlewares is there.
+ */
+export function installStoryRoute(middlewares: Connect.Server, route: Connect.NextHandleFunction): void {
+  const at = middlewares.stack.findIndex(
+    ({ handle }) => typeof handle === 'function' && VITE_FILE_MIDDLEWARES.has(handle.name),
+  );
+  if (at === -1) middlewares.use(route);
+  else middlewares.stack.splice(at, 0, { route: '', handle: route });
+}
+
 /** The assets each story instance of a dev server currently serves, so instances can see each other's names. */
 const devAssets = new WeakMap<ViteDevServer, Set<() => ReadonlyMap<string, string | Uint8Array> | undefined>>();
 
@@ -209,6 +232,12 @@ function sameBytes(a: string | Uint8Array, b: string | Uint8Array): boolean {
   return Buffer.from(a).equals(Buffer.from(b));
 }
 
+/**
+ * Sets up the story in `server`: the first compile, the watcher, and a
+ * middleware that notes each request's URL before Vite's own middlewares
+ * rewrite it. Resolves, after the first compile, to the middleware that serves
+ * the story and the entry's assets, for installStoryRoute.
+ */
 export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions): Promise<Connect.NextHandleFunction> {
   const { options, cache } = dev;
   const config = server.config;

@@ -24,7 +24,7 @@ import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
 import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
-import { setUpDevStory } from './vite-dev.js';
+import { installStoryRoute, setUpDevStory } from './vite-dev.js';
 import {
   bundleEntry,
   ENTRY_INPUT_NAME,
@@ -340,10 +340,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         outputs: allOutputs,
         injectClient: injectViteClient,
       });
-      // Installed after Vite's internal middlewares (host check, CORS, base, public
-      // files, transforms) and before its HTML fallback.
+      // Installed once Vite's internal middlewares are, between its request checks and its file serving.
       return () => {
-        server.middlewares.use(route);
+        installStoryRoute(server.middlewares, route);
       };
     },
   };
