@@ -139,6 +139,20 @@ export const MATRIX = {
     issue: undefined,
     variants: ['html', 'twee3', 'twee1', 'twine2-archive', 'twine1-archive', 'json'],
   },
+  // Revision 3: the files an entry's imports select, which a module list from an earlier bundle
+  // cannot name.
+  DEPS: {
+    invariant: 'Development and watch entry bundles follow the files their imports select, as a fresh build does',
+    issue: 341,
+    variants: [
+      'dev eager glob gains a file',
+      'dev lazy glob loses a file',
+      'dev keys-only glob renames a file',
+      'dev glob folder created',
+      'dev watcher glob gains a file',
+      'build watch glob gains a file',
+    ],
+  },
 } as const satisfies Record<string, CaseGroup>;
 
 export type GroupName = keyof typeof MATRIX;

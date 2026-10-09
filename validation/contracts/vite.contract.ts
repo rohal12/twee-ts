@@ -1,12 +1,14 @@
 /**
  * What the compiler and the Vite plugin put into a story format's page, and the plugin's entry
- * builds, as the build in dist/ does them. Matrix groups HEAD and VITE (see cases.ts).
+ * builds, as the build in dist/ does them. Matrix groups HEAD, VITE and DEPS (see cases.ts).
  */
+import { readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { build } from 'vite';
+import { runInNewContext } from 'node:vm';
+import { build, createServer, version } from 'vite';
 import type { InlineConfig, Plugin } from 'vite';
 import { expect } from 'vitest';
-import { compile } from '@rohal12/twee-ts';
+import { compile, decompileHTML } from '@rohal12/twee-ts';
 import { tweeTsPlugin } from '@rohal12/twee-ts/vite';
 import type { TweeTsVitePluginOptions } from '@rohal12/twee-ts/vite';
 import { attr, elements, scriptTexts, textContent } from '../../test/helpers/html.js';
@@ -156,3 +158,151 @@ async function expectEntryConfigKept(root: string, setup: () => EntrySetup): Pro
   expect(development, 'development did not keep the user configuration').toContain(MARKER);
   expect(development, 'the config file replaced the inline value').not.toContain('VALIDATION_FILE_ENTRY');
 }
+
+/** An entry that leaves, in `globalThis.found`, what its glob call `call` selects: its keys, or its values sorted. */
+const globEntry = (call: string): string =>
+  `const found = ${call}; globalThis.found = Array.isArray(found) ? found.slice().sort() : Object.keys(found).sort();`;
+
+/** What the entry of a story page left in `globalThis.found`, running its Story JavaScript. */
+function foundIn(html: string): unknown {
+  const script = decompileHTML(html)
+    .story.passages.filter((passage) => passage.tags.includes('script'))
+    .map((passage) => passage.text)
+    .join('\n');
+  const context: { found?: unknown } = {};
+  runInNewContext(script, context);
+  return context.found;
+}
+
+/** A project whose entry, `app/entry.js`, makes the glob call `call`, with `widgets` in `app/widgets`. */
+function globProject(root: string, call: string, widgets: readonly string[]): TweeTsVitePluginOptions {
+  const { formatId, options } = localFormat(root);
+  const storyFile = write(join(root, 'story', 'story.tw'), story());
+  for (const widget of widgets)
+    write(join(root, 'app', 'widgets', widget), `export default ${JSON.stringify(widget)};`);
+  const entry = write(join(root, 'app', 'entry.js'), globEntry(call));
+  return { sources: [storyFile], format: formatId, entry, compileOptions: options };
+}
+
+/**
+ * Starts a development server for `root` (with no watcher unless `watcher`), reads what the entry found, makes
+ * `change`, and expects the entry to find `before`, then `after`: at once with no watcher, which the server catches
+ * up with before it serves the story, and with one once the server has noticed.
+ */
+async function expectDevFollows(
+  root: string,
+  pluginOptions: TweeTsVitePluginOptions,
+  change: () => void,
+  before: unknown,
+  after: unknown,
+  watcher = false,
+): Promise<void> {
+  const server = await createServer({
+    configFile: false,
+    root,
+    logLevel: 'silent',
+    plugins: [tweeTsPlugin(pluginOptions)],
+    server: { host: '127.0.0.1', port: 0, ...(watcher ? {} : { watch: null }) },
+  });
+  try {
+    await server.listen();
+    const [url] = server.resolvedUrls?.local ?? [];
+    const read = async (): Promise<unknown> => foundIn(await (await fetch(String(url))).text());
+    expect(await read()).toEqual(before);
+    change();
+    if (watcher) await expect.poll(read, { timeout: 20_000, interval: 100 }).toEqual(after);
+    else expect(await read(), 'the story kept the files the glob selected before').toEqual(after);
+  } finally {
+    await server.close();
+  }
+}
+
+/** Expects `vite build --watch` to build the story again with the file a glob gains. */
+async function expectBuildWatchFollows(root: string): Promise<void> {
+  const pluginOptions = globProject(root, "Object.keys(import.meta.glob('./widgets/*.js'))", ['a.js']);
+  const started: unknown = await build({
+    configFile: false,
+    root,
+    logLevel: 'silent',
+    plugins: [tweeTsPlugin({ ...pluginOptions, outputFilename: 'story.html' })],
+    build: { watch: {}, outDir: join(root, 'out') },
+  });
+  const watcher = started as {
+    on(event: 'event', listener: (event: { code: string }) => void): void;
+    close(): Promise<void>;
+  };
+  const ended: string[] = [];
+  watcher.on('event', (event) => {
+    if (event.code === 'END' || event.code === 'ERROR') ended.push(event.code);
+  });
+  try {
+    const found = (): unknown => foundIn(readFileSync(join(root, 'out', 'story.html'), 'utf-8'));
+    await expect.poll(() => ended.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    expect(found()).toEqual(['./widgets/a.js']);
+    write(join(root, 'app', 'widgets', 'b.js'), 'export default "b";');
+    await expect.poll(found, { timeout: 20_000, interval: 100 }).toEqual(['./widgets/a.js', './widgets/b.js']);
+  } finally {
+    await watcher.close();
+  }
+}
+
+const widget = (root: string, name: string): string => join(root, 'app', 'widgets', name);
+
+defineContracts(
+  'DEPS',
+  {
+    'dev eager glob gains a file': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.values(import.meta.glob('./widgets/*.js', { eager: true, import: 'default' }))", [
+          'a.js',
+        ]),
+        () => write(widget(root, 'b.js'), 'export default "b.js";'),
+        ['a.js'],
+        ['a.js', 'b.js'],
+      ),
+    'dev lazy glob loses a file': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "import.meta.glob('./widgets/*.js')", ['a.js', 'b.js']),
+        () => {
+          unlinkSync(widget(root, 'b.js'));
+        },
+        ['./widgets/a.js', './widgets/b.js'],
+        ['./widgets/a.js'],
+      ),
+    'dev keys-only glob renames a file': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.keys(import.meta.glob('./widgets/*.js'))", ['a.js']),
+        () => {
+          renameSync(widget(root, 'a.js'), widget(root, 'renamed.js'));
+        },
+        ['./widgets/a.js'],
+        ['./widgets/renamed.js'],
+      ),
+    'dev glob folder created': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.keys(import.meta.glob(['./widgets/*.js', './later/**/*.js']))", ['a.js']),
+        () => write(join(root, 'app', 'later', 'deep', 'first.js'), 'export default 1;'),
+        ['./widgets/a.js'],
+        ['./later/deep/first.js', './widgets/a.js'],
+      ),
+    'dev watcher glob gains a file': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.keys(import.meta.glob('./widgets/*.js'))", ['a.js']),
+        () => write(widget(root, 'b.js'), 'export default "b.js";'),
+        ['./widgets/a.js'],
+        ['./widgets/a.js', './widgets/b.js'],
+        true,
+      ),
+    'build watch glob gains a file': expectBuildWatchFollows,
+  },
+  // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
+  {
+    skip: (variant) =>
+      variant === 'build watch glob gains a file' && /^8\.[01]\./.test(version) ? 'Vite 8.0/8.1' : undefined,
+  },
+);

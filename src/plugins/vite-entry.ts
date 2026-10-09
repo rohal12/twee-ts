@@ -20,6 +20,8 @@ import type {
 } from 'vite';
 import type { InlineSource } from '../types.js';
 import { toPosix } from './paths.js';
+import { moduleGlobScopes } from './vite-glob.js';
+import type { GlobScope } from './vite-glob.js';
 import { isRecord } from '../util.js';
 
 /** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
@@ -521,6 +523,22 @@ function spelledAs(spelled: string, resolved: string): string | undefined {
 }
 
 /**
+ * What a caller of bundleEntry learns as the entry build runs, filled in also when the build fails (the files of a
+ * failed bundle are the ones whose fixing bundles it again):
+ * - `watchFiles`: the files the build's plugins add with `addWatchFile`, and the modules of its graph;
+ * - `onLoad`: each module's file, just before the build reads it;
+ * - `onResolve`: each import's path as authored (see recordWatchFiles);
+ * - `onGlob`: the scope of each `import.meta.glob()` pattern of a module, just before Vite reads the files it
+ *   matches (see vite-glob.ts).
+ */
+export interface EntryBuildObserver {
+  readonly watchFiles?: Set<string>;
+  readonly onLoad?: (file: string) => void;
+  readonly onResolve?: (authored: string) => void;
+  readonly onGlob?: (scope: GlobScope) => void;
+}
+
+/**
  * Collects the files the entry build's plugins add with `addWatchFile`. These
  * are not modules of the bundle: Vite's CSS plugin adds the stylesheets pulled
  * in by `@import` and the files `url()` points at this way. The build runs on
@@ -528,11 +546,8 @@ function spelledAs(spelled: string, resolved: string): string | undefined {
  * which sees the final plugin list, including the plugins Vite resolves per
  * environment (`applyToEnvironment`) after `configResolved`.
  */
-function recordWatchFiles(
-  files: Set<string>,
-  onLoad: ((file: string) => void) | undefined,
-  onResolve: ((authored: string) => void) | undefined,
-): Plugin {
+function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuildObserver): Plugin {
+  const { onLoad, onResolve, onGlob } = observer;
   return {
     name: `${PLUGIN_NAME}:record-watch-files`,
     // Called for each module just before its file is read, so a caller can note the file's state as the
@@ -568,6 +583,16 @@ function recordWatchFiles(
             if (found !== undefined) onResolve(found);
           }
         }
+        return null;
+      },
+    },
+    // The scopes of the module's glob calls. This plugin is the last of the user's, so it sees each module as
+    // Vite's import-glob, which runs next, does; it transforms nothing itself.
+    transform: {
+      filter: { code: 'import.meta.glob' },
+      async handler(code, id) {
+        if (onGlob === undefined) return null;
+        for (const scope of await moduleGlobScopes(this, code, id, root)) onGlob(scope);
         return null;
       },
     },
@@ -626,12 +651,9 @@ export async function bundleEntry(
   entryPath: string,
   command: ViteCommand,
   outputFilename: string,
-  onLoad?: (file: string) => void,
-  onResolve?: (authored: string) => void,
-  // The files the entry build's plugins add with `addWatchFile` and the modules of its graph, filled in
-  // also when the build fails, so a caller keeps them (they are the files whose fixing bundles it again).
-  watchFiles = new Set<string>(),
+  observer: EntryBuildObserver = {},
 ): Promise<EntryBundle> {
+  const watchFiles = observer.watchFiles ?? new Set<string>();
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
   const plugins = (await flattenPlugins(user.plugins))
@@ -651,7 +673,7 @@ export async function bundleEntry(
     plugins: [
       ...plugins,
       entryBuildEnforcer(entryPath, command, outputFilename),
-      recordWatchFiles(watchFiles, onLoad, onResolve),
+      recordWatchFiles(watchFiles, config.root, observer),
     ],
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).

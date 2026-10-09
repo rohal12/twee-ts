@@ -109,10 +109,14 @@ export function tempDir(): string {
   return dir;
 }
 
-/** Closes the servers started and removes the projects made since the last call; for afterEach. */
+/**
+ * Closes the servers started and removes the projects made since the last call; for afterEach. On Windows a file
+ * that a closing watcher or bundler still holds, or creates as the folder is removed, fails the removal for a moment
+ * (EBUSY, EPERM, ENOTEMPTY), so it is retried, as Node.js retries those.
+ */
 export async function cleanUp(): Promise<void> {
   await Promise.all([...servers.splice(0), ...watchers.splice(0)].map((closable) => closable.close()));
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** Every file below `dir`, but in node_modules and .git. */
