@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Vite dev server serves the story and the files the `entry` emits separately (`?no-inline` imports) before Vite's own file serving, so a file of the same name in `public/` (or a custom `publicDir`) or in the root no longer stands in for them: dev now serves the bytes the build writes, as `vite build` writes them over the public copy; also for `index.html` and a nested `outputFilename`. Vite's host, CORS, proxy and base handling still come first, and other public files are served as before (#339)
 - Folder watch mode notices a folder that is moved out or deleted right after it was created: a folder whose creation was reported only through a file in it was not remembered, so its removal looked like a change to an unknown path and no build followed; every build now refreshes the folders it knows (#337)
 - `--init` also writes `src/StoryTitle.tw` (`My Story`), so the scaffolded story opens in SugarCube, which refuses a story without a name; an existing file is kept (#333)
 - The Vite `entry` starts with a `;`, so a story script that ends without a semicolon no longer swallows the entry's opening parenthesis as a call (inside the build, in a separate entry build and in dev) (#334)
