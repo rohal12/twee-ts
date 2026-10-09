@@ -248,8 +248,19 @@ export function installStoryRoute(middlewares: Connect.Server, route: Connect.Ne
   else middlewares.stack.splice(at, 0, { route: '', handle: route });
 }
 
-/** The assets each story instance of a dev server currently serves, so instances can see each other's names. */
-const devAssets = new WeakMap<ViteDevServer, Set<() => ReadonlyMap<string, string | Uint8Array> | undefined>>();
+interface DevInstance {
+  /** The URL paths (below the base) of the instance's story page. */
+  readonly paths: readonly string[];
+  readonly assets: () => ReadonlyMap<string, string | Uint8Array> | undefined;
+}
+
+/** The story and assets each story instance of a dev server serves, so instances can see each other's names. */
+const devInstances = new WeakMap<ViteDevServer, Set<DevInstance>>();
+
+/** The error for a story page whose URL another story or an entry asset of the same dev server also claims. */
+function storyCollisionMessage(path: string): string {
+  return `twee-ts: more than one generated file is served at ${path || '/'} (another story or an entry asset); set a distinct outputFilename.`;
+}
 
 function sameBytes(a: string | Uint8Array, b: string | Uint8Array): boolean {
   return Buffer.from(a).equals(Buffer.from(b));
@@ -284,9 +295,16 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let html = '';
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
-  const instances = devAssets.get(server) ?? new Set();
-  devAssets.set(server, instances);
-  instances.add(() => entry?.assets);
+  const instances = devInstances.get(server) ?? new Set<DevInstance>();
+  devInstances.set(server, instances);
+  const self: DevInstance = { paths, assets: () => entry?.assets };
+  instances.add(self);
+  const fail = (res: ServerResponse, message: string): void => {
+    config.logger.error(`[twee-ts] ${message}`);
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.end(message);
+  };
   let entryStale = true; // bundle again on the next rebuild
   // The files the entry was last bundled from, and their states then, kept while a
   // later bundle fails, so that fixing one of them (inside the root or not) bundles it again.
@@ -625,6 +643,17 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       next();
       return;
     }
+    const others = [...instances].filter((other) => other !== self);
+    // A path another instance claims for its story, or (for a story) emits as an asset, is not served by plugin
+    // order: the production build rejects both.
+    const mine = paths.includes(path);
+    if (
+      (mine || entry?.assets.has(path) === true) &&
+      others.some((other) => other.paths.includes(path) || (mine && other.assets()?.has(path) === true))
+    ) {
+      fail(res, storyCollisionMessage(path));
+      return;
+    }
     if (paths.includes(path)) {
       catchUp().then(() => {
         send(req, res, 'text/html; charset=utf-8', html || waitingPage(base));
@@ -639,14 +668,10 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     }
     // Another instance emitting the same name with other bytes: the production build rejects that, and the dev
     // server must not pick one by plugin order.
-    for (const other of instances) {
-      const theirs = other()?.get(path);
+    for (const other of others) {
+      const theirs = other.assets()?.get(path);
       if (theirs !== undefined && !sameBytes(theirs, asset)) {
-        const message = entryCollisionMessage(path);
-        config.logger.error(`[twee-ts] ${message}`);
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.end(message);
+        fail(res, entryCollisionMessage(path));
         return;
       }
     }
