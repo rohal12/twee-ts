@@ -14,7 +14,8 @@ import {} from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
-const STORY = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHello from the story.\n';
+const STORY =
+  ':: StoryTitle\nT\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHello from the story.\n';
 const DUPLICATE_START = `${STORY}\n:: Start\nHello again.\n`;
 const NO_START = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Other\nHi\n';
 const BUILD = { command: 'build', mode: 'production' };

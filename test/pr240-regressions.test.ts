@@ -51,7 +51,7 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const story = (text: string): string => `:: StoryData\n{"ifid":"${IFID}"}\n:: Start\n${text}`;
+const story = (text: string): string => `:: StoryTitle\nT\n:: StoryData\n{"ifid":"${IFID}"}\n:: Start\n${text}`;
 
 describe('#236: a later StorySettings replaces everything an earlier one set', () => {
   it('an empty replacement leaves no settings and no legacy IFID', async () => {
@@ -426,7 +426,7 @@ describe('a compiled story keeps its head file in the real head of the format te
     const headFile = join(root, 'head.html');
     writeFileSync(headFile, META);
     return compile({
-      sources: [{ filename: 'story.tw', content: `:: StoryTitle\nReview\n${story('Hello')}` }],
+      sources: [{ filename: 'story.tw', content: story('Hello').replace('StoryTitle\nT', 'StoryTitle\nReview') }],
       formatId: 'review',
       formatPaths: [formats],
       headFile,

@@ -12,7 +12,7 @@ Compiles a playable HTML file by inserting story data into a story format's HTML
 
 Requires a story format: the one `-f`/`formatId` names, else the one StoryData's `format` and `format-version` name, else `sugarcube-2`. It is looked for in the local format directories, then the format URLs and format indices and the Story Formats Archive, unless `--no-remote` is given; see [Story Formats](./story-formats).
 
-Twine 2 HTML (and the Twine 2 archive) writes every passage as a `<tw-passagedata>` element except StoryTitle, StoryData, an empty StorySettings, and passages tagged `script`, `stylesheet` or `Twine.private`: the script and stylesheet passages go into the story's script and style elements, and the others are left out.
+Twine 2 HTML (and the Twine 2 archive) writes every passage as a `<tw-passagedata>` element except StoryTitle, StoryData, an empty StorySettings, and passages tagged `script`, `stylesheet` or `Twine.private`: the script and stylesheet passages go into the story's script and style elements, and the others are left out. The stylesheets are joined in order into one style element, so an `@import` must come in the first stylesheet, before any rule (twee-ts warns about one that does not, since browsers ignore it); a file added as a head module keeps its own style element.
 
 ## Twee 3
 

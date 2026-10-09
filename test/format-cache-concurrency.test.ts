@@ -83,7 +83,7 @@ describe('compiles in several processes sharing a cache', () => {
       [
         `const { compile } = await import(${JSON.stringify(pathToFileURL(join(ROOT, 'src', 'index.ts')).href)});`,
         `const result = await compile({`,
-        `  sources: [{ filename: 's.tw', content: ':: StoryData\\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"Review","format-version":"1.0.0"}\\n\\n:: Start\\nHi' }],`,
+        `  sources: [{ filename: 's.tw', content: ':: StoryTitle\\nT\\n\\n:: StoryData\\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"Review","format-version":"1.0.0"}\\n\\n:: Start\\nHi' }],`,
         `  useTweegoPath: false,`,
         `  formatIndices: [${JSON.stringify(`${server.origin}/index.json`)}],`,
         `});`,

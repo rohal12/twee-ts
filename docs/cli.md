@@ -224,7 +224,7 @@ In watch mode (`-w`), a build with errors is reported but not written: the outpu
 ```sh
 $ twee-ts -w -o story.html src/
 Watch mode started. Press CTRL+C to stop.
-Built: 2 passages, 3 words
+Built: 3 passages, 3 words
 error: line 4: Malformed twee source; unterminated tag block.
 Build has 1 error; output not written. Still watching for changes.
 ```

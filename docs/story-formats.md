@@ -248,7 +248,7 @@ Twine 2 output leaves out `StoryTitle`, `StoryData` and a `StorySettings` passag
 
 | Passage             | Purpose                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
-| `StoryTitle`        | Story name (required for Twine 1)                                                           |
+| `StoryTitle`        | Story name (required for Twine 1 and for HTML output unless an imported story names it)     |
 | `StoryData`         | JSON metadata: IFID, format, format version, start passage, options, tags, tag colors, zoom |
 | `StoryAuthor`       | Author name                                                                                 |
 | `StoryInit`         | SugarCube initialization code                                                               |

@@ -85,6 +85,7 @@ export const REVIEW_AREAS: readonly ReviewArea[] = [
       'src/modules.ts',
       'src/escape.ts',
       'src/html-structure.ts',
+      'src/css-imports.ts',
       'src/html-output-check.ts',
       'src/html-parser.ts',
     ],

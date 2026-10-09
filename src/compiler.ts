@@ -18,6 +18,8 @@ import type {
   InlineSource,
   FileCacheEntry,
 } from './types.js';
+import { ineffectiveImportDiagnostics } from './css-imports.js';
+import type { StylesheetSource } from './css-imports.js';
 import { createStory, storyHas, getStoryStats, snapshot } from './story.js';
 import {
   getFilenames,
@@ -680,10 +682,16 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
         throw new TweeTsError('No story format available for HTML output.', diagnostics);
       }
 
-      if (!format.isTwine2 && story.name === '' && !storyHas(story, 'StoryTitle')) {
+      // A story without a name cannot start in SugarCube, and Twine 1 reads its name from the StoryTitle passage.
+      if ((!format.isTwine2 || story.name === '') && !storyHas(story, 'StoryTitle')) {
         diagnostics.push({
           level: 'error',
           message: 'Special passage "StoryTitle" not found.',
+        });
+      } else if (story.name === '') {
+        diagnostics.push({
+          level: 'error',
+          message: 'Special passage "StoryTitle" is empty, so the story has no name.',
         });
       }
 
@@ -797,7 +805,7 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
 function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[]): string {
   // Gather script and stylesheet content, excluding them from passages.
   const scripts: string[] = [];
-  const stylesheets: string[] = [];
+  const stylesheets: StylesheetSource[] = [];
   const storyPassages: { name: string; tags: string[]; text: string; metadata?: Record<string, string> }[] = [];
 
   for (const p of story.passages) {
@@ -807,7 +815,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
     if (hasTag(p, 'script')) {
       scripts.push(p.text);
     } else if (hasTag(p, 'stylesheet')) {
-      stylesheets.push(p.text);
+      stylesheets.push({ label: `Stylesheet passage "${p.name}"`, text: p.text });
     } else {
       const entry: { name: string; tags: string[]; text: string; metadata?: Record<string, string> } = {
         name: p.name,
@@ -823,6 +831,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
 
   const tagColors = twine2TagColors(story);
   diagnostics.push(...tagColors.diagnostics);
+  diagnostics.push(...ineffectiveImportDiagnostics(stylesheets));
   const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {
@@ -835,7 +844,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
     ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
     creator: CREATOR_NAME,
     'creator-version': VERSION,
-    style: stylesheets.join('\n'),
+    style: stylesheets.map((sheet) => sheet.text).join('\n'),
     script: scripts.map((text, i) => (i < scripts.length - 1 ? terminateScript(text) : text)).join(''),
     passages: storyPassages,
   };

@@ -121,7 +121,7 @@ describe('vite plugin: dev server details', { timeout: 30_000 }, () => {
 
   it('serves the client first when the story format has no <head>', async () => {
     const dir = makeProject({
-      'story/start.tw': STORY.replace(':: StoryTitle\nGaps\n\n', ''),
+      'story/start.tw': STORY,
       'formats/headless-1/format.js':
         'window.storyFormat({"name":"Headless","version":"1.0.0","source":"<body>{{STORY_DATA}}</body>"});',
     });
@@ -378,7 +378,7 @@ describe('vite plugin: the client script in the served head', { timeout: 30_000 
 
   async function serveTemplate(source: string): Promise<string> {
     const dir = makeProject({
-      'story/start.tw': STORY.replace(':: StoryTitle\nGaps\n\n', ''),
+      'story/start.tw': STORY,
       'formats/probe-1/format.js': `window.storyFormat(${JSON.stringify({ name: 'Probe', version: '1.0.0', source })});`,
     });
     const url = await start(dir, {

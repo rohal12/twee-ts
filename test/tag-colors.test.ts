@@ -57,7 +57,7 @@ async function build(colors: Readonly<Record<string, string>>, outputMode: Outpu
   const storyData = JSON.stringify({ ifid: IFID, 'tag-colors': colors });
   return compile({
     ...htmlOptions,
-    sources: [{ filename: 'story.tw', content: `:: StoryData\n${storyData}\n\n:: Start\nHi` }],
+    sources: [{ filename: 'story.tw', content: `:: StoryTitle\nT\n\n:: StoryData\n${storyData}\n\n:: Start\nHi` }],
     outputMode,
   });
 }

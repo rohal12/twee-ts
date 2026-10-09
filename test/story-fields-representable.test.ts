@@ -17,7 +17,7 @@ const BASE = {
 const MODES: readonly OutputMode[] = ['twine2-archive', 'html'];
 
 async function diagnosticsFor(outputMode: OutputMode, data: Record<string, unknown>): Promise<string[]> {
-  const content = `:: StoryData\n${JSON.stringify({ ifid: IFID, ...data })}\n\n:: Start\nHello.`;
+  const content = `:: StoryTitle\nT\n\n:: StoryData\n${JSON.stringify({ ifid: IFID, ...data })}\n\n:: Start\nHello.`;
   const result = await compile({ ...BASE, outputMode, sources: [{ filename: 'probe.tw', content }] });
   return result.diagnostics.filter((d) => d.level === 'error').map((d) => d.message);
 }
@@ -42,7 +42,7 @@ describe.each(MODES)('story fields in %s output', (mode) => {
   });
 
   it('keeps an accepted option through the HTML round trip', async () => {
-    const content = `:: StoryData\n{"ifid":"${IFID}","options":["dé﻿bug"]}\n\n:: Start\nHello.`;
+    const content = `:: StoryTitle\nT\n\n:: StoryData\n{"ifid":"${IFID}","options":["dé﻿bug"]}\n\n:: Start\nHello.`;
     const result = await compile({ ...BASE, outputMode: mode, sources: [{ filename: 'p.tw', content }] });
     const back = decompileHTML(Buffer.from(result.output, 'utf8').toString('utf8')).story;
     expect([...back.twine2.options.keys()]).toEqual(['dé﻿bug']);
