@@ -5,12 +5,13 @@
  * overlay.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry } from '../types.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
+import { sha256Hex } from '../format-cache.js';
 import type { BuildOutputs } from '../filesystem.js';
 import { mediaTypeFromFilename, normalizedFileExt } from '../media-types.js';
 import { viteWaitingPage } from '../html-structure.js';
@@ -136,6 +137,26 @@ function fileState(file: string): string | undefined {
     return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
   } catch {
     return undefined; // Missing: it counts as gone.
+  }
+}
+
+/**
+ * A module's file as the bundle was about to read it: its state (see fileState) and the hash of its content.
+ * Taken just before the bundler reads the file, so a write in between makes the file differ from it afterwards.
+ */
+interface FileRead {
+  readonly state: string;
+  readonly hash: string;
+}
+
+/** `file` as it is now, as a FileRead; undefined when it can't be read. */
+function fileRead(file: string): FileRead | undefined {
+  const state = fileState(file);
+  if (state === undefined) return undefined;
+  try {
+    return { state, hash: sha256Hex(readFileSync(file)) };
+  } catch {
+    return undefined;
   }
 }
 
@@ -282,6 +303,11 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // entryFiles are, while a later bundle fails.
   let entryGlobs = new Map<string, GlobScope>();
   let globStates = new Map<string, string>();
+  // Each module of the last good bundle as it read it, by key: a watcher event for one that is still byte for byte
+  // and state for state what the bundle read reports a change the bundle already has (#343). Kept only with a
+  // watcher; the catch-up compares states alone.
+  let entryReads = new Map<string, FileRead>();
+  const readsModules = config.server.watch !== null;
   // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
   const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
@@ -406,14 +432,17 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     const before = fileStates(entryFiles);
     const observed = new Map<string, string>();
     const loaded = new Map<string, string>(); // key → path of each module the bundle loaded
+    const reads = new Map<string, FileRead>();
     let next: EntryBundle;
     try {
       next = await bundleEntry(config, entryPath, 'serve', options.outputFilename, {
         watchFiles,
         onLoad: (file) => {
           const key = fileKey(file);
-          const state = fileState(canonicalPath(file));
+          const read = readsModules ? fileRead(canonicalPath(file)) : undefined;
+          const state = read?.state ?? fileState(canonicalPath(file));
           if (state !== undefined && !observed.has(key)) observed.set(key, state);
+          if (read !== undefined && !reads.has(key)) reads.set(key, read);
           if (!loaded.has(key)) loaded.set(key, canonicalPath(file));
         },
         onResolve: noteSpelling,
@@ -445,7 +474,21 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     entryMissingFolders = [];
     entryGlobs = globs;
     globStates = globsRead;
+    entryReads = reads;
     watchEntryFiles(entryWatchTargets());
+  };
+
+  // Whether the change reported for `key` is one the last good bundle already read (#343): a module of it, not a
+  // story input, that is now as it was, state and content, when the bundle read it. A request catches up with a
+  // change before the watcher reports it; the late event then needs no bundle, compile or reload. Comparing the
+  // content as well tells a real save from it on a file system whose coarse timestamps leave the state unchanged;
+  // a file touched or saved unchanged after the bundle read it has another state, and is bundled again as before.
+  const alreadyRead = (key: string): boolean => {
+    const read = entryReads.get(key);
+    const path = entryFiles.get(key);
+    if (entryStale || read === undefined || path === undefined || keyWithin(key, inputKeys())) return false;
+    const now = fileRead(path);
+    return now?.state === read.state && now.hash === read.hash;
   };
 
   // `initial`: the compile at server start. No page is open yet, and Vite would
@@ -453,6 +496,8 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const rebuild = async (changed: ReadonlySet<string>, initial = false): Promise<void> => {
     if (closed) return;
     try {
+      const unread = [...changed].filter((key) => !alreadyRead(key));
+      if (changed.size > 0 && unread.length === 0 && !linkMoved() && !globsChanged()) return;
       outputs = dev.outputs(config);
       output = outputPaths(outputs);
       // Taken before the compile reads anything, so a file written during it
@@ -461,7 +506,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // The compile cache trusts modification times, which a quick save may leave
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
-      if (entryStale || linkMoved() || globsChanged() || [...changed].some(touchesEntry)) await bundle();
+      if (entryStale || linkMoved() || globsChanged() || unread.some(touchesEntry)) await bundle();
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       html = dev.injectClient(story.output, base);
