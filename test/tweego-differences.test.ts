@@ -141,6 +141,14 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     });
   });
 
+  it('D-18: ends each script but the last with a statement boundary', async () => {
+    const result = await build({
+      'a.tw': ':: StoryTitle\nT\n\n:: A [script]\nwindow.a = {} // note\n\n:: B [script]\n(function () {})();\n',
+    });
+    const script = String((JSON.parse(result.output) as { script: unknown }).script);
+    expect(script).toBe('window.a = {} // note\n;\n(function () {})();');
+  });
+
   it('D-17: writes Twee with LF line endings on every OS', async () => {
     const result = await build({ 'a.tw': ':: Start\r\nline one\r\nline two\r\n' }, 'twee3');
     expect(result.output).toContain('line one\nline two');

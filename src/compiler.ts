@@ -33,7 +33,7 @@ import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
 import { generateIFID } from './ifid.js';
-import { toTwine2HTML, toTwine2Archive, twine2TagColors } from './output-twine2.js';
+import { toTwine2HTML, toTwine2Archive, terminateScript, twine2TagColors } from './output-twine2.js';
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { loadHeadContent, moduleIds } from './modules.js';
@@ -836,7 +836,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
     creator: CREATOR_NAME,
     'creator-version': VERSION,
     style: stylesheets.join('\n'),
-    script: scripts.join('\n'),
+    script: scripts.map((text, i) => (i < scripts.length - 1 ? terminateScript(text) : text)).join(''),
     passages: storyPassages,
   };
 

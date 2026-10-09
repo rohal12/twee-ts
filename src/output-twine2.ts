@@ -157,6 +157,15 @@ function codePassages(story: ReadonlyStory): { scripts: ReadonlyPassage[]; style
 }
 
 /**
+ * `script` ended so that whatever follows it starts a new statement: on a line of its own (a trailing line comment
+ * must not swallow the `;`), then an empty statement. JavaScript does not insert a semicolon before a following
+ * `(`, `[`, `/`, `` ` `` or `+`, so literal concatenation would turn `a = {}` and `(function(){})()` into one call.
+ */
+export function terminateScript(script: string): string {
+  return `${script}${script.endsWith('\n') ? '' : '\n'};\n`;
+}
+
+/**
  * The text of the story's script or style element: the text of a single passage, or the passages joined, each after
  * a comment naming it (as Tweego joins them), with where each passage's text starts.
  */
@@ -171,7 +180,7 @@ function joinCode(passages: readonly ReadonlyPassage[], kind: 'script' | 'styles
   const parts: [CodePart, ...CodePart[]] = [{ label: label(first), start: text.length }];
   text += first.text;
   rest.forEach((p, i) => {
-    if (!text.endsWith('\n')) text += '\n';
+    text = kind === 'script' ? terminateScript(text) : text.endsWith('\n') ? text : `${text}\n`;
     text += header(p, i + 2);
     parts.push({ label: label(p), start: text.length });
     text += p.text;

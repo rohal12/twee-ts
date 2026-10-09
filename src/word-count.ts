@@ -4,6 +4,7 @@
  */
 import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
+import { readSquareBracketedMarkup } from './link-markup.js';
 
 /**
  * The first index of a character at or after a position, for positions that never decrease: each search
@@ -209,14 +210,16 @@ function stripMacros(text: string): string {
   });
 }
 
-/** `text` with each `[[text]]`, `[[text|target]]` link replaced by its text (before the first `|`). */
+/**
+ * `text` with each SugarCube link, `[[Link]]`, `[[Text|Link]]`, `[[Text->Link]]` or `[[Link<-Text]]`, with or
+ * without a setter, replaced by the text it displays. Links are read as `readSquareBracketedMarkup` reads them,
+ * within an allowance of four times the text plus a fixed one, so the time stays linear.
+ */
 function linksToText(text: string): string {
-  return replaceMarkup(text, '[[', (i, finder) => {
-    const close = finder.next(']', i + 2);
-    if (close === -1) return 'never';
-    if (text[close + 1] !== ']') return 'none';
-    const pipe = finder.next('|', i + 2);
-    return { end: close + 2, replacement: text.slice(i + 2, pipe !== -1 && pipe < close ? pipe : close) };
+  const budget = { left: 4 * text.length + 100_000 };
+  return replaceMarkup(text, '[[', (i) => {
+    const markup = readSquareBracketedMarkup(text, i, budget);
+    return markup?.label === undefined ? 'none' : { end: markup.end, replacement: markup.label };
   });
 }
 
