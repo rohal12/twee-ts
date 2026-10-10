@@ -314,7 +314,7 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(twice.stats.words).toBe(once.stats.words);
   });
 
-  describe('loading files', () => {
+  describe('loading files found by comparison with Tweego', () => {
     let dir: string;
     beforeEach(() => {
       dir = mkdtempSync(join(tmpdir(), 'twee-ts-differences-'));
