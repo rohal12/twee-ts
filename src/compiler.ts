@@ -45,6 +45,7 @@ import { toTwine2HTML, toTwine2Archive, terminateScript, twine2TagColors } from 
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { loadHeadContent, moduleIds } from './modules.js';
+import { checkInsertedText } from './html-output-check.js';
 import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
 import { checkWritable, isOwnOutput, writeFileAtomic } from './atomic-write.js';
@@ -449,11 +450,14 @@ function fatalInput(problem: InputProblem, diagnostics: readonly Diagnostic[]): 
  * would silently lack what the author put in the head.
  */
 function readHeadFile(path: string, diagnostics: Diagnostic[]): string {
+  let text: string;
   try {
-    return readUTF8(path, diagnostics).trim();
+    text = readUTF8(path, diagnostics).trim();
   } catch (e) {
     throw fatalInput(inputProblem('head', 'named', failureOfRead(path, e), path, e), diagnostics);
   }
+  checkInsertedText(diagnostics, `The head file "${path}"`, text);
+  return text;
 }
 
 /**
