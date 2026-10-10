@@ -7,7 +7,7 @@
  */
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import type { Diagnostic, ExcludeGlob, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
-import { readUTF8, similarKey } from './util.js';
+import { pushAll, readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { identify } from './path-identity.js';
 import { failureOfRead, inputProblem } from './input-policy.js';
@@ -290,7 +290,7 @@ function readConfig(
   }
 
   const config = parseConfig(raw, filePath, readDiagnostics);
-  diagnostics?.push(...readDiagnostics);
+  pushAll(diagnostics, readDiagnostics);
   return rebaseConfigPaths(config, filePath);
 }
 
@@ -309,8 +309,9 @@ function parseConfig(raw: string, path: string, diagnostics: Diagnostic[]): Twee
       code: 'INVALID_OPTIONS',
     });
   }
-  diagnostics.push(
-    ...decoded.warnings.map((message): Diagnostic => ({
+  pushAll(
+    diagnostics,
+    decoded.warnings.map((message): Diagnostic => ({
       level: 'warning',
       message: `${path}: ${message}`,
       file: path,

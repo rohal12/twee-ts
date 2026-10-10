@@ -79,6 +79,12 @@ describe('globCalls', () => {
     expect(globCalls(code)).toEqual({ calls: expected, unreadable: [] });
   });
 
+  // #396: the walk spread each node's children into push(), which overflowed the stack for a long array literal.
+  it('reads a module with a very long array literal', { timeout: 60_000 }, () => {
+    const code = `import.meta.glob('./x/*.js', { eager: true });\nexport const a = [${'0,'.repeat(300_000)}];`;
+    expect(globCalls(code)).toEqual({ calls: [call(['./x/*.js'])], unreadable: [] });
+  });
+
   it('reports where a call it cannot read is', () => {
     const code = "type T = string;\nimport.meta.glob(./a/*.js); import.meta.glob('./b/*.js');\nimport.meta.glob(";
     expect(globCalls(code)).toEqual({ calls: [call(['./b/*.js'])], unreadable: [17, 75] });

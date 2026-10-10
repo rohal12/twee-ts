@@ -19,7 +19,7 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, ObjectExpression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
 import { AcornParser, trySyntax } from '../js-syntax.js';
-import { isRecord } from '../util.js';
+import { isRecord, pushAll } from '../util.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
 
@@ -66,7 +66,7 @@ function* nodesOf(root: AnyNode): Generator<AnyNode> {
   for (let value = stack.pop(); value !== undefined; value = stack.pop()) {
     if (isNode(value)) yield value;
     const children: readonly unknown[] = Array.isArray(value) ? value : isNode(value) ? Object.values(value) : [];
-    stack.push(...children.toReversed());
+    pushAll(stack, children.toReversed());
   }
 }
 
@@ -213,7 +213,7 @@ function scopeOf(dir: string, rest: string, exhaustive: boolean): GlobScope {
   const plain = magic === -1 ? segments.slice(0, -1) : segments.slice(0, magic);
   const below = segments.slice(plain.length);
   return {
-    dir: toPosix(resolve(dir, ...plain)),
+    dir: toPosix(plain.reduce((folder, segment) => resolve(folder, segment), dir)),
     deep: below.length > 1 || below.some((segment) => segment.includes('**')),
     dot: exhaustive || namesDot(below),
     exhaustive,

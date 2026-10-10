@@ -6,7 +6,7 @@
  */
 import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
-import { readUTF8, readBase64, fileStem } from './util.js';
+import { readUTF8, readBase64, fileStem, pushAll } from './util.js';
 import { cssStringEscape, scriptContentEscape, styleContentEscape } from './escape.js';
 import { checkInsertedText, codeEscapeDiagnostics } from './html-output-check.js';
 import { fillFormatTemplate } from './template.js';
@@ -97,9 +97,12 @@ function loadModuleTagged(
   const source = readUTF8(filename, diagnostics).trim();
   if (source.length === 0) return null;
   checkInsertedText(diagnostics, `The module "${filename}"`, source);
-  diagnostics?.push(
-    ...codeEscapeDiagnostics(tag, { text: source, parts: [{ label: `module "${filename}"`, start: 0 }] }),
-  );
+  if (diagnostics) {
+    pushAll(
+      diagnostics,
+      codeEscapeDiagnostics(tag, { text: source, parts: [{ label: `module "${filename}"`, start: 0 }] }),
+    );
+  }
 
   const family = fileStem(filename);
   const idSlug = idFor(`${tag}-module-${slugify(family)}`, filename);
@@ -160,6 +163,6 @@ export function loadHeadContent(
 export function modifyHead(html: string, modulePaths: string[], headFile?: string, diagnostics?: Diagnostic[]): string {
   const head = loadHeadContent(modulePaths, headFile, diagnostics);
   const filled = fillFormatTemplate({ template: html, placeholders: [], head, owner: 'The HTML' });
-  diagnostics?.push(...filled.diagnostics);
+  pushAll(diagnostics, filled.diagnostics);
   return filled.output;
 }

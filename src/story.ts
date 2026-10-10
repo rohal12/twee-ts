@@ -31,6 +31,7 @@ import {
 import type { GeneratedName } from './passage.js';
 import { trimTweeSpace } from './twee-syntax.js';
 import type { DecodeIssue, DecodeIssueKind, TextDecodeResult } from './json-decode.js';
+import { pushAll } from './util.js';
 import {
   field,
   type Decoder,
@@ -459,7 +460,7 @@ export function unmarshalStorySettings(story: Story, text: string, diagnostics: 
   const data = decodeStorySettings(text);
   story.twine1 = { settings: new Map(data.settings) };
   story.legacyIFID = data.legacyIFID;
-  diagnostics.push(...storySettingsDiagnostics(data, undefined));
+  pushAll(diagnostics, storySettingsDiagnostics(data, undefined));
 }
 
 // --- Story metadata from special passages ---
@@ -516,7 +517,7 @@ function readSpecialPassage(story: Story, p: Passage, diagnostics: Diagnostic[])
       const data = decodeStorySettings(p.text);
       story.twine1 = { settings: new Map(data.settings) };
       story.legacyIFID = data.legacyIFID;
-      diagnostics.push(...storySettingsDiagnostics(data, p.source));
+      pushAll(diagnostics, storySettingsDiagnostics(data, p.source));
       return p;
     }
 

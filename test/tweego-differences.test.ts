@@ -3,7 +3,8 @@
  * number. A difference that is not listed there is a bug.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { constants } from 'node:buffer';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -393,6 +394,22 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     const decoy = decompileHTML(`<html><body><template>${story('Decoy', 'decoy')}</template>${story('Real', 'real')}`);
     expect(decoy.story.name).toBe('Real');
     expect(passageText(`<template>${story('Decoy', 'decoy')}</template>${story('Real', 'real')}`)).toBe('real');
+  });
+
+  it('D-30: rejects a text file too large for a string before reading it, and HTML nested more than 512 deep', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-ts-d30-'));
+    try {
+      const path = join(dir, 'huge.twee');
+      writeFileSync(path, '');
+      // Sparse: no data is written.
+      truncateSync(path, constants.MAX_STRING_LENGTH + 1);
+      const result = await compile({ sources: [path], outputMode: 'json', noRemote: true });
+      expect(result.diagnostics.map((d) => d.message)).toContainEqual(expect.stringMatching(/File size .* is greater/));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(() => decompileHTML('<div>'.repeat(511))).toThrow('HTML nests more than 512 elements deep.');
+    expect(() => decompileHTML('<div>'.repeat(510))).not.toThrow();
   });
 
   it('lists every difference of docs/tweego-differences.md with a test named after it', () => {

@@ -7,7 +7,7 @@
  * and --log-files go to standard error. Exit status: 0 success, 1 build or lint errors, 2 usage errors.
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { compileForOutputFile, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
+import { compileForOutputFile, resourceLimitError, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
 import type { ExtraInput } from '../src/compiler.js';
 import { formatDiagnostic } from '../src/diagnostic-text.js';
 import { WatchPathError } from '../src/filesystem.js';
@@ -485,7 +485,9 @@ main(process.argv.slice(2)).then(
     // process.exitCode, not process.exit(): output still being written to a pipe is not cut off.
     if (process.exitCode === undefined || status !== EXIT_OK) process.exitCode = status;
   },
-  (err: unknown) => {
+  (thrown: unknown) => {
+    // An engine limit reached outside a build (in lint, say) is named as a build's is.
+    const err = resourceLimitError(thrown) ?? thrown;
     logErrorDiagnostics(err);
     log(`error: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = EXIT_FAILED;

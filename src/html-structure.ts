@@ -18,6 +18,7 @@ import type { InContext, SourceRange } from './code-context.js';
 import { attrEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
 import { TweeTsError } from './errors.js';
+import { pushAll } from './util.js';
 
 type HtmlDocument = DefaultTreeAdapterTypes.Document;
 /** An element of a parsed document. */
@@ -29,12 +30,99 @@ type HtmlNode = DefaultTreeAdapterTypes.Node;
 const HTML_NS = htmlSpec.NS.HTML;
 
 /**
+ * The deepest nesting of elements read from HTML, as Chromium's parser limits it (512). An HTML parser looks through
+ * the open elements at many tags, so reading costs the size of the document times its depth; deeper documents are
+ * rejected rather than read for minutes (#381). Twine's own HTML and story format templates nest a few dozen deep.
+ */
+export const MAX_HTML_DEPTH = 512;
+
+/** HTML nested more than `MAX_HTML_DEPTH` elements deep. */
+export class HtmlNestingError extends TweeTsError {
+  constructor() {
+    super(`HTML nests more than ${String(MAX_HTML_DEPTH)} elements deep.`, [], { code: 'BUILD_FAILED' });
+  }
+}
+
+/**
+ * parse5's tree adapter, rejecting an element that would lie more than `MAX_HTML_DEPTH` elements deep (template
+ * contents count as children of their template). The depth of each parent is remembered, so a check costs a lookup;
+ * when the parser moves a node (the adoption agency algorithm), what was remembered is dropped and worked out again,
+ * by walking up at most `MAX_HTML_DEPTH` or so parents. Either way the checks add work in proportion to the size of
+ * the document.
+ */
+function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
+  const templateOfContent = new WeakMap<ParentNode, ParentNode>();
+  const parentOf = (node: ParentNode): ParentNode | null | undefined =>
+    'parentNode' in node ? node.parentNode : templateOfContent.get(node);
+  // The number of elements from a node up to the root, itself included, for the current `moves`.
+  const known = new WeakMap<ParentNode, { readonly depth: number; readonly moves: number }>();
+  let moves = 0;
+  const depthOf = (start: ParentNode): number => {
+    const unknown: ParentNode[] = [];
+    let depth = 0;
+    for (let node: ParentNode | null | undefined = start; node !== null && node !== undefined; node = parentOf(node)) {
+      const remembered = known.get(node);
+      if (remembered?.moves === moves) {
+        depth = remembered.depth;
+        break;
+      }
+      unknown.push(node);
+    }
+    for (const node of unknown.reverse()) {
+      if (isElement(node)) depth += 1;
+      known.set(node, { depth, moves });
+    }
+    return depth;
+  };
+  const checkDepth = (parent: ParentNode, child: ChildNode): void => {
+    if (!isElement(child)) return;
+    // An element that already has children is a subtree moving in: depths remembered inside it are stale.
+    if (child.childNodes.length > 0 || (templateContent(child)?.childNodes.length ?? 0) > 0) moves += 1;
+    const depth = depthOf(parent) + 1;
+    if (depth > MAX_HTML_DEPTH) {
+      throw new HtmlNestingError();
+    }
+    known.set(child, { depth, moves });
+  };
+  return {
+    ...defaultTreeAdapter,
+    appendChild(parent, child) {
+      checkDepth(parent, child);
+      defaultTreeAdapter.appendChild(parent, child);
+    },
+    insertBefore(parent, child, reference) {
+      checkDepth(parent, child);
+      defaultTreeAdapter.insertBefore(parent, child, reference);
+    },
+    detachNode(node) {
+      // A node moves: the depths below it change.
+      moves += 1;
+      defaultTreeAdapter.detachNode(node);
+    },
+    setTemplateContent(template, content) {
+      templateOfContent.set(content, template);
+      defaultTreeAdapter.setTemplateContent(template, content);
+    },
+  };
+}
+
+/**
  * Parse a whole document as a browser does with scripting enabled, with the source location of every node unless
  * `locations` is false. parse5 preprocesses the input stream as the HTML standard does (CRLF and CR become LF; NUL
- * is dropped from text and becomes U+FFFD elsewhere); source locations are offsets into `html` as given.
+ * is dropped from text and becomes U+FFFD elsewhere); source locations are offsets into `html` as given. Throws a
+ * `TweeTsError` when elements nest more than `MAX_HTML_DEPTH` deep (an `HtmlNestingError`).
  */
 export function parseHtml(html: string, locations = true): HtmlDocument {
-  return parse(html, { sourceCodeLocationInfo: locations, scriptingEnabled: true });
+  return parse(html, {
+    sourceCodeLocationInfo: locations,
+    scriptingEnabled: true,
+    treeAdapter: depthLimitedTreeAdapter(),
+  });
+}
+
+/** Parse `html` as the content of a `div` element, as `parseHtml()` reads a document. */
+function parseHtmlFragment(html: string): DefaultTreeAdapterTypes.DocumentFragment {
+  return parseFragment(FRAGMENT_CONTEXT, html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
 }
 
 function isElement(node: HtmlNode): node is HtmlElement {
@@ -328,7 +416,7 @@ function headEndCandidates(doc: HtmlDocument, head: HtmlElement): number[] {
     undefined,
   );
   if (lastChildEnd !== undefined) candidates.push(lastChildEnd);
-  candidates.push(...headStartCandidates(doc));
+  pushAll(candidates, headStartCandidates(doc));
   return candidates;
 }
 
@@ -768,7 +856,7 @@ function jQueryRuns(script: HtmlElement): RunningScript | undefined {
  * template (`type="text/template"`) or JSON, is not code.
  */
 export function scriptsJQueryRuns(html: string): RunningScript[] {
-  const fragment = parseFragment(FRAGMENT_CONTEXT, html, { scriptingEnabled: true });
+  const fragment = parseHtmlFragment(html);
   const scripts: RunningScript[] = [];
   for (const { node } of descendants(fragment, false)) {
     const running = isElement(node) && node.tagName === 'script' ? jQueryRuns(node) : undefined;
@@ -785,7 +873,7 @@ export function scriptsJQueryRuns(html: string): RunningScript[] {
  * parses them: lower case, and of an attribute written twice only the first.
  */
 export function wikifiedElementAttributes(startTag: string): ReadonlyMap<string, string> | undefined {
-  let node: HtmlNode = parseFragment(FRAGMENT_CONTEXT, startTag, { scriptingEnabled: true });
+  let node: HtmlNode = parseHtmlFragment(startTag);
   for (let child = childrenOf(node)[0]; child !== undefined; child = childrenOf(node)[0]) node = child;
   if (node.nodeName === '#document-fragment') return new Map();
   if (!isElement(node)) return undefined;

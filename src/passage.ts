@@ -8,6 +8,7 @@ import { tweeEscape } from './twee-syntax.js';
 import { countTextWords } from './word-count.js';
 import type { DecodeIssue, FieldReader, TextDecodeResult } from './json-decode.js';
 import { jsonString, nullAsZero, ownRecord, readObjectText, formatJsonPath } from './json-decode.js';
+import { pushAll } from './util.js';
 
 // Info passages contain structural data, metadata, and code rather than story content.
 const INFO_PASSAGE_NAMES = new Set([
@@ -39,7 +40,7 @@ export function hasTag(p: ReadonlyPassage, tag: string): boolean {
   return p.tags.includes(tag);
 }
 
-function hasAnyTag(p: ReadonlyPassage, ...tags: string[]): boolean {
+function hasAnyTag(p: ReadonlyPassage, tags: readonly string[]): boolean {
   return p.tags.some((t) => tags.includes(t));
 }
 
@@ -48,7 +49,7 @@ function hasTagStartingWith(p: ReadonlyPassage, prefix: string): boolean {
 }
 
 function hasInfoTags(p: ReadonlyPassage): boolean {
-  return hasAnyTag(p, ...INFO_TAGS) || hasTagStartingWith(p, 'Twine.');
+  return hasAnyTag(p, INFO_TAGS) || hasTagStartingWith(p, 'Twine.');
 }
 
 function hasInfoName(p: ReadonlyPassage): boolean {
@@ -74,7 +75,7 @@ const ENTRY_TAGS = INFO_TAGS.filter((t) => t !== 'annotation');
  * story data (StoryData, StorySettings, StoryIncludes), a note (`annotation`) or a `Twine.` passage.
  */
 export function isEntryPassage(p: ReadonlyPassage): boolean {
-  return (hasInfoName(p) && !DATA_PASSAGE_NAMES.has(p.name)) || hasAnyTag(p, ...ENTRY_TAGS);
+  return (hasInfoName(p) && !DATA_PASSAGE_NAMES.has(p.name)) || hasAnyTag(p, ENTRY_TAGS);
 }
 
 export function isStoryPassage(p: ReadonlyPassage): boolean {
@@ -137,7 +138,10 @@ export function decodePassageMetadata(json: string): MetadataDecodeResult {
       const r =
         value === null ? { ok: true as const, value: entries.get(name) ?? '' } : jsonString(value, path, fieldIssues);
       if (r.ok) entries.set(name, r.value);
-      rejected.push(...fieldIssues.map((issue) => issue.message));
+      pushAll(
+        rejected,
+        fieldIssues.map((issue) => issue.message),
+      );
     },
   });
   const read = readObjectText(json, {

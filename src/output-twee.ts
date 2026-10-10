@@ -8,6 +8,7 @@ import { decodeStoryData, marshalStoryData } from './story.js';
 import { parseTwee } from './parser.js';
 import { ownRecord } from './json-decode.js';
 import { isHeaderLine, sourceLines, splitTweeFields, trimTweeSpace } from './twee-syntax.js';
+import { pushAll } from './util.js';
 
 /**
  * Serialize the story as Twee. The StoryData passage is written from the story model rather than
@@ -30,8 +31,11 @@ export function toTwee(
 ): string {
   const passages = withEffectiveStoryData(story, options.addStoryData ?? false);
   const written = passages.map((p) => tweeRoundTrip(p, outMode));
-  options.diagnostics?.push(...written.flatMap(({ diagnostics }) => diagnostics));
-  if (outMode === 'twee1') options.diagnostics?.push(...twee1MetadataWarning(passages));
+  pushAll(
+    options.diagnostics,
+    written.flatMap(({ diagnostics }) => diagnostics),
+  );
+  if (outMode === 'twee1' && options.diagnostics) pushAll(options.diagnostics, twee1MetadataWarning(passages));
   return written.map(({ twee }) => twee).join('');
 }
 
@@ -158,7 +162,7 @@ function differences(p: ReadonlyPassage, { passages }: ReadBack, outMode: Output
     ];
   }
   if (!sameStrings(back.tags, p.tags)) {
-    problems.push(...orElse(tagProblems(p.tags, outMode), `its tags read back as ${JSON.stringify(back.tags)}`));
+    pushAll(problems, orElse(tagProblems(p.tags, outMode), `its tags read back as ${JSON.stringify(back.tags)}`));
   }
   if (outMode === 'twee3' && !sameEntries(metadataEntries(back), metadataEntries(p))) {
     problems.push(`its metadata reads back as ${JSON.stringify(ownRecord(metadataEntries(back)))}`);

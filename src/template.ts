@@ -10,6 +10,7 @@ import type { Diagnostic } from './types.js';
 import {
   analyzeTemplate,
   contentStaysInHead,
+  HtmlNestingError,
   locateHeadEnd,
   locateStoreArea,
   locateTextContainer,
@@ -19,6 +20,8 @@ import {
 import type { HeadPlacement, PlaceholderOccurrence, PlaceholderSite } from './html-structure.js';
 import { escapeForContext, htmlEscape, jsStringEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
+import { pushAll } from './util.js';
+import { TweeTsError } from './errors.js';
 
 /** What replaces a placeholder. */
 export type PlaceholderValue =
@@ -79,8 +82,20 @@ interface Edit {
   readonly text: string;
 }
 
-/** Fill a story format template: placeholders, head content and the store area comment. */
+/**
+ * Fill a story format template: placeholders, head content and the store area comment. Throws a TweeTsError naming
+ * the template when it nests elements too deeply to read.
+ */
 export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
+  try {
+    return fillTemplate(fill);
+  } catch (e) {
+    if (!(e instanceof HtmlNestingError)) throw e;
+    throw new TweeTsError(`${fill.owner}: ${e.message}`, [], { code: e.code, cause: e });
+  }
+}
+
+function fillTemplate(fill: TemplateFill): FilledTemplate {
   const { template, tail, owner } = fill;
   // The story data of a pre-1.4 Twine 1 format, between the template and the footer, is a sequence of tiddler
   // elements; one stands in for it while the template and footer are parsed together.
@@ -102,14 +117,14 @@ export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
       container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
     };
     const placed = placeholderEdits(document, placeholder, occurrences, owner, locate);
-    edits.push(...placed.edits);
-    diagnostics.push(...placed.diagnostics);
+    pushAll(edits, placed.edits);
+    pushAll(diagnostics, placed.diagnostics);
   }
 
   const head = fill.head ?? '';
   if (head !== '') {
     const placement = locateHeadEnd(analysis.marked, analysis.doc);
-    diagnostics.push(...headDiagnostics(placement, owner, document));
+    pushAll(diagnostics, headDiagnostics(placement, owner, document));
     if (placement !== undefined) {
       // On its own line, as Tweego writes it; but where the head has already ended, the line break would be text
       // after the head, so it is left out there.
@@ -227,7 +242,7 @@ function placeholderEdits(
   for (const entry of occurrences) {
     const text = replace(entry);
     if (text === undefined) diagnostics.push(unsupportedSite(placeholder, entry, owner, document));
-    edits.push(...edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
+    pushAll(edits, edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
   }
   return { edits, diagnostics };
 }

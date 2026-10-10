@@ -328,7 +328,9 @@ export function readFormatObject(source: string): FormatObjectRead {
       const { error } = parsed;
       return {
         ok: false,
-        reason: `The story format file is not valid JavaScript: ${error.message} at ${reader.position(error.pos)}.`,
+        reason: error.tooDeep
+          ? `The story format file nests too deeply to read (the JavaScript parser ran out of stack space) at ${reader.position(error.pos)}.`
+          : `The story format file is not valid JavaScript: ${error.message} at ${reader.position(error.pos)}.`,
       };
     }
   }
