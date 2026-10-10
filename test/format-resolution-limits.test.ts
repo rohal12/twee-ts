@@ -135,7 +135,8 @@ describe('formatResolutionTimeout: one time limit for finding the story format',
       const urls = [`${server.origin}/a.js`, `http://127.0.0.1:${(silent.address() as AddressInfo).port}/b.js`];
       const built = await build({ formatUrls: urls, formatFetchTimeout: 50, formatResolutionTimeout: limit });
       const warnings = built.warnings.join('\n');
-      for (const url of urls) expect(warnings).toContain(`Failed to download format from ${url}: timed out after 50 ms`);
+      for (const url of urls)
+        expect(warnings).toContain(`Failed to download format from ${url}: timed out after 50 ms`);
       expect(warnings).not.toContain('formatResolutionTimeout');
     } finally {
       silent.close();
