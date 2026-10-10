@@ -544,6 +544,27 @@ describe('CLI --lint', () => {
     expect(r.stdout).toContain('Lint passed.');
     expect(r.status).toBe(0);
   });
+
+  it('writes the same report whatever the system locale (#375)', () => {
+    // 1234 words: the count is grouped in thousands.
+    writeFileSync(join(dir, 'story.tw'), `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\n${'a'.repeat(5 * 1234)}\n`);
+    // German groups with periods, Arabic writes Arabic-Indic digits.
+    const reports = ['de_DE.UTF-8', 'ar_EG.UTF-8'].map(
+      (locale) =>
+        runCli(dir, ['--no-config', '--lint', 'story.tw'], { ...process.env, LC_ALL: locale, LANG: locale }).stdout,
+    );
+    expect(reports).toEqual([
+      expect.stringContaining('3 total (1 story, 2 info), 1,234 words, 1 file\n'),
+      expect.stringContaining('3 total (1 story, 2 info), 1,234 words, 1 file\n'),
+    ]);
+  }, 30_000);
+
+  it('fails a story that HTML output rejects for text HTML cannot carry (#365)', () => {
+    const r = lintStory(`:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\nA\u0000B\n`);
+    expect(r.stdout).toContain('error: The text of passage "Start" contains U+0000, which HTML cannot carry');
+    expect(r.stdout).toContain('Lint failed.');
+    expect(r.status).toBe(1);
+  });
 });
 
 describe('CLI with a story format that is not available', () => {

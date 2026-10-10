@@ -11,7 +11,7 @@
  *   expect(map.brokenLinks).toHaveLength(0);
  */
 import type { InspectOptions, PassageOmission, ReadonlyPassage, ReadonlyStory } from './types.js';
-import { hasTag, isInfoPassage, isStoryPassage } from './passage.js';
+import { hasTag, isEntryPassage, isInfoPassage, isStoryPassage } from './passage.js';
 import { passageOmission } from './passage-omission.js';
 import { findJavaScriptPassageLinks, findPassageLinks } from './sugarcube-macros.js';
 
@@ -49,10 +49,11 @@ export interface StoryMap {
   readonly deadEnds: readonly string[];
   /**
    * Story passages that the player cannot reach: no chain of links leads to them from the start passage or
-   * from an info passage (such as StoryInit, PassageHeader, or a `script` or `widget` passage, which the story
-   * format runs or shows without a link). A passage that links only to itself, or a group that links only
-   * among itself, is an orphan. Only the links `links` lists count, so a passage that is shown only through a
-   * macro such as `<<include>>` is listed too.
+   * from an info passage the story format runs or shows without a link (such as StoryInit, PassageHeader, or a
+   * `script` or `widget` passage). An `annotation` note, a `Twine.` passage (private or media), StoryData,
+   * StorySettings and StoryIncludes are not shown, so links from them count only when a link leads to them. A
+   * passage that links only to itself, or a group that links only among itself, is an orphan. Only the links
+   * `links` lists count, so a passage that is shown only through a macro such as `<<include>>` is listed too.
    */
   readonly orphans: readonly string[];
   /** The configured start passage name, if any. */
@@ -272,9 +273,11 @@ export function storyInspect(story: ReadonlyStory, options: InspectOptions = {})
     }
   }
 
-  // Orphans: story passages that no chain of links reaches from the start or from an info passage
+  // Orphans: story passages that no chain of links reaches from the start or from a passage the format runs or
+  // shows without a link. A note, private passage or story data is not one, but its links count once reached.
   const start = story.twine2.start || 'Start';
-  const reached = reachable([start, ...infoPassages], links);
+  const entries = story.passages.filter(isEntryPassage).map((p) => p.name);
+  const reached = reachable([start, ...entries], links);
   const orphans = storyPassages.filter((name) => !reached.has(name));
 
   return {

@@ -4,10 +4,11 @@
  */
 import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
-import { compileForOutputFile } from './compiler.js';
+import { compileForLint } from './compiler.js';
 import { formatDiagnostic } from './diagnostic-text.js';
 import { storyInspect } from './inspect.js';
 import { describeOmission } from './passage-omission.js';
+import { twine2MarkupDiagnostics } from './output-twine2.js';
 import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 
 export interface LintResult {
@@ -37,7 +38,7 @@ export interface LintResult {
   readonly deadEnds: readonly string[];
   /**
    * Story passages the player cannot reach: no chain of links leads to them from the start passage or from
-   * an info passage (see `StoryMap.orphans`).
+   * an info passage the story format runs or shows without a link (see `StoryMap.orphans`).
    */
   readonly orphans: readonly string[];
 }
@@ -45,7 +46,8 @@ export interface LintResult {
 /**
  * Lint a story: compile without output rendering, then inspect structure.
  * Uses JSON output mode internally to avoid format resolution, so it checks
- * the starting passage itself, against the Twine 2 passage rules. Link
+ * the starting passage itself, against the Twine 2 passage rules, and adds
+ * what Twine 2 HTML output reports about the story's own data. Link
  * destinations are checked against the same rules: a link to a passage that
  * Twine 2 output leaves out is broken, and a passage it leaves out (other than
  * a script passage) gives no links.
@@ -65,12 +67,14 @@ export async function lintForOutputFile(
   options: Omit<CompileOptions, 'outputMode'>,
   outFile: string | undefined,
 ): Promise<LintResult> {
-  const result = await compileForOutputFile({ ...options, outputMode: 'json' }, outFile);
+  const result = await compileForLint(options, outFile);
   const map = storyInspect(result.story, { target: 'twine2' });
 
   return {
     diagnostics: [
       ...result.diagnostics,
+      // What Twine 2 HTML output reports beyond JSON output about the story's own data.
+      ...twine2MarkupDiagnostics(result.story),
       ...startPassageDiagnostics(result.story, map.start, 'twine2'),
       ...storyTitleDiagnostics(result.story, 'twine2'),
     ],
@@ -87,9 +91,15 @@ export async function lintForOutputFile(
   };
 }
 
-/** `n` and a noun, plural unless `n` is 1: `1 file`, `2 files`, `1,234 words`. */
+/**
+ * `n` and a noun, plural unless `n` is 1: `1 file`, `2 files`, `1,234 words`. Digits are grouped in threes with
+ * commas whatever the system locale, so the report is the same everywhere.
+ */
 function counted(n: number, noun: string): string {
-  return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+  const digits = String(n);
+  const groups: string[] = [];
+  for (let end = digits.length; end > 0; end -= 3) groups.unshift(digits.slice(Math.max(0, end - 3), end));
+  return `${groups.join(',')} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 /**

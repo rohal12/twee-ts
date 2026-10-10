@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compile } from '../src/compiler.js';
 import { lint, formatLintReport } from '../src/lint.js';
+import { storyInspect } from '../src/inspect.js';
 import type { LintResult } from '../src/lint.js';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -359,6 +360,46 @@ describe('lint: SugarCube info passages', () => {
     expect(result.storyPassages).toBe(2);
     expect(result.infoPassages).toBe(4);
     expect(result.diagnostics).toEqual([]);
+  });
+});
+
+describe('orphans: the passages a story format runs or shows without a link are the roots (#369)', () => {
+  const STORY_DATA = ':: StoryTitle\nTitled\n\n:: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n\n';
+  /** The passage `Target` and a passage `header` whose text is `body`, which links to it. */
+  const withLinker = (header: string, body = '[[Target]]'): string =>
+    `${STORY_DATA}:: Start\nThe end.\n\n:: Target\nText.\n\n:: ${header}\n${body}\n`;
+
+  // Each info passage, and whether a link from it reaches Target. Story passages are listed elsewhere.
+  const LINKERS: readonly (readonly [header: string, body: string | undefined, root: boolean])[] = [
+    ['Notes [annotation]', undefined, false],
+    ['Media [Twine.image]', undefined, false],
+    ['Hidden [Twine.private]', undefined, false],
+    ['StorySettings', 'undo:on\n[[Target]]', false],
+    ['StoryIncludes', 'more.tw\n[[Target]]', false],
+    ['StoryInit', undefined, true],
+    ['PassageHeader', undefined, true],
+    ['StoryMenu', undefined, true],
+    ['StoryCaption', undefined, true],
+    ['Boot [init]', undefined, true],
+    ['Widgets [widget]', '<<widget "w">>[[Target]]<</widget>>', true],
+    ['Logic [script]', 'window.next = "[[Target]]";', true],
+    ['Annotated widgets [annotation widget]', '<<widget "w">>[[Target]]<</widget>>', true],
+  ];
+
+  it.each(LINKERS)('%s: reaches Target: %s', async (header, body, root) => {
+    const content = withLinker(header, body);
+    const sources = [{ filename: 'story.tw', content }];
+    const expected = root ? [] : ['Target'];
+    expect((await lint({ sources })).orphans).toEqual(expected);
+    const { story } = await compile({ sources, outputMode: 'json' });
+    expect(storyInspect(story).orphans).toEqual(expected);
+  });
+
+  it('follows the links of a note once a link leads to it', async () => {
+    const content = `${STORY_DATA}:: Start\n[[Notes]]\n\n:: Notes [annotation]\n[[Target]]\n\n:: Target\nText.\n`;
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+    expect(result.orphans).toEqual([]);
+    expect(result.brokenLinks).toEqual([]);
   });
 });
 

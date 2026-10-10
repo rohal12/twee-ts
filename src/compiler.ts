@@ -29,7 +29,14 @@ import {
   toBuildOutputs,
   watchFilesystem,
 } from './filesystem.js';
-import type { BuildOutputs, DiscoveredFile, OutputPaths, SkippedOutput, WatchTiming } from './filesystem.js';
+import type {
+  BuildOutputs,
+  DiscoveredFile,
+  FilenamesResult,
+  OutputPaths,
+  SkippedOutput,
+  WatchTiming,
+} from './filesystem.js';
 import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
 import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
 import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
@@ -108,6 +115,21 @@ export async function compileForOutputFile(
   extraInputs: readonly ExtraInput[] = [],
 ): Promise<CompileResult> {
   return buildOutput(options, { cache, outputs, extraInputs });
+}
+
+/**
+ * The JSON build lint inspects, for a project whose builds are written to `outputs` (see `compileForOutputFile()`).
+ * It also reads the modules and head file as HTML output does, so it reports what HTML output would about them:
+ * a module that can't be used, text HTML cannot carry, code the escapers change, and a head file that can't be
+ * read (fatal, as in a build).
+ *
+ * Internal, for lint; not part of the public API.
+ */
+export async function compileForLint(
+  options: Omit<CompileOptions, 'outputMode'>,
+  outputs: string | undefined,
+): Promise<CompileResult> {
+  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true });
 }
 
 /**
@@ -545,6 +567,24 @@ function moduleTags(
 }
 
 /**
+ * The content HTML output injects into the head (the module tags, then the head file) and what went into it, the
+ * modules that loaded and the head file, as Tweego lists them. Adds what reading them reports to `diagnostics`;
+ * a head file that can't be read is fatal (see `readHeadFile()`).
+ */
+function headContent(
+  modules: FilenamesResult,
+  headFile: string | undefined,
+  diagnostics: Diagnostic[],
+): { readonly head: string; readonly injected: string[] } {
+  diagnostics.push(...modules.diagnostics);
+  const tags = moduleTags(modules.files, diagnostics);
+  const head = [tags.tags, headFile ? readHeadFile(headFile, diagnostics) : '']
+    .filter((part) => part.length > 0)
+    .join('\n');
+  return { head, injected: [...tags.loaded, ...(headFile ? [identify(headFile).display] : [])] };
+}
+
+/**
  * `outputs`: what the build writes (an output file's path, or a bundler's outputs),
  * which source and module discovery skip, so an output inside a source folder is
  * never loaded back. The output-safety checks run before any input is read and before
@@ -707,14 +747,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       diagnostics.push(...storyTitleDiagnostics(story, format.isTwine2 ? 'twine2' : 'twine1'));
 
       // Modules and head file, injected before the template's closing head tag while the template is filled
-      diagnostics.push(...modules.diagnostics);
-      const { headFile } = options;
-      const injected = moduleTags(modules.files, diagnostics);
-      const head = [injected.tags, headFile ? readHeadFile(headFile, diagnostics) : '']
-        .filter((part) => part.length > 0)
-        .join('\n');
-      // The modules that loaded and the head file: what went into the head, as Tweego lists it.
-      externalFiles = [...injected.loaded, ...(headFile ? [identify(headFile).display] : [])];
+      const { head, injected } = headContent(modules, options.headFile, diagnostics);
+      externalFiles = injected;
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
@@ -727,6 +761,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       throw new TweeTsError(`Unhandled output mode: ${_exhaustive}`, diagnostics);
     }
   }
+  // Lint reads the modules and head file as HTML output does, for what HTML output would report about them.
+  if (context.checkHead === true && outputMode !== 'html') headContent(modules, options.headFile, diagnostics);
 
   // Compute stats
   const stats: CompileStats = {
@@ -789,6 +825,8 @@ interface BuildContext {
   readonly extraInputs?: readonly ExtraInput[];
   /** Receives every source and module file the build found, before any is read (for the watcher). */
   readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
+  /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
+  readonly checkHead?: boolean;
 }
 
 /** A run of sources of one kind, in the order supplied. */

@@ -190,7 +190,8 @@ describe('storyInspect', () => {
         { from: 'Logic', to: 'Gone' },
         { from: 'Hidden Logic', to: 'Lost' },
       ]);
-      expect(map.orphans).toEqual([]);
+      // No format shows a Twine.private passage, so its link to Epilogue counts only once a link leads to it (#369).
+      expect(map.orphans).toEqual(['Epilogue']);
     });
 
     it('reads no links from passages that Twine 2 output leaves out, but still reads scripts', async () => {

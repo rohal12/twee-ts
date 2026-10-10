@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import { formatLintReport } from '../src/lint.js';
 import type { LintResult } from '../src/lint.js';
 
@@ -45,9 +46,20 @@ describe('formatLintReport counts (#250 CLI-3)', () => {
     [0, [], '0 words, 0 files'],
     [1, ['a.tw'], '1 word, 1 file'],
     [2, ['a.tw', 'b.tw'], '2 words, 2 files'],
-    [1234, ['a.tw'], `${(1234).toLocaleString()} words, 1 file`],
+    [1234, ['a.tw'], '1,234 words, 1 file'],
+    [241676, ['a.tw'], '241,676 words, 1 file'],
+    [1000000, ['a.tw'], '1,000,000 words, 1 file'],
   ])('writes %d words and %j as "%s"', (words, files, expected) => {
     const report = formatLintReport({ ...BASE, stats: { ...BASE.stats, words, files } });
     expect(report).toContain(`info), ${expected}\n`);
+  });
+
+  it('groups digits as en-US does, whatever the system locale (#375)', () => {
+    fc.assert(
+      fc.property(fc.maxSafeNat(), (words) => {
+        const report = formatLintReport({ ...BASE, stats: { ...BASE.stats, words } });
+        expect(report).toContain(`info), ${words.toLocaleString('en-US')} word`);
+      }),
+    );
   });
 });
