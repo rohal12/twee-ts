@@ -2,7 +2,7 @@
  * Edge cases of the format cache, the index checks and the request layer: damaged cache entries,
  * cache writes that fail part way, response bodies that break off, and malformed index entries.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs';
 import {
   chmodSync,
@@ -31,7 +31,13 @@ import type { CacheOrigin, NewRecord } from '../src/format-cache.js';
 import { compile } from '../src/compiler.js';
 import { resolveStoryFormat } from '../src/format-resolution.js';
 import { describeFormatRequest, errorText, judgeCandidate, readFormatSource, selectFormat } from '../src/formats.js';
-import { checkRemoteUrl, fetchDirectFormat, fetchIndex, parseFormatIndex } from '../src/remote-formats.js';
+import {
+  checkRemoteUrl,
+  ensureGlobalDispatcher,
+  fetchDirectFormat,
+  fetchIndex,
+  parseFormatIndex,
+} from '../src/remote-formats.js';
 import type { Diagnostic, FormatRequest } from '../src/types.js';
 import {
   entryPath,
@@ -422,6 +428,120 @@ describe('requests', () => {
       reason,
     );
     expect(server.log).toEqual([]);
+  });
+
+  describe('connection attempts end with the request limit (#376)', () => {
+    const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+
+    /** Stands in for undici's Agent, the class of the global dispatcher. */
+    class FakeAgent {
+      static readonly made: FakeAgent[] = [];
+      destroyed = false;
+      constructor(readonly options: unknown) {
+        FakeAgent.made.push(this);
+      }
+      dispatch(): boolean {
+        return true;
+      }
+      destroy(): Promise<void> {
+        this.destroyed = true;
+        return Promise.resolve();
+      }
+    }
+
+    let saved: unknown;
+    beforeEach(() => {
+      saved = Reflect.get(globalThis, GLOBAL_DISPATCHER);
+      FakeAgent.made.length = 0;
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, new FakeAgent({}));
+      FakeAgent.made.length = 0;
+    });
+    afterEach(() => {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, saved);
+    });
+
+    /** Stubs fetch with the format, logging what each request was given. */
+    function serve(): { dispatchers: unknown[] } {
+      const log = { dispatchers: [] as unknown[] };
+      vi.stubGlobal('fetch', (_url: string, init?: RequestInit) => {
+        log.dispatchers.push(init?.dispatcher);
+        return Promise.resolve(new Response(formatJs('Review', '1.0.0')));
+      });
+      return log;
+    }
+
+    it('gives a request a dispatcher whose connect timeout is its limit, and frees it afterwards', async () => {
+      const log = serve();
+      await fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
+      const [agent] = FakeAgent.made;
+      expect(FakeAgent.made).toHaveLength(1);
+      expect(agent?.options).toEqual({ connect: { timeout: 1500 } });
+      expect(log.dispatchers).toEqual([agent]);
+      expect(agent?.destroyed).toBe(true);
+    });
+
+    it('frees the dispatcher when the request fails', async () => {
+      vi.stubGlobal('fetch', () => Promise.reject(new TypeError('fetch failed')));
+      await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).rejects.toThrow(
+        'fetch failed',
+      );
+      expect(FakeAgent.made.map((agent) => agent.destroyed)).toEqual([true]);
+    });
+
+    it.each([[30_000], [10_000], [0]])(
+      'leaves a limit of %i ms to undici, which ends a connect after ten seconds',
+      async (timeout) => {
+        const log = serve();
+        await fetchDirectFormat('https://example.test/format.js', { timeout });
+        expect(log.dispatchers).toEqual([undefined]);
+        expect(FakeAgent.made).toEqual([]);
+      },
+    );
+
+    it.each([
+      ['a global dispatcher whose class cannot be built', () => ({ constructor: () => 1 })],
+      [
+        'a class that builds something else',
+        () => ({
+          constructor: function builds() {
+            return { dispatch: 1 };
+          },
+        }),
+      ],
+      ['a global dispatcher that is no object', () => 'agent'],
+    ])('uses the global dispatcher when it finds %s', async (_label, make) => {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, make());
+      const log = serve();
+      await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).resolves.toMatchObject({
+        name: 'Review',
+      });
+      expect(log.dispatchers).toEqual([undefined]);
+    });
+
+    it.each([
+      ['answers', () => Promise.resolve(new Response(null))],
+      ['fails', () => Promise.reject(new TypeError('fetch failed'))],
+    ])(
+      'asks for a data: URL to create the global dispatcher when no request has yet, and the request %s',
+      async (_label, answerWith) => {
+        Reflect.set(globalThis, GLOBAL_DISPATCHER, undefined);
+        const asked: string[] = [];
+        await ensureGlobalDispatcher((url) => {
+          asked.push(url);
+          return answerWith();
+        });
+        expect(asked).toEqual(['data:,']);
+      },
+    );
+
+    it('does not ask when the global dispatcher exists', async () => {
+      const asked: string[] = [];
+      await ensureGlobalDispatcher((url) => {
+        asked.push(url);
+        return Promise.resolve(new Response(null));
+      });
+      expect(asked).toEqual([]);
+    });
   });
 
   it('refuses a URL it cannot fetch', async () => {

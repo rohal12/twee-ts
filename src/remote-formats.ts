@@ -285,22 +285,118 @@ async function readLimited(res: Response): Promise<Uint8Array<ArrayBuffer> | und
 }
 
 /**
+ * How long Node's `fetch` (undici) waits for a connection by default, in milliseconds. Aborting a
+ * request does not end a connection attempt in progress, so it holds the process open this long.
+ */
+const UNDICI_CONNECT_TIMEOUT = 10_000;
+
+/** Where undici keeps the dispatcher every `fetch` without its own uses; its class is the one to ask for another. */
+const UNDICI_GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+
+type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
+
+/** A dispatcher for one download, and the call that frees its connections. */
+interface BoundedDispatcher {
+  readonly dispatcher: FetchDispatcher;
+  readonly release: () => void;
+}
+
+function isDispatcher(value: unknown): value is FetchDispatcher {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'dispatch' in value &&
+    typeof value.dispatch === 'function' &&
+    'destroy' in value &&
+    typeof value.destroy === 'function'
+  );
+}
+
+/** The `fetch` of this process when the module loaded: a test or a host may replace the global one with a function that ignores a dispatcher. */
+const nativeFetch = globalThis.fetch;
+
+/**
+ * Makes undici create its global dispatcher, which it does with the first request of a process: a
+ * request for a data: URL makes no connection. `request` is exported for tests.
+ */
+export async function ensureGlobalDispatcher(request: (url: string) => Promise<Response> = nativeFetch): Promise<void> {
+  if (Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER) !== undefined) return;
+  await request('data:,').then(
+    (res) => res.body?.cancel(),
+    () => undefined,
+  );
+}
+
+/**
+ * A dispatcher whose connection attempts end after `connectTimeout` milliseconds, so a host that
+ * drops packets does not hold the process open for undici's own ten seconds after an abort ended
+ * the request; `undefined` for no bound, or where Node gives no such dispatcher (the request then
+ * runs on the global one). Node exports no dispatcher class, so this builds one from the class of
+ * the global dispatcher, which exists once any request was made.
+ */
+async function boundedDispatcher(connectTimeout: number | undefined): Promise<BoundedDispatcher | undefined> {
+  if (connectTimeout === undefined) return undefined;
+  await ensureGlobalDispatcher();
+  const current: unknown = Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER);
+  const dispatcherClass: unknown = typeof current === 'object' && current !== null ? current.constructor : undefined;
+  if (typeof dispatcherClass !== 'function') return undefined;
+  let made: unknown;
+  try {
+    made = Reflect.construct(dispatcherClass, [{ connect: { timeout: connectTimeout } }]);
+  } catch {
+    return undefined;
+  }
+  if (!isDispatcher(made)) return undefined;
+  const dispatcher = made;
+  return {
+    dispatcher,
+    release: () => {
+      // The download is over (or aborted): its connections are of no further use, and an idle one
+      // would hold the process open. Closing cannot fail in a way that matters to the caller.
+      void Promise.resolve(dispatcher.destroy()).catch(() => undefined);
+    },
+  };
+}
+
+/**
  * Fetch `url`, aborting when `signal` does. `what` names the request in errors, as in "Failed to
  * <what> from <url>: <cause>". The bytes are returned undecoded, so checksums cover what was served.
  * A redirect must stay on http: or https:, and never go from https: to http:.
  */
-async function fetchBytes(url: string, what: string, signal: AbortSignal, validators: Validators): Promise<Fetched> {
+async function fetchBytes(
+  url: string,
+  what: string,
+  signal: AbortSignal,
+  validators: Validators,
+  connectTimeout: number | undefined,
+): Promise<Fetched> {
+  const bounded = await boundedDispatcher(connectTimeout);
+  try {
+    return await fetchBytesVia(url, what, signal, validators, bounded?.dispatcher);
+  } finally {
+    bounded?.release();
+  }
+}
+
+async function fetchBytesVia(
+  url: string,
+  what: string,
+  signal: AbortSignal,
+  validators: Validators,
+  dispatcher: FetchDispatcher | undefined,
+): Promise<Fetched> {
   const fail = (reason: string, cause?: unknown): Error =>
     new Error(`Failed to ${what} from ${url}: ${reason}`, cause === undefined ? undefined : { cause });
   const headers = new Headers();
   if (validators.etag !== undefined) headers.set('if-none-match', validators.etag);
   if (validators.lastModified !== undefined) headers.set('if-modified-since', validators.lastModified);
+  const init: RequestInit = { signal, headers, redirect: 'manual', ...(dispatcher && { dispatcher }) };
   let res: Response;
   let finalUrl = url;
   let sawHttps = new URL(url).protocol === 'https:';
   for (let hops = 0; ; hops++) {
     try {
-      res = await fetch(finalUrl, { signal, headers, redirect: 'manual' });
+      res = await fetch(finalUrl, init);
     } catch (e) {
       throw fail(describeFetchError(e), e);
     }
@@ -351,8 +447,13 @@ function sharedFetch(
   options: RemoteFetchOptions,
   validators: Validators = {},
 ): Promise<Fetched> {
+  const wait = waitOptions(options, what, url);
+  // A request that waits less than a connect may take is bounded by the limit of the caller that
+  // starts it. A caller with a longer limit that joins it meanwhile sees an unreachable host fail at
+  // that limit instead of at undici's ten seconds; once the connection is made, each keeps its own.
+  const connectTimeout = wait.timeout > 0 && wait.timeout < UNDICI_CONNECT_TIMEOUT ? wait.timeout : undefined;
   const key = JSON.stringify([what, url, validators.etag ?? null, validators.lastModified ?? null]);
-  return shareRequest(key, waitOptions(options, what, url), (signal) => fetchBytes(url, what, signal, validators));
+  return shareRequest(key, wait, (signal) => fetchBytes(url, what, signal, validators, connectTimeout));
 }
 
 /** Decode downloaded text as local files are (UTF-8, else Windows-1252), without a leading BOM. */

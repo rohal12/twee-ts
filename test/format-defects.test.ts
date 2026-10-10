@@ -543,7 +543,7 @@ describe('F14: an ID means the same in every source', () => {
 
 describe('what decoding a format.js leaves out is reported for the format a build uses', () => {
   const noted = (marker: string): string =>
-    `window.storyFormat({name: 'Review', version: '1.0.0', author: 7, setup: function () { return 1; }, source: '<html><head></head><body>${marker} {{STORY_DATA}}</body></html>'});`;
+    `window.storyFormat({name: 'Review', version: '1.0.0', author: 7, license: function () { return 1; }, setup: function () { return 1; }, source: '<html><head></head><body>${marker} {{STORY_DATA}}</body></html>'});`;
 
   it('names the local format file', async () => {
     const dir = join(tempRoot(), 'formats');
@@ -553,7 +553,7 @@ describe('what decoding a format.js leaves out is reported for the format a buil
     const result = await build({ ...story('Review', '1.0.0'), formatPaths: [dir], noRemote: true });
     expect(result.marker).toBe('LOCAL');
     expect(result.warnings).toEqual([
-      expect.stringMatching(/^format review-1: Skipped the function at property setup \(line 1, column \d+\) \(/),
+      expect.stringMatching(/^format review-1: Skipped the function at property license \(line 1, column \d+\) \(/),
       expect.stringMatching(
         new RegExp(`^format review-1: Ignored "author": it is not a string \\(${escapeRegExp(file)}\\)$`),
       ),

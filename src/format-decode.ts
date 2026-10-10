@@ -22,7 +22,9 @@
  *   JavaScript resolves them (the last value wins, in the place of the first).
  *
  * A property whose value is a function (`setup: function () {…}`, an arrow function, or a method
- * such as Harlowe's `setup() {…}`) is not data: it is left out, and a note says so. Anything else is
+ * such as Harlowe's `setup() {…}`) is not data: it is left out. A note says so only for a top-level
+ * property twee-ts reads (`name`, `version`, `source`, …); Twine's own code (`setup`,
+ * `editorExtensions`) is left out silently. Anything else is
  * an error naming the property and its line and column: identifiers (including `undefined`, `NaN`
  * and `Infinity`), BigInts, regular expressions, computed keys, spreads, getters and setters,
  * shorthand properties, array holes, operators and calls. So is a `__proto__` key, which in
@@ -50,6 +52,15 @@ import { parseVersion } from './semver.js';
 export const UNNAMED_FORMAT_NAME = 'Untitled Story Format';
 
 const STORY_FORMAT = 'storyFormat';
+
+const OPTIONAL_TEXT_FIELDS = ['author', 'description', 'image', 'url', 'license'] as const;
+
+/**
+ * The top-level properties of a format object that twee-ts reads: the required `version` and `source`
+ * and the optional fields. A function at one of these is a mistake the author can fix; a function
+ * anywhere else (Harlowe's `setup`, `editorExtensions`) is code for Twine, which twee-ts never reads.
+ */
+const READ_FIELDS: readonly string[] = ['name', 'version', 'source', 'proofing', ...OPTIONAL_TEXT_FIELDS];
 
 /** Whether a value read from the tree is an acorn node. */
 function isNode(value: unknown): value is AnyNode {
@@ -149,7 +160,10 @@ class LiteralReader {
     if (property.kind !== 'init') return this.fail(keyPath, property, `${property.kind}ter`);
     if (property.shorthand) return this.fail(keyPath, property, 'shorthand property');
     if (property.method || isFunction(property.value)) {
-      this.notes.push(`Skipped the function at ${describePath(keyPath)} (${this.position(property.start)})`);
+      // Only a function where twee-ts expects data is worth a warning: nothing else in the file is its to fix.
+      if (path === '' && READ_FIELDS.includes(key)) {
+        this.notes.push(`Skipped the function at ${describePath(keyPath)} (${this.position(property.start)})`);
+      }
       return { ok: true, key, value: SKIPPED };
     }
     if (key === '__proto__') return this.fail(keyPath, property, '__proto__ key (it sets the prototype)');
@@ -354,7 +368,7 @@ function toFormatJSON(fields: ReadonlyMap<string, unknown>, notes: string[]): Fo
   const proofing = fields.get('proofing');
   if (proofing !== undefined && typeof proofing !== 'boolean') notes.push('Ignored "proofing": it is not a boolean');
   const data: Twine2FormatJSON = { name, version, source, proofing: proofing === true };
-  for (const key of ['author', 'description', 'image', 'url', 'license'] as const) {
+  for (const key of OPTIONAL_TEXT_FIELDS) {
     const value = optionalString(key);
     if (value !== undefined) data[key] = value;
   }

@@ -599,6 +599,31 @@ describe('CLI formatFetchTimeout config key', () => {
   }, 30_000);
 });
 
+describe('CLI with a request that cannot connect', () => {
+  it('exits soon after the build, whatever the host does with the connection', () => {
+    // 10.255.255.1 is not routable: where packets to it are dropped, the connect hangs for ten seconds
+    // unless the request's own limit ends it; elsewhere it fails at once and the test passes trivially.
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    writeFileSync(
+      join(dir, 'twee-ts.config.json'),
+      JSON.stringify({
+        sources: ['story.tw'],
+        output: 'out.html',
+        formatFetchTimeout: 1,
+        formatIndices: ['http://10.255.255.1/index.json'],
+        useDefaultFormatIndices: false,
+      }),
+    );
+    const cache = join(dir, 'cache');
+    const start = performance.now();
+    const r = runCli(dir, ['-f', 'sugarcube-2'], { ...process.env, XDG_CACHE_HOME: cache, TWEEGO_PATH: '' });
+    const elapsed = performance.now() - start;
+    expect(r.stderr).toContain('http://10.255.255.1/index.json');
+    // Without the fix the process lingered until undici's connect timeout, about 10.5 s in all.
+    expect(elapsed).toBeLessThan(6000);
+  }, 30_000);
+});
+
 describe('CLI with a named source that is the output (#157)', () => {
   it('fails, naming the path, and leaves the file unchanged', () => {
     writeFileSync(join(dir, 'a.tw'), VALID_STORY);
