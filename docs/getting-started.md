@@ -94,7 +94,7 @@ Extensions match without regard to letter case. A file of another type in a sour
 
 ### Text encoding
 
-Text files (Twee, CSS, JavaScript, HTML, modules, the head file, story formats and the config file) are read as UTF-8, or as UTF-16 when they start with a UTF-16 byte order mark (as Windows PowerShell 5's `>` writes them). A leading byte order mark is removed and CRLF and CR line endings become LF. Invalid UTF-16, and UTF-32, are errors naming the file. As in Tweego, a file that is not valid UTF-8 is read as Windows-1252 instead, the encoding of many older Windows files and Twine 1 exports, so its accented letters and curly quotes survive. twee-ts also prints a warning naming the file:
+Text files (Twee, CSS, JavaScript, HTML, modules, the head file, story formats and the config file) are read as UTF-8, or as UTF-16 when they start with a UTF-16 byte order mark (as Windows PowerShell 5's `>` writes them). A leading byte order mark is removed and CRLF and CR line endings become LF. Invalid UTF-16, and UTF-32, are errors naming the file. As in Tweego, a file that is not valid UTF-8 is read as Windows-1252 instead, the encoding of many older Windows files and Twine 1 exports, so its accented letters and curly quotes survive. (The five bytes Windows-1252 leaves undefined become the control characters U+0081, U+008D, U+008F, U+0090 and U+009D here, and U+FFFD in Tweego; see [Differences from Tweego](./tweego-differences).) twee-ts also prints a warning naming the file:
 
 ```
 warning: read src/old.tw: Invalid UTF-8; assuming charset is windows-1252.

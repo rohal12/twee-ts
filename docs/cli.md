@@ -4,7 +4,7 @@
 twee-ts [options] <sources...>
 ```
 
-Sources can be files or directories. Directories are walked recursively for supported file types, in code-point order of their entries on every operating system, so which of two passages with the same name wins doesn't depend on the OS. Inside a source directory, a symbolic link to a file is read, but a link to a directory is not followed, as in Tweego, so a link back to a parent can't make the walk read the same files again and again. A directory named as a source is followed even when it is a link; name a linked directory as a source to include it. The same file reached by two paths (a link and its target, say) is read once.
+Sources can be files or directories. Directories are walked recursively for supported file types, in code-point order of their entries on every operating system, so which of two passages with the same name wins doesn't depend on the OS. Inside a source directory, a symbolic link to a file is read (Tweego skips it), but a link to a directory is not followed, as in Tweego, so a link back to a parent can't make the walk read the same files again and again. A directory named as a source is followed even when it is a link; name a linked directory as a source to include it. The same file reached by two paths (a link and its target, say) is read once.
 
 The command line is checked before anything is built or written. These are usage errors: twee-ts prints `error: …` and a pointer to `--help`, and exits with status 2.
 
@@ -306,5 +306,7 @@ The start passage and the story format can also come from the `StoryData` passag
 2. Config file (`twee-ts.config.json`)
 3. `StoryData` passage in source files (`start`; `format` and `format-version`)
 4. Built-in default (`Start`; `sugarcube-2`) (lowest)
+
+An output mode flag (`-d`, `--decompile-twee1`, `--json`, `-a`, `--archive-twine1`) changes the format of the output, not where it goes: the `output` path from the config file still applies unless `-o` is given. With `"output": "story.html"` in the config, `twee-ts -d src/` writes Twee 3 source into `story.html`. Give `-o` (`-o -` for standard output) to write elsewhere.
 
 For example, `-s Prologue` on the CLI overrides `"startPassage": "Begin"` in the config, which overrides the `start` field in `StoryData`. `-t` adds the `debug` option to those StoryData gives; `"testMode": false` doesn't remove one StoryData sets.

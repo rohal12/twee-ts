@@ -25,7 +25,7 @@ export default {
 ```typescript
 interface TweeTsVitePluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
-  sources: string[];
+  sources: readonly string[];
   /** Story format ID. */
   format?: string;
   /** Output file name, relative to the output folder. Default: 'index.html'. */
@@ -156,7 +156,7 @@ export default {
 ```typescript
 interface TweeTsRollupPluginOptions {
   /** Source directories/files to compile, relative to the working directory. */
-  sources: string[];
+  sources: readonly string[];
   /** Story format ID. */
   format?: string;
   /** Output file name, relative to the output folder. Default: 'index.html'. */

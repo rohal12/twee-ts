@@ -122,7 +122,7 @@ The result in Twine 2 HTML:
 | Changelog    | `changes`     | `changes`, `annotation`     | A `<tw-passagedata>` element with `tags="changes annotation"`; an info passage, not counted as a story passage |
 | Start        | _(none)_      | _(none)_                    | Normal story passage, unaffected                                                                               |
 
-All four aliased passages are **info passages**: they are not counted as story passages or in the word count, and lint never lists them as dead ends or orphans. Only Changelog is written as a `<tw-passagedata>` element. Decompiling the HTML gives Utils and Dark Theme back as part of one `Story JavaScript` passage (tagged `script`) and one `Story Stylesheet` passage (tagged `stylesheet`), without their names or alias tags, and Design Notes not at all. Twee output (`-d`) keeps every passage with the tags as written.
+All four aliased passages are **info passages**: they are not counted as story passages or in the word count, and lint never lists them as dead ends or orphans. Only Changelog is written as a `<tw-passagedata>` element. Decompiling the HTML gives Utils and Dark Theme back as part of one `Story JavaScript` passage (tagged `script`) and one `Story Stylesheet` passage (tagged `stylesheet`), without their names or alias tags, and Design Notes not at all. Twee output (`-d`) keeps every passage, with the tags it has after aliasing: `:: Utils [library script]` for a passage written `:: Utils [library]`.
 
 ## Common Aliases
 

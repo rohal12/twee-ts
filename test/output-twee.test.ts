@@ -152,6 +152,16 @@ describe('Twee output round trip', () => {
     ]);
   });
 
+  it('writes the tags after aliasing: the alias and its target (docs/tag-aliases.md)', async () => {
+    const result = await compile({
+      sources: [{ filename: 'story.tw', content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Utils [library]\nx\n` }],
+      outputMode: 'twee3',
+      tagAliases: { library: 'script' },
+    });
+
+    expect(result.output).toContain(':: Utils [library script]\n');
+  });
+
   it('reports nothing for a story that reads back the same', async () => {
     const result = await compile({
       sources: [

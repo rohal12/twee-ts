@@ -113,4 +113,4 @@ Outputs the story model as JSON per the [Twine 2 JSON Output Specification](http
 
 Valid values: `html`, `twee3`, `twee1`, `twine2-archive`, `twine1-archive`, `json`.
 
-CLI flags override the config value. Two output mode flags (`-d --json`, say) are a usage error (exit status 2).
+CLI flags override the config value, and only it: the config's `output` path still names the file, so with `"output": "story.html"` in the config, `twee-ts -d src/` writes Twee into `story.html`. Give `-o` to write elsewhere. Two output mode flags (`-d --json`, say) are a usage error (exit status 2).
