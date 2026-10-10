@@ -81,7 +81,7 @@ describe('standard output carries only the story (FS-01)', () => {
       expect(toStdout.stdout).toBe(readFileSync(join(dir, 'out'), 'utf-8'));
       expect(toFile.stdout).toBe('');
       for (const run of [toStdout, toFile]) {
-        expect(run.stderr).toContain('warning: Replacing existing passage "Next"');
+        expect(run.stderr).toMatch(/^warning: a\.tw:\d+: Replacing existing passage "Next"/m);
         expect(run.stderr).toContain('\nFiles: a.tw\n');
         expect(run.stderr).toContain('\nStatistics:\n  Passages: ');
       }

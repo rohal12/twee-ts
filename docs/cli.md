@@ -8,14 +8,14 @@ Sources can be files or directories. Directories are walked recursively for supp
 
 The command line is checked before anything is built or written. These are usage errors: twee-ts prints `error: …` and a pointer to `--help`, and exits with status 2.
 
-- an unknown option, an option without its value or with an empty one, and an option given twice (other than those marked repeatable)
+- an unknown option, an option without its value or with an empty one (also `cache clear ""`, which never means "everything"), an option that takes no value given one (`-d=x`), and an option given twice (other than those marked repeatable)
 - options that conflict: two output modes (`-d --json`), `--lint` with `--watch`, `--log-stats`, `--log-files` or an output mode, `-c` with `--no-config`, and `--version`, `--init` or `--list-formats` with anything else (`--list-formats` takes `-c` or `--no-config`)
 - an invalid `--tag-alias` or `--word-count-method`
 - no sources, neither on the command line nor in the config
 - watch mode without an output file (`-o`, or `output` in the config), or with `-o -`
 - `cache` with options or extra arguments
 
-Sources whose names start with `-` go after `--`. `cache` is a subcommand only as the first word; to build a folder named `cache`, write `./cache` or put it after `--`. `--help` wins over every other option.
+Sources whose names start with `-` go after `--`. `cache` is a subcommand only as the first word; to build a folder named `cache`, write `./cache` or put it after `--`. `-h` and `--help` win over every other option: with one of them before any `--` (and not as the value of another option), twee-ts prints the help and exits with status 0, whatever else is on the line, even a malformed option. A short option takes its value as `-o file`, `-ofile` or, as in Tweego, `-o=file`; the long form is `--output=file`.
 
 Tweego's `--charset` and `--list-charsets` are not supported, and are usage errors that say so: sources are read as UTF-8, or as UTF-16 after a UTF-16 byte order mark, and a file that is not valid UTF-8 as Windows-1252, as Tweego does by default. Here `-c` means `--config`; when it names a file that doesn't exist and looks like a charset (`-c utf-8`), the error (exit status 1) adds a note that says so. Tweego's deprecated `--decompile` is accepted as `--decompile-twee3`.
 
@@ -195,7 +195,9 @@ The date is when the format was downloaded. With nothing cached, `list` prints `
 
 ## Output Streams
 
-Standard output carries only what was asked for: the story, when no output file is given (`-o -`), or the answer of a query (`--help`, `--version`, `--list-formats`, the `cache` subcommands, the `--lint` report, the `--init` report). Everything else goes to standard error: warnings and errors (except under `--lint`, whose report lists them), `--log-stats`, `--log-files`, and watch mode's messages. So `twee-ts -d -l src/ > story.tw` writes exactly the story to `story.tw`, the same bytes `-o story.tw` would. A reader that closes the pipe early (`twee-ts src/ | head`) ends the output quietly.
+Standard output carries only what was asked for: the story, when no output file is given (`-o -`), or the answer of a query (`--help`, `--version`, `--list-formats`, the `cache` subcommands, the `--lint` report, the `--init` report). Everything else goes to standard error: warnings and errors (except under `--lint`, whose report lists them), `--log-stats`, `--log-files`, and watch mode's messages. So `twee-ts -d -l src/ > story.tw` writes exactly the story to `story.tw`, the same bytes `-o story.tw` would. A reader that closes the pipe early (`twee-ts src/ | head`) ends the output quietly. Any other failure to write there (a full disk behind `> story.html`, an I/O error) prints `error: Cannot write standard output: <reason>` and ends with status 1; a failure of standard error itself only sets the status.
+
+A warning or error about a source names the file and line, as `src/Start.tw:4: …` (a message that already names its file, such as `load src/a.tw: line 3: …`, is printed as it is), in the build output and in the `--lint` report. Warnings of Node itself (such as an experimental feature) are printed as Node prints them, and `NODE_NO_WARNINGS` and `--no-warnings` silence them.
 
 ## Exit Status
 
@@ -211,7 +213,7 @@ When a compilation reports errors (malformed Twee source, an invalid or missing 
 
 ```sh
 $ twee-ts -o story.html src/
-error: line 4: Malformed twee source; unterminated tag block.
+error: src/Start.tw:4: Malformed twee source; unterminated tag block.
 Compilation failed with 1 error; output not written.
 $ echo $?
 1
@@ -225,7 +227,7 @@ In watch mode (`-w`), a build with errors is reported but not written: the outpu
 $ twee-ts -w -o story.html src/
 Watch mode started. Press CTRL+C to stop.
 Built: 3 passages, 3 words
-error: line 4: Malformed twee source; unterminated tag block.
+error: src/Start.tw:4: Malformed twee source; unterminated tag block.
 Build has 1 error; output not written. Still watching for changes.
 ```
 

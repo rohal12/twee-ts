@@ -440,7 +440,7 @@ for (const e of listCachedFormats()) {
 // Clear all cached formats (returns the number removed)
 clearCachedFormats();
 
-// Clear cached formats by name, without regard to letter case
+// Clear cached formats by name, without regard to letter case (an empty name matches none)
 clearCachedFormats('SugarCube');
 
 // Get total cache size

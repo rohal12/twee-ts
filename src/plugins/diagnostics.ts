@@ -3,6 +3,7 @@
  */
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry } from '../types.js';
 import { compileForOutputFile } from '../compiler.js';
+import { formatDiagnostic } from '../diagnostic-text.js';
 import { TweeTsError } from '../errors.js';
 import type { BuildOutputs } from '../filesystem.js';
 
@@ -10,13 +11,6 @@ import type { BuildOutputs } from '../filesystem.js';
 export interface LocatedError extends Error {
   id?: string;
   loc?: { file: string; line: number; column: number };
-}
-
-export function formatDiagnostic(d: Readonly<Diagnostic>): string {
-  const where = d.file ? `${d.file}${d.line ? `:${d.line}` : ''}: ` : '';
-  // The parser starts its messages with "line N: "; the location already says it.
-  const message = d.file && d.line ? d.message.replace(/^line \d+: /, '') : d.message;
-  return `${where}${message}`;
 }
 
 /** Returns the warnings; throws a LocatedError when the compile reported errors. */

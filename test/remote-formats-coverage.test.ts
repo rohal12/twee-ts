@@ -291,9 +291,11 @@ describe('listing and clearing', () => {
     expect(existsSync(legacyUrls)).toBe(false);
   });
 
-  it('clears everything for an empty name too', () => {
+  it('clears nothing for an empty name: only no name at all means everything (#366)', () => {
     seedIndexDownload('Review', '1.0.0', formatJs('Review', '1.0.0'), OFFICIAL_INDEX);
-    expect(clearCachedFormats('')).toBe(1);
+    expect(clearCachedFormats('')).toBe(0);
+    expect(listCachedFormats()).toHaveLength(1);
+    expect(clearCachedFormats()).toBe(1);
   });
 
   it('reaches no origin it does not know', () => {

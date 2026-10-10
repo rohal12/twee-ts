@@ -543,13 +543,13 @@ export function discoverCachedFormats(): Map<string, StoryFormatInfo> {
 }
 
 /**
- * Clear all cached formats, or only those with a given name (matched as format names are, without
- * regard to letter case). Returns the number of cached formats removed. Clearing all also removes
+ * Clear all cached formats (no name given), or only those with a given name (matched as format names are, without
+ * regard to letter case; an empty name matches none). Returns the number of cached formats removed. Clearing all also removes
  * the directories older twee-ts versions wrote.
  */
 export function clearCachedFormats(name?: string): number {
   const records = listRecords();
-  if (name === undefined || name === '') {
+  if (name === undefined) {
     rmSync(getCacheDir(), { recursive: true, force: true });
     rmSync(legacyUrlCacheDir(), { recursive: true, force: true });
     return records.length;
