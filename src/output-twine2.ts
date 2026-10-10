@@ -82,9 +82,21 @@ export function toTwine2HTML(
 
 /** Diagnostics for what the Twine 2 story data cannot carry. */
 function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
-  const { scripts, stylesheets } = codePassages(story);
   return [
     ...twine2TagColors(story).diagnostics,
+    ...twine2MarkupDiagnostics(story),
+    ...stylesheetImportDiagnostics(codePassages(story).stylesheets),
+  ];
+}
+
+/**
+ * The diagnostics for what the Twine 2 story data cannot carry as HTML markup (HTML and archive output), beyond
+ * those JSON output also gives (tag colors, stylesheet imports): text HTML cannot carry, tags and story options
+ * that would not read back, and script and style code the escapers change. Lint reports these too.
+ */
+export function twine2MarkupDiagnostics(story: ReadonlyStory): Diagnostic[] {
+  const { scripts, stylesheets } = codePassages(story);
+  return [
     ...twine2StoryFieldDiagnostics(story),
     ...unrepresentableTextDiagnostics(
       story,
@@ -93,7 +105,6 @@ function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
     ),
     ...codeEscapeDiagnostics('script', joinCode(scripts, 'script')),
     ...codeEscapeDiagnostics('style', joinCode(stylesheets, 'stylesheet')),
-    ...stylesheetImportDiagnostics(stylesheets),
   ];
 }
 

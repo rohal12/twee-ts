@@ -109,7 +109,7 @@ See [Format Discovery](./story-formats) for how formats are located.
 | -------- | ----------------------------------------------------------------------- |
 | `--lint` | Lint story structure (broken links, dead ends, orphans) without output. |
 
-Exits with code 1 if errors are found (broken links, a missing or empty story title, a starting passage that is missing or would be left out of Twine 2 output, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit. The report goes to standard output; the compilation's warnings and errors are part of it, in a `Diagnostics:` section, when there are any. Its `Format:` line is the format StoryData names.
+Exits with code 1 if errors are found (broken links, a missing or empty story title, a starting passage that is missing or would be left out of Twine 2 output, compilation errors, and the errors Twine 2 HTML output gives about the story's own data, such as text HTML cannot carry: U+0000 or a lone surrogate, or a story option with white space, and what it reports about the modules and the head file: a module that cannot be used, or text HTML cannot carry in one). A head file that cannot be read stops lint, as it stops a build. Warnings (dead ends, orphans) do not cause a non-zero exit. The report goes to standard output; the compilation's warnings and errors are part of it, in a `Diagnostics:` section, when there are any. Its `Format:` line is the format StoryData names. The report is the same in every locale: counts are grouped in thousands with commas (`241,676 words`).
 
 Like a build, linting leaves the output file (`-o`, or `output` in the config file) out of the sources, so an earlier build inside a source folder is not linted.
 

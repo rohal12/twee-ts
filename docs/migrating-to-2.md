@@ -112,7 +112,7 @@ becomes
 
 ### Orphans
 
-**Before:** a passage counted as reached when any link led to it. **After:** `storyInspect()` and lint list as orphans the story passages that no chain of links reaches from the start passage or an info passage, so a passage that links only to itself, or a group that links only among itself, is listed.
+**Before:** a passage counted as reached when any link led to it. **After:** `storyInspect()` and lint list as orphans the story passages that no chain of links reaches from the start passage or an info passage the story format runs or shows without a link (not an `annotation` note, a `Twine.` passage or story data), so a passage that links only to itself, or a group that links only among itself, is listed.
 
 **Migrate:** link the passages listed, or remove them.
 

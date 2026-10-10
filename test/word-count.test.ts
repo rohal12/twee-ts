@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { countNormalizationSegments, countTextWords, stripComments } from '../src/word-count.js';
 
 /**
@@ -75,6 +77,28 @@ describe("countTextWords 'tweego'", () => {
     expect(countNormalizationSegments('\u0b47\u0b3e')).toBe(1);
     expect(countNormalizationSegments('😀x')).toBe(2);
     expect(countNormalizationSegments('')).toBe(0);
+  });
+
+  it('ends a reordered segment at a starter that combines backward, as Tweego does (#367)', () => {
+    // Tweego 2.1.1 prints `Words: 2` for this passage text.
+    expect(countTextWords('́াাaaaa', 'tweego')).toBe(2);
+    expect(countNormalizationSegments('́াা')).toBe(2);
+    expect(countNormalizationSegments('́া'.repeat(12))).toBe(7);
+    // Go reads the text as written: the same marks in canonical order give one segment, out of order two.
+    expect(countNormalizationSegments('x̖́া')).toBe(1);
+    expect(countNormalizationSegments('x̖́া')).toBe(2);
+  });
+
+  it("counts the segments Go's norm.Iter yields (differential against go-norm-segments.json)", () => {
+    const fixture = JSON.parse(
+      readFileSync(join(import.meta.dirname, 'fixtures/word-count/go-norm-segments.json'), 'utf-8'),
+    ) as {
+      readonly cases: readonly (readonly [string, number])[];
+    };
+    const text = (hex: string): string => String.fromCodePoint(...hex.split(' ').map((cp) => parseInt(cp, 16)));
+    const differ = fixture.cases.filter(([hex, segments]) => countNormalizationSegments(text(hex)) !== segments);
+    expect(fixture.cases.length).toBeGreaterThan(3000);
+    expect(differ).toEqual([]);
   });
 
   it('starts a new segment after 30 combining marks, as Go stream-safe text does', () => {

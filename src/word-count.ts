@@ -67,7 +67,8 @@ export function stripComments(text: string): string {
 /**
  * Code points with canonical combining class 0 that NFC may still combine with the character before them
  * (Unicode NFC_Quick_Check=Maybe): Hangul medial vowels and final consonants, and some vowel and length
- * signs. Go's `norm` package starts no new segment before them. Derived from the Unicode 16 data.
+ * signs. Go's `norm` package counts them as non-starters for stream-safe text, so it starts no new segment
+ * before them, except after it has reordered. Derived from the Unicode 16 data.
  */
 const COMBINING_STARTERS: ReadonlySet<string> = new Set(
   [
@@ -112,56 +113,335 @@ function codePoints(from: number, to: number): number[] {
   return Array.from({ length: to - from + 1 }, (_, i) => from + i);
 }
 
-/** How a code point of decomposed text takes part in segmentation. */
-type SegmentRole = 'starter' | 'combining-starter' | 'non-starter';
-
-const roles = new Map<string, SegmentRole>();
-
-/** Whether a code point has a non-zero canonical combining class: canonical reordering moves it. */
+/** Whether a code point of decomposed text has a non-zero canonical combining class: canonical reordering moves it. */
 function isNonStarter(ch: string): boolean {
   // Every character with a non-zero combining class is a mark; testing that first is cheap.
   if (!/\p{M}/u.test(ch)) return false;
   // Reordering puts a lower class first: U+0334 has class 1, U+05B0 class 10.
-  const after = 'a' + ch + '\u0334';
-  const before = 'a\u05b0' + ch;
+  const after = 'a' + ch + '̴';
+  const before = 'aְ' + ch;
   return after.normalize('NFD') !== after || before.normalize('NFD') !== before;
 }
 
-function segmentRole(ch: string): SegmentRole {
-  const known = roles.get(ch);
-  if (known !== undefined) return known;
-  const role: SegmentRole = isNonStarter(ch)
-    ? 'non-starter'
-    : COMBINING_STARTERS.has(ch)
-      ? 'combining-starter'
-      : 'starter';
-  roles.set(ch, role);
-  return role;
+const nonStarters = new Map<string, boolean>();
+
+/** Whether a code point of decomposed text (or `''`, for none) has combining class 0. */
+function hasZeroClass(ch: string): boolean {
+  if (ch < '̀') return true;
+  let known = nonStarters.get(ch);
+  if (known === undefined) {
+    known = isNonStarter(ch);
+    nonStarters.set(ch, known);
+  }
+  return !known;
+}
+
+const lowerClasses = new Map<string, boolean>();
+
+/**
+ * Whether the combining class of `a` is lower than that of `b`, both code points of decomposed text (or `''`,
+ * class 0): canonical reordering moves `a` before `b` exactly when it is.
+ */
+function hasLowerClass(a: string, b: string): boolean {
+  if (hasZeroClass(b)) return false;
+  if (hasZeroClass(a)) return true;
+  const key = `${a} ${b}`;
+  let known = lowerClasses.get(key);
+  if (known === undefined) {
+    const text = 'a' + b + a;
+    known = text.normalize('NFD') !== text;
+    lowerClasses.set(key, known);
+  }
+  return known;
+}
+
+/**
+ * Whether a code point of decomposed text is a starter for Go's `norm` package (`BoundaryBefore`): combining
+ * class 0, and not one that combines with the character before it.
+ */
+function isBoundary(ch: string): boolean {
+  return hasZeroClass(ch) && !COMBINING_STARTERS.has(ch);
+}
+
+/** What Go's NFKD tables hold for a character of the source text (its `Properties`). */
+interface CharInfo {
+  /** A Hangul syllable, which Go decomposes by computation rather than from its tables. */
+  readonly hangul: boolean;
+  /** The NFKD decomposition, when the character has one. */
+  readonly decomposition: readonly string[] | undefined;
+  /** The code point whose combining class is the character's leading one (`ccc`), or `''` for class 0. */
+  readonly lead: string;
+  /** The code point whose combining class is the character's trailing one (`tccc`), or `''` for class 0. */
+  readonly trail: string;
+  /** Leading non-starters: code points of class above 0, or that combine with what precedes them. */
+  readonly nLead: number;
+  /** Trailing non-starters. */
+  readonly nTrail: number;
+  /** Whether the decomposition holds more than one segment, which Go yields one by one. */
+  readonly multiSegment: boolean;
+}
+
+/** Any ASCII character: Go's iterator takes each as a segment of its own. */
+const ASCII_INFO: CharInfo = {
+  hangul: false,
+  decomposition: undefined,
+  lead: '',
+  trail: '',
+  nLead: 0,
+  nTrail: 0,
+  multiSegment: false,
+};
+/** Go's empty `Properties`, which the iterator reads past the end of the text. */
+const END_INFO: CharInfo = { ...ASCII_INFO };
+
+const HANGUL_T_COUNT = 28;
+
+const infos = new Map<string, CharInfo>();
+
+function charInfo(ch: string): CharInfo {
+  if (ch < '\u0080') return ASCII_INFO;
+  let info = infos.get(ch);
+  if (info === undefined) {
+    info = computeCharInfo(ch);
+    infos.set(ch, info);
+  }
+  return info;
+}
+
+function computeCharInfo(ch: string): CharInfo {
+  if (ch >= '가' && ch <= '힣') {
+    // A leading consonant, a vowel and, unless the syllable has none, a trailing consonant; the last two combine.
+    const trailing = (ch.charCodeAt(0) - 0xac00) % HANGUL_T_COUNT === 0 ? 1 : 2;
+    return { ...ASCII_INFO, hangul: true, nTrail: trailing };
+  }
+  const runes = Array.from(ch.normalize('NFKD'));
+  const lead = runes.slice(0, 1).join('');
+  const trail = runes.slice(-1).join('');
+  const firstStarter = runes.findIndex(isBoundary);
+  const nLead = firstStarter === -1 ? runes.length : firstStarter;
+  return {
+    hangul: false,
+    decomposition: runes.length === 1 && lead === ch ? undefined : runes,
+    lead: hasZeroClass(lead) ? '' : lead,
+    trail: hasZeroClass(trail) ? '' : trail,
+    nLead,
+    nTrail: runes.length - 1 - runes.findLastIndex(isBoundary),
+    multiSegment: nLead === 0 && hasZeroClass(lead) && runes.slice(1).some(hasZeroClass),
+  };
 }
 
 /** The most non-starters in one segment; more start a new one, as in Go's stream-safe text handling. */
 const MAX_NON_STARTERS = 30;
 
+/** Which of Go's `Iter.next` functions yields the next segment. */
+type IterStep = 'decomposed' | 'ascii' | 'hangul' | 'multi' | 'cgj';
+
 /**
- * The number of normalization segments Go's `norm.Iter` yields for `text` in NFKD: each starts at a starter
- * (a character with combining class 0 that does not combine with the one before it) and holds the characters
- * that follow it up to the next one, so `é` (`e` and U+0301 in NFKD) is one segment and a Hangul syllable
- * (three jamo) is one.
+ * Go's `norm.Iter` over a text in NFKD (golang.org/x/text v0.3.2, the version Tweego 2.1.1 is built with), reduced
+ * to where its segments end: a port of `nextDecomposed` and the functions it hands over to. The text is read as
+ * written, a character (code point) at a time; each method names the Go function it ports.
+ *
+ * Go also ends a segment when its 128-byte buffer would overflow, which is left out: the 30 non-starter limit
+ * always comes first. A segment holds one starter of at most 4 bytes and non-starters that each add at least 1
+ * to the count per 4 bytes (a decomposition that leads with a non-starter holds only non-starters), so it holds
+ * at most 4 × 31 = 124 bytes.
+ */
+class SegmentIterator {
+  private readonly infos: readonly CharInfo[];
+  /** The character the next segment starts at, as `i.p`. */
+  private p = 0;
+  /** The properties of the current character, as `i.info`. */
+  private info: CharInfo;
+  /** Go's `streamSafe`: the non-starters in the segment so far. */
+  private ss: number;
+  private step: IterStep = 'decomposed';
+  /** The segments of a multi-segment decomposition still to yield, as `i.multiSeg`; empty for none. */
+  private multiSeg: readonly string[] = [];
+
+  constructor(text: string) {
+    this.infos = Array.from(text, charInfo);
+    this.info = this.at(0);
+    this.ss = this.info.nTrail;
+  }
+
+  /** Whether no segment is left (`Done`). */
+  done(): boolean {
+    return this.p >= this.infos.length;
+  }
+
+  /** Move past the next segment (`Next`). */
+  next(): void {
+    switch (this.step) {
+      case 'decomposed':
+        this.decomposed();
+        break;
+      case 'ascii':
+        this.ascii();
+        break;
+      case 'hangul':
+        this.hangul();
+        break;
+      case 'multi':
+        this.multi();
+        break;
+      case 'cgj':
+        // `nextCGJDecompose`: a grapheme joiner, then the character that overflowed and the non-starters after it.
+        this.ss = this.info.nTrail;
+        this.step = 'decomposed';
+        this.reorder();
+        break;
+      default: {
+        const _exhaustive: never = this.step;
+        throw new Error(`Unhandled iterator step: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  private at(k: number): CharInfo {
+    return this.infos[k] ?? END_INFO;
+  }
+
+  /** `streamSafe.next`: whether `next` starts a segment, overflows this one, or joins it. */
+  private ssNext(next: CharInfo): 'starter' | 'overflow' | 'joins' {
+    this.ss += next.nLead;
+    if (this.ss > MAX_NON_STARTERS) {
+      this.ss = 0;
+      return 'overflow';
+    }
+    if (next.nLead > 0) return 'joins';
+    this.ss = next.nTrail;
+    return 'starter';
+  }
+
+  /** `nextASCIIString`. */
+  private ascii(): void {
+    const next = this.at(this.p + 1);
+    if (next === END_INFO || next === ASCII_INFO) {
+      this.p++;
+    } else {
+      this.info = this.at(this.p);
+      this.step = 'decomposed';
+      this.decomposed();
+    }
+  }
+
+  /** `nextHangul`. */
+  private hangul(): void {
+    const next = this.at(this.p + 1);
+    if (next === END_INFO || next.hangul) {
+      this.p++;
+      return;
+    }
+    this.ssNext(this.info);
+    this.info = this.at(this.p);
+    this.step = 'decomposed';
+    this.decomposed();
+  }
+
+  /** `nextMulti`: the next segment of a decomposition that holds several. */
+  private multi(): void {
+    const j = this.multiSeg.findIndex((r, k) => k > 0 && isBoundary(r));
+    if (j !== -1) {
+      this.multiSeg = this.multiSeg.slice(j);
+      return;
+    }
+    // The last segment, taken as a decomposition of its own.
+    this.step = 'decomposed';
+    this.decomposed();
+  }
+
+  /** `doNormDecomposed`: the character at `p` and the ones of non-zero class after it, reordered. */
+  private reorder(): void {
+    for (;;) {
+      this.p++;
+      if (this.done()) return;
+      this.info = this.at(this.p);
+      if (this.info.lead === '') return;
+      if (this.ssNext(this.info) === 'overflow') {
+        this.step = 'cgj';
+        return;
+      }
+    }
+  }
+
+  /** `nextDecomposed`. */
+  private decomposed(): void {
+    let first = true;
+    for (;;) {
+      const { info } = this;
+      if (info === ASCII_INFO) {
+        this.ss = 0;
+        this.p++;
+        if (this.done()) return;
+        if (this.at(this.p) === ASCII_INFO) {
+          this.step = 'ascii';
+          return;
+        }
+      } else if (info.decomposition !== undefined) {
+        if (first && info.multiSegment) {
+          if (this.multiSeg.length === 0) {
+            this.multiSeg = info.decomposition;
+            this.step = 'multi';
+            this.multi();
+            return;
+          }
+          // The last segment of the decomposition.
+          this.multiSeg = [];
+        }
+        this.p++;
+        this.info = this.at(this.p);
+        const next = this.ssNext(this.info);
+        if (next === 'overflow') this.step = 'cgj';
+        if (next !== 'joins') return;
+        first = false;
+        if (hasLowerClass(this.info.lead, info.trail)) {
+          this.reorder();
+          return;
+        }
+        continue;
+      } else if (info.hangul) {
+        this.p++;
+        if (this.done()) return;
+        if (this.at(this.p).hangul) {
+          this.step = 'hangul';
+          return;
+        }
+      } else {
+        this.p++;
+      }
+      first = false;
+      if (this.done()) return;
+      this.info = this.at(this.p);
+      const next = this.ssNext(this.info);
+      if (next === 'starter') return;
+      if (next === 'overflow') {
+        this.step = 'cgj';
+        return;
+      }
+      if (hasLowerClass(this.info.lead, info.trail)) {
+        this.reorder();
+        return;
+      }
+    }
+  }
+}
+
+/**
+ * The number of normalization segments Go's `norm.Iter` yields for `text` in NFKD, which Tweego's word count
+ * counts (see `SegmentIterator`). A segment starts at a starter (combining class 0, not combining with what
+ * precedes it) and holds the non-starters after it, so `é` is one segment and a Hangul syllable is one. The
+ * iterator reads the text as written, not decomposed first: when a character's leading combining class is lower
+ * than the trailing class before it, it reorders, and then ends the segment at the next character of class 0,
+ * even one that combines with what precedes it (U+0301 U+09BE U+09BE is two segments). More than 30
+ * non-starters also end a segment. Character properties come from the JavaScript
+ * engine's Unicode data, so characters newer than Go's tables can count differently.
  */
 export function countNormalizationSegments(text: string): number {
+  const iter = new SegmentIterator(text);
   let segments = 0;
-  let nonStarters = 0;
-  for (const ch of text.normalize('NFKD')) {
-    const role = ch < '\u0300' ? 'starter' : segmentRole(ch);
-    if (segments === 0 || role === 'starter') {
-      segments++;
-      nonStarters = role === 'non-starter' ? 1 : 0;
-    } else if (role === 'combining-starter') {
-      nonStarters = 0;
-    } else if (++nonStarters > MAX_NON_STARTERS) {
-      segments++;
-      nonStarters = 1;
-    }
+  while (!iter.done()) {
+    segments++;
+    iter.next();
   }
   return segments;
 }

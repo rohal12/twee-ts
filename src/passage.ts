@@ -59,6 +59,24 @@ export function isInfoPassage(p: ReadonlyPassage): boolean {
   return hasInfoName(p) || hasInfoTags(p);
 }
 
+/** Info passages that hold story data or settings, which no story format shows. */
+const DATA_PASSAGE_NAMES: ReadonlySet<string> = new Set(['StoryData', 'StorySettings', 'StoryIncludes']);
+
+/**
+ * The info tags of passages a story format runs or shows: all but `annotation`, a note. (The `Twine.` tags mark
+ * private passages and media, which no format shows either.)
+ */
+const ENTRY_TAGS = INFO_TAGS.filter((t) => t !== 'annotation');
+
+/**
+ * Whether a story format runs or shows `p` without a link (StoryInit, PassageHeader, a `script`, `init` or `widget`
+ * passage and the like), so that what it links to is reachable: an info passage, unless it is one only for being
+ * story data (StoryData, StorySettings, StoryIncludes), a note (`annotation`) or a `Twine.` passage.
+ */
+export function isEntryPassage(p: ReadonlyPassage): boolean {
+  return (hasInfoName(p) && !DATA_PASSAGE_NAMES.has(p.name)) || hasAnyTag(p, ...ENTRY_TAGS);
+}
+
 export function isStoryPassage(p: ReadonlyPassage): boolean {
   return !hasInfoName(p) && !hasInfoTags(p);
 }

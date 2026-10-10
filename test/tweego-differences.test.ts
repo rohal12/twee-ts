@@ -12,6 +12,7 @@ import { parseTwee } from '../src/parser.js';
 import { StoryBuilder, createStory, decodeStoryData, marshalStoryData } from '../src/story.js';
 import { toTwee } from '../src/output-twee.js';
 import { decompileHTML } from '../src/html-parser.js';
+import { countNormalizationSegments } from '../src/word-count.js';
 import type { CompileResult, Diagnostic, OutputMode } from '../src/types.js';
 
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
@@ -195,6 +196,11 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
       });
       expect(result.output).toContain(`<!-- UUID://${IFID}// --><div id="store-area" hidden><tw-storydata `);
     });
+  });
+
+  it('D-31: counts a mark newer than Unicode 11 as a mark', () => {
+    // U+1E130 (Unicode 12, combining class 230): Go's tables do not have it, so Tweego counts two segments here.
+    expect(countNormalizationSegments('a\u{1e130}')).toBe(1);
   });
 
   it('D-17: writes Twee with LF line endings on every OS', async () => {

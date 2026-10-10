@@ -2,7 +2,7 @@
 
 twee-ts reads Twee and builds the story model as Tweego does, read from Tweego's Go source line by line: the same whitespace (Go's `unicode.IsSpace`, which counts U+0085 and not U+FEFF), the same escaping, the same rules for duplicate and special passages, the same StoryData decoding (keys match regardless of letter case, as Go's `encoding/json` matches them), the same Twee2 conversion and the same word count. This page lists every difference that is intended. Each one has a test in `test/tweego-differences.test.ts`, named after its number. Any other difference is a bug.
 
-The first comparisons come from reading Tweego's source (`tweego/*.go`, `internal/tweelexer`, `internal/twee2compat`) and Go's standard library. The Twee2 conversion and the comment removal of the word count are also checked against Tweego's own regular expressions, run with Go's semantics. The output differences (D-20 to D-26) and the input differences (D-27 to D-29) come from comparing the output of twee-ts with that of a Tweego 2.1.1 binary in about 1,900 comparisons; a real project (CleanSlate) compiles to the same bytes apart from `creator`, `creator-version` and the `tags` attribute (D-22).
+The first comparisons come from reading Tweego's source (`tweego/*.go`, `internal/tweelexer`, `internal/twee2compat`) and Go's standard library. The Twee2 conversion and the comment removal of the word count are also checked against Tweego's own regular expressions, run with Go's semantics. The output differences (D-20 to D-26) and the input differences (D-27 to D-29) come from comparing the output of twee-ts with that of a Tweego 2.1.1 binary in about 1,900 comparisons; a real project (CleanSlate) compiles to the same bytes apart from `creator`, `creator-version` and the `tags` attribute (D-22). The word count's character segments are checked against Go's `norm` package itself, at the version Tweego 2.1.1 is built with (`test/fixtures/word-count/go-norm-segments.json`).
 
 ## Reading Twee
 
@@ -72,6 +72,10 @@ The first comparisons come from reading Tweego's source (`tweego/*.go`, `interna
 **D-13. Locations.** Diagnostics about a passage carry its file and line, and the warning about a duplicate passage also names the file and line of the passage it replaces.
 
 **D-26. Statistics.** The word count of `-l` is the word count of the story that is built. After a replaced duplicate passage, Tweego still counts the words of the first passage (`:: Dup` with `first one two three` and then `:: Dup` with `second` gives a count of 4 in Tweego and 2 in twee-ts). The layout of the report differs too: twee-ts writes `Statistics:` with `Passages`, `Words` and `Files`, and `--log-files` writes `Files: a, b` and `External files: …`; Tweego writes `Processed files (in order)`, `Total> Passages: N` and `Story> Passages: N, Words: N`. All of it goes to standard error in twee-ts. A script that parses Tweego's report has to be changed.
+
+## Word count
+
+**D-31. Characters newer than Unicode 11.** The `tweego` word count splits text into characters (a letter with its accents is one) as Go's `norm` package does, but takes each character's properties from the Unicode data of the JavaScript engine. Tweego 2.1.1 is built with Unicode 11 tables, so a mark added later (such as U+1E130, from Unicode 12) is a character of its own there and part of the character before it in twee-ts. Text written with Unicode 11 characters counts the same.
 
 ## Reading Twine 2 HTML
 
