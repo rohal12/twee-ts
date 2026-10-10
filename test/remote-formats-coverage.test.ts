@@ -436,6 +436,7 @@ describe('requests', () => {
     /** Stands in for undici's Agent, the class of the global dispatcher. */
     class FakeAgent {
       static readonly made: FakeAgent[] = [];
+      static destroyFails = false;
       destroyed = false;
       constructor(readonly options: unknown) {
         FakeAgent.made.push(this);
@@ -445,7 +446,7 @@ describe('requests', () => {
       }
       destroy(): Promise<void> {
         this.destroyed = true;
-        return Promise.resolve();
+        return FakeAgent.destroyFails ? Promise.reject(new Error('already destroyed')) : Promise.resolve();
       }
     }
 
@@ -453,6 +454,7 @@ describe('requests', () => {
     beforeEach(() => {
       saved = Reflect.get(globalThis, GLOBAL_DISPATCHER);
       FakeAgent.made.length = 0;
+      FakeAgent.destroyFails = false;
       Reflect.set(globalThis, GLOBAL_DISPATCHER, new FakeAgent({}));
       FakeAgent.made.length = 0;
     });
@@ -485,6 +487,16 @@ describe('requests', () => {
       await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).rejects.toThrow(
         'fetch failed',
       );
+      expect(FakeAgent.made.map((agent) => agent.destroyed)).toEqual([true]);
+    });
+
+    it('does not mind a dispatcher that cannot be destroyed', async () => {
+      const log = serve();
+      FakeAgent.destroyFails = true;
+      await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).resolves.toMatchObject({
+        name: 'Review',
+      });
+      expect(log.dispatchers).toHaveLength(1);
       expect(FakeAgent.made.map((agent) => agent.destroyed)).toEqual([true]);
     });
 
