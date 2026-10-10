@@ -424,7 +424,7 @@ describe('CLI exit status', () => {
 describe('CLI output inside a source folder', () => {
   const ORIGINAL = `${STORY_DATA}\n:: Start\nORIGINAL_CONTENT [[Deleted]]\n\n:: Deleted\nSOON_DELETED\n`;
   // Start still links to Deleted, which the edit removes.
-  const EDITED = `${STORY_DATA}\n:: Start\nUPDATED_CONTENT [[Deleted]]\n`;
+  const EDITED = `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\nUPDATED_CONTENT [[Deleted]]\n`;
   const source = join('story', 'a.tw');
   const output = join('story', 'z-output.html');
 
@@ -500,7 +500,7 @@ describe('CLI --lint', () => {
 
   it('fails on links to passages that Twine 2 output leaves out, and says why', () => {
     const r = lintStory(
-      `${STORY_DATA}\n:: Start\n[[Secret]] [[Logic]]\n\n:: Secret [Twine.private]\nHidden\n\n:: Logic [script]\nwindow.x = 1;\n`,
+      `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\n[[Secret]] [[Logic]]\n\n:: Secret [Twine.private]\nHidden\n\n:: Logic [script]\nwindow.x = 1;\n`,
     );
     expect(r.stdout).toContain('Start -> Secret (passage "Secret" is tagged "Twine.private"');
     expect(r.stdout).toContain('Start -> Logic (passage "Logic" is tagged "script"');
@@ -510,7 +510,7 @@ describe('CLI --lint', () => {
 
   it('passes when the only broken link is in a Twine.private passage', () => {
     const r = lintStory(
-      `${STORY_DATA}\n:: Start\n[[Next]]\n\n:: Next\nThe end.\n\n:: Notes [Twine.private]\nTODO: write [[Epilogue]] later.\n`,
+      `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\n[[Next]]\n\n:: Next\nThe end.\n\n:: Notes [Twine.private]\nTODO: write [[Epilogue]] later.\n`,
     );
     expect(r.stdout).not.toContain('Broken links');
     expect(r.stdout).toContain('Lint passed.');
@@ -519,7 +519,7 @@ describe('CLI --lint', () => {
 
   it('passes when the only bracketed text is in a stylesheet', () => {
     const r = lintStory(
-      `${STORY_DATA}\n:: Start\nHello\n\n:: Theme [stylesheet]\nbody::before { content: "[[Decorative]]"; }\n`,
+      `:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\nHello\n\n:: Theme [stylesheet]\nbody::before { content: "[[Decorative]]"; }\n`,
     );
     expect(r.stdout).toContain('Lint passed.');
     expect(r.status).toBe(0);

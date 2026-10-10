@@ -7,7 +7,7 @@ import type { BrokenLink } from './inspect.js';
 import { compileForOutputFile } from './compiler.js';
 import { storyInspect } from './inspect.js';
 import { describeOmission } from './passage-omission.js';
-import { startPassageDiagnostics } from './start-passage.js';
+import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 
 export interface LintResult {
   /** Compilation diagnostics (errors and warnings). */
@@ -68,7 +68,11 @@ export async function lintForOutputFile(
   const map = storyInspect(result.story, { target: 'twine2' });
 
   return {
-    diagnostics: [...result.diagnostics, ...startPassageDiagnostics(result.story, map.start, 'twine2')],
+    diagnostics: [
+      ...result.diagnostics,
+      ...startPassageDiagnostics(result.story, map.start, 'twine2'),
+      ...storyTitleDiagnostics(result.story, 'twine2'),
+    ],
     stats: result.stats,
     formatName: result.story.twine2.format,
     formatVersion: result.story.twine2.formatVersion,

@@ -98,6 +98,7 @@ const FIXTURES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     'src/Start.tw': ':: Start\nYou wake up.\n\n:: Kitchen [food\nA kitchen.\n',
   },
   lint: {
+    'src/StoryTitle.tw': ':: StoryTitle\nMy Story\n',
     'src/StoryData.tw': `:: StoryData\n{\n\t"ifid": "${IFID}",\n\t"format": "SugarCube",\n\t"format-version": "2.37.3"\n}\n`,
     'src/Start.tw': ':: Start\nYou wake up. [[Kitchen]]\n',
     'src/Kitchen.tw':

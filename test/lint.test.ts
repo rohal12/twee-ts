@@ -9,6 +9,31 @@ import type { LintResult } from '../src/lint.js';
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 
 describe('lint', () => {
+  const IFID = '{"ifid":"12345678-1234-4234-8234-123456789ABC"}';
+  const titleErrors = (result: LintResult) =>
+    result.diagnostics.filter((d) => d.level === 'error').map((d) => d.message);
+
+  it.each([
+    ['missing', `:: StoryData\n${IFID}\n\n:: Start\nHello.`, 'Special passage "StoryTitle" not found.'],
+    [
+      'empty',
+      `:: StoryTitle\n\n:: StoryData\n${IFID}\n\n:: Start\nHello.`,
+      'Special passage "StoryTitle" is empty, so the story has no name.',
+    ],
+  ])('reports a %s story title as an error', async (_name, content, message) => {
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+
+    expect(titleErrors(result)).toEqual([message]);
+    expect(formatLintReport(result)).not.toContain('Lint passed.');
+  });
+
+  it('passes a story with a title', async () => {
+    const content = `:: StoryTitle\nTitled\n\n:: StoryData\n${IFID}\n\n:: Start\nHello.`;
+    const result = await lint({ sources: [{ filename: 'story.tw', content }] });
+
+    expect(titleErrors(result)).toEqual([]);
+  });
+
   it('reports stats for a clean story', async () => {
     const result = await lint({
       sources: [join(FIXTURES_DIR, 'multi-passage.tw')],
@@ -57,7 +82,7 @@ describe('lint', () => {
         {
           filename: 'comments.tw',
           content:
-            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<!-- [[Ghost]] --> /% [[Ghost]] %/ /* [[Ghost]] */ [[Room]]\n\n:: Room\nText.',
+            ':: StoryTitle\nTitled\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\n<!-- [[Ghost]] --> /% [[Ghost]] %/ /* [[Ghost]] */ [[Room]]\n\n:: Room\nText.',
         },
       ],
     });
@@ -100,7 +125,7 @@ describe('lint', () => {
 });
 
 describe('lint reads no links from stylesheets', () => {
-  const STORY_DATA = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n';
+  const STORY_DATA = ':: StoryTitle\nTitled\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n';
   // Normal passage links and links in a script's strings, which must still be read.
   const STORY = `${STORY_DATA}:: Start\n[[Room]]\n\n:: Room\nText.\n\n:: Story JavaScript [script]\n$('#x').wiki('[[Missing]]');\n`;
   const CSS =
@@ -158,7 +183,7 @@ describe('lint reads no links from stylesheets', () => {
 });
 
 describe('lint checks link destinations against what Twine 2 output emits', () => {
-  const STORY_DATA = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n';
+  const STORY_DATA = ':: StoryTitle\nTitled\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n';
   const DESTINATIONS = [
     'Secret',
     'Logic',
@@ -175,7 +200,6 @@ describe('lint checks link destinations against what Twine 2 output emits', () =
   ];
   const STORY =
     STORY_DATA +
-    ':: StoryTitle\nTitle\n\n' +
     `:: Start\n${DESTINATIONS.map((name) => `[[${name}]]`).join(' ')}\n\n` +
     ':: Secret [Twine.private]\nHidden\n\n' +
     ':: Logic [script]\nwindow.x = 1;\n\n' +
@@ -256,7 +280,7 @@ describe('lint checks link destinations against what Twine 2 output emits', () =
   });
 
   it('reads no links from StoryTitle, which Twine 2 output leaves out', async () => {
-    const content = `${STORY_DATA}:: StoryTitle\nThe [[Missing]] Story\n\n:: Start\nHello.\n`;
+    const content = `${STORY_DATA.replace(':: StoryTitle\nTitled\n\n', '')}:: StoryTitle\nThe [[Missing]] Story\n\n:: Start\nHello.\n`;
     const result = await lint({ sources: [{ filename: 'story.tw', content }] });
     expect(result.brokenLinks).toEqual([]);
   });
@@ -285,7 +309,7 @@ describe('formatLintReport', () => {
         {
           filename: 'clean.tw',
           content:
-            ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"SugarCube","format-version":"2.37.3"}\n\n:: Start\n[[Room]]\n\n:: Room\n[[Start]]',
+            ':: StoryTitle\nTitled\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"SugarCube","format-version":"2.37.3"}\n\n:: Start\n[[Room]]\n\n:: Room\n[[Start]]',
         },
       ],
     });
