@@ -137,9 +137,42 @@ describe('function-valued properties (JS-4)', () => {
     expect(decodeFormatJSON(source)).toEqual({
       ok: true,
       data: { name: 'R', version: '1.0.0', source: 'x', proofing: true },
-      notes: ['Skipped the function at property setup (line 1, column 63)'],
+      notes: [],
     });
   });
+
+  it('notes a function where twee-ts expects data, with its position', () => {
+    const source = 'window.storyFormat({name: () => 1, version: "1.0.0", source: "x", proofing() {}});';
+    expect(decodeFormatJSON(source)).toEqual({
+      ok: true,
+      data: { name: UNNAMED_FORMAT_NAME, version: '1.0.0', source: 'x', proofing: false },
+      notes: [
+        'Skipped the function at property name (line 1, column 21)',
+        'Skipped the function at property proofing (line 1, column 67)',
+      ],
+    });
+  });
+
+  it.each(['name', 'version', 'source', 'proofing', 'author', 'description', 'image', 'url', 'license'])(
+    'notes a function at the property %s that twee-ts reads',
+    (field) => {
+      const source = `window.storyFormat({version: "1.0.0", source: "x", ${field}() {}, other: {${field}() {}}});`;
+      const result = readFormatObject(source);
+      expect(result.ok && result.notes).toEqual([
+        `Skipped the function at property ${field} (line 1, column ${source.indexOf(`${field}() {}`) + 1})`,
+      ]);
+    },
+  );
+
+  it.each(['setup', 'editorExtensions', 'other'])(
+    'says nothing of a function at the property %s, nested or not',
+    (key) => {
+      const source = `window.storyFormat({name: "R", version: "1.0.0", source: "x", ${key}: () => 1, nested: {name() {}, ${key}: function () {}}});`;
+      const result = readFormatObject(source);
+      expect(result.ok && result.notes).toEqual([]);
+      expect(result.ok && [...result.fields.keys()]).toEqual(['name', 'version', 'source', 'nested']);
+    },
+  );
 
   it('reads a source that follows the setup function', () => {
     const source = 'window.storyFormat({name:"R",version:"1.0.0","setup": function(){return 1},source:"x"});';
@@ -150,7 +183,15 @@ describe('function-valued properties (JS-4)', () => {
     'skips %s',
     (property) => {
       const result = decodeFormatJSON(`window.storyFormat({name:"R",version:"1.0.0",source:"x",${property}});`);
-      expect(result).toMatchObject({ ok: true, data: { name: 'R' }, notes: [expect.stringContaining('setup')] });
+      expect(result).toMatchObject({ ok: true, data: { name: 'R' }, notes: [] });
+      expect(readFormatObject(`window.storyFormat({name:"R",version:"1.0.0",source:"x",${property}});`)).toMatchObject({
+        ok: true,
+        fields: new Map([
+          ['name', 'R'],
+          ['version', '1.0.0'],
+          ['source', 'x'],
+        ]),
+      });
     },
   );
 });
@@ -326,10 +367,11 @@ describe('decoding speed', () => {
     expect(elapsed).toBeLessThan(30_000);
   });
 
-  it('notes many function properties in linear time', { timeout: 120_000 }, () => {
+  it('leaves out many function properties in linear time', { timeout: 120_000 }, () => {
     const methods = Array.from({ length: 50_000 }, (_, i) => `f${i}() {}`).join(',\n');
-    const result = decodeFormatJSON(`window.storyFormat({version: "1.0.0", source: "s",\n${methods}});`);
-    expect(result.ok && result.notes.length).toBe(50_000);
-    expect(result.ok && result.notes.at(-1)).toBe('Skipped the function at property f49999 (line 50001, column 1)');
+    const result = decodeFormatJSON(`window.storyFormat({version: "1.0.0", source: "s",\n${methods}, name() {}});`);
+    expect(result.ok && result.notes).toEqual([
+      expect.stringMatching(/^Skipped the function at property name \(line 50001, /),
+    ]);
   });
 });

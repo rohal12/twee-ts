@@ -74,19 +74,19 @@ describe('format object literals read as JavaScript reads them', () => {
 
   it('leaves out a function-valued property, as data, whatever its spelling (JS-4)', () => {
     for (const property of [
-      'setup: function () {}',
-      '"setup": function () { return /"}/; }',
-      "'setup': function named() {}",
-      'setup() {}',
-      'async setup() {}',
-      '*setup() {}',
-      'setup: () => {}',
-      'setup: async () => 1',
+      'name: function () {}',
+      '"name": function () { return /"}/; }',
+      "'name': function named() {}",
+      'name() {}',
+      'async name() {}',
+      '*name() {}',
+      'name: () => {}',
+      'name: async () => 1',
     ]) {
       const read = readFormatObject(`window.storyFormat({a: 1, ${property}, b: 2});`);
       expect(read, property).toMatchObject({
         ok: true,
-        notes: [expect.stringMatching(/^Skipped the function at property setup/)],
+        notes: [expect.stringMatching(/^Skipped the function at property name/)],
       });
       expect(read.ok && [...read.fields.keys()], property).toEqual(['a', 'b']);
     }
