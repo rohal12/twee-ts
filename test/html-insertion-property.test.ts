@@ -4,14 +4,14 @@
  *   belongs (modules, head file and Vite client exactly once as elements of the head; IFID comment before the store
  *   area; story data as live elements) and the rest of the document is unchanged;
  * - P3: for random values and random template text around a placeholder, in every insertion context, the reader of
- *   that context gets the value back (HTML text and attributes decoded, JavaScript, JSON and CSS strings evaluated),
- *   or there is a diagnostic.
+ *   that context gets the value back (HTML text and attributes decoded, JavaScript, JSON and CSS strings evaluated,
+ *   scripts read by acorn to the same tokens), or there is a diagnostic.
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { Script } from 'node:vm';
 import { fillFormatTemplate } from '../src/template.js';
-import { failures, judgeStoryName } from './helpers/insertion-judges.js';
+import { failures, judgeStoryName, twineEscape } from './helpers/insertion-judges.js';
 import { attr, elements, parseDocument, textContent } from './helpers/html.js';
 
 /** Fragments that change the tokenizer state or the tree-construction context, and look-alikes of targets. */
@@ -164,6 +164,9 @@ describe('P3: a value keeps its meaning in every context', { timeout: 120_000 },
     (pre, post) => `<script>/*${pre}{{STORY_NAME}}${post}*/</script>`,
     (pre, post) => `<script>//${pre}{{STORY_NAME}}${post}\n</script>`,
     (pre, post) => `<style>/*${pre}{{STORY_NAME}}${post}*/</style>`,
+    (pre, post) => `<script>var v = "${pre}{{STORY_NAME}}${post}";</script>`,
+    (pre, post) => `<script>var v = '${pre}{{STORY_NAME}}${post}';</script>`,
+    (pre, post) => `<script>var v = \`${pre}{{STORY_NAME}}${post}\`;</script>`,
   ];
 
   it('keeps the value, or warns, in markup contexts with any text around it', () => {
@@ -195,10 +198,6 @@ describe('P3: a value keeps its meaning in every context', { timeout: 120_000 },
     }
     return context.v;
   }
-
-  /** Twine 2's escaping of the story name (lodash `escape()`): the five characters HTML text needs. */
-  const twineEscape = (s: string): string =>
-    s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] ?? ch);
 
   /** JavaScript string text without quotes, escapes or line breaks: written the same in each kind of literal. */
   const plain = fc.string({
@@ -243,6 +242,24 @@ describe('P3: a value keeps its meaning in every context', { timeout: 120_000 },
     ['script code', '<script>//\n!{{STORY_NAME}}\n</script>', false],
     ['an attribute, a character reference made', '<p title="&am{{STORY_NAME}}p;">x</p>', false],
     ['text, a tag made', '<p>a<{{STORY_NAME}}b>c</p>', false],
+    // Text that joins up for JavaScript or CSS, which the HTML structure cannot show (found with seed -1096408398,
+    // path "28:7": `*` and `/` ending the comment early, so the script no longer compiles).
+    ['a script comment, its end made', '<script>/**{{STORY_NAME}}/*/</script>', false],
+    ['a module script comment, its end made', '<script type="module">/**{{STORY_NAME}}/ */</script>', false],
+    ['a script string, a backslash escaping', '<script>var v = "\\{{STORY_NAME}}n";</script>', false],
+    ['a single-quoted script string, a backslash escaping', "<script>var v = '\\{{STORY_NAME}}n';</script>", false],
+    ['a template literal, a backslash escaping', '<script>var v = `\\{{STORY_NAME}}n`;</script>', false],
+    [
+      'a JSON string, a backslash escaping',
+      '<script type="application/json">{"v": "\\{{STORY_NAME}}n"}</script>',
+      false,
+    ],
+    ['a style comment, its end made', '<style>/**{{STORY_NAME}}/a{}*/</style>', false],
+    ['a CSS string, a backslash escaping', '<style>a::after { content: "\\{{STORY_NAME}}62"; }</style>', false],
+    ['a script comment', '<script>/*a{{STORY_NAME}}b*/</script>', true],
+    ['a script line comment after a backslash', '<script>// a\\{{STORY_NAME}}\n</script>', true],
+    ['a script string after an escaped backslash', '<script>var v = "\\\\{{STORY_NAME}}n";</script>', true],
+    ['a style comment', '<style>/*a{{STORY_NAME}}b*/</style>', true],
   ])('writes an empty value between text it joins in %s, warning only where the page changes', (_label, t, kept) => {
     const { output, diagnostics } = fill(t, '');
     expect(output).toBe(t.replace('{{STORY_NAME}}', ''));

@@ -214,15 +214,19 @@ function placeholderEdits(
       const inText = delimiters === 'inside' && context.kind === 'text';
       return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
     }
-    const text = replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
-    // An empty value cannot be escaped; in a context that takes values, the template text around it joining up
-    // matters only where that changes the page (`<!` and `--` making `<!--` in script text that still ends at its end
-    // tag does not). A context that takes no value (JavaScript code) still warns.
+    const before = document.slice(0, occurrence.start);
+    const after = document.slice(occurrence.end);
+    const text = replacementFor(value, site, before, after);
+    // An empty value cannot be escaped; in a context that takes values, the template text around it joining up for
+    // the HTML tokenizer matters only where that changes the page (`<!` and `--` making `<!--` in script text that
+    // still ends at its end tag does not). A context that takes no value (JavaScript code), and text that joins up
+    // for the script or style language itself (`*` and `/` ending a comment, a backslash escape), still warn.
     const empty =
       value.kind === 'text' &&
       value.text === '' &&
       site.delimiters === 'inside' &&
-      escapeForContext('', site.context) !== undefined;
+      escapeForContext('', site.context) !== undefined &&
+      !codeGlues(site.context, before, after);
     return text === undefined && empty && locate.keepsStructure(occurrence) ? '' : text;
   };
   // The markup's comment goes before the element of the template's own that holds a live placeholder, else first.
@@ -385,20 +389,33 @@ function startGlues(context: InsertionContext, before: string, next: string): bo
         (before.endsWith('--!') && next.startsWith('>'))
       );
     case 'style':
-      if (spansBoundary(STYLE_SEQUENCES, before, next)) return true;
-      return isCodeComment(context) ? before.endsWith('*') && next.startsWith('/') : ESCAPING_BACKSLASH.test(before);
+      return spansBoundary(STYLE_SEQUENCES, before, next) || codeGlues(context, before, next);
     case 'script':
     case 'json':
-      if (spansBoundary(context.escapable ? SCRIPT_SEQUENCES : PLAIN_SCRIPT_SEQUENCES, before, next)) return true;
-      if (isCodeComment(context))
-        return context.js.kind === 'block-comment' && before.endsWith('*') && next.startsWith('/');
-      // (A template literal's `${` cannot form: `$` right before a placeholder's `{{` would already be one.)
-      return ESCAPING_BACKSLASH.test(before);
+      return (
+        spansBoundary(context.escapable ? SCRIPT_SEQUENCES : PLAIN_SCRIPT_SEQUENCES, before, next) ||
+        codeGlues(context, before, next)
+      );
     default: {
       const _unhandled: never = context;
       throw new Error(`Unhandled context at a boundary: ${JSON.stringify(_unhandled)}`);
     }
   }
+}
+
+/**
+ * Whether `next`, written after the template text `before` in JavaScript, JSON or CSS text, would be read together
+ * with it by that language (not by the HTML tokenizer): `*` and `/` ending a block comment, or a backslash escaping
+ * the next character of a string. The HTML structure cannot show these, so an empty value warns here too.
+ */
+function codeGlues(context: InsertionContext, before: string, next: string): boolean {
+  if (next === '' || (context.kind !== 'style' && context.kind !== 'script' && context.kind !== 'json')) return false;
+  if (!isCodeComment(context)) {
+    // (A template literal's `${` cannot form: `$` right before a placeholder's `{{` would already be one.)
+    return ESCAPING_BACKSLASH.test(before);
+  }
+  const block = context.kind === 'style' || context.js.kind === 'block-comment';
+  return block && before.endsWith('*') && next.startsWith('/');
 }
 
 /** Whether `pattern` matches `before` followed by `next` across the boundary between them, but in neither alone. */
