@@ -44,11 +44,11 @@ Local story formats:
   jonah: jonah  (Twine 1)
 
 Cached remote formats:
-  chapbook-2: Chapbook 2.2.0
-  sugarcube-2: SugarCube 2.37.3 (also cached: 2.36.1)
+  chapbook-2: chapbook 2.3.1
+  sugarcube-2: sugarcube 2.37.3 (also cached: 2.36.1)
 ```
 
-Local formats are listed after [pruning](#semver-version-pruning), by search directory and then folder name; a Twine 1 format shows its folder name and no version. The list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version, and only when a build would consider it: when it came from one of the configured `formatUrls` or `formatIndices`, or from the Story Formats Archive (see [The Download Cache](#the-download-cache)). `twee-ts cache list` lists every download.
+Local formats are listed after [pruning](#semver-version-pruning), by search directory and then folder name; a Twine 1 format shows its folder name and no version. The list reads `formatPaths` and `useTweegoPath` from the config file (unless `--no-config`). A cached download is listed under the ID of its name and major version, with the name and version as its source records them (an index may write `sugarcube` where the format's own name is `SugarCube`), and only when a build would consider it: when it came from one of the configured `formatUrls` or `formatIndices`, or from the Story Formats Archive (see [The Download Cache](#the-download-cache)). `twee-ts cache list` lists every download.
 
 ## Format Directory Structure
 
@@ -196,7 +196,7 @@ The format is selected in this order of precedence:
 
 The first of these that is set is the request twee-ts looks for, in every source above. If it can't be found, the build fails with an error naming it, the local formats found, and the candidates with the requested name with why each one does not answer; twee-ts never swaps in a different story format.
 
-The compiled HTML's `<tw-storydata>` element records the format and version it was built with. Archive output (`twine2-archive`) keeps the `StoryData` values as written.
+The compiled HTML's `<tw-storydata>` element records the format and version it was built with. Archive output (`twine2-archive`) keeps the `StoryData` values as written (empty when it names no format, and `--format` is not used), where Tweego writes the format it finds; see [Differences from Tweego](./tweego-differences).
 
 ### How a Format Is Chosen
 

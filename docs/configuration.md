@@ -16,7 +16,7 @@ The config file has a [JSON Schema](https://json-schema.org/) that provides auto
 }
 ```
 
-The schema is also submitted to [SchemaStore](https://www.schemastore.org/), so editors that use SchemaStore will automatically associate `twee-ts.config.json` files with the schema — no `$schema` key needed.
+[SchemaStore](https://www.schemastore.org/) lists the schema too, so editors that use SchemaStore will automatically associate `twee-ts.config.json` files with it — no `$schema` key needed. SchemaStore does not keep a copy: its entry points to the schema in the npm package (`https://unpkg.com/@rohal12/twee-ts/schemas/twee-ts.config.schema.json`), so the schema an editor uses is always the one of the latest release. To validate against the schema of the version you have installed, use a `$schema` key with a version in the URL (`https://unpkg.com/@rohal12/twee-ts@2/schemas/twee-ts.config.schema.json`).
 
 ## Minimal Config
 

@@ -223,7 +223,8 @@ function exportedTypeModules(): Map<string, string> {
 
 /**
  * A mirror block's check: the block's declarations in a namespace, and for each one a check that
- * it has the keys of the exported type of the same name and is assignable to it.
+ * it has the keys of the exported type of the same name, that the two are assignable to each other
+ * and that the same properties are read-only.
  */
 function mirrorSnippet(block: CodeBlock, exported: ReadonlyMap<string, string>): Snippet {
   const from = block.directive.values.get('from') ?? PACKAGE;
@@ -237,11 +238,17 @@ function mirrorSnippet(block: CodeBlock, exported: ReadonlyMap<string, string>):
     `import type * as Real from '${from}';`,
     ...imports,
     'type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;',
+    'type Defined<T> = { [K in keyof T]-?: Exclude<T[K], undefined> };',
+    'type ReadonlyKeys<T> = { [K in keyof T]-?: Equal<{ [P in K]: T[P] }, { -readonly [P in K]: T[P] }> extends true ? never : K }[keyof T];',
     'declare namespace Doc {',
   ];
   const checks = declared.flatMap((name) => [
     `const keys_${name}: Equal<keyof Doc.${name}, keyof Real.${name}> = true;`,
     `const assignable_${name} = (value: Doc.${name}): Real.${name} => value;`,
+    // The shipped type must also fit the documented one (a documented \`T[]\` is not the shipped \`readonly T[]\`),
+    // and the same properties must be read-only.
+    `const shipped_${name} = (value: Defined<Real.${name}>): Defined<Doc.${name}> => value;`,
+    `const readonly_${name}: Equal<ReadonlyKeys<Doc.${name}>, ReadonlyKeys<Real.${name}>> = true;`,
   ]);
   return {
     block,

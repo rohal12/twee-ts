@@ -87,6 +87,8 @@ Full docs at **[rohal12.github.io/twee-ts](https://rohal12.github.io/twee-ts/)**
 
 ## Development
 
+You need Node.js 24 or later and pnpm 12, the version `packageManager` in `package.json` pins; `devEngines` makes the install fail on an older Node.js. Get pnpm 12 with `npm install -g pnpm@12`, or run `corepack enable` and let Corepack read the pinned version. A standalone pnpm 10 or 11 cannot install the project: it tries to switch to the pinned pnpm 12 and fails with `ERR_PNPM_NO_MATCHING_VERSION` for `@pnpm/linux-x64@12.10.1` (pnpm 12 renamed its platform packages), so update pnpm first. [CONTRIBUTING.md](CONTRIBUTING.md) lists the checks a change has to pass.
+
 ```sh
 pnpm install
 pnpm test            # run tests (including every example in these docs)

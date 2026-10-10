@@ -7,6 +7,17 @@ export default defineConfig({
   // Deploy to GitHub Pages at https://<user>.github.io/twee-ts/
   base: '/twee-ts/',
 
+  // Shiki ships no Twee grammar: a minimal one that marks passage headers, so Twee blocks are known to Shiki.
+  markdown: {
+    languages: [
+      {
+        name: 'twee',
+        scopeName: 'source.twee',
+        patterns: [{ name: 'markup.heading.twee', match: '^::.*$' }],
+      },
+    ],
+  },
+
   head: [['meta', { name: 'theme-color', content: '#6366f1' }]],
 
   themeConfig: {

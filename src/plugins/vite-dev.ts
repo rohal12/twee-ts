@@ -78,7 +78,6 @@ export function pathBelowBase(url: string, base: string): string | undefined {
   return path.startsWith(decodedBase) ? path.slice(decodedBase.length) : undefined;
 }
 
-/** Served until the first successful compile, so the overlay has a page to appear on. */
 /** The reload message for a rebuilt story: limited to the story's pages unless Vite's client could not match them. */
 export function reloadPayload(base: string, outputFilename: string): { type: 'full-reload'; path?: string } {
   let decoded: string;
@@ -100,6 +99,7 @@ const OUTPUT_MEDIA_TYPES: Readonly<Record<OutputMode, string>> = {
   json: 'application/json; charset=utf-8',
 };
 
+/** Served until the first successful compile, so the overlay has a page to appear on. */
 function waitingPage(base: string): string {
   return viteWaitingPage(`${base}@vite/client`);
 }

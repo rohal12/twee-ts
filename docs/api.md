@@ -177,6 +177,8 @@ Hello, world!`,
 console.log(result.story.name); // My Story
 ```
 
+An inline source is read by the extension of its `filename`: Twee (`.tw`, `.twee`, `.tw2`, `.twee2`, or no extension), a stylesheet (`.css`) or a script (`.js`). Any other type (Twine HTML, media, fonts) is skipped with a warning, because there is no file to load it from. A `Buffer` is decoded like a file's bytes.
+
 You can mix inline sources with file paths:
 
 ```typescript
@@ -194,36 +196,45 @@ console.log(result.stats.passages);
 
 ```typescript
 interface CompileResult {
-  output: string; // compiled HTML, Twee or JSON
-  story: ReadonlyStory; // the story model, read-only
-  format?: StoryFormatInfo | undefined; // format used (undefined for non-HTML modes)
-  diagnostics: Diagnostic[];
-  stats: CompileStats;
+  readonly output: string; // compiled HTML, Twee or JSON
+  readonly story: ReadonlyStory; // the story model, read-only
+  readonly format?: StoryFormatInfo | undefined; // format used (undefined for non-HTML modes)
+  readonly diagnostics: readonly Diagnostic[];
+  readonly stats: CompileStats;
 }
 
 interface CompileStats {
-  passages: number; // all passages
-  storyPassages: number; // passages that are not info passages
-  words: number; // word count of the story passages
-  files: string[]; // source files loaded, in order, relative to the working directory when inside it
-  externalFiles?: string[]; // modules and head file injected (HTML output only)
+  readonly passages: number; // all passages
+  readonly storyPassages: number; // passages that are not info passages
+  readonly words: number; // word count of the story passages
+  readonly files: readonly string[]; // source files loaded, in order, relative to the working directory when inside it
+  readonly externalFiles?: readonly string[]; // modules and head file injected (HTML output only)
 }
 
 type Diagnostic =
-  | { level: 'warning'; message: string; file?: string; line?: number }
-  | { level: 'error'; message: string; file?: string; line?: number; fatal?: boolean };
+  | { readonly level: 'warning'; readonly message: string; readonly file?: string; readonly line?: number }
+  | {
+      readonly level: 'error';
+      readonly message: string;
+      readonly file?: string;
+      readonly line?: number;
+      readonly fatal?: boolean;
+    };
 ```
+
+All of these are read-only: copy before changing (`[...result.diagnostics]`).
 
 ## Error Handling
 
 Problems in the sources (a missing start passage, duplicate passages, malformed Twee, an invalid StoryData field) are collected as `diagnostics` rather than thrown. A `TweeTsError` is thrown when a build cannot run at all; nothing is built or written then. Its `code` says why, and `diagnostics` holds what the build reported before it stopped:
 
-| `code`              | When                                                                                                                                                                              |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BUILD_FAILED`      | No story format is available for HTML output; an unknown `outputMode`                                                                                                             |
-| `INVALID_OPTIONS`   | An option out of range (a negative `formatFetchTimeout`); a config file that is not valid JSON or fails validation; bad plugin options; the Vite plugin under a Vite older than 8 |
-| `INPUT_UNAVAILABLE` | The head file (HTML output) or the config file is missing or can't be read                                                                                                        |
-| `OUTPUT_IS_INPUT`   | The output would overwrite an input (`compileToFile()`, `watch()`, the CLI and the plugins)                                                                                       |
+| `code`               | When                                                                                                                                                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUILD_FAILED`       | No story format is available for HTML output; an unknown `outputMode`                                                                                                                                                                                 |
+| `INVALID_OPTIONS`    | An option out of range (a negative `formatFetchTimeout`); a config file that is not valid JSON or fails validation; bad plugin options; the Vite plugin under a Vite older than 8                                                                     |
+| `INPUT_UNAVAILABLE`  | The head file (HTML output) or the config file is missing or can't be read                                                                                                                                                                            |
+| `OUTPUT_IS_INPUT`    | The output would overwrite an input (`compileToFile()`, `watch()`, the CLI and the plugins)                                                                                                                                                           |
+| `FORMAT_UNAVAILABLE` | A story format that was found can't be used: `resolveRemoteFormat()` found it nowhere and a source failed (`diagnostics` lists every failure); a Twine 1 format's required file is missing; a format that no longer decodes when its template is read |
 
 Other failures are ordinary errors: an aborted `signal` rejects with its reason, a failed write of `outFile` with the file system error (its `code`, such as `EACCES`), and a story format file that can't be read at build time, or a Twine 1 format whose required file is missing, with an `Error` naming the file.
 
