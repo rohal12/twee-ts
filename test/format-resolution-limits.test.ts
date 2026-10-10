@@ -6,6 +6,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { compile, TweeTsError } from '../src/compiler.js';
 import { resolveRemoteFormat } from '../src/format-resolution.js';
 import { clearIndexCache } from '../src/remote-formats.js';
@@ -88,7 +90,10 @@ describe('formatResolutionTimeout: one time limit for finding the story format',
     });
     expect(built.marker).toBeUndefined();
     expect(built.warnings.join('\n')).toMatch(DEADLINE);
-    expect(server.log).toEqual(['/index.json', `/${entryPath('SugarCube', '2.37.3')}`]);
+    // The index answered, so its request was seen; whether the hung download reached the server
+    // before the limit depends on the machine. Nothing else was asked.
+    expect(server.log[0]).toBe('/index.json');
+    expect(['/index.json', `/${entryPath('SugarCube', '2.37.3')}`]).toEqual(expect.arrayContaining(server.log));
   });
 
   it('limits the sum of requests that each stay within formatFetchTimeout', async () => {
@@ -98,8 +103,7 @@ describe('formatResolutionTimeout: one time limit for finding the story format',
     const built = await build({ formatUrls: urls, formatFetchTimeout: 120, formatResolutionTimeout: 200 });
     expect(built.marker).toBeUndefined();
     expect(built.warnings.join('\n')).toMatch(DEADLINE);
-    expect(built.warnings.join('\n')).toContain('timed out after 120 ms');
-    expect(server.log).toContain('/a.js');
+    expect(built.warnings.join('\n')).toContain(`Failed to download format from ${urls[0]}: timed out after 120 ms`);
     expect(server.log).not.toContain('/c.js');
     expect(external).toEqual([]);
   });
@@ -119,12 +123,23 @@ describe('formatResolutionTimeout: one time limit for finding the story format',
     expect(built.warnings.join('\n')).toMatch(DEADLINE);
   });
 
+  // Whether a request reaches a server within its own limit depends on the machine (a loaded CI
+  // runner took more than 50 ms), so the warnings tell which sources were tried, not the server's
+  // log. The second source accepts connections and never reads one, so its server never sees the
+  // request at all: every source must be tried all the same.
   it.each([0, Number.POSITIVE_INFINITY])('has no overall limit at %s: every source is tried', async (limit) => {
-    const server = await startFormatServer({ '/a.js': hang, '/b.js': hang });
-    const urls = ['a', 'b'].map((n) => `${server.origin}/${n}.js`);
-    const built = await build({ formatUrls: urls, formatFetchTimeout: 50, formatResolutionTimeout: limit });
-    expect(server.log).toEqual(['/a.js', '/b.js']);
-    expect(built.warnings.join('\n')).not.toContain('formatResolutionTimeout');
+    const server = await startFormatServer({ '/a.js': hang });
+    const silent = createServer({ pauseOnConnect: true }, () => undefined);
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    try {
+      const urls = [`${server.origin}/a.js`, `http://127.0.0.1:${(silent.address() as AddressInfo).port}/b.js`];
+      const built = await build({ formatUrls: urls, formatFetchTimeout: 50, formatResolutionTimeout: limit });
+      const warnings = built.warnings.join('\n');
+      for (const url of urls) expect(warnings).toContain(`Failed to download format from ${url}: timed out after 50 ms`);
+      expect(warnings).not.toContain('formatResolutionTimeout');
+    } finally {
+      silent.close();
+    }
   });
 
   it('applies to resolveRemoteFormat as resolutionTimeout', async () => {
