@@ -136,8 +136,8 @@ export async function compileIncremental(
  * one is written and reported as it finishes, in order: changes made during a build go into one
  * follow-up build after it. A watched path that can't be watched is passed to `onError`.
  *
- * Options that can't work (an output that is also a named input, an out-of-range option) reject the
- * returned promise before anything is watched. A build that fails for such a reason later (a link
+ * Options that can't work (an output that is also a named input or an authored file in a source or module
+ * folder, an out-of-range option) reject the returned promise before anything is watched. A build that fails for such a reason later (a link
  * changed to make the output an input) is passed to `onError`, and watching stops.
  *
  * Aborting the returned controller, or the `signal` in the options, stops watching and
@@ -165,7 +165,9 @@ export function watchWithWriteFilter(
   hooks: WatchHooks = {},
 ): AbortController {
   validateOptions(options);
-  checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(toBuildOutputs(options.outFile)), []);
+  const written = toBuildOutputs(options.outFile);
+  checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(written), []);
+  checkFolderOutputs(options, written);
 
   const controller = new AbortController();
   const cache = new Map<string, FileCacheEntry>();
@@ -449,6 +451,17 @@ function checkSkippedOutputs(
       ` It is a ${role} file inside the ${role} folder ${output.folder}, and not an earlier build. Move the output out of the folder, or exclude the file.`,
     );
   }
+}
+
+/**
+ * The output-safety check for an output inside a source or module folder (see checkSkippedOutputs), which a
+ * watch makes before it watches anything, as its first build would: the error is then the rejection of watch(),
+ * not one that stops the watch silently when there is no `onError` (#363).
+ */
+function checkFolderOutputs(options: CompileOptions, written: BuildOutputs): void {
+  const sources = options.sources.filter((s): s is string => typeof s === 'string');
+  checkSkippedOutputs(getFilenames(sources, written, options.exclude).skippedOutputs, 'source', []);
+  checkSkippedOutputs(getFilenames(options.modules ?? [], written, [], 'module').skippedOutputs, 'module', []);
 }
 
 /** The files a story format reads, which the output must not overwrite. */
