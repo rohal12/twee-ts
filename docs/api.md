@@ -350,7 +350,7 @@ console.log(untrimmed.story.passages.length);
 
 `trim` (default `true`) trims whitespace at both ends of passage text, as the Twee lexer does, and applies to the Twine 2 story stylesheet and script too. `compile()` passes its own `trim` option through when it loads `.html` files.
 
-The HTML is read as a browser reads it (with scripting enabled, as story formats run): the story is the first `<tw-storydata>` element, or Twine 1 store area, that a story format finds, not one in template content, a comment or raw text; line breaks are normalized and NUL characters handled as the HTML parser does; and a passage's text is its `textContent`, so text inside elements is kept.
+The HTML is read as a browser reads it (with scripting enabled, as story formats run): the story is the first `<tw-storydata>` element, or Twine 1 store area, that a story format finds, not one in template content, a comment or raw text; line breaks are normalized and NUL characters handled as the HTML parser does; and a passage's text is its `textContent`, so text inside elements is kept. HTML that holds more stories (a Twine 2 library archive, or files joined together; Twine 1 store areas count when they hold a passage) gives the warning `The HTML holds 2 stories; only "One" is read.`
 
 Decompiling gives back the story that was compiled, except for what the output does not carry:
 
@@ -361,7 +361,7 @@ Decompiling gives back the story that was compiled, except for what the output d
 
 Text HTML cannot carry (NUL and lone surrogates) is an error when compiling.
 
-A `<tw-storydata>` `ifid` that is not a valid IFID gives a warning in `diagnostics`, and `story.ifid` keeps the value as written, uppercased. A missing or empty `ifid` gives a warning too, and `story.ifid` stays empty. When `compile()` loads the same file, these are reported once, as errors, by the `StoryData` check, as for a Twee `StoryData` passage.
+A `<tw-storydata>` `ifid` that is not a valid IFID gives a warning in `diagnostics`, and `story.ifid` keeps the value as written, uppercased. A missing or empty `ifid` gives a warning too, and `story.ifid` stays empty. When `compile()` loads the same file, these are reported once, as errors, as for a Twee `StoryData` passage: an invalid IFID always, a missing one only for Twine 2 output, which requires one.
 
 ### Story Formats
 

@@ -669,8 +669,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
     story.twine2.options.set('debug', true);
   }
 
-  // Ensure IFID is set before output generation
-  ensureIFID(story, diagnostics);
+  // The Twine 2 story data carries the IFID; the other outputs write it when the story has one (as Tweego does).
+  if (requiresIFID(outputMode, format)) ensureIFID(story, diagnostics);
 
   // Generate output
   let output: string;
@@ -795,6 +795,30 @@ interface BuildContext {
 type SourceGroup =
   { readonly kind: 'paths'; readonly paths: string[] } | { readonly kind: 'inline'; readonly sources: InlineSource[] };
 
+/**
+ * Whether the output needs an IFID: Twine 2 HTML and the Twine 2 archive, whose `tw-storydata` element has an `ifid`
+ * attribute that Twine 2 requires, as Tweego requires it. Twine 1 HTML and archives, Twee and JSON (where `ifid` is
+ * optional) are written without one when the story has none. HTML output with no format fails anyway.
+ */
+function requiresIFID(outputMode: OutputMode, format: StoryFormatInfo | undefined): boolean {
+  switch (outputMode) {
+    case 'html':
+      return format?.isTwine2 !== false;
+    case 'twine2-archive':
+      return true;
+    case 'twine1-archive':
+    case 'twee3':
+    case 'twee1':
+    case 'json':
+      return false;
+    default: {
+      const _exhaustive: never = outputMode;
+      throw new TweeTsError(`Unhandled output mode: ${String(_exhaustive)}`, []);
+    }
+  }
+}
+
+/** Give the story an IFID for output that requires one: the legacy IFID, else a generated one, reported. */
 function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
   if (story.ifid !== '') return;
 

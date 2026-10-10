@@ -207,14 +207,11 @@ describe('Twine 2 JSON Output Spec -- Optional Story Properties', () => {
     expect(ifid).toMatch(/^[0-9A-Z-]+$/);
   });
 
-  it('ifid: Optional -- when StoryData has no ifid, an IFID is generated and the author told to add it', async () => {
+  it('ifid: Optional -- left out, with no diagnostic, when the story has no IFID', async () => {
     const source = [':: StoryTitle', 'No IFID Story', '', ':: Start', 'Hello'].join('\n');
     const { json, diagnostics } = await compileToJSON(source);
-    // A generated IFID is a version 4 UUID: 36 characters of digits, capitals and hyphens.
-    expect(json.ifid).toMatch(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/);
-    expect(diagnostics).toEqual([
-      { level: 'error', message: `Story IFID not found. Add an IFID to your story: {"ifid":"${json.ifid ?? ''}"}` },
-    ]);
+    expect(Object.hasOwn(json, 'ifid')).toBe(false);
+    expect(diagnostics).toEqual([]);
   });
 
   // --- format ---

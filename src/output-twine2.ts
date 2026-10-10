@@ -32,12 +32,14 @@ export function toTwine2Archive(
   options?: { readonly sourceInfo?: boolean; readonly diagnostics?: Diagnostic[] },
 ): string {
   options?.diagnostics?.push(...twine2DataDiagnostics(story));
-  return getTwine2DataChunk(story, startName, options) + '\n';
+  return ifidComment(story) + getTwine2DataChunk(story, startName, options) + '\n';
 }
 
 /**
  * Fill the Twine 2 format template: every `{{STORY_NAME}}` gets the story name, escaped for the place it is in, and
- * the first `{{STORY_DATA}}` in HTML text gets the story data (as Tweego does), and `head` goes before the closing
+ * the first `{{STORY_DATA}}` in HTML text gets the story data (as Tweego does), after the IFID comment (or, where the
+ * placeholder is in an element of the template's own, such as SugarCube 1's store area, with the IFID comment before
+ * that element, since SugarCube 1 reads the story data as its first child node), and `head` goes before the closing
  * head tag (see `fillFormatTemplate()`). All three are found in the template before anything is inserted, so a story
  * name, passage text or head content holding a placeholder or a closing head tag stays literal.
  * `options.diagnostics` receives a warning when the format file is not valid UTF-8, any diagnostic about the
@@ -63,6 +65,7 @@ export function toTwine2HTML(
         value: {
           kind: 'markup',
           html: getTwine2DataChunk(built, startName, options),
+          comment: ifidComment(built),
           probe: storyDataProbe(
             'twine2',
             story.passages.some((p) => twine2PassageOmission(story, p) === undefined && /[^\t\n\f\r ]/.test(p.text)),
@@ -197,6 +200,12 @@ function joinCode(passages: readonly ReadonlyPassage[], kind: 'script' | 'styles
   return { text, parts };
 }
 
+/** The IFID comment that precedes the story data, as Tweego writes it (the Treaty of Babel's HTML IFID). */
+function ifidComment(story: ReadonlyStory): string {
+  return `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->`;
+}
+
+/** The `tw-storydata` element. */
 function getTwine2DataChunk(
   story: ReadonlyStory,
   startName: string,
@@ -243,7 +252,6 @@ function getTwine2DataChunk(
   const zoom = String(story.twine2.zoom);
 
   const wrapper =
-    `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->` +
     `<tw-storydata name="${attrEscape(story.name)}" startnode="${attrEscape(startID)}" ` +
     `creator="${attrEscape(CREATOR_NAME)}" creator-version="${attrEscape(VERSION)}" ` +
     `ifid="${attrEscape(story.ifid)}" zoom="${attrEscape(zoom)}" ` +

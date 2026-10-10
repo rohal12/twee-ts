@@ -4,6 +4,7 @@
  */
 import type { LexerItem } from './types.js';
 import { ItemType } from './types.js';
+import { quotableCharacterAt } from './source-text.js';
 
 const EOF = -1;
 const HEADER_DELIM = '::';
@@ -213,7 +214,8 @@ function lexAfterHeaderPart(ctx: LexerContext, r: number): StateFn {
       ctx.emit(ItemType.EOF);
       return null;
     default:
-      return ctx.errorf(`illegal character '${String.fromCharCode(r)}' amid the optional blocks`);
+      // `r` is the character at `pos`, which may be the first half of a surrogate pair.
+      return ctx.errorf(`illegal character '${quotableCharacterAt(ctx.input, ctx.pos)}' amid the optional blocks`);
   }
 }
 

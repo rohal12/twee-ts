@@ -207,7 +207,7 @@ A warning or error about a source names the file and line, as `src/Start.tw:4: â
 | `1`  | Failure: a fatal error, an input that can't be used, or a compilation that reported at least one error. `--lint` also exits 1 on broken links. |
 | `2`  | Usage error: the command line itself can't be run (see above). Nothing is built or written.                                                    |
 
-When a compilation reports errors (malformed Twee source, an invalid or missing IFID, a missing starting passage, and so on), twee-ts prints them to stderr, writes no output, and exits with status 1. The output file is left as it was, and nothing is written to stdout. This matches Tweego, which stops on these errors before writing output.
+When a compilation reports errors (malformed Twee source, an invalid IFID or a missing one in Twine 2 output, a missing starting passage, and so on), twee-ts prints them to stderr, writes no output, and exits with status 1. The output file is left as it was, and nothing is written to stdout. This matches Tweego, which stops on these errors before writing output.
 
 <!-- docs-test: fixture=broken exit=1 output -->
 

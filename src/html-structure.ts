@@ -78,11 +78,16 @@ function* descendants(root: HtmlNode, intoTemplates: boolean): Generator<Visit> 
   }
 }
 
+/** The elements in tree order, outside template contents, that `matches`; as `querySelectorAll()` finds them. */
+function* findElements(doc: HtmlDocument, matches: (element: HtmlElement) => boolean): Generator<HtmlElement> {
+  for (const { node } of descendants(doc, false)) {
+    if (isElement(node) && matches(node)) yield node;
+  }
+}
+
 /** The first element in tree order, outside template contents, that `matches`; as `querySelector()` finds it. */
 function findElement(doc: HtmlDocument, matches: (element: HtmlElement) => boolean): HtmlElement | undefined {
-  for (const { node } of descendants(doc, false)) {
-    if (isElement(node) && matches(node)) return node;
-  }
+  for (const element of findElements(doc, matches)) return element;
   return undefined;
 }
 
@@ -140,6 +145,27 @@ export function findStoreArea(doc: HtmlDocument, prefer = false): HtmlElement | 
     if (first !== undefined) return first;
   }
   return findElement(doc, (element) => isStoreArea(attributeOf(element, 'id')));
+}
+
+/**
+ * Every story the document holds, in tree order, of which a story format reads only one: each `tw-storydata`
+ * element, and each Twine 1 store area that holds a tiddler (so that an empty store area a Twine 2 format's template
+ * has is not counted).
+ */
+export function findStories(doc: HtmlDocument): HtmlElement[] {
+  return [
+    ...findElements(
+      doc,
+      (element) =>
+        element.tagName === 'tw-storydata' ||
+        (STORE_AREA_IDS.some((id) => id === attributeOf(element, 'id')) && childElements(element).some(isTiddler)),
+    ),
+  ];
+}
+
+/** Whether `element` is a Twine 1 tiddler: a `div` with a `tiddler` attribute, which holds a passage. */
+export function isTiddler(element: HtmlElement): boolean {
+  return element.tagName === 'div' && attributeOf(element, 'tiddler') !== undefined;
 }
 
 /** The Twine 1 archive: the store area holding `count` tiddlers, `data`. */
@@ -385,6 +411,24 @@ function locateImpliedHeadStart(html: string, doc: HtmlDocument, probe: string):
  */
 export function contentStaysInHead(html: string, doc: HtmlDocument, offset: number, content: string): boolean {
   return insertsIntoHead(html, structureKey(doc), offset, content);
+}
+
+/**
+ * The start tag offset of the element that holds the text at `offset` (of the document `doc` was parsed from), when
+ * that is an element of the template's own rather than `body`, such as the store area SugarCube 1 puts its story
+ * data in. `undefined` in `body`, outside any element, or for an element with no start tag.
+ */
+export function locateTextContainer(doc: HtmlDocument, offset: number): number | undefined {
+  for (const { node } of descendants(doc, false)) {
+    const location = node.sourceCodeLocation;
+    if (node.nodeName !== '#text' || location === undefined || location === null) continue;
+    if (location.startOffset > offset || location.endOffset <= offset) continue;
+    const parent = node.parentNode;
+    if (parent === null || !isElement(parent)) return undefined;
+    const isBody = parent.tagName === 'body' && parent.namespaceURI === HTML_NS;
+    return isBody ? undefined : parent.sourceCodeLocation?.startTag?.startOffset;
+  }
+  return undefined;
 }
 
 /** The start tag offsets of the Twine 1 store area element, preferring `store-area` as Tweego does. */

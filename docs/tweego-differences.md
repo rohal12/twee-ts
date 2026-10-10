@@ -42,7 +42,7 @@ The first comparisons come from reading Tweego's source (`tweego/*.go`, `interna
 
 **D-11. The written Twee is checked.** Each passage is read back with the Twee reader; twee-ts warns about each passage that would read back differently and says why (a text line that starts with `::`, a name with surrounding white space or a line break, a tag with white space, and in Twee 1 the characters it cannot escape). In stylesheet and script passages, a text line that would read as a header is indented by one space. Twee 1 output warns once that it leaves out passage metadata. Tweego writes the same Twee without warnings.
 
-**D-12. StoryData is written from the story.** The StoryData passage records what the compile options changed (the start passage, test mode) and a generated IFID. Tweego writes it as it rewrote it when loading, without the options' changes.
+**D-12. StoryData is written from the story.** The StoryData passage records what the compile options changed (the start passage, test mode). Tweego writes it as it rewrote it when loading, without the options' changes.
 
 **D-17. Line endings.** Twee output uses LF line endings on every operating system, so a build gives the same bytes everywhere; Tweego writes CRLF on Windows. Both read either.
 
@@ -80,6 +80,8 @@ The first comparisons come from reading Tweego's source (`tweego/*.go`, `interna
 **D-15. Numbers in attributes.** `startnode` and `pid` are read as Go's `strconv.Atoi` reads them (an optional sign and decimal digits), up to 2^53 − 1. `zoom` must be a finite decimal number (`0.6`, `.5`, `6e-1`); Go's `ParseFloat` also accepts `Inf`, `NaN`, hexadecimal and underscores, which twee-ts reports as it reports any value it cannot read. A `startnode` that no passage has as its `pid` is a warning; Tweego leaves the story without a start passage silently.
 
 **D-29. HTML parsing.** twee-ts reads Twine 2 HTML with a parser that follows the HTML Standard (parse5) and takes all the text of a `<tw-passagedata>` element, where Tweego takes the text of its first child node only. A comment or a CDATA section (which HTML reads as a comment) in a passage ends Tweego's text: `a<!-- c -->b<![CDATA[x]]>z` is `a` in Tweego and `abz` in twee-ts. A story element inside `<template>` is inert content for a browser, and twee-ts skips it; Tweego reads it, so a file that holds a decoy story in a template before the real one gives the decoy in Tweego and the real story in twee-ts.
+
+**D-30. The IFID comment stays out of a template's element.** Both write the `<!-- UUID://…// -->` comment before `<tw-storydata>`, except where the format template puts `{{STORY_DATA}}` inside an element of its own rather than `body`: twee-ts then writes the comment before that element, as both do before a Twine 1 store area, so the story data is its first child node. SugarCube 1.0.x reads the first child node of its store area as the story data and never starts with Tweego's output. Every other official format puts `{{STORY_DATA}}` in `body`, where the output is the same.
 
 ## Twee2 conversion
 

@@ -4,6 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { IFID } from './types.js';
+import { quotableCharacterAt } from './source-text.js';
 
 /** Generate a new IFID (UUID v4, uppercase). */
 export function generateIFID(): IFID {
@@ -82,22 +83,22 @@ export function validateIFID(ifid: string): string | null {
       case 18:
       case 23:
         if (ch !== '-') {
-          return `invalid IFID character '${ch}' at position ${i + 1}`;
+          return `invalid IFID character '${quotableCharacterAt(uuid, i)}' at position ${i + 1}`;
         }
         break;
       case 14:
         if (ch < '1' || ch > '5') {
-          return `invalid version '${ch}' at position ${i + 1}`;
+          return `invalid version '${quotableCharacterAt(uuid, i)}' at position ${i + 1}`;
         }
         break;
       case 19:
         if (!['8', '9', 'a', 'A', 'b', 'B'].includes(ch)) {
-          return `invalid variant '${ch}' at position ${i + 1}`;
+          return `invalid variant '${quotableCharacterAt(uuid, i)}' at position ${i + 1}`;
         }
         break;
       default:
         if (!/^[0-9a-fA-F]$/.test(ch)) {
-          return `invalid IFID hex value '${ch}' at position ${i + 1}`;
+          return `invalid IFID hex value '${quotableCharacterAt(uuid, i)}' at position ${i + 1}`;
         }
         break;
     }
