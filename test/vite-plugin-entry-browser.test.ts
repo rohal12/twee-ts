@@ -188,3 +188,36 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
     });
   },
 );
+
+// A worker of the story page that is still served keeps starting while the story fails to compile (#360).
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'a retained story page after a failed story compile in Chromium (#360)',
+  { timeout: 60_000 },
+  () => {
+    it('starts its worker from the bundle it was compiled with, and the new one once the story compiles', async () => {
+      const dir = makeProject(FILES);
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'runner-1',
+        entry: join(dir, 'entry.js'),
+        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+      });
+      const { url } = await startServer({ root: dir, publicDir: false, plugins: [plugin], server: { watch: null } });
+      const pageUrl = `${url}/index.html`;
+      expect(await workerOutcome(pageUrl)).toBe('worker:42');
+
+      // The story no longer compiles, then a module of the worker changes: the bundle succeeds, the story does not.
+      writeFileSync(join(dir, 'story/start.tw'), `${STORY}\n:: Incomplete [\n`);
+      await fetch(pageUrl);
+      writeFileSync(join(dir, 'answer.js'), 'export const answer = 84;');
+      await fetch(pageUrl);
+      // A bundle the server repeats for a file whose timestamp is too coarse to tell it changed reloads an open
+      // page, so a page is opened again until one stays.
+      await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:42');
+
+      writeFileSync(join(dir, 'story/start.tw'), STORY);
+      await fetch(pageUrl);
+      await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:84');
+    });
+  },
+);

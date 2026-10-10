@@ -306,9 +306,13 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let html = '';
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
+  // The assets of the bundle the page in `html` was compiled with (#360). A later bundle can succeed while the
+  // story fails to compile; then the page still served refers to the files of the bundle before it, so those are
+  // the files served until a story compiles with the new one.
+  let servedAssets: EntryBundle['assets'] | undefined;
   const instances = devInstances.get(server) ?? new Set<DevInstance>();
   devInstances.set(server, instances);
-  const self: DevInstance = { paths, assets: () => entry?.assets };
+  const self: DevInstance = { paths, assets: () => servedAssets };
   instances.add(self);
   const fail = (res: ServerResponse, message: string): void => {
     config.logger.error(`[twee-ts] ${message}`);
@@ -541,6 +545,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       // Only a playable page can run the client; other outputs are served as compiled.
       html = outputMode === 'html' ? dev.injectClient(story.output, base) : story.output;
+      servedAssets = entry?.assets;
       lastError = undefined;
       // A path tells the client to reload only the pages showing the story. Vite's client compares it with the
       // decoded page path and the base as configured, so under a base that has percent-encoded characters
@@ -660,7 +665,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // order: the production build rejects both.
     const mine = paths.includes(path);
     if (
-      (mine || entry?.assets.has(path) === true) &&
+      (mine || servedAssets?.has(path) === true) &&
       others.some((other) => other.paths.includes(path) || (mine && other.assets()?.has(path) === true))
     ) {
       fail(res, storyCollisionMessage(path));
@@ -674,7 +679,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       return;
     }
     // Files the entry's bundle still emits separately, where the build writes them.
-    const asset = entry?.assets.get(path);
+    const asset = servedAssets?.get(path);
     if (asset === undefined) {
       next();
       return;
