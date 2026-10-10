@@ -151,12 +151,12 @@ function planWrite(
 }
 
 /**
- * Throws when the folder that would hold the new file `target` does not exist. (A file where a folder should
- * be has already failed the look at `target`, with ENOTDIR.)
+ * Throws when there is no folder to hold the new file `target`: nothing at its path, or a file. (On POSIX a
+ * file there has already failed the look at `target`, with ENOTDIR; Windows reports that look as ENOENT.)
  */
 function checkFolder(target: string): void {
   const folder = dirname(target);
-  if (statSync(folder, { throwIfNoEntry: false }) === undefined)
+  if (statSync(folder, { throwIfNoEntry: false })?.isDirectory() !== true)
     throw codeError('ENOENT', `the folder ${folder} does not exist`);
 }
 

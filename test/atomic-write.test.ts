@@ -11,7 +11,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { constants, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
+import { getSystemErrorMap } from 'node:util';
 import { checkWritable, writeFileAtomic } from '../src/atomic-write.js';
 import type * as NodeFs from 'node:fs';
 
@@ -223,7 +224,8 @@ describe('writeFileAtomic', () => {
 
 /** A system error as Node throws it, naming `path` (the temporary file, say) in its message. */
 function systemError(code: string, syscall: string, path: string): Error {
-  const errno = -((constants.errno as Readonly<Record<string, number | undefined>>)[code] ?? 0);
+  // The platform's own number for the code (libuv's, which differ between POSIX and Windows).
+  const errno = [...getSystemErrorMap()].find(([, [name]]) => name === code)?.[0];
   return Object.assign(new Error(`${code}: refused, ${syscall} '${path}'`), { code, errno, syscall, path });
 }
 
@@ -338,7 +340,12 @@ describe('write errors name the output path given (#388)', () => {
 
   it.each([
     ['a missing folder', (d: string) => join(d, 'missing', 'out.html'), 'ENOENT', 'does not exist'],
-    ['a file as the folder', (d: string) => join(d, 'file', 'out.html'), 'ENOTDIR', 'ENOTDIR: not a directory'],
+    [
+      'a file as the folder',
+      (d: string) => join(d, 'file', 'out.html'),
+      '(ENOTDIR|ENOENT)',
+      '(ENOTDIR: not a directory|does not exist)',
+    ],
     ['a folder as the output', (d: string) => d, 'EISDIR', 'the output is a folder'],
   ])('checks %s before anything is written', (_case, pathIn, code, reason) => {
     writeFileSync(join(dir, 'file'), '');
@@ -346,11 +353,19 @@ describe('write errors name the output path given (#388)', () => {
     expect(() => {
       checkWritable(path);
     }).toThrow(
-      expect.objectContaining({ code, message: expect.stringMatching(new RegExp(`^Cannot write .*${reason}`)) }),
+      expect.objectContaining({
+        code: expect.stringMatching(new RegExp(`^${code}$`)),
+        message: expect.stringMatching(new RegExp(`^Cannot write .*${reason}`)),
+      }),
     );
     expect(() => {
       writeFileAtomic(path, 'x');
-    }).toThrow(expect.objectContaining({ code, message: expect.stringContaining(`Cannot write ${path}: `) }));
+    }).toThrow(
+      expect.objectContaining({
+        code: expect.stringMatching(new RegExp(`^${code}$`)),
+        message: expect.stringContaining(`Cannot write ${path}: `),
+      }),
+    );
   });
 
   it('passes a path that can be written, and a stream', () => {
