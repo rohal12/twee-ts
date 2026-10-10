@@ -91,7 +91,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       record.addFiles(outputOptions, Object.keys(bundle));
       let story: CompiledStory;
       try {
-        story = await compileStory(resolved.compile(), record.outputs());
+        story = await compileStory(resolved.compile(), record.outputs(), undefined, true);
       } catch (e) {
         return this.error(fatalError(e));
       }

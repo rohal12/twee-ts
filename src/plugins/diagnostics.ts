@@ -49,16 +49,23 @@ export interface CompiledStory {
 
 /**
  * Compiles the story for a plugin, leaving out what a build writes (`outputs`).
- * Throws a LocatedError when the compile fails or reports errors.
+ * `writesStory` is whether the story goes to a file (a build, not the dev server): a story path in `outputs`
+ * that holds an authored file of a source folder then fails the compile (`OUTPUT_IS_INPUT`), as a named output
+ * does. Throws a LocatedError when the compile fails or reports errors.
  */
 export async function compileStory(
   options: CompileOptions,
   outputs: BuildOutputs,
   cache?: Map<string, FileCacheEntry>,
+  writesStory = false,
 ): Promise<CompiledStory> {
   let result: CompileResult;
   try {
-    result = await compileForOutputFile(options, outputs, cache);
+    result = await compileForOutputFile(
+      options,
+      writesStory ? outputs : { files: outputs.files, dirs: outputs.dirs },
+      cache,
+    );
   } catch (e) {
     throw fatalError(e);
   }

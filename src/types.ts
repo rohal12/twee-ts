@@ -185,8 +185,8 @@ export interface CompileStats {
  * - `OUTPUT_IS_INPUT`: the output would overwrite an input (a source, module, head file, config file or story
  *   format), or a source file of the output's type found in a source folder.
  * - `INPUT_UNAVAILABLE`: an input the input policy makes fatal (the head file, the config file) can't be used.
- * - `INVALID_OPTIONS`: an option is out of range or not usable (a format URL that is not http(s), say), or
- *   needs a newer Node.js.
+ * - `INVALID_OPTIONS`: an option is out of range or not usable (a format URL that is not http(s), say), or the
+ *   Vite plugin runs under a Vite older than 8.
  * - `FORMAT_UNAVAILABLE`: `resolveRemoteFormat()` found the format nowhere and some source failed; the
  *   error's diagnostics hold every failure.
  * - `BUILD_FAILED`: anything else (no story format for HTML output, say).

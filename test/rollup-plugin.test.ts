@@ -601,3 +601,84 @@ describe('rollup plugin: in a Vite build', { timeout: 30_000 }, () => {
     expect(existsSync(join(dir, 'dist', 'index.html'))).toBe(false);
   });
 });
+
+// A bundler's build may write its chunks and assets over files of a source folder, but the story it writes there
+// is checked as the CLI checks its output: a file of a loadable type that an earlier build didn't write is the
+// author's own, and the build fails rather than overwrite it (#402).
+describe('rollup plugin: the story over an authored file', { timeout: 30_000 }, () => {
+  const AUTHORED_HTML =
+    '<!doctype html><html><body><tw-storydata name="Authored" startnode="1" creator="Twine" creator-version="2.6.2" ' +
+    'ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC" format="Harlowe" format-version="3.3.0" options="" hidden>' +
+    '<tw-passagedata pid="1" name="Start" tags="" position="0,0" size="100,100">Authored</tw-passagedata>' +
+    '</tw-storydata></body></html>';
+
+  const outputs: readonly [string, string, (dir: string) => OutputOptions][] = [
+    ['output.dir', 'story', (dir) => ({ dir: join(dir, 'story'), format: 'es' })],
+    ['output.file', 'story/zz', (dir) => ({ file: join(dir, 'story/zz/bundle.js'), format: 'es' })],
+  ];
+
+  it.each(outputs)(
+    'refuses to overwrite an authored Twine HTML file at the story path (%s)',
+    async (_n, where, out) => {
+      const dir = makeProject(STORY);
+      mkdirSync(join(dir, where), { recursive: true });
+      const authored = join(dir, where, 'story.html');
+      writeFileSync(authored, AUTHORED_HTML);
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'test-format-1',
+        outputFilename: 'story.html',
+        compileOptions: COMPILE,
+      });
+      await expect(writeProject(dir, plugin, out(dir))).rejects.toMatchObject({
+        plugin: 'twee-ts',
+        message: expect.stringContaining('Output file cannot be an input source'),
+      });
+      expect(readFileSync(authored, 'utf-8')).toBe(AUTHORED_HTML);
+    },
+  );
+
+  it('refuses an authored Twee file at the story path', async () => {
+    const dir = makeProject(STORY);
+    const authored = join(dir, 'story', 'story.tw');
+    writeFileSync(authored, STORY);
+    const plugin = tweeTsPlugin({
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      outputFilename: 'story.tw',
+      compileOptions: COMPILE,
+    });
+    await expect(writeProject(dir, plugin, { dir: join(dir, 'story'), format: 'es' })).rejects.toMatchObject({
+      message: expect.stringContaining('Output file cannot be an input source'),
+    });
+    expect(readFileSync(authored, 'utf-8')).toBe(STORY);
+  });
+
+  it('writes over an earlier build of the story, and over a file the sources do not load', async () => {
+    const dir = makeProject(STORY);
+    const plugin = tweeTsPlugin({
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      outputFilename: 'story.html',
+      compileOptions: COMPILE,
+    });
+    await writeProject(dir, plugin, { dir: join(dir, 'story'), format: 'es' });
+    // A new plugin instance, as a new process: the file there is only recognised as a build of twee-ts.
+    const next = tweeTsPlugin({
+      sources: [join(dir, 'story')],
+      format: 'test-format-1',
+      outputFilename: 'story.html',
+      compileOptions: COMPILE,
+    });
+    await writeProject(dir, next, { dir: join(dir, 'story'), format: 'es' });
+    expect(readFileSync(join(dir, 'story', 'story.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+
+  it('leaves a chunk the bundle writes into a source folder alone, as it cannot tell it from an earlier build', async () => {
+    const dir = makeProject(STORY);
+    const plugin = tweeTsPlugin({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE });
+    writeFileSync(join(dir, 'story', 'entry.js'), '/* authored */');
+    await writeProject(dir, plugin, { dir: join(dir, 'story'), format: 'es' });
+    expect(readFileSync(join(dir, 'story', 'index.html'), 'utf-8')).toContain('Hello from the story.');
+  });
+});

@@ -11,6 +11,7 @@ import { TweeTsError } from '../errors.js';
 import { isExcluded } from '../filesystem.js';
 import { identify, isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
+import { parseVersion } from '../semver.js';
 import { isRecord } from '../util.js';
 
 /**
@@ -80,6 +81,26 @@ export interface ResolvedPluginOptions {
 
 function fail(kind: PluginKind, message: string): never {
   throw new TweeTsError(`twee-ts ${kind} plugin: ${message}`, [], { code: 'INVALID_OPTIONS' });
+}
+
+/** The oldest Vite the plugin works with (the `vite` peer dependency). */
+const MINIMUM_VITE_MAJOR = 8;
+
+/**
+ * Throws a TweeTsError (`INVALID_OPTIONS`) that names twee-ts and the Vite version when Vite is older than the
+ * plugin supports, instead of the obscure failure an older Vite gives (a missing `index.html`, say). A version
+ * that is not a SemVer version (a custom build) is accepted.
+ */
+export function checkViteVersion(viteVersion: string): void {
+  const parsed = parseVersion(viteVersion);
+  if (parsed === null) return;
+  if (parsed.major < MINIMUM_VITE_MAJOR) {
+    fail(
+      'vite',
+      `Vite ${viteVersion} is not supported; the plugin needs Vite ${MINIMUM_VITE_MAJOR} or newer. ` +
+        'Upgrade Vite, or use an older twee-ts release for this Vite.',
+    );
+  }
 }
 
 /**

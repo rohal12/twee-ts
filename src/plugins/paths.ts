@@ -74,13 +74,14 @@ export interface OutputRecord {
   addLocation(output: OutputLocation): void;
   /** Records the files a bundle writes to `output`, by output file name. */
   addFiles(output: OutputLocation, fileNames: Iterable<string>): void;
-  /** Every path recorded so far: `output.dir` folders as folders, the rest as files. */
+  /** Every path recorded so far: `output.dir` folders as folders, the rest as files, the stories among them marked. */
   outputs(): BuildOutputs;
 }
 
 /** An empty OutputRecord for a plugin that writes its story as `storyFileName`. */
 export function createOutputRecord(storyFileName: string): OutputRecord {
   const files = new Set<string>();
+  const stories = new Set<string>();
   const dirs = new Set<string>();
   const addFiles = (output: OutputLocation, fileNames: Iterable<string>): void => {
     for (const fileName of fileNames) {
@@ -93,9 +94,11 @@ export function createOutputRecord(storyFileName: string): OutputRecord {
       if (output.dir !== undefined) dirs.add(resolve(output.dir));
       if (output.file !== undefined) files.add(resolve(output.file));
       addFiles(output, [storyFileName]);
+      const story = emittedFilePath(output, storyFileName);
+      if (story !== undefined) stories.add(story);
     },
     addFiles,
-    outputs: () => ({ files: [...files], dirs: [...dirs] }),
+    outputs: () => ({ files: [...files], stories: [...stories], dirs: [...dirs] }),
   };
 }
 
