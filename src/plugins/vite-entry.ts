@@ -453,8 +453,8 @@ const WATCH_FILE_HOOKS = [
   'buildEnd',
 ] as const;
 
-/** A plugin context whose `addWatchFile` also records the file in `files`. */
-function recordingContext(context: object, files: Set<string>): object {
+/** A plugin context whose `addWatchFile` also passes the file to `record`. */
+function recordingContext(context: object, record: (file: string) => void): object {
   return new Proxy(context, {
     get(target, key) {
       const value: unknown = Reflect.get(target, key, target);
@@ -464,7 +464,7 @@ function recordingContext(context: object, files: Set<string>): object {
         return bound;
       }
       return (id: unknown): unknown => {
-        if (typeof id === 'string' && !id.startsWith('\0')) files.add(fileOfId(resolve(id)));
+        if (typeof id === 'string' && !id.startsWith('\0')) record(fileOfId(resolve(id)));
         return Reflect.apply(value, target, [id]);
       };
     },
@@ -472,12 +472,12 @@ function recordingContext(context: object, files: Set<string>): object {
 }
 
 /**
- * `plugin` with hooks that record its `addWatchFile` calls in `files`. The
+ * `plugin` with hooks that pass the file of each of its `addWatchFile` calls to `record`. The
  * original stays untouched, so a plugin object shared across entry builds
  * never collects wrappers. A plugin without such hooks (a built-in one, for
  * instance) is returned as it is.
  */
-function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
+function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin {
   const overrides = new Map<PropertyKey, unknown>();
   for (const name of WATCH_FILE_HOOKS) {
     const hook = plugin[name];
@@ -486,7 +486,7 @@ function recordingPlugin(plugin: Plugin, files: Set<string>): Plugin {
     overrides.set(
       name,
       withHandler(hook, function (this: unknown, ...args: unknown[]): unknown {
-        const context = typeof this === 'object' && this !== null ? recordingContext(this, files) : this;
+        const context = typeof this === 'object' && this !== null ? recordingContext(this, record) : this;
         return Reflect.apply(handler, context, args);
       }),
     );
@@ -526,6 +526,8 @@ function spelledAs(spelled: string, resolved: string): string | undefined {
  * What a caller of bundleEntry learns as the entry build runs, filled in also when the build fails (the files of a
  * failed bundle are the ones whose fixing bundles it again):
  * - `watchFiles`: the files the build's plugins add with `addWatchFile`, and the modules of its graph;
+ * - `onWatchFile`: each file (or folder) a plugin adds with `addWatchFile`, as it adds it, which is before it
+ *   reads what it watches;
  * - `onLoad`: each module's file, just before the build reads it;
  * - `onResolve`: each import's path as authored (see recordWatchFiles);
  * - `onGlob`: the scope of each `import.meta.glob()` pattern of a module, just before Vite reads the files it
@@ -533,6 +535,7 @@ function spelledAs(spelled: string, resolved: string): string | undefined {
  */
 export interface EntryBuildObserver {
   readonly watchFiles?: Set<string>;
+  readonly onWatchFile?: (file: string) => void;
   readonly onLoad?: (file: string) => void;
   readonly onResolve?: (authored: string) => void;
   readonly onGlob?: (scope: GlobScope) => void;
@@ -547,7 +550,11 @@ export interface EntryBuildObserver {
  * environment (`applyToEnvironment`) after `configResolved`.
  */
 function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuildObserver): Plugin {
-  const { onLoad, onResolve, onGlob } = observer;
+  const { onLoad, onResolve, onGlob, onWatchFile } = observer;
+  const record = (file: string): void => {
+    files.add(file);
+    onWatchFile?.(file);
+  };
   return {
     name: `${PLUGIN_NAME}:record-watch-files`,
     // Called for each module just before its file is read, so a caller can note the file's state as the
@@ -611,7 +618,7 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
         // the user's plugin list is read (see userEntryConfig()).
         const plugins = (await flattenPlugins(inputOptions.plugins))
           .filter(isPlugin)
-          .map((p) => recordingPlugin(p, files));
+          .map((p) => recordingPlugin(p, record));
         return { ...inputOptions, plugins };
       },
     },

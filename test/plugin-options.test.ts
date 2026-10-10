@@ -261,6 +261,56 @@ describe('plugin options: output file names (D10)', () => {
     );
   });
 
+  it('reads every spelling of the path of an accepted name as that path (#401)', () => {
+    // Pieces that, put before a segment, name the same place: an empty segment, `.`, a segment and `..`, encoded
+    // dots; and the separators a URL path may hold (an http URL reads a backslash as a slash).
+    const noise = fc.constantFrom('', '/', './', '/./', 'x/../', '%2e/', '%2E/', 'y/%2e%2E/', 'z/.%2e/');
+    const separator = fc.constantFrom('/', '\\', '%5C', '%2F', '//');
+    const bases = fc.constantFrom('/', '/game/', '/my%20game/', '/ü/');
+    const spell = (segments: readonly string[], pieces: readonly (readonly [string, string])[]): string =>
+      segments
+        .map((segment, at) => {
+          const [before, sep] = pieces[at % pieces.length] ?? ['', '/'];
+          return (at === 0 ? before : sep + before) + encodeURIComponent(segment);
+        })
+        .join('');
+    const pieces = fc.array(fc.tuple(noise, separator), { minLength: 4, maxLength: 4 });
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...NAMES.filter(([, problem]) => problem === undefined).map(([name]) => name)),
+        bases,
+        pieces,
+        (name, base, spelling) => {
+          expect(pathBelowBase(`${base}${spell(name.split('/'), spelling)}?q=1`, base)).toBe(name);
+        },
+      ),
+    );
+    // The folder of an index.html, with what may follow a folder's path and still name it.
+    const tail = fc.constantFrom('', '/', '.', '/.', 'x/..', 'x/../', '%2e', 'x/%2e%2e', '\\');
+    fc.assert(
+      fc.property(fc.constantFrom('', 'game', 'a b/ü'), bases, pieces, tail, (folder, base, spelling, end) => {
+        const spelled = folder === '' ? (spelling[0]?.[0] ?? '') : `${spell(folder.split('/'), spelling)}/`;
+        expect(pathBelowBase(`${base}${spelled}${end}`, base)).toBe(folder === '' ? '' : `${folder}/`);
+      }),
+    );
+  });
+
+  it.each([
+    ['//index.html', 'index.html'],
+    ['/./index.html', 'index.html'],
+    ['/x/../index.html', 'index.html'],
+    ['/../index.html', 'index.html'],
+    ['/%2e%2e/index.html', 'index.html'],
+    ['/\\index.html', 'index.html'],
+    ['/game/.', 'game/'],
+    ['/game/..', ''],
+    ['/game//', 'game/'],
+    ['/.', ''],
+    ['//', ''],
+  ])('reads %s as %j (#401)', (url, path) => {
+    expect(pathBelowBase(url, '/')).toBe(path);
+  });
+
   it('reads no request outside the base, nor one that is not valid percent-encoding', () => {
     expect(pathBelowBase('/other/index.html', '/game/')).toBeUndefined();
     expect(pathBelowBase('/game/%E0%A4%A.html', '/game/')).toBeUndefined();

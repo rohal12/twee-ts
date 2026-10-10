@@ -35,11 +35,11 @@ const PAGE = '<!doctype html><html><head></head><body>PUBLIC PAGE</body></html>\
 const ENTRY = "import logo from './logo.svg?no-inline';\nwindow.reviewLogo = logo;\n";
 
 /** Fetches `url` with node:http, which lets a test set the Host header; the status and the body. */
-function get(url: string, host?: string): Promise<{ status: number; body: string }> {
+function get(url: string, host?: string, rawPath?: string): Promise<{ status: number; body: string }> {
   return new Promise((done, fail) => {
     const target = new URL(url);
     const req = request(
-      { host: target.hostname, port: target.port, path: target.pathname, headers: host ? { host } : {} },
+      { host: target.hostname, port: target.port, path: rawPath ?? target.pathname, headers: host ? { host } : {} },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -136,6 +136,33 @@ describe('vite plugin dev requests: static files at the paths of the story and i
       expect(served.body, path).not.toContain('PUBLIC PAGE');
     }
   });
+
+  it.each(CASES.filter((shadow) => shadow.publicDir === undefined && 'public/logo.svg' in shadow.files))(
+    'serves them at every spelling of their paths, never the public file (#401): $name',
+    { timeout: 60_000 },
+    async (shadow) => {
+      const dir = makeProject({
+        'story/start.tw': STORY,
+        'app/main.js': ENTRY,
+        'app/logo.svg': IMPORTED,
+        ...shadow.files,
+      });
+      const { url } = await startServer(config(dir, shadow));
+      // Sent as written: a client's URL parser would resolve the dot segments first (browsers keep `//`).
+      const spellings = (path: string): string[] =>
+        ['/', './', '/./', 'x/../', '../', '%2e/', '%2E%2e/', 'x/%2e%2e/', '\\'].map(
+          (noise) => `${shadow.base}${noise}${path}`,
+        );
+      for (const raw of spellings('logo.svg')) {
+        expect(await get(url, undefined, raw), raw).toEqual({ status: 200, body: IMPORTED });
+      }
+      for (const raw of storyPathsOf(shadow).flatMap(([path]) => spellings(path))) {
+        const served = await get(url, undefined, raw);
+        expect(served.status, raw).toBe(200);
+        expect(served.body, raw).toContain('Hello from the story.');
+      }
+    },
+  );
 
   it('still serves every other public file, and checks the Host header first', { timeout: 30_000 }, async () => {
     const shadow: ShadowCase = { name: '', files: { 'public/logo.svg': SHADOW, 'public/other.svg': OTHER }, base: '/' };
