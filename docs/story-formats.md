@@ -302,7 +302,7 @@ blankcss:off
 
 twee-ts acts on three of these when it writes Twine 1 output: `jquery:on` and `modernizr:on` insert `jquery.js` and `modernizr.js` from the format directory, and `obfuscate:rot13` encodes the tiddlers (see [Twine 1 Archive](./output-modes#twine-1-archive): a `StorySettings` passage tagged `Twine.private` turns obfuscation off, with a warning, and a passage whose name or tag ROT13 turns into `StorySettings` or `Twine.image` is an error). The others are passed to the Twine 1 story format.
 
-The `ifid` and `zoom` settings are obsolete, and twee-ts warns about them; put both in `StoryData`. `zoom` is ignored. A valid `ifid` is kept as the legacy IFID, and when no `StoryData` IFID is available it becomes the story's IFID, with the warning `Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.` Neither counts as a setting, so a `StorySettings` passage with only these is empty.
+The `ifid` and `zoom` settings are obsolete, and twee-ts warns about them; put both in `StoryData`. `zoom` is ignored. A valid `ifid` is kept as the legacy IFID, and when no `StoryData` IFID is available for Twine 2 output (which requires one) it becomes the story's IFID, with the warning `Story IFID not found; reusing "ifid" entry from the "StorySettings" special passage.` Neither counts as a setting, so a `StorySettings` passage with only these is empty.
 
 Keys and values are lower-cased and trimmed, and a repeated key takes its last value. When the sources hold more than one `StorySettings` passage, the last one decides all the settings: one it leaves out, such as `obfuscate:rot13`, is off, even if an earlier passage set it.
 

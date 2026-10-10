@@ -7,6 +7,10 @@
  */
 import { Parser } from 'acorn';
 import type { Options, Program } from 'acorn';
+import { escapeLoneSurrogates, quotableCharacterAt } from './source-text.js';
+
+/** How acorn's message for a character no token can start with begins. */
+const UNEXPECTED_CHARACTER = 'Unexpected character ';
 
 /** Options for a classic script, read as a browser reads one (sloppy mode unless it says otherwise). */
 export const SCRIPT_OPTIONS: Readonly<Options> = { ecmaVersion: 'latest', sourceType: 'script', allowHashBang: true };
@@ -38,7 +42,12 @@ export class AcornParser extends Parser {
   declare pos: number;
 
   raise(pos: number, message: string): never {
-    throw new JsSyntaxError(message, pos, this.pos);
+    // Diagnostics quote this message. Acorn quotes an unexpected character as it reads it: a lone surrogate as it
+    // is, and a high surrogate at the end of the input as U+10000; so that character is quoted from the input.
+    const quoted = message.startsWith(UNEXPECTED_CHARACTER)
+      ? `${UNEXPECTED_CHARACTER}'${quotableCharacterAt(this.input, pos)}'`
+      : escapeLoneSurrogates(message);
+    throw new JsSyntaxError(quoted, pos, this.pos);
   }
 
   raiseRecoverable(pos: number, message: string): never {

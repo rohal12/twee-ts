@@ -90,7 +90,7 @@ describe('standard output carries only the story (FS-01)', () => {
 
   it('writes nothing to stdout when the build fails, -l included', () => {
     writeFileSync(join(dir, 'noifid.tw'), ':: Start\nx\n');
-    const r = cli(dir, ['--no-config', '-d', '-l', 'noifid.tw']);
+    const r = cli(dir, ['--no-config', '-a', '-l', 'noifid.tw']);
     expect(r.status).toBe(1);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('error: Story IFID not found');

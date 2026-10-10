@@ -12,6 +12,7 @@ import {
   contentStaysInHead,
   locateHeadEnd,
   locateStoreArea,
+  locateTextContainer,
   replacementIsLiveElement,
   STORE_AREA_DESCRIPTION,
 } from './html-structure.js';
@@ -25,9 +26,12 @@ export type PlaceholderValue =
   | { readonly kind: 'text'; readonly text: string }
   /**
    * HTML elements, inserted as they are, only where they become elements of the page (the story data). `probe` is
-   * an empty element of the kind `html` starts with, which is inserted to check that.
+   * an empty element of the kind `html` starts with, which is inserted to check that. `comment` (the IFID comment)
+   * goes before them, or, where the placeholder is inside an element of the template's own rather than `body`,
+   * before that element: so that element's child nodes are the ones its template gives it (SugarCube 1 reads its
+   * store area's first child node as the story data).
    */
-  | { readonly kind: 'markup'; readonly html: string; readonly probe: string }
+  | { readonly kind: 'markup'; readonly html: string; readonly probe: string; readonly comment?: string }
   /**
    * Text whose placeholder's quotes become the quotes of a JavaScript string literal (`"START_AT"`) or of an
    * attribute value (`data-size="STORY_SIZE"`), as Tweego writes them; elsewhere the quotes are kept as text.
@@ -92,9 +96,12 @@ export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
       const site = analysis.sites[i];
       return occurrence.placeholder === placeholder && site !== undefined ? [{ occurrence, site }] : [];
     });
-    const isLive = (occurrence: Found, probe: string): boolean =>
-      replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe);
-    const placed = placeholderEdits(document, placeholder, occurrences, owner, isLive);
+    const locate: MarkupLocator = {
+      isLive: (occurrence, probe) =>
+        replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
+      container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
+    };
+    const placed = placeholderEdits(document, placeholder, occurrences, owner, locate);
     edits.push(...placed.edits);
     diagnostics.push(...placed.diagnostics);
   }
@@ -164,34 +171,53 @@ function findPlaceholders(template: string, placeholders: readonly Placeholder[]
   });
 }
 
+/** Where markup lands in the template. */
+interface MarkupLocator {
+  /** Whether `probe` written at the occurrence becomes an element of the page (see `replacementIsLiveElement()`). */
+  readonly isLive: (occurrence: Found, probe: string) => boolean;
+  /** The start of the element of the template's own that holds the occurrence (see `locateTextContainer()`). */
+  readonly container: (occurrence: Found) => number | undefined;
+}
+
 /** The edits for one placeholder, given each of its occurrences and where it sits. */
 function placeholderEdits(
   document: string,
   placeholder: Placeholder,
   occurrences: readonly { readonly occurrence: Found; readonly site: PlaceholderSite }[],
   owner: string,
-  isLive: (occurrence: Found, probe: string) => boolean,
+  locate: MarkupLocator,
 ): { edits: Edit[]; diagnostics: Diagnostic[] } {
   const replace = ({ occurrence, site }: { occurrence: Found; site: PlaceholderSite }): string | undefined => {
     const { value } = placeholder;
     if (value.kind === 'markup') {
       const { context, delimiters } = site;
       const inText = delimiters === 'inside' && context.kind === 'text';
-      return inText && isLive(occurrence, value.probe) ? value.html : undefined;
+      return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
     }
     return replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
   };
-  const edit = (occurrence: Found, text: string): Edit => ({ start: occurrence.start, end: occurrence.end, text });
+  // The markup's comment goes before the element of the template's own that holds a live placeholder, else first.
+  const edit = (occurrence: Found, text: string, live: boolean): Edit[] => {
+    const { value } = placeholder;
+    const comment = value.kind === 'markup' ? value.comment : undefined;
+    const container = comment !== undefined && live ? locate.container(occurrence) : undefined;
+    if (comment === undefined) return [{ start: occurrence.start, end: occurrence.end, text }];
+    if (container === undefined) return [{ start: occurrence.start, end: occurrence.end, text: comment + text }];
+    return [
+      { start: container, end: container, text: comment },
+      { start: occurrence.start, end: occurrence.end, text },
+    ];
+  };
 
   if (placeholder.occurrences === 'first') {
     for (const entry of occurrences) {
       const text = replace(entry);
-      if (text !== undefined) return { edits: [edit(entry.occurrence, text)], diagnostics: [] };
+      if (text !== undefined) return { edits: edit(entry.occurrence, text, true), diagnostics: [] };
     }
     const [first] = occurrences;
     if (first === undefined) return { edits: [], diagnostics: [] };
     return {
-      edits: [edit(first.occurrence, fallbackFor(placeholder.value))],
+      edits: edit(first.occurrence, fallbackFor(placeholder.value), false),
       diagnostics: [unsupportedSite(placeholder, first, owner, document)],
     };
   }
@@ -201,7 +227,7 @@ function placeholderEdits(
   for (const entry of occurrences) {
     const text = replace(entry);
     if (text === undefined) diagnostics.push(unsupportedSite(placeholder, entry, owner, document));
-    edits.push(edit(entry.occurrence, text ?? fallbackFor(placeholder.value)));
+    edits.push(...edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
   }
   return { edits, diagnostics };
 }

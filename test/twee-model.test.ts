@@ -100,10 +100,14 @@ describe('T-02: one StoryData passage decides both the passage and the metadata'
 
 describe('T-03 and #236: a later StorySettings replaces everything an earlier one set', () => {
   it('drops the legacy IFID of the replaced StorySettings', async () => {
-    const result = await build({
-      'a.tw': `:: StorySettings\nifid:${IFID}\njquery:on\n:: Start\nhi`,
-      'b.tw': ':: StorySettings\nundo:off\n',
-    });
+    const result = await build(
+      {
+        'a.tw': `:: StorySettings\nifid:${IFID}\njquery:on\n:: Start\nhi`,
+        'b.tw': ':: StorySettings\nundo:off\n',
+      },
+      // Output that requires an IFID, so that a missing one is reported.
+      'twine2-archive',
+    );
     expect(result.story.legacyIFID).toBe('');
     expect([...result.story.twine1.settings]).toEqual([['undo', 'off']]);
     expect(result.diagnostics.some((d) => d.message.includes('reusing "ifid" entry'))).toBe(false);

@@ -17,7 +17,16 @@ import { createStory, storyAdd, storyPrepend, marshalStoryData, freeName } from 
 import { rot13, tiddlerUnescape } from './escape.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
 import { isObfuscatable, withGeneratedName } from './passage.js';
-import { attributeOf, childElements, findStoreArea, findStoryData, parseHtml, textContent } from './html-structure.js';
+import {
+  attributeOf,
+  childElements,
+  findStoreArea,
+  findStories,
+  findStoryData,
+  isTiddler,
+  parseHtml,
+  textContent,
+} from './html-structure.js';
 import type { HtmlElement } from './html-structure.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { splitTweeFields, trimTweeSpace } from './twee-syntax.js';
@@ -61,19 +70,32 @@ function decompile(html: string, options: DecompileOptions, checks: DecompileChe
 
   // Try Twine 2 first (tw-storydata), then the Twine 1 store area.
   const twine2Data = findStoryData(doc);
+  const twine1Data = twine2Data ? undefined : findStoreArea(doc);
   if (twine2Data) {
     decompileTwine2(twine2Data, story, passageText, checks, diagnostics);
-    return { story, diagnostics };
-  }
-
-  const twine1Data = findStoreArea(doc);
-  if (twine1Data) {
+  } else if (twine1Data) {
     decompileTwine1(twine1Data, story, passageText, diagnostics);
+  } else {
+    diagnostics.push({ level: 'error', message: 'Malformed HTML source; story data not found.' });
     return { story, diagnostics };
   }
-
-  diagnostics.push({ level: 'error', message: 'Malformed HTML source; story data not found.' });
+  diagnostics.push(...otherStoriesDiagnostics(findStories(doc), twine2Data ?? twine1Data, story.name));
   return { story, diagnostics };
+}
+
+/**
+ * A warning when the document holds `stories` besides the one read (`read`, named `name`): a Twine 2 library
+ * archive, or files joined together. Only the first is read, as a story format and Tweego read it.
+ */
+function otherStoriesDiagnostics(
+  stories: readonly HtmlElement[],
+  read: HtmlElement | undefined,
+  name: string,
+): Diagnostic[] {
+  const others = stories.filter((element) => element !== read).length;
+  if (others === 0) return [];
+  const which = name === '' ? 'one of them' : JSON.stringify(name);
+  return [{ level: 'warning', message: `The HTML holds ${String(others + 1)} stories; only ${which} is read.` }];
 }
 
 /** Turns stored passage text into passage text: trimmed at both ends, or kept as is. */
@@ -291,10 +313,6 @@ function decompileTwine1(
       obfuscated && isObfuscatable(p) ? { ...p, name: rot13(p.name), tags: p.tags.map(rot13), text: rot13(p.text) } : p;
     storyAdd(story, passage, diagnostics);
   }
-}
-
-function isTiddler(node: HtmlElement): boolean {
-  return node.tagName === 'div' && attributeOf(node, 'tiddler') !== undefined;
 }
 
 function tiddlerToPassage(node: HtmlElement, passageText: PassageText): Passage {

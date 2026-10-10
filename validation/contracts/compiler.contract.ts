@@ -330,7 +330,8 @@ defineContracts('OUTPUT', {
     expect(back.story.ifid).toBe(IFID);
   },
   'missing IFID reported': async () => {
-    const result = await compile({ sources: [inline(':: Start\nHello')], outputMode: 'json' });
+    // Twine 2 story data requires an IFID; Twee, JSON and Twine 1 output do not, as in Tweego (#370).
+    const result = await compile({ sources: [inline(':: Start\nHello')], outputMode: 'twine2-archive' });
     expect(errorsOf(result).some((message) => message.includes('IFID'))).toBe(true);
   },
 });
@@ -352,9 +353,11 @@ async function expectPrivatePassage(root: string, asStart: boolean): Promise<voi
 
 defineContracts('CLI', {
   'compile error preserves previous output': async (root) => {
-    const output = write(join(root, 'output.json'), 'last good output');
+    const output = write(join(root, 'output.html'), 'last good output');
     const file = write(join(root, 'story.tw'), ':: Start\nNo IFID');
-    const result = await run(process.execPath, [CLI, '--no-config', '--json', '-o', output, file], { cwd: root });
+    const result = await run(process.execPath, [CLI, '--no-config', '--archive-twine2', '-o', output, file], {
+      cwd: root,
+    });
     expect(result.status).toBe(1);
     expect(readFileSync(output, 'utf8')).toBe('last good output');
   },

@@ -287,11 +287,29 @@ describe('CLI exit status', () => {
     expect(r.stderr).toMatch(/error: broken\.tw:\d+: Malformed twee source; unterminated tag block\./);
   });
 
-  it('exits 1 for a missing IFID in Twee output mode', () => {
+  it('exits 1 for a missing IFID in Twine 2 archive output mode', () => {
     const src = write('noifid.tw', ':: Start\nHello.\n');
-    const r = runCli(dir, ['--no-config', '--no-remote', '-d', src]);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', src]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('error: Story IFID not found.');
+  });
+
+  // As Tweego decompiles them (#370).
+  it.each([
+    ['a Twee 3 file', 'noifid.tw', ':: Start\nHello.\n', []],
+    ['a Twee2 file', 'twee2.tw', ':: StoryTitle\nT\n\n:: Start <10,20>\nHello.\n', ['--twee2-compat']],
+    [
+      'Twine 1 HTML',
+      'twine1.html',
+      '<html><body><div id="storeArea"><div tiddler="Start" tags="">Hello.</div></div></body></html>',
+      [],
+    ],
+  ])('decompiles %s without an IFID to Twee', (_, name, content, flags) => {
+    const src = write(name, content);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-d', ...flags, src]);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(':: Start');
   });
 
   it('keeps watching after a build that reports errors', async () => {

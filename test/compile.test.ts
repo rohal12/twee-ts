@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { compile, compileIncremental, compileToFile, TweeTsError } from '../src/compiler.js';
-import type { CompileResult, Diagnostic, FileCacheEntry } from '../src/types.js';
+import type { CompileResult, Diagnostic, FileCacheEntry, OutputMode } from '../src/types.js';
 import { decompileHTML } from '../src/html-parser.js';
 import { scriptTexts } from './helpers/html.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
@@ -673,11 +673,12 @@ describe('Twee output records the effective StoryData', () => {
     expect(overridden.output).toBe(plain.output);
   });
 
-  it('records the IFID generated for a StoryData passage without one', async () => {
+  it('writes a StoryData passage without an IFID without one, as Tweego does (#370)', async () => {
     const source = ':: StoryData\n{"start":"Start"}\n\n:: Start\nOriginal';
     const result = await compile({ sources: [{ filename: 'story.tw', content: source }], outputMode: 'twee3' });
-    expect(result.diagnostics.some((d) => d.level === 'error' && d.message.includes('IFID not found'))).toBe(true);
-    expect(result.output).toContain(`"ifid": "${result.story.ifid}"`);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.story.ifid).toBe('');
+    expect(result.output).toContain(':: StoryData\n{\n\t"start": "Start"\n}\n');
   });
 
   it('keeps a StoryData passage that cannot be parsed as written', async () => {
@@ -867,9 +868,7 @@ describe('format template placeholders', () => {
       sources: [{ filename: 'story.tw', content: ':: StoryTitle\nT\n\n:: STORY\nhi\n' }],
     });
 
-    expect(result.output).toMatch(
-      /^<html><body><script>var start="STORY";<\/script><!-- UUID:\/\/[^ ]+\/\/ --><div id="storeArea"><div tiddler=/,
-    );
+    expect(result.output).toMatch(/^<html><body><script>var start="STORY";<\/script><div id="storeArea"><div tiddler=/);
     expect(result.output).toMatch(/hi<\/div><\/div>\n<\/body>\n<\/html>\n$/);
   });
 
@@ -1552,10 +1551,10 @@ describe('compiling a Twine 2 HTML file with a bad tw-storydata ifid', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function compileHTML(ifid: string) {
+  async function compileHTML(ifid: string, outputMode: OutputMode = 'twee3') {
     const file = join(dir, 'story.html');
     writeFileSync(file, twine2HTML({ name: 'T', ifid }));
-    return compile({ sources: [file], outputMode: 'twee3' });
+    return compile({ sources: [file], outputMode });
   }
 
   it('reports an invalid ifid once', async () => {
@@ -1563,10 +1562,16 @@ describe('compiling a Twine 2 HTML file with a bad tw-storydata ifid', () => {
     expect(result.diagnostics).toEqual([{ level: 'error', message: 'Cannot validate IFID; invalid IFID length: 10.' }]);
   });
 
-  it('reports a missing ifid once', async () => {
-    const result = await compileHTML('');
+  it('reports a missing ifid once for Twine 2 output', async () => {
+    const result = await compileHTML('', 'twine2-archive');
     expect(result.diagnostics).toEqual([
       { level: 'error', message: expect.stringMatching(/^Story IFID not found\. Add an IFID to your story/) },
     ]);
+  });
+
+  it('decompiles a story with no ifid to Twee with no diagnostic and no IFID, as Tweego does (#370)', async () => {
+    const result = await compileHTML('');
+    expect(result.diagnostics).toEqual([]);
+    expect(result.output).not.toContain('"ifid"');
   });
 });

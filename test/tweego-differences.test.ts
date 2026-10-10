@@ -169,6 +169,34 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(script).toBe('window.a = {} // note\n;\n(function () {})();');
   });
 
+  describe('a format template', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'twee-ts-d20-'));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('D-30: writes the IFID comment before the element of its own that holds the story data', async () => {
+      mkdirSync(join(dir, 'store-1'));
+      const format = {
+        name: 'Store',
+        version: '1.0.0',
+        source: '<body><div id="store-area" hidden>{{STORY_DATA}}</div>',
+      };
+      writeFileSync(join(dir, 'store-1', 'format.js'), `window.storyFormat(${JSON.stringify(format)});`);
+      const result = await compile({
+        sources: [{ filename: 'a.tw', content: `:: StoryTitle\nT\n:: StoryData\n{"ifid":"${IFID}"}\n:: Start\nx` }],
+        formatId: 'store-1',
+        formatPaths: [dir],
+        useTweegoPath: false,
+        noRemote: true,
+      });
+      expect(result.output).toContain(`<!-- UUID://${IFID}// --><div id="store-area" hidden><tw-storydata `);
+    });
+  });
+
   it('D-17: writes Twee with LF line endings on every OS', async () => {
     const result = await build({ 'a.tw': ':: Start\r\nline one\r\nline two\r\n' }, 'twee3');
     expect(result.output).toContain('line one\nline two');

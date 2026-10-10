@@ -285,7 +285,8 @@ describe('every format path reads the same wrappers (#221, JS-1 to JS-3)', () =>
         useTweegoPath: false,
       });
       expect(offline.format?.name).toBe('Review');
-      expect(offline.output.startsWith('<b>')).toBe(true);
+      // The template is the format's: its element holds the story data, with the IFID comment before it.
+      expect(offline.output).toMatch(/^<!-- UUID:\/\/[^ ]+\/\/ --><b><tw-storydata /);
     });
   }
 
