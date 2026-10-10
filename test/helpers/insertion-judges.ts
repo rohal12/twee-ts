@@ -8,6 +8,7 @@
  * Tweego leaves it and a diagnostic says so.
  */
 import { Script } from 'node:vm';
+import { tokenizer } from 'acorn';
 import { fillFormatTemplate } from '../../src/template.js';
 import { insertViteClient } from '../../src/html-structure.js';
 import { HTML_NS, isElement, parseDocument } from './html.js';
@@ -248,9 +249,64 @@ function compiles(source: string): boolean {
   }
 }
 
+/** What a script means to the reader of a value in it: its token types, its comments, and its string values. */
+interface ScriptReading {
+  readonly types: string;
+  readonly comments: number;
+  readonly strings: readonly string[];
+}
+
+/** Read `source` with acorn, or `undefined` where it does not tokenize. */
+function readScript(source: string): ScriptReading | undefined {
+  const types: string[] = [];
+  const strings: string[] = [];
+  let comments = 0;
+  try {
+    const onComment = (): void => {
+      comments++;
+    };
+    for (const token of tokenizer(source, { ecmaVersion: 'latest', onComment })) {
+      types.push(token.type.label);
+      // acorn's types leave out a token's value: a string's or template part's cooked value.
+      const value: unknown = Reflect.get(token, 'value');
+      if (token.type.label === 'string' || token.type.label === 'template') {
+        strings.push(typeof value === 'string' ? value : '');
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return { types: types.join(' '), comments, strings };
+}
+
+/** A character no escape sequence starts with (a backslash before it escapes it to itself), standing in for a value. */
+const STAND_IN = String.fromCharCode(0xe123);
+
+/** Twine 2's escaping of the story name (lodash `escape()`), which JavaScript strings keep (see `escapeForContext()`). */
+export const twineEscape = (s: string): string =>
+  s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] ?? ch);
+
+/**
+ * Why the script `output` does not read as `template` (with the placeholder `token`) does with `name` in it: the same
+ * tokens and comments, and its strings holding the HTML-escaped name; `undefined` when it does, or when the template
+ * does not compile with a value there.
+ */
+function scriptFailure(template: string, output: string, token: string, name: string): string | undefined {
+  const standIn = template.replaceAll(token, STAND_IN);
+  if (!compiles(standIn)) return undefined;
+  if (!compiles(output)) return 'a script no longer compiles';
+  const expected = readScript(standIn);
+  const actual = readScript(output);
+  if (expected === undefined || actual === undefined) return undefined;
+  if (expected.types !== actual.types || expected.comments !== actual.comments) return 'a script reads differently';
+  const strings = expected.strings.map((s) => s.replaceAll(STAND_IN, () => twineEscape(name)));
+  return strings.every((s, i) => actual.strings[i] === s) ? undefined : 'a script string does not hold the name';
+}
+
 /**
  * The story name in every place (`{{STORY_NAME}}`): the document keeps its shape, decoded text and attribute values
- * hold the name (percent-encoded in a URL attribute), and a script that compiled before still compiles; or there is
+ * hold the name (percent-encoded in a URL attribute), and a script that compiled before reads the same (see
+ * `scriptFailure()`); or there is
  * a warning.
  */
 export function judgeStoryName(template: string, name = TRICKY_NAME): string | undefined {
@@ -275,9 +331,8 @@ export function judgeStoryName(template: string, name = TRICKY_NAME): string | u
       if (holds && a.text.decoded && b.text.value !== a.text.value.replaceAll(token, () => name)) {
         return fail(`text ${JSON.stringify(b.text.value)} does not hold the name`);
       }
-      if (holds && a.text.script && compiles(a.text.value.replaceAll(token, () => 'x')) && !compiles(b.text.value)) {
-        return fail('a script no longer compiles');
-      }
+      const script = holds && a.text.script ? scriptFailure(a.text.value, b.text.value, token, name) : undefined;
+      if (script !== undefined) return fail(script);
     }
     for (const [k, attr] of (a.attrs ?? []).entries()) {
       const value = b.attrs?.[k]?.value;
