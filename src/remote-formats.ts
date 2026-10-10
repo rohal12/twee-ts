@@ -284,19 +284,13 @@ async function readLimited(res: Response): Promise<Uint8Array<ArrayBuffer> | und
   return bytes;
 }
 
-/**
- * How long Node's `fetch` (undici) waits for a connection by default, in milliseconds. Aborting a
- * request does not end a connection attempt in progress, so it holds the process open this long.
- */
-const UNDICI_CONNECT_TIMEOUT = 10_000;
-
 /** Where undici keeps the dispatcher every `fetch` without its own uses; its class is the one to ask for another. */
 const UNDICI_GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
 
 type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
 
 /** A dispatcher for one download, and the call that frees its connections. */
-interface BoundedDispatcher {
+interface RequestDispatcher {
   readonly dispatcher: FetchDispatcher;
   readonly release: () => void;
 }
@@ -316,33 +310,52 @@ function isDispatcher(value: unknown): value is FetchDispatcher {
 const nativeFetch = globalThis.fetch;
 
 /**
+ * The global dispatcher Node created, with its default options, for the request with which
+ * {@link ensureGlobalDispatcher} made it; `undefined` while there is none (a dispatcher that was in
+ * place before may be one the host installed, with options of its own).
+ */
+let nodeDefaultDispatcher: object | undefined;
+
+/**
  * Makes undici create its global dispatcher, which it does with the first request of a process: a
- * request for a data: URL makes no connection. `request` is exported for tests.
+ * request for a data: URL makes no connection. undici creates it during the call, before any other
+ * code can run, so the dispatcher there right after the call is Node's own. `request` is exported
+ * for tests.
  */
 export async function ensureGlobalDispatcher(request: (url: string) => Promise<Response> = nativeFetch): Promise<void> {
   if (Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER) !== undefined) return;
-  await request('data:,').then(
+  const answer = request('data:,');
+  const made: unknown = Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER);
+  if (typeof made === 'object' && made !== null) nodeDefaultDispatcher = made;
+  await answer.then(
     (res) => res.body?.cancel(),
     () => undefined,
   );
 }
 
 /**
- * A dispatcher whose connection attempts end after `connectTimeout` milliseconds, so a host that
- * drops packets does not hold the process open for undici's own ten seconds after an abort ended
- * the request; `undefined` for no bound, or where Node gives no such dispatcher (the request then
- * runs on the global one). Node exports no dispatcher class, so this builds one from the class of
- * the global dispatcher, which exists once any request was made.
+ * A dispatcher whose sockets `signal` destroys, so that a request that ends (at its limit, by a
+ * caller's signal or by the resolution deadline) also ends its connection attempt. Aborting `fetch`
+ * alone does not: undici leaves a connection attempt in progress to its own ten-second connect
+ * timeout, and a host that drops packets holds the process open that long. undici passes these
+ * options on to `net.connect()` and `tls.connect()`: `connect` for a direct connection,
+ * `proxyTls` for the connection to a proxy, `requestTls` for TLS through its tunnel.
+ *
+ * Node exports no dispatcher class, so this builds one from the class of the global dispatcher, and
+ * only when that is the one Node created with its default options for twee-ts's own first request:
+ * a dispatcher built from another's class would lose the options the host gave it (its CA, its proxy
+ * URLs). Where the global dispatcher was in place before, or was replaced since, the request runs
+ * on it unchanged (`undefined`), and a connection attempt in progress ends at undici's own limit.
  */
-async function boundedDispatcher(connectTimeout: number | undefined): Promise<BoundedDispatcher | undefined> {
-  if (connectTimeout === undefined) return undefined;
+async function requestDispatcher(signal: AbortSignal): Promise<RequestDispatcher | undefined> {
   await ensureGlobalDispatcher();
-  const current: unknown = Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER);
-  const dispatcherClass: unknown = typeof current === 'object' && current !== null ? current.constructor : undefined;
+  const current = nodeDefaultDispatcher;
+  if (current === undefined || Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER) !== current) return undefined;
+  const dispatcherClass: unknown = current.constructor;
   if (typeof dispatcherClass !== 'function') return undefined;
   let made: unknown;
   try {
-    made = Reflect.construct(dispatcherClass, [{ connect: { timeout: connectTimeout } }]);
+    made = Reflect.construct(dispatcherClass, [{ connect: { signal }, proxyTls: { signal }, requestTls: { signal } }]);
   } catch {
     return undefined;
   }
@@ -363,18 +376,12 @@ async function boundedDispatcher(connectTimeout: number | undefined): Promise<Bo
  * <what> from <url>: <cause>". The bytes are returned undecoded, so checksums cover what was served.
  * A redirect must stay on http: or https:, and never go from https: to http:.
  */
-async function fetchBytes(
-  url: string,
-  what: string,
-  signal: AbortSignal,
-  validators: Validators,
-  connectTimeout: number | undefined,
-): Promise<Fetched> {
-  const bounded = await boundedDispatcher(connectTimeout);
+async function fetchBytes(url: string, what: string, signal: AbortSignal, validators: Validators): Promise<Fetched> {
+  const own = await requestDispatcher(signal);
   try {
-    return await fetchBytesVia(url, what, signal, validators, bounded?.dispatcher);
+    return await fetchBytesVia(url, what, signal, validators, own?.dispatcher);
   } finally {
-    bounded?.release();
+    own?.release();
   }
 }
 
@@ -447,13 +454,8 @@ function sharedFetch(
   options: RemoteFetchOptions,
   validators: Validators = {},
 ): Promise<Fetched> {
-  const wait = waitOptions(options, what, url);
-  // A request that waits less than a connect may take is bounded by the limit of the caller that
-  // starts it. A caller with a longer limit that joins it meanwhile sees an unreachable host fail at
-  // that limit instead of at undici's ten seconds; once the connection is made, each keeps its own.
-  const connectTimeout = wait.timeout > 0 && wait.timeout < UNDICI_CONNECT_TIMEOUT ? wait.timeout : undefined;
   const key = JSON.stringify([what, url, validators.etag ?? null, validators.lastModified ?? null]);
-  return shareRequest(key, wait, (signal) => fetchBytes(url, what, signal, validators, connectTimeout));
+  return shareRequest(key, waitOptions(options, what, url), (signal) => fetchBytes(url, what, signal, validators));
 }
 
 /** Decode downloaded text as local files are (UTF-8, else Windows-1252), without a leading BOM. */

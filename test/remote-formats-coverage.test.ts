@@ -15,6 +15,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
 import type * as NodeFs from 'node:fs';
 import {
@@ -51,6 +53,9 @@ import {
   storySource,
 } from './helpers/format-server.js';
 import { seedIndexDownload, seedUrlDownload, OFFICIAL_INDEX } from './helpers/format-cache.js';
+
+/** The fetch of this process, before any test stands in for it. */
+const nativeFetch = globalThis.fetch;
 
 // renameSync passes through unless a test stands in for another process that finishes the same
 // cache write first.
@@ -432,9 +437,26 @@ describe('requests', () => {
     expect(server.log).toEqual([]);
   });
 
-  describe('connection attempts end with the request limit (#376)', () => {
-    const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+  const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
 
+  /** Stands in for the first request of a process, with which Node creates `dispatcher` as its global dispatcher. */
+  async function nodeCreates(dispatcher: unknown): Promise<void> {
+    Reflect.set(globalThis, GLOBAL_DISPATCHER, undefined);
+    await ensureGlobalDispatcher(() => {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, dispatcher);
+      return Promise.resolve(new Response(null));
+    });
+  }
+
+  /** Node's own global dispatcher, which twee-ts then takes for one it made Node create. */
+  async function nodeDefault(): Promise<unknown> {
+    if (Reflect.get(globalThis, GLOBAL_DISPATCHER) === undefined) await nativeFetch('data:,');
+    const dispatcher: unknown = Reflect.get(globalThis, GLOBAL_DISPATCHER);
+    await nodeCreates(dispatcher);
+    return dispatcher;
+  }
+
+  describe('connection attempts end with the request (#376)', () => {
     /** Stands in for undici's Agent, the class of the global dispatcher. */
     class FakeAgent {
       static readonly made: FakeAgent[] = [];
@@ -452,16 +474,18 @@ describe('requests', () => {
       }
     }
 
+    /** Stands in for undici's EnvHttpProxyAgent. */
+    class EnvHttpProxyAgent extends FakeAgent {}
+
     let saved: unknown;
-    beforeEach(() => {
+    beforeEach(async () => {
       saved = Reflect.get(globalThis, GLOBAL_DISPATCHER);
-      FakeAgent.made.length = 0;
       FakeAgent.destroyFails = false;
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, new FakeAgent({}));
+      await nodeCreates(new FakeAgent({}));
       FakeAgent.made.length = 0;
     });
-    afterEach(() => {
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, saved);
+    afterEach(async () => {
+      await nodeCreates(saved);
     });
 
     /** Stubs fetch with the format, logging what each request was given. */
@@ -474,14 +498,31 @@ describe('requests', () => {
       return log;
     }
 
-    it('gives a request a dispatcher whose connect timeout is its limit, and frees it afterwards', async () => {
-      const log = serve();
-      await fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
-      const [agent] = FakeAgent.made;
-      expect(FakeAgent.made).toHaveLength(1);
-      expect(agent?.options).toEqual({ connect: { timeout: 1500 } });
-      expect(log.dispatchers).toEqual([agent]);
-      expect(agent?.destroyed).toBe(true);
+    it.each([[1500], [10_000], [30_000], [0]])(
+      'gives a request with a limit of %i ms a dispatcher whose connections end with it, and frees it afterwards',
+      async (timeout) => {
+        const log = serve();
+        await fetchDirectFormat('https://example.test/format.js', { timeout });
+        const [agent] = FakeAgent.made;
+        expect(FakeAgent.made).toHaveLength(1);
+        const signal = expect.any(AbortSignal) as unknown;
+        expect(agent?.options).toEqual({ connect: { signal }, proxyTls: { signal }, requestTls: { signal } });
+        expect(log.dispatchers).toEqual([agent]);
+        expect(agent?.destroyed).toBe(true);
+      },
+    );
+
+    it('aborts the signal of the dispatcher when the caller stops waiting', async () => {
+      const controller = new AbortController();
+      vi.stubGlobal('fetch', () => {
+        controller.abort(new Error('stop'));
+        return new Promise<never>(() => undefined);
+      });
+      await expect(fetchDirectFormat('https://example.test/format.js', { signal: controller.signal })).rejects.toThrow(
+        'stop',
+      );
+      const options = FakeAgent.made[0]?.options as { connect: { signal: AbortSignal } } | undefined;
+      expect(options?.connect.signal.aborted).toBe(true);
     });
 
     it('frees the dispatcher when the request fails', async () => {
@@ -502,16 +543,6 @@ describe('requests', () => {
       expect(FakeAgent.made.map((agent) => agent.destroyed)).toEqual([true]);
     });
 
-    it.each([[30_000], [10_000], [0]])(
-      'leaves a limit of %i ms to undici, which ends a connect after ten seconds',
-      async (timeout) => {
-        const log = serve();
-        await fetchDirectFormat('https://example.test/format.js', { timeout });
-        expect(log.dispatchers).toEqual([undefined]);
-        expect(FakeAgent.made).toEqual([]);
-      },
-    );
-
     it.each([
       ['a global dispatcher whose class cannot be built', () => ({ constructor: () => 1 })],
       [
@@ -524,12 +555,44 @@ describe('requests', () => {
       ],
       ['a global dispatcher that is no object', () => 'agent'],
     ])('uses the global dispatcher when it finds %s', async (_label, make) => {
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, make());
+      await nodeCreates(make());
       const log = serve();
       await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).resolves.toMatchObject({
         name: 'Review',
       });
       expect(log.dispatchers).toEqual([undefined]);
+    });
+
+    // A dispatcher the host installed carries the host's options, which a dispatcher built from its
+    // class would lose; it may also be the one in place before twee-ts's first request.
+    it.each([
+      ['an Agent with its own CA', () => new FakeAgent({ connect: { ca: 'corporate CA' } })],
+      [
+        'an EnvHttpProxyAgent with its own proxy URLs',
+        () => new EnvHttpProxyAgent({ httpProxy: 'http://proxy.test:3128', httpsProxy: 'http://proxy.test:3128' }),
+      ],
+      ['an Agent with default options', () => new FakeAgent({})],
+    ])('uses %s that the host installed as it is', async (_label, make) => {
+      const host = make();
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+      FakeAgent.made.length = 0;
+      const log = serve();
+      await fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
+      expect(log.dispatchers).toEqual([undefined]);
+      expect(FakeAgent.made).toEqual([]);
+      expect(Reflect.get(globalThis, GLOBAL_DISPATCHER)).toBe(host);
+    });
+
+    it('uses a dispatcher in place before its first request as it is', async () => {
+      const host = new FakeAgent({});
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+      FakeAgent.made.length = 0;
+      vi.resetModules();
+      const fresh = await import('../src/remote-formats.js');
+      const log = serve();
+      await fresh.fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
+      expect(log.dispatchers).toEqual([undefined]);
+      expect(FakeAgent.made).toEqual([]);
     });
 
     it.each([
@@ -556,6 +619,98 @@ describe('requests', () => {
       });
       expect(asked).toEqual([]);
     });
+  });
+
+  // A TLS handshake the server never answers is a connection attempt still in progress, as one to a
+  // host that drops packets is: undici ends it only at its own ten-second connect timeout. Each way
+  // a request ends other than at its own limit, with the default limit of 30 seconds.
+  it.each([
+    [
+      'a caller signal',
+      async (url: string, opened: Promise<unknown>) => {
+        const controller = new AbortController();
+        const request = fetchDirectFormat(url, { signal: controller.signal });
+        await opened;
+        controller.abort(new Error('stop'));
+        await expect(request).rejects.toThrow('stop');
+      },
+    ],
+    [
+      'the resolution deadline',
+      async (url: string) => {
+        const diagnostics: Diagnostic[] = [];
+        const info = await resolveStoryFormat(
+          { kind: 'name', name: 'Review', version: '1.0.0' },
+          {
+            formatPaths: [],
+            useTweegoPath: false,
+            formatUrls: [url],
+            useDefaultFormatIndices: false,
+            formatResolutionTimeout: 1000,
+          },
+          diagnostics,
+        );
+        expect(info).toBeUndefined();
+        expect(diagnostics.map((d) => d.message).join('\n')).toContain('formatResolutionTimeout');
+      },
+    ],
+  ])(
+    'ends a connection attempt as soon as %s ends the request (#376)',
+    async (_label, endRequest) => {
+      await nodeDefault();
+      const closed = Promise.withResolvers<number>();
+      const opened = Promise.withResolvers<undefined>();
+      const server = createServer((socket) => {
+        opened.resolve(undefined);
+        socket.on('error', () => undefined);
+        // Read what arrives, or the end of the stream would wait behind the unread ClientHello.
+        socket.resume();
+        socket.on('close', () => {
+          closed.resolve(Date.now());
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const { port } = server.address() as AddressInfo;
+        await endRequest(`https://127.0.0.1:${port}/format.js`, opened.promise);
+        const ended = Date.now();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<number>((resolve) => {
+          timer = setTimeout(() => {
+            resolve(Infinity);
+          }, 5000);
+        });
+        const closedAt = await Promise.race([closed.promise, late]);
+        clearTimeout(timer);
+        expect(closedAt - ended).toBeLessThan(2000);
+      } finally {
+        server.close();
+      }
+    },
+    10_000,
+  );
+
+  it('downloads through a real Agent the host installed, with its options (#376)', async () => {
+    const server = await startFormatServer({ '/format.js': formatJs('Review', '1.0.0') });
+    const port = new URL(server.origin).port;
+    const node = await nodeDefault();
+    const Agent = (node as { constructor: new (options: unknown) => { close: () => Promise<void> } }).constructor;
+    // The host's own name resolution stands in for its CA or proxy: a dispatcher without it fails.
+    const lookup = (_host: string, options: { all?: boolean }, callback: (...args: unknown[]) => void): void => {
+      if (options.all === true) callback(null, [{ address: '127.0.0.1', family: 4 }]);
+      else callback(null, '127.0.0.1', 4);
+    };
+    const host = new Agent({ connect: { lookup } });
+    Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+    vi.stubGlobal('fetch', nativeFetch);
+    try {
+      await expect(
+        fetchDirectFormat(`http://formats.host-only.test:${port}/format.js`, { timeout: 5000 }),
+      ).resolves.toMatchObject({ name: 'Review' });
+    } finally {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, node);
+      await host.close();
+    }
   });
 
   it('refuses a URL it cannot fetch', async () => {
