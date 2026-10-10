@@ -25,7 +25,7 @@ describe('compile with a deeply nested format template (#314)', () => {
       sources: [
         {
           filename: 'story.tw',
-          content: ':: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n:: Start\nhello\n',
+          content: ':: StoryTitle\nT\n:: StoryData\n{"ifid":"12345678-1234-4234-8234-123456789ABC"}\n:: Start\nhello\n',
         },
       ],
       formatId: 'Depth',

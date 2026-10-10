@@ -29,7 +29,10 @@ import { tweeTsPlugin } from '../src/plugins/rollup.js';
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
 
-const STORY_DATA = `:: StoryData
+const STORY_DATA = `:: StoryTitle
+T
+
+:: StoryData
 {"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}
 `;
 

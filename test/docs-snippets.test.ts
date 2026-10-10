@@ -93,6 +93,7 @@ const FIXTURES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     'src/analytics.js': 'window.analytics = true;\n',
   },
   broken: {
+    'src/StoryTitle.tw': ':: StoryTitle\nMy Story\n',
     'src/StoryData.tw': `:: StoryData\n{\n\t"ifid": "${IFID}"\n}\n`,
     'src/Start.tw': ':: Start\nYou wake up.\n\n:: Kitchen [food\nA kitchen.\n',
   },

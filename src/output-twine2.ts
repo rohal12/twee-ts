@@ -21,6 +21,7 @@ import {
   unrepresentableTextDiagnostics,
 } from './html-output-check.js';
 import type { CodePart, CodeText } from './html-output-check.js';
+import { ineffectiveImportDiagnostics } from './css-imports.js';
 import { VERSION } from './version.js';
 
 const CREATOR_NAME = 'Twee-ts';
@@ -89,7 +90,15 @@ function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
     ),
     ...codeEscapeDiagnostics('script', joinCode(scripts, 'script')),
     ...codeEscapeDiagnostics('style', joinCode(stylesheets, 'stylesheet')),
+    ...stylesheetImportDiagnostics(stylesheets),
   ];
+}
+
+/** Warnings for `@import` rules that the joined story stylesheet puts after other rules. */
+function stylesheetImportDiagnostics(stylesheets: readonly ReadonlyPassage[]): Diagnostic[] {
+  return ineffectiveImportDiagnostics(
+    stylesheets.map((p) => ({ label: `Stylesheet passage "${p.name}"`, text: p.text })),
+  );
 }
 
 /** The named tag colors of the Twine 2 HTML output specification. */

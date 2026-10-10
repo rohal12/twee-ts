@@ -12,7 +12,7 @@ const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
 
 function storyData(extra = ''): string {
-  return `:: StoryData\n{"ifid":"${IFID}"${extra}}\n\n`;
+  return `:: StoryTitle\nT\n\n:: StoryData\n{"ifid":"${IFID}"${extra}}\n\n`;
 }
 
 function source(content: string): InlineSource {

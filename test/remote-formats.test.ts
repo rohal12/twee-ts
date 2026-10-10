@@ -483,7 +483,10 @@ describe('resolveRemoteFormat with a download cache and no network', () => {
 // --- Concurrent downloads, per-URL cache entries, cancellation ---
 
 const INLINE_STORY = [
-  { filename: 's.tw', content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHi\n' },
+  {
+    filename: 's.tw',
+    content: ':: StoryTitle\nT\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHi\n',
+  },
 ];
 const SUGARCUBE_URL = `${OFFICIAL_BASE}/twine2/SugarCube/2.37.3/format.js`;
 const FORK_URL = 'https://example.test/my-patched-sugarcube/format.js';
@@ -702,7 +705,7 @@ describe('same-major older fallback from format URLs', () => {
   const storyFor = (version: string) => [
     {
       filename: 's.tw',
-      content: `:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"SugarCube","format-version":"${version}"}\n\n:: Start\nHi\n`,
+      content: `:: StoryTitle\nT\n\n:: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC","format":"SugarCube","format-version":"${version}"}\n\n:: Start\nHi\n`,
     },
   ];
   const compileFor = (version: string, options: { formatUrls?: string[]; noRemote?: boolean } = {}) =>
