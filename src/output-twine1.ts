@@ -11,7 +11,7 @@ import { DEFAULT_TWINE1_FOOTER, storyDataProbe, twine1ArchiveStoreArea } from '.
 import { fillFormatTemplate } from './template.js';
 import type { Placeholder } from './template.js';
 import { htmlCommentSanitize, rot13 } from './escape.js';
-import { unrepresentableTextDiagnostics } from './html-output-check.js';
+import { checkInsertedText, unrepresentableTextDiagnostics } from './html-output-check.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
@@ -49,6 +49,7 @@ export function toTwine1HTML(
   const parentDir = dirname(formatDir);
   const diagnostics = options?.diagnostics;
   let template = readFormatSource(format, diagnostics);
+  checkInsertedText(diagnostics, `The story format "${format.name}"`, template);
   const chunk = getTwine1PassageChunk(story, time);
   const { data, count } = chunk;
   diagnostics?.push(...chunk.diagnostics);
@@ -122,12 +123,15 @@ export function toTwine1HTML(
  */
 function readFooter(formatDir: string, diagnostics: Diagnostic[] | undefined): string {
   const path = join(formatDir, 'footer.html');
+  let footer: string;
   try {
-    return readUTF8(path, diagnostics);
+    footer = readUTF8(path, diagnostics);
   } catch (e) {
     if (isAbsent(path, e)) return DEFAULT_TWINE1_FOOTER;
     throw componentUnavailable('Format component cannot be read', path, e);
   }
+  checkInsertedText(diagnostics, `The story format component "${path}"`, footer);
+  return footer;
 }
 
 /**
@@ -215,6 +219,7 @@ function tryReplaceComponent(
   if (!template.includes(placeholder)) return template;
   try {
     const content = downloaded?.() ?? readUTF8(componentPath, diagnostics);
+    checkInsertedText(diagnostics, `The story format component "${componentPath}"`, content);
     return template.replace(placeholder, () => content);
   } catch (e) {
     if (required) throw componentUnavailable('Required format component not found', componentPath, e);

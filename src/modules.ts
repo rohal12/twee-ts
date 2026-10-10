@@ -8,7 +8,7 @@ import type { Diagnostic } from './types.js';
 import { normalizedFileExt, mediaTypeFromExt, fontFormatHint, slugify } from './media-types.js';
 import { readUTF8, readBase64, fileStem } from './util.js';
 import { cssStringEscape, scriptContentEscape, styleContentEscape } from './escape.js';
-import { codeEscapeDiagnostics, unrepresentableTextDiagnostic } from './html-output-check.js';
+import { checkInsertedText, codeEscapeDiagnostics } from './html-output-check.js';
 import { fillFormatTemplate } from './template.js';
 import { duplicateInput } from './input-policy.js';
 
@@ -96,8 +96,7 @@ function loadModuleTagged(
 ): string | null {
   const source = readUTF8(filename, diagnostics).trim();
   if (source.length === 0) return null;
-  const unrepresentable = unrepresentableTextDiagnostic(`The module "${filename}"`, source);
-  if (unrepresentable !== undefined) diagnostics?.push(unrepresentable);
+  checkInsertedText(diagnostics, `The module "${filename}"`, source);
   diagnostics?.push(
     ...codeEscapeDiagnostics(tag, { text: source, parts: [{ label: `module "${filename}"`, start: 0 }] }),
   );
@@ -141,6 +140,7 @@ export function loadHeadContent(
   if (headFile) {
     try {
       const source = readUTF8(headFile, diagnostics).trim();
+      checkInsertedText(diagnostics, `The head file "${headFile}"`, source);
       if (source.length > 0) parts.push(source);
     } catch (e) {
       diagnostics?.push({

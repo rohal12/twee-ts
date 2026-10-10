@@ -16,6 +16,7 @@ import { readFormatSource } from './formats.js';
 import { storyDataProbe } from './html-structure.js';
 import { fillFormatTemplate } from './template.js';
 import {
+  checkInsertedText,
   codeEscapeDiagnostics,
   twine2StoryFieldDiagnostics,
   unrepresentableTextDiagnostics,
@@ -52,6 +53,7 @@ export function toTwine2HTML(
   options?: { readonly sourceInfo?: boolean; readonly head?: string; readonly diagnostics?: Diagnostic[] },
 ): string {
   const template = readFormatSource(format, options?.diagnostics);
+  checkInsertedText(options?.diagnostics, `The story format "${format.name}" ${format.version}`, template);
   // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
   const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
   options?.diagnostics?.push(...twine2DataDiagnostics(built));

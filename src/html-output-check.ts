@@ -19,7 +19,7 @@ import { isTweeTag, splitTweeFields } from './twee-syntax.js';
 const UNREPRESENTABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /** An error when `text` (named `what` in the message) holds a code point HTML cannot carry, else `undefined`. */
-export function unrepresentableTextDiagnostic(what: string, text: string): Diagnostic | undefined {
+function unrepresentableTextDiagnostic(what: string, text: string): Diagnostic | undefined {
   const match = UNREPRESENTABLE.exec(text);
   if (match === null) return undefined;
   const codePoint = `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
@@ -31,14 +31,23 @@ export function unrepresentableTextDiagnostic(what: string, text: string): Diagn
   };
 }
 
-/** A list of diagnostics and a function that adds the error for text HTML cannot carry (see `unrepresentableTextDiagnostic()`). */
+/**
+ * Add to `diagnostics` the error for `text` (named `what`) when it holds a code point HTML cannot carry (see
+ * `unrepresentableTextDiagnostic()`): for text the HTML output inserts besides the story data, such as the head
+ * file, a module or a story format's template and components.
+ */
+export function checkInsertedText(diagnostics: Diagnostic[] | undefined, what: string, text: string): void {
+  const diagnostic = unrepresentableTextDiagnostic(what, text);
+  if (diagnostic !== undefined) diagnostics?.push(diagnostic);
+}
+
+/** A list of diagnostics and a function that adds the error for text HTML cannot carry (see `checkInsertedText()`). */
 function textChecker(): { readonly diagnostics: Diagnostic[]; readonly check: (what: string, text: string) => void } {
   const diagnostics: Diagnostic[] = [];
   return {
     diagnostics,
     check(what, text) {
-      const diagnostic = unrepresentableTextDiagnostic(what, text);
-      if (diagnostic !== undefined) diagnostics.push(diagnostic);
+      checkInsertedText(diagnostics, what, text);
     },
   };
 }
