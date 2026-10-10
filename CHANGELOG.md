@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--lint` and `lint()` report a missing or empty `StoryTitle` as an error, as HTML output does, so a lint-only CI check no longer passes a story the compiler rejects; no story format is resolved for it (#356)
 - HTML output reports an error for a story without a name, whatever the story format: no `StoryTitle` passage (as Tweego does) or an empty one, either of which stops SugarCube at startup; the CLI writes no output and plugins reject the build. Twee, archive and JSON output are unchanged (#351)
 - A warning names a stylesheet source whose `@import` rules come after other rules of the story stylesheet, where browsers ignore them and the imported fonts or theme never load; in HTML, archive and JSON output, also for the Vite `entry` stylesheet. The text is kept as Tweego joins it; put imports first or add the file as a head module (#352)
 - Scripts are joined with a statement boundary: each script (`.js` file or `[script]` passage) but the last ends on a line of its own followed by `;` in Twine 2 HTML, archive and JSON output, so a source without a final semicolon no longer swallows an IIFE, array literal or regular expression that starts the next one. A script that continues in the next script passage no longer works (D-18 in the differences from Tweego) (#348)

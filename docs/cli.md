@@ -109,7 +109,7 @@ See [Format Discovery](./story-formats) for how formats are located.
 | -------- | ----------------------------------------------------------------------- |
 | `--lint` | Lint story structure (broken links, dead ends, orphans) without output. |
 
-Exits with code 1 if errors are found (broken links, a starting passage that is missing or would be left out of Twine 2 output, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit. The report goes to standard output; the compilation's warnings and errors are part of it, in a `Diagnostics:` section, when there are any. Its `Format:` line is the format StoryData names.
+Exits with code 1 if errors are found (broken links, a missing or empty story title, a starting passage that is missing or would be left out of Twine 2 output, compilation errors). Warnings (dead ends, orphans) do not cause a non-zero exit. The report goes to standard output; the compilation's warnings and errors are part of it, in a `Diagnostics:` section, when there are any. Its `Format:` line is the format StoryData names.
 
 Like a build, linting leaves the output file (`-o`, or `output` in the config file) out of the sources, so an earlier build inside a source folder is not linted.
 
@@ -122,7 +122,7 @@ Links are read from passage markup and, in script passages, only from JavaScript
 ```sh
 $ twee-ts --lint src/
 Format: SugarCube 2.37.3
-Passages: 7 total (5 story, 2 info), 27 words, 4 files
+Passages: 8 total (5 story, 3 info), 27 words, 5 files
 Start: Start
 
 Broken links (2):

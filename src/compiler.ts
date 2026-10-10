@@ -20,7 +20,7 @@ import type {
 } from './types.js';
 import { ineffectiveImportDiagnostics } from './css-imports.js';
 import type { StylesheetSource } from './css-imports.js';
-import { createStory, storyHas, getStoryStats, snapshot } from './story.js';
+import { createStory, getStoryStats, snapshot } from './story.js';
 import {
   getFilenames,
   isExcluded,
@@ -39,7 +39,7 @@ import { toTwine2HTML, toTwine2Archive, terminateScript, twine2TagColors } from 
 import { toTwine1HTML, toTwine1Archive } from './output-twine1.js';
 import { toTwee } from './output-twee.js';
 import { loadHeadContent, moduleIds } from './modules.js';
-import { startPassageDiagnostics } from './start-passage.js';
+import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
 import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
@@ -683,17 +683,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       }
 
       // A story without a name cannot start in SugarCube, and Twine 1 reads its name from the StoryTitle passage.
-      if ((!format.isTwine2 || story.name === '') && !storyHas(story, 'StoryTitle')) {
-        diagnostics.push({
-          level: 'error',
-          message: 'Special passage "StoryTitle" not found.',
-        });
-      } else if (story.name === '') {
-        diagnostics.push({
-          level: 'error',
-          message: 'Special passage "StoryTitle" is empty, so the story has no name.',
-        });
-      }
+      diagnostics.push(...storyTitleDiagnostics(story, format.isTwine2 ? 'twine2' : 'twine1'));
 
       // Modules and head file, injected before the template's closing head tag while the template is filled
       diagnostics.push(...modules.diagnostics);
