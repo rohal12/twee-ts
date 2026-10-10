@@ -15,6 +15,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
 import type * as NodeFs from 'node:fs';
 import {
@@ -432,7 +434,7 @@ describe('requests', () => {
     expect(server.log).toEqual([]);
   });
 
-  describe('connection attempts end with the request limit (#376)', () => {
+  describe('connection attempts end with the request (#376)', () => {
     const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
 
     /** Stands in for undici's Agent, the class of the global dispatcher. */
@@ -474,14 +476,31 @@ describe('requests', () => {
       return log;
     }
 
-    it('gives a request a dispatcher whose connect timeout is its limit, and frees it afterwards', async () => {
-      const log = serve();
-      await fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
-      const [agent] = FakeAgent.made;
-      expect(FakeAgent.made).toHaveLength(1);
-      expect(agent?.options).toEqual({ connect: { timeout: 1500 } });
-      expect(log.dispatchers).toEqual([agent]);
-      expect(agent?.destroyed).toBe(true);
+    it.each([[1500], [10_000], [30_000], [0]])(
+      'gives a request with a limit of %i ms a dispatcher whose connections end with it, and frees it afterwards',
+      async (timeout) => {
+        const log = serve();
+        await fetchDirectFormat('https://example.test/format.js', { timeout });
+        const [agent] = FakeAgent.made;
+        expect(FakeAgent.made).toHaveLength(1);
+        const signal = expect.any(AbortSignal) as unknown;
+        expect(agent?.options).toEqual({ connect: { signal }, proxyTls: { signal }, requestTls: { signal } });
+        expect(log.dispatchers).toEqual([agent]);
+        expect(agent?.destroyed).toBe(true);
+      },
+    );
+
+    it('aborts the signal of the dispatcher when the caller stops waiting', async () => {
+      const controller = new AbortController();
+      vi.stubGlobal('fetch', () => {
+        controller.abort(new Error('stop'));
+        return new Promise<never>(() => undefined);
+      });
+      await expect(fetchDirectFormat('https://example.test/format.js', { signal: controller.signal })).rejects.toThrow(
+        'stop',
+      );
+      const options = FakeAgent.made[0]?.options as { connect: { signal: AbortSignal } } | undefined;
+      expect(options?.connect.signal.aborted).toBe(true);
     });
 
     it('frees the dispatcher when the request fails', async () => {
@@ -501,16 +520,6 @@ describe('requests', () => {
       expect(log.dispatchers).toHaveLength(1);
       expect(FakeAgent.made.map((agent) => agent.destroyed)).toEqual([true]);
     });
-
-    it.each([[30_000], [10_000], [0]])(
-      'leaves a limit of %i ms to undici, which ends a connect after ten seconds',
-      async (timeout) => {
-        const log = serve();
-        await fetchDirectFormat('https://example.test/format.js', { timeout });
-        expect(log.dispatchers).toEqual([undefined]);
-        expect(FakeAgent.made).toEqual([]);
-      },
-    );
 
     it.each([
       ['a global dispatcher whose class cannot be built', () => ({ constructor: () => 1 })],
@@ -557,6 +566,74 @@ describe('requests', () => {
       expect(asked).toEqual([]);
     });
   });
+
+  // A TLS handshake the server never answers is a connection attempt still in progress, as one to a
+  // host that drops packets is: undici ends it only at its own ten-second connect timeout. Each way
+  // a request ends other than at its own limit, with the default limit of 30 seconds.
+  it.each([
+    [
+      'a caller signal',
+      async (url: string, opened: Promise<unknown>) => {
+        const controller = new AbortController();
+        const request = fetchDirectFormat(url, { signal: controller.signal });
+        await opened;
+        controller.abort(new Error('stop'));
+        await expect(request).rejects.toThrow('stop');
+      },
+    ],
+    [
+      'the resolution deadline',
+      async (url: string) => {
+        const diagnostics: Diagnostic[] = [];
+        const info = await resolveStoryFormat(
+          { kind: 'name', name: 'Review', version: '1.0.0' },
+          {
+            formatPaths: [],
+            useTweegoPath: false,
+            formatUrls: [url],
+            useDefaultFormatIndices: false,
+            formatResolutionTimeout: 1000,
+          },
+          diagnostics,
+        );
+        expect(info).toBeUndefined();
+        expect(diagnostics.map((d) => d.message).join('\n')).toContain('formatResolutionTimeout');
+      },
+    ],
+  ])(
+    'ends a connection attempt as soon as %s ends the request (#376)',
+    async (_label, endRequest) => {
+      const closed = Promise.withResolvers<number>();
+      const opened = Promise.withResolvers<undefined>();
+      const server = createServer((socket) => {
+        opened.resolve(undefined);
+        socket.on('error', () => undefined);
+        // Read what arrives, or the end of the stream would wait behind the unread ClientHello.
+        socket.resume();
+        socket.on('close', () => {
+          closed.resolve(Date.now());
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const { port } = server.address() as AddressInfo;
+        await endRequest(`https://127.0.0.1:${port}/format.js`, opened.promise);
+        const ended = Date.now();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<number>((resolve) => {
+          timer = setTimeout(() => {
+            resolve(Infinity);
+          }, 5000);
+        });
+        const closedAt = await Promise.race([closed.promise, late]);
+        clearTimeout(timer);
+        expect(closedAt - ended).toBeLessThan(2000);
+      } finally {
+        server.close();
+      }
+    },
+    10_000,
+  );
 
   it('refuses a URL it cannot fetch', async () => {
     await expect(fetchDirectFormat('ftp://example.test/format.js')).rejects.toThrow(
