@@ -442,8 +442,10 @@ function checkSkippedOutputs(
   skipped: readonly SkippedOutput[],
   role: 'source' | 'module',
   diagnostics: readonly Diagnostic[],
+  only?: OutputPaths,
 ): void {
   for (const output of skipped) {
+    if (only !== undefined && !only.isFile(output.path)) continue;
     if (!isLoadableType(output.path, role) || isOwnOutput(output.path) || isPreviousBuild(output.path)) continue;
     throw outputIsInput(
       { role, path: output.path },
@@ -553,8 +555,14 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   const written = toBuildOutputs(outputs);
   const outputGuard = outputPaths(written);
   // The story file a user named (CLI, compileToFile, watch). A bundler's outputs are its own: it writes
-  // over its chunks and assets in a source folder on every build, so only named inputs are checked for it.
+  // over its chunks and assets in a source folder on every build, so for it only named inputs and its story
+  // (`BuildOutputs.stories`) are checked.
   const namedOutput = typeof outputs === 'string';
+  // What is checked in a source or module folder: every output file of a named output; of a bundler's, only its
+  // story (when the caller says it writes one).
+  const stories = outputPaths({ files: written.stories ?? [], dirs: [] });
+  const guardsFolders = namedOutput || (written.stories?.length ?? 0) > 0;
+  const guarded = namedOutput ? undefined : stories;
   const diagnostics: Diagnostic[] = [];
   const outputMode: OutputMode = options.outputMode ?? 'html';
   const trim = options.trim ?? true;
@@ -593,12 +601,12 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
     if (group.kind === 'inline') return group;
     const found = getFilenames(group.paths, written, options.exclude);
     diagnostics.push(...found.diagnostics);
-    if (namedOutput) checkSkippedOutputs(found.skippedOutputs, 'source', diagnostics);
+    if (guardsFolders) checkSkippedOutputs(found.skippedOutputs, 'source', diagnostics, guarded);
     return { kind: 'files' as const, files: found.files };
   });
   // Modules are read for HTML output only, but checked in every mode.
   const modules = getFilenames(options.modules ?? [], written, [], 'module');
-  if (namedOutput) checkSkippedOutputs(modules.skippedOutputs, 'module', diagnostics);
+  if (guardsFolders) checkSkippedOutputs(modules.skippedOutputs, 'module', diagnostics, guarded);
   context.onDiscovered?.([...walked.flatMap((group) => (group.kind === 'files' ? group.files : [])), ...modules.files]);
   // Every file of the build, so that a cache purge while loading one group keeps the others' entries.
   const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.files.map((f) => f.path) : [])));
@@ -745,16 +753,22 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   }
   // The same holds for an output that became an authored file of a source or module folder while the build awaited
   // a format (edited, or created at a path nothing was at): the folders are walked again for what they now skip.
-  if (namedOutput && outputMode === 'html') {
+  if (guardsFolders && outputMode === 'html') {
     for (const group of groups) {
       if (group.kind === 'paths') {
-        checkSkippedOutputs(getFilenames(group.paths, written, options.exclude).skippedOutputs, 'source', diagnostics);
+        checkSkippedOutputs(
+          getFilenames(group.paths, written, options.exclude).skippedOutputs,
+          'source',
+          diagnostics,
+          guarded,
+        );
       }
     }
     checkSkippedOutputs(
       getFilenames(options.modules ?? [], written, [], 'module').skippedOutputs,
       'module',
       diagnostics,
+      guarded,
     );
   }
   // The story handed out is a frozen copy: it shares no object with the incremental cache (#246 S-4).

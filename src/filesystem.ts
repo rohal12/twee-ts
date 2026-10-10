@@ -47,6 +47,12 @@ export interface BuildOutputs {
    */
   readonly files: readonly string[];
   /**
+   * The story files among `files`, which the build writes whole. A bundler overwrites its other files
+   * without a word, but the story is checked as a named output file is: an existing file of a type the
+   * source folders load, which twee-ts didn't build, is the author's own and is never overwritten.
+   */
+  readonly stories?: readonly string[];
+  /**
    * Folders the build writes into, which hold nothing but its output. One found
    * while walking a source folder is skipped whole, files from earlier builds
    * included (old hashed chunks, say). A folder named as a source, or one that

@@ -218,12 +218,12 @@ type Diagnostic =
 
 Problems in the sources (a missing start passage, duplicate passages, malformed Twee, an invalid StoryData field) are collected as `diagnostics` rather than thrown. A `TweeTsError` is thrown when a build cannot run at all; nothing is built or written then. Its `code` says why, and `diagnostics` holds what the build reported before it stopped:
 
-| `code`              | When                                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BUILD_FAILED`      | No story format is available for HTML output; an unknown `outputMode`                                                                                         |
-| `INVALID_OPTIONS`   | An option out of range (a negative `formatFetchTimeout`); a config file that is not valid JSON or fails validation; bad plugin options; `entry` before Vite 8 |
-| `INPUT_UNAVAILABLE` | The head file (HTML output) or the config file is missing or can't be read                                                                                    |
-| `OUTPUT_IS_INPUT`   | The output would overwrite an input (`compileToFile()`, `watch()`, the CLI and the plugins)                                                                   |
+| `code`              | When                                                                                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUILD_FAILED`      | No story format is available for HTML output; an unknown `outputMode`                                                                                                             |
+| `INVALID_OPTIONS`   | An option out of range (a negative `formatFetchTimeout`); a config file that is not valid JSON or fails validation; bad plugin options; the Vite plugin under a Vite older than 8 |
+| `INPUT_UNAVAILABLE` | The head file (HTML output) or the config file is missing or can't be read                                                                                                        |
+| `OUTPUT_IS_INPUT`   | The output would overwrite an input (`compileToFile()`, `watch()`, the CLI and the plugins)                                                                                       |
 
 Other failures are ordinary errors: an aborted `signal` rejects with its reason, a failed write of `outFile` with the file system error (its `code`, such as `EACCES`), and a story format file that can't be read at build time, or a Twine 1 format whose required file is missing, with an `Error` naming the file.
 

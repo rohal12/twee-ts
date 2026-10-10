@@ -12,6 +12,7 @@
  * name, in the client environment only.
  */
 import { relative, resolve } from 'node:path';
+import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
 import { compileStory, fatalError } from './diagnostics.js';
@@ -20,7 +21,7 @@ import { getFilenames, outputPaths } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
-import { resolvePluginOptions } from './options.js';
+import { checkViteVersion, resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
 import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
@@ -132,7 +133,11 @@ function configOutputs(config: ResolvedConfig, outputFilename: string): BuildOut
 
 /** Both builds' outputs together. */
 function mergeOutputs(a: BuildOutputs, b: BuildOutputs): BuildOutputs {
-  return { files: [...a.files, ...b.files], dirs: [...a.dirs, ...b.dirs] };
+  return {
+    files: [...a.files, ...b.files],
+    stories: [...(a.stories ?? []), ...(b.stories ?? [])],
+    dirs: [...a.dirs, ...b.dirs],
+  };
 }
 
 /** Adds Vite's client to the page, first in its head, so reloads and the error overlay reach it. */
@@ -158,6 +163,7 @@ function isStoryBuild(config: ResolvedConfig): boolean {
 }
 
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
+  checkViteVersion(viteVersion);
   const resolved = resolvePluginOptions('vite', options);
   const { outputFilename, entry: entryPath } = resolved;
   instances += 1;
@@ -349,7 +355,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         record.addFiles(outputOptions, [...Object.keys(bundle), ...(entry?.assets.keys() ?? [])]);
         let story: CompiledStory;
         try {
-          story = await compileStory(resolved.compile(entrySources(entry)), allOutputs(config), cache);
+          story = await compileStory(resolved.compile(entrySources(entry)), allOutputs(config), cache, true);
         } catch (e) {
           return this.error(fatalError(e));
         }
