@@ -526,7 +526,13 @@ describe.skipIf(!CAN_BUILD)('shell examples', () => {
             ? (stderr: string) => shownOutput(block).every((l) => stderr.includes(l))
             : (stderr: string) => /^Built: /m.test(stderr);
         const result = await runNode([ws.cli, ...args], dir, env, until);
-        outputs.push(...`${result.stdout}${result.stderr}`.split('\n').filter((l) => l.trim() !== ''));
+        // A path in the output has the platform's separators; the docs show it with `/`.
+        outputs.push(
+          ...`${result.stdout}${result.stderr}`
+            .replace(/\\/g, '/')
+            .split('\n')
+            .filter((l) => l.trim() !== ''),
+        );
         expect({ line, status: result.status }, `${line}\n${result.stdout}\n${result.stderr}`).toEqual({
           line,
           status: expected,

@@ -701,7 +701,7 @@ describe('CLI diagnostics name their file and line (#394)', () => {
     writeFileSync(join(dir, 'src', 'ok.tw'), VALID_STORY);
     writeFileSync(join(dir, 'src', 'bad-one.tw'), UNTERMINATED);
     writeFileSync(join(dir, 'src', 'bad-two.tw'), UNTERMINATED);
-    const r = runCli(dir, ['--no-config', '--no-remote', '-o', '-', 'src']);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', '-o', '-', 'src']);
     expect(r.status).toBe(1);
     const errors = r.stderr.split('\n').filter((line) => line.startsWith('error:'));
     expect(errors).toEqual([
