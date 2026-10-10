@@ -33,6 +33,7 @@ src/
   compiler.ts          compile(), compileToFile(), watch(), compileIncremental(); TweeTsError
   cli-request.ts       CLI argv → typed request (parseCliArgs), merged with the config (resolveBuild)
   config.ts            Config loading; CONFIG_SPEC is the one table behind validation and the JSON schema
+  compile-options.ts   The one check of the compile options (API, plugins), by CONFIG_SPEC where a config key matches
   loader.ts            Loads each input type; media-types.ts maps extensions
   filesystem.ts        Source walk, exclude globs, output overlap checks, watch mode
   path-identity.ts     Canonical path identity (real path, case folding per volume, Windows forms)

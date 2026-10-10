@@ -59,24 +59,32 @@ describe.each(PLUGINS)('%s plugin options', (kind, create) => {
       { sources: ['s'], compileOptions: { formatId: 'harlowe-3' } },
       /`compileOptions.formatId` is not accepted; set the plugin's `format` option instead/,
     ],
-    ['exclude as a string', { sources: ['s'], compileOptions: { exclude: '*.png' } }, /`compileOptions.exclude`/],
+    ['exclude as a string', { sources: ['s'], compileOptions: { exclude: '*.png' } }, /"compileOptions.exclude"/],
     [
       'an exclude object without a glob',
       { sources: ['s'], compileOptions: { exclude: [{ base: 'p' }] } },
-      /`compileOptions.exclude` must be an array of non-empty strings or `\{ base, glob \}` objects/,
+      /"compileOptions.exclude" must be an array of non-empty strings and \{ base, glob \} objects/,
     ],
     [
       'an exclude object with an empty base',
       { sources: ['s'], compileOptions: { exclude: [{ base: '', glob: '*.png' }] } },
-      /`compileOptions.exclude`/,
+      /"compileOptions.exclude"/,
     ],
     [
       'an exclude object with another key',
       { sources: ['s'], compileOptions: { exclude: [{ base: 'p', glob: '*.png', extra: 1 }] } },
-      /`compileOptions.exclude`/,
+      /"compileOptions.exclude"/,
     ],
-    ['modules with a number', { sources: ['s'], compileOptions: { modules: [1] } }, /`compileOptions.modules`/],
-    ['an empty headFile', { sources: ['s'], compileOptions: { headFile: '' } }, /`compileOptions.headFile`/],
+    [
+      'modules with a number',
+      { sources: ['s'], compileOptions: { modules: [1] } },
+      /"compileOptions.modules" must be an array of strings/,
+    ],
+    [
+      'an empty headFile',
+      { sources: ['s'], compileOptions: { headFile: '' } },
+      /"compileOptions.headFile" must not be empty/,
+    ],
   ])('refuses %s with a TweeTsError naming the option', (_case, options, message) => {
     expect(() => create(options)).toThrow(TweeTsError);
     expect(() => create(options)).toThrow(expect.objectContaining({ code: 'INVALID_OPTIONS' }));

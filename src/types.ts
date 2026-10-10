@@ -38,8 +38,8 @@ export interface ExcludeGlob {
  *   consulted first, then each format URL (requested again, conditionally, on every online build),
  *   then each index, then the Story Formats Archive. A download is cached for the URL or index it
  *   came from, and `noRemote` builds still use those cached downloads.
- * - A missing or unreadable `headFile` is a TweeTsError (`INPUT_UNAVAILABLE`); a negative
- *   `formatFetchTimeout` one with `INVALID_OPTIONS`.
+ * - A missing or unreadable `headFile` is a TweeTsError (`INPUT_UNAVAILABLE`); an option of the wrong type,
+ *   an empty string or a negative `formatFetchTimeout` one with `INVALID_OPTIONS`, before anything is read.
  */
 export interface CompileOptions {
   /**

@@ -21,6 +21,7 @@ export const REVIEW_AREAS: readonly ReviewArea[] = [
       'src/index.ts',
       'src/types.ts',
       'src/compiler.ts',
+      'src/compile-options.ts',
       'src/errors.ts',
       'src/diagnostic-text.ts',
       'src/build-time.ts',

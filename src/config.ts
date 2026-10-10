@@ -175,16 +175,18 @@ export const CONFIG_SPEC: ConfigSpec = {
   // No schema default for these two: when they are left out, StoryData decides, so no value is the default.
   formatId: stringField(
     "Story format ID (e.g. 'sugarcube-2'). Overrides StoryData's format; without it, StoryData's format decides, and 'sugarcube-2' when StoryData names none.",
+    { minLength: 1 },
   ),
   startPassage: stringField(
     "Name of the starting passage. Overrides StoryData's start; without it, StoryData's start decides, and 'Start' when StoryData names none.",
+    { minLength: 1 },
   ),
   formatPaths: stringArrayField('Extra directories to search for story formats, relative to the config file.'),
   formatIndices: stringArrayField('URLs to SFA-compatible index.json files for remote format lookup.'),
   formatUrls: stringArrayField('Direct URLs to format.js files.'),
   useTweegoPath: booleanField('Also search TWEEGO_PATH env for formats.', true),
   modules: stringArrayField('Module files to inject into <head>, relative to the config file.'),
-  headFile: stringField('Raw HTML file to append to <head>, relative to the config file; "" for none.'),
+  headFile: stringField('Raw HTML file to append to <head>, relative to the config file.', { minLength: 1 }),
   trim: booleanField('Trim passage whitespace.', true),
   twee2Compat: booleanField('Twee2 compatibility mode.', false),
   testMode: booleanField('Enable debug/test mode option.', false),
@@ -317,16 +319,29 @@ function parseConfig(raw: string, path: string, diagnostics: Diagnostic[]): Twee
   return decoded.config;
 }
 
-/** A config value as JSON: what `JSON.parse` would give back, a value JSON can't hold read as `null`. */
-function toJsonValue(value: unknown): JsonValue {
+/**
+ * A config value as JSON: what `JSON.parse` would give back, a value JSON can't hold (a function, `undefined`, an
+ * object inside itself) read as `null`.
+ */
+function toJsonValue(value: unknown, ancestors: readonly object[] = []): JsonValue {
   if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
     return value;
   }
-  if (Array.isArray(value)) return value.map(toJsonValue);
-  if (typeof value === 'object') {
-    return new JsonObject(Object.entries(value).map(([key, item]) => ({ key, value: toJsonValue(item) })));
-  }
-  return null;
+  if (typeof value !== 'object' || ancestors.includes(value)) return null;
+  const inside = [...ancestors, value];
+  if (Array.isArray(value)) return value.map((item: unknown) => toJsonValue(item, inside));
+  return new JsonObject(Object.entries(value).map(([key, item]) => ({ key, value: toJsonValue(item, inside) })));
+}
+
+/**
+ * The error for `value` given to the option `key` from JavaScript (the compile options, a plugin's
+ * `compileOptions`), as the config key of that name reports it: one table, CONFIG_SPEC, decides what each option
+ * may hold wherever it is set. `label` names the option in the message. Undefined when the value is valid.
+ */
+export function configValueError(key: keyof TweeTsConfig, value: unknown, label: string): string | undefined {
+  const issues: DecodeIssue[] = [];
+  const decoded = CONFIG_SPEC[key].decoder(`"${label}"`)(toJsonValue(value), [], issues);
+  return decoded.ok ? undefined : issues.map((issue) => issue.message).join(' ');
 }
 
 /** The warning for a key the config does not define, with the key it may stand for. */
@@ -456,14 +471,14 @@ function rebaseGlob(dir: string, glob: string): string | ExcludeGlob {
 /**
  * The config with the paths in it, which are relative to the folder holding the config file at
  * `configPath`, made relative to the working directory (or absolute, when that folder is outside it).
- * Absolute paths, `"-"` (standard output) and an empty `headFile` stay as they are. A config file in the
+ * Absolute paths and `"-"` (standard output) stay as they are. A config file in the
  * working directory is returned unchanged.
  */
 export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): TweeTsConfig {
   const folder = identify(dirname(configPath));
   if (folder.key === identify('.').key) return config;
   const dir = folder.display;
-  const rebase = (path: string): string => (path === '' || path === '-' || isAbsolute(path) ? path : join(dir, path));
+  const rebase = (path: string): string => (path === '-' || isAbsolute(path) ? path : join(dir, path));
   const { sources, exclude, output, modules, headFile, formatPaths } = config;
   return {
     ...config,

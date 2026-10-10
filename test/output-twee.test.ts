@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compile } from '../src/compiler.js';
 import { parseTwee } from '../src/parser.js';
+import { createStory, storyAdd } from '../src/story.js';
+import { toTwee as toTweeOutput } from '../src/output-twee.js';
 import { fullAttrEscape, htmlEscape } from '../src/escape.js';
 import type { Diagnostic, OutputMode } from '../src/types.js';
 
@@ -140,14 +142,14 @@ describe('Twee output round trip', () => {
     expect(twee3.diagnostics).toEqual([]);
   });
 
-  it('warns about a tag with whitespace, which only the API can make', async () => {
-    const result = await compile({
-      sources: [{ filename: 'story.tw', content: `:: StoryData\n{"ifid":"${IFID}"}\n\n:: Start [a]\nHi\n` }],
-      outputMode: 'twee3',
-      tagAliases: { a: 'two words' },
-    });
+  it('warns about a tag with whitespace, which no input can make and the renderer still checks', () => {
+    const story = createStory();
+    const diagnostics: Diagnostic[] = [];
+    storyAdd(story, { name: 'StoryData', tags: [], text: `{"ifid":"${IFID}"}` }, diagnostics);
+    storyAdd(story, { name: 'Start', tags: ['two words'], text: 'Hi' }, diagnostics);
+    toTweeOutput(story, 'twee3', { diagnostics });
 
-    expect(warnings(result.diagnostics)).toEqual([
+    expect(warnings(diagnostics)).toEqual([
       'Passage "Start" cannot be written as Twee that reads back the same: its tag "two words" is empty or has whitespace, which splits tags in Twee.',
     ]);
   });

@@ -176,7 +176,8 @@ async function runBuild(request: BuildRequest): Promise<number> {
       // resolveBuild() refuses watch mode without an output file.
       return startWatch(compileOptions, outPath ?? build.output, request.log, extraInputs);
     case 'once': {
-      const result = await compileForOutputFile(compileOptions, outPath, undefined, extraInputs);
+      // An output that can't be written (a missing folder, a read-only file) fails before the build's work.
+      const result = await compileForOutputFile(compileOptions, outPath, undefined, extraInputs, true);
       logDiagnostics(result.diagnostics);
       // Like Tweego, a build with errors produces no output: the output file (or stdout)
       // is left untouched and the exit status is 1, so scripts and CI can detect it.

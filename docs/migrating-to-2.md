@@ -77,9 +77,9 @@ becomes
 
 ### Stricter values
 
-**Before:** empty entries were accepted. **After:** `output` and the entries of `sources`, `exclude`, `modules`, `formatPaths`, `formatIndices` and `formatUrls` must not be empty, and tag aliases and their targets must be non-empty and hold no white space. A config file that fails validation is a `TweeTsError` (`INVALID_OPTIONS`).
+**Before:** empty entries were accepted. **After:** `output`, `formatId`, `startPassage`, `headFile` and the entries of `sources`, `exclude`, `modules`, `formatPaths`, `formatIndices` and `formatUrls` must not be empty (`"headFile": ""` no longer means none: leave the key out), and tag aliases and their targets must be non-empty and hold no white space. A config file that fails validation is a `TweeTsError` (`INVALID_OPTIONS`).
 
-**Migrate:** remove empty entries; a tag can't hold white space, so an alias that does could never match.
+**Migrate:** remove empty entries and empty values; a tag can't hold white space, so an alias that does could never match.
 
 ## Story sources
 
@@ -236,6 +236,12 @@ try {
 ### Removed internal exports
 
 The `CLOSING_HEAD_TAG` constant and the `scanHeadTags()` and `findHeadStartEnd()` scanners are gone from the internal modules; they were never exported from the package. Use [`decompileHTML()`](./api#html-decompiler) to read compiled HTML.
+
+### The compile options are checked
+
+**Before:** `compile()`, `compileToFile()`, `watch()` and the functions built on them checked only the time limits, so an option of the wrong type failed late with a `TypeError` or was ignored, and an empty string meant something else in each place. **After:** they throw a `TweeTsError` (`INVALID_OPTIONS`) naming each option that is missing, of the wrong type or empty, before anything is read, with the rules of the config file (see [Option checks](./api#option-checks)); an empty `outFile` is one. On the command line an empty source (`twee-ts ''`) is a usage error, as an empty option value is.
+
+**Migrate:** pass the options their types name; leave an option out (or `undefined`) instead of an empty string.
 
 ## Plugins
 

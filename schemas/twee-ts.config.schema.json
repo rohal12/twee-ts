@@ -39,10 +39,12 @@
     },
     "formatId": {
       "type": "string",
+      "minLength": 1,
       "description": "Story format ID (e.g. 'sugarcube-2'). Overrides StoryData's format; without it, StoryData's format decides, and 'sugarcube-2' when StoryData names none."
     },
     "startPassage": {
       "type": "string",
+      "minLength": 1,
       "description": "Name of the starting passage. Overrides StoryData's start; without it, StoryData's start decides, and 'Start' when StoryData names none."
     },
     "formatPaths": {
@@ -84,7 +86,8 @@
     },
     "headFile": {
       "type": "string",
-      "description": "Raw HTML file to append to <head>, relative to the config file; \"\" for none."
+      "minLength": 1,
+      "description": "Raw HTML file to append to <head>, relative to the config file."
     },
     "trim": {
       "type": "boolean",

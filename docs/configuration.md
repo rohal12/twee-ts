@@ -2,7 +2,7 @@
 
 twee-ts automatically loads `twee-ts.config.json` from the current working directory. Use `-c <file>` to specify a different path, or `--no-config` to skip loading entirely.
 
-Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder that holds the config file, so `twee-ts -c proj/twee-ts.config.json` from the folder above `proj` builds `proj/src/`, not `src/`. Absolute paths, `"-"` (stdout) and an empty `headFile` are kept as they are. (Before 2.0 they were relative to the working directory; see [Migrating to 2.0](./migrating-to-2#config-paths-are-relative-to-the-config-file).) Paths given on the command line stay relative to the working directory.
+Paths in a config file (`sources`, `exclude`, `output`, `modules`, `headFile`, `formatPaths`) are relative to the folder that holds the config file, so `twee-ts -c proj/twee-ts.config.json` from the folder above `proj` builds `proj/src/`, not `src/`. Absolute paths and `"-"` (stdout) are kept as they are. (Before 2.0 they were relative to the working directory; see [Migrating to 2.0](./migrating-to-2#config-paths-are-relative-to-the-config-file).) Paths given on the command line stay relative to the working directory.
 
 ## JSON Schema
 
@@ -46,7 +46,7 @@ Every key, with its default. `sources` has none: name the sources here or on the
   "formatUrls": [],
   "useTweegoPath": true,
   "modules": [],
-  "headFile": "",
+  "headFile": "head.html",
   "trim": true,
   "twee2Compat": false,
   "testMode": false,
@@ -97,7 +97,7 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 | Key                       | Type       | Default         | Description                                                                                                                                                                                                                             |
 | ------------------------- | ---------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `formatId`                | `string`   | `"sugarcube-2"` | Story format ID. Without it, StoryData's `format` and `format-version` decide, and `sugarcube-2` only when StoryData names none.                                                                                                        |
+| `formatId`                | `string`   | `"sugarcube-2"` | Story format ID. Without it, StoryData's `format` and `format-version` decide, and `sugarcube-2` only when StoryData names none. Must not be empty.                                                                                     |
 | `formatPaths`             | `string[]` | `[]`            | Extra format directories, which outrank `TWEEGO_PATH`.                                                                                                                                                                                  |
 | `formatIndices`           | `string[]` | `[]`            | `http:`/`https:` URLs of SFA-compatible `index.json` files, consulted after `formatUrls` and before the Story Formats Archive.                                                                                                          |
 | `formatUrls`              | `string[]` | `[]`            | `http:`/`https:` URLs of `format.js` files, consulted after local formats and before `formatIndices`.                                                                                                                                   |
@@ -111,7 +111,7 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 | Key               | Type      | Default    | Description                                                                                                                                                            |
 | ----------------- | --------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `startPassage`    | `string`  | `"Start"`  | Name of the starting passage. Without it, StoryData's `start` decides, and `Start` only when StoryData names none.                                                     |
+| `startPassage`    | `string`  | `"Start"`  | Name of the starting passage. Without it, StoryData's `start` decides, and `Start` only when StoryData names none. Must not be empty.                                  |
 | `trim`            | `boolean` | `true`     | Trim leading and trailing whitespace from passage content, in Twee and HTML sources.                                                                                   |
 | `twee2Compat`     | `boolean` | `false`    | Enable Twee2 syntax compatibility mode.                                                                                                                                |
 | `testMode`        | `boolean` | `false`    | Enable test/debug mode (sets the `debug` option in story data).                                                                                                        |
@@ -120,10 +120,10 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 
 ### Head Injection
 
-| Key        | Type       | Default | Description                                                                                                                                                        |
-| ---------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `modules`  | `string[]` | `[]`    | JS or CSS files to inject into the HTML `<head>`.                                                                                                                  |
-| `headFile` | `string`   | `""`    | Path to a raw HTML file whose contents are appended to `<head>`; `""` for none. Keep it out of the source folders, where an `.html` file is read as a Twine story. |
+| Key        | Type       | Default | Description                                                                                                                                                            |
+| ---------- | ---------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modules`  | `string[]` | `[]`    | JS or CSS files to inject into the HTML `<head>`.                                                                                                                      |
+| `headFile` | `string`   | —       | Path to a raw HTML file whose contents are appended to `<head>`. Must not be empty. Keep it out of the source folders, where an `.html` file is read as a Twine story. |
 
 See [Head Injection](./cli#head-injection) for where they go in a template without a closing head tag.
 
