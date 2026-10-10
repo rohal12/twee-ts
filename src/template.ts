@@ -14,6 +14,7 @@ import {
   locateHeadEnd,
   locateStoreArea,
   locateTextContainer,
+  removalKeepsStructure,
   replacementIsLiveElement,
   STORE_AREA_DESCRIPTION,
 } from './html-structure.js';
@@ -115,6 +116,8 @@ function fillTemplate(fill: TemplateFill): FilledTemplate {
       isLive: (occurrence, probe) =>
         replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
       container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
+      keepsStructure: (occurrence) =>
+        removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
     };
     const placed = placeholderEdits(document, placeholder, occurrences, owner, locate);
     pushAll(edits, placed.edits);
@@ -192,6 +195,8 @@ interface MarkupLocator {
   readonly isLive: (occurrence: Found, probe: string) => boolean;
   /** The start of the element of the template's own that holds the occurrence (see `locateTextContainer()`). */
   readonly container: (occurrence: Found) => number | undefined;
+  /** Whether removing the occurrence changes nothing else in the page (see `removalKeepsStructure()`). */
+  readonly keepsStructure: (occurrence: Found) => boolean;
 }
 
 /** The edits for one placeholder, given each of its occurrences and where it sits. */
@@ -209,7 +214,16 @@ function placeholderEdits(
       const inText = delimiters === 'inside' && context.kind === 'text';
       return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
     }
-    return replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
+    const text = replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
+    // An empty value cannot be escaped; in a context that takes values, the template text around it joining up
+    // matters only where that changes the page (`<!` and `--` making `<!--` in script text that still ends at its end
+    // tag does not). A context that takes no value (JavaScript code) still warns.
+    const empty =
+      value.kind === 'text' &&
+      value.text === '' &&
+      site.delimiters === 'inside' &&
+      escapeForContext('', site.context) !== undefined;
+    return text === undefined && empty && locate.keepsStructure(occurrence) ? '' : text;
   };
   // The markup's comment goes before the element of the template's own that holds a live placeholder, else first.
   const edit = (occurrence: Found, text: string, live: boolean): Edit[] => {

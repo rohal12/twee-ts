@@ -315,7 +315,8 @@ function structureKey(
     }
     flushText();
     if (isElement(child)) {
-      parts.push(`<${child.namespaceURI} ${child.tagName}${JSON.stringify(child.attrs)}>`);
+      const attrs = child.attrs.map((attr) => ({ ...attr, value: editText(attr.value) }));
+      parts.push(`<${child.namespaceURI} ${child.tagName}${JSON.stringify(attrs)}>`);
       const content = templateContent(child);
       const steps: Task[] = [...child.childNodes];
       if (content !== undefined) {
@@ -333,7 +334,7 @@ function structureKey(
       });
       for (const step of steps.reverse()) stack.push(step);
     } else if ('data' in child) {
-      parts.push(`#comment${JSON.stringify(child.data)}`);
+      parts.push(`#comment${JSON.stringify(editText(child.data))}`);
     } else {
       parts.push(`#doctype${JSON.stringify([child.name, child.publicId, child.systemId])}`);
     }
@@ -358,12 +359,35 @@ export function replacementIsLiveElement(
   end: number,
   probe: string,
 ): boolean {
-  const removed = html.slice(start, end);
-  const before = structureKey(doc, 0, 0, (text) => text.replace(removed, ''));
-  const after = parseHtml(html.slice(0, start) + probe + html.slice(end));
+  const { before, after } = replaced(html, doc, start, end, probe);
   const found = [...descendants(after, true)].find(({ node }) => node.sourceCodeLocation?.startOffset === start);
   const live = found !== undefined && !found.inTemplate && isElement(found.node) && found.node.namespaceURI === HTML_NS;
   return live && structureKey(after, start, start + probe.length) === before;
+}
+
+/**
+ * Whether removing `[start, end)` of `html` (parsed as `doc`) changes nothing but that text: the template text on
+ * either side may join into a sequence the tokenizer reads (`<!` and `--` making `<!--`), which matters only where it
+ * changes the document. `[start, end)` lies in text, a comment or an attribute value.
+ */
+export function removalKeepsStructure(html: string, doc: HtmlDocument, start: number, end: number): boolean {
+  const { before, after } = replaced(html, doc, start, end, '');
+  return structureKey(after) === before;
+}
+
+/** The structure key of `doc` without the text `[start, end)` of `html`, and the parse of `html` with `text` there. */
+function replaced(
+  html: string,
+  doc: HtmlDocument,
+  start: number,
+  end: number,
+  text: string,
+): { readonly before: string; readonly after: HtmlDocument } {
+  const removed = html.slice(start, end);
+  return {
+    before: structureKey(doc, 0, 0, (value) => value.replace(removed, '')),
+    after: parseHtml(html.slice(0, start) + text + html.slice(end)),
+  };
 }
 
 /** Insert `text` into `html` at `offset`. */

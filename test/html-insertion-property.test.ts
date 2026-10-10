@@ -227,6 +227,28 @@ describe('P3: a value keeps its meaning in every context', { timeout: 120_000 },
     );
   });
 
+  // The empty value is not escaped: the template text around it joins up, which matters only where it changes the
+  // page (found by this property with seed -1042709191: `<!` and `--` around an empty name).
+  it.each([
+    ['a JSON data block', '<script type="application/json">{"v": "<!{{STORY_NAME}}--"}</script>', true],
+    ['a script', '<script>var v = "<!{{STORY_NAME}}--";</script>', true],
+    [
+      'a script, its end tag hidden by a later <script',
+      '<script>var v = "<!{{STORY_NAME}}--"; w = "<script>";</script>',
+      false,
+    ],
+    ['a script, its end tag made', '<script>var v = "</{{STORY_NAME}}script>";</script>', false],
+    ['a comment', '<!--a<!{{STORY_NAME}}-->', true],
+    // Code takes no value, empty or not (found with seed 1376209955).
+    ['script code', '<script>//\n!{{STORY_NAME}}\n</script>', false],
+    ['an attribute, a character reference made', '<p title="&am{{STORY_NAME}}p;">x</p>', false],
+    ['text, a tag made', '<p>a<{{STORY_NAME}}b>c</p>', false],
+  ])('writes an empty value between text it joins in %s, warning only where the page changes', (_label, t, kept) => {
+    const { output, diagnostics } = fill(t, '');
+    expect(output).toBe(t.replace('{{STORY_NAME}}', ''));
+    expect(diagnostics.length === 0).toBe(kept);
+  });
+
   it('gives a JSON data block the value', () => {
     fc.assert(
       fc.property(plain, plain, value, (pre, post, name) => {

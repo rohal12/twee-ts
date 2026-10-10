@@ -396,7 +396,7 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(passageText(`<template>${story('Decoy', 'decoy')}</template>${story('Real', 'real')}`)).toBe('real');
   });
 
-  it('D-30: rejects a text file too large for a string before reading it, and HTML nested more than 512 deep', async () => {
+  it('D-32: rejects a text file too large for a string before reading it, and HTML nested more than 512 deep', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'twee-ts-d30-'));
     try {
       const path = join(dir, 'huge.twee');
