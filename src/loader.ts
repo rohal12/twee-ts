@@ -13,7 +13,7 @@ import { storyAdd, storyHas, storyPrepend } from './story.js';
 import { freezePassage, withGeneratedName } from './passage.js';
 import { parseTwee } from './parser.js';
 import { decompileHTMLForImport } from './html-parser.js';
-import { readUTF8, readBase64, fileStem, decodeText } from './util.js';
+import { readUTF8, readBase64, fileStem, decodeText, pushAll } from './util.js';
 import type { DecodedText } from './util.js';
 import { normalizeSourceText } from './source-text.js';
 import { cssStringEscape } from './escape.js';
@@ -140,7 +140,7 @@ export function loadInlineSources(
       if (failure) diagnostics.push(failure);
       continue;
     }
-    diagnostics.push(...decoded.diagnostics);
+    pushAll(diagnostics, decoded.diagnostics);
     const content = normalizeSourceText(decoded.text);
 
     switch (kind) {
@@ -151,7 +151,7 @@ export function loadInlineSources(
           trim: opts.trim ?? true,
           twee2Compat: kind === 'twee2' || (opts.twee2Compat ?? false),
         });
-        diagnostics.push(...result.diagnostics);
+        pushAll(diagnostics, result.diagnostics);
         for (const p of result.passages) {
           storyAdd(story, p, diagnostics);
         }
@@ -340,7 +340,10 @@ function addParsed(
   diagnostics: Diagnostic[],
 ): void {
   // Copies: the caller gets diagnostics it may change, and the cache keeps its own (#246 S-4).
-  diagnostics.push(...result.diagnostics.map((d): Diagnostic => ({ ...d })));
+  pushAll(
+    diagnostics,
+    result.diagnostics.map((d): Diagnostic => ({ ...d })),
+  );
   for (const p of result.passages) {
     storyAdd(story, p, diagnostics);
   }

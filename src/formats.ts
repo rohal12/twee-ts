@@ -13,7 +13,7 @@ import type { Diagnostic, FormatDecodeResult, FormatRequest, SemVer, StoryFormat
 import { decodeFormatJSON } from './format-decode.js';
 import { compareVersions, parseVersion } from './semver.js';
 import { normalizeSourceText } from './source-text.js';
-import { decodeText, readUTF8 } from './util.js';
+import { decodeText, pushAll, readUTF8 } from './util.js';
 import { TweeTsError } from './errors.js';
 
 /** The message of a caught error, or the text of a thrown value that is not an Error. */
@@ -86,7 +86,7 @@ function loadFormatDir(
       decoded = { ok: false, reason: `Could not read ${filename}: ${errorText(e)}` };
     }
     if (!decoded.ok) {
-      diagnostics?.push(...encoding);
+      pushAll(diagnostics, encoding);
       diagnostics?.push({
         level: 'warning',
         message: `format ${id}: Skipping format; ${decoded.reason} (${filename})`,
@@ -263,10 +263,10 @@ export function getFormatSearchDirs(extraPaths: readonly string[] = [], useTweeg
 
   // TWEEGO_PATH environment variable
   const tweegoPath = useTweegoPath ? process.env['TWEEGO_PATH'] : undefined;
-  if (tweegoPath) dirs.push(...tweegoPath.split(process.platform === 'win32' ? ';' : ':'));
+  if (tweegoPath) pushAll(dirs, tweegoPath.split(process.platform === 'win32' ? ';' : ':'));
 
   // Extra user-provided paths outrank everything else.
-  dirs.push(...extraPaths);
+  pushAll(dirs, extraPaths);
 
   return dirs;
 }
@@ -529,7 +529,7 @@ export function readFormatComponent(
   const bytes = downloaded?.files.get(file);
   if (downloaded === undefined || bytes === undefined) return undefined;
   const decoded = decodeText(bytes, `${downloaded.from} (${file})`);
-  diagnostics?.push(...decoded.diagnostics);
+  pushAll(diagnostics, decoded.diagnostics);
   return normalizeSourceText(decoded.text);
 }
 
@@ -542,7 +542,7 @@ export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnost
   let source: string;
   if (downloaded) {
     const decoded = decodeText(downloaded.bytes, downloaded.from);
-    diagnostics?.push(...decoded.diagnostics);
+    pushAll(diagnostics, decoded.diagnostics);
     source = normalizeSourceText(decoded.text);
   } else {
     source = readUTF8(format.filename, diagnostics);
@@ -558,8 +558,9 @@ export function readFormatSource(format: StoryFormatInfo, diagnostics?: Diagnost
   // What decoding left out of the format a build uses (a skipped function, a field of the wrong
   // type), once per build, naming where the format came from.
   const from = downloaded ? `downloaded from ${downloaded.from}` : format.filename;
-  diagnostics?.push(
-    ...decoded.notes.map((note) => ({ level: 'warning' as const, message: `format ${format.id}: ${note} (${from})` })),
+  pushAll(
+    diagnostics,
+    decoded.notes.map((note) => ({ level: 'warning' as const, message: `format ${format.id}: ${note} (${from})` })),
   );
   return decoded.data.source;
 }

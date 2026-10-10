@@ -40,6 +40,7 @@ import {
 } from './remote-formats.js';
 import { parseVersion } from './semver.js';
 import { TweeTsError } from './errors.js';
+import { pushAll } from './util.js';
 
 /** Where to look for story formats. */
 export interface FormatResolutionOptions {
@@ -252,7 +253,7 @@ async function resolveWith(
 
   const gatherLocal = (searchDirs: readonly string[]): SourcedCandidate[] => {
     const all = discoverAllFormats(searchDirs, diagnostics);
-    localIds.push(...all.keys());
+    pushAll(localIds, all.keys());
     // As in Tweego, a name request selects among the greatest version of each name and major.
     const formats = request.kind === 'name' ? pruneFormats(all) : all;
     return localCandidates(formats).map((c) => ({
@@ -302,8 +303,9 @@ async function resolveWith(
       fail(`${why}${fallback.length > 0 ? '; using the formats downloaded from it before' : ''}`);
       return fallback;
     }
-    skipped.push(
-      ...index.skipped.map((s) => ({
+    pushAll(
+      skipped,
+      index.skipped.map((s) => ({
         label: `${s.twine} entry ${s.position} of format index ${indexUrl}`,
         name: s.name,
         reason: s.reason,
@@ -329,7 +331,10 @@ async function resolveWith(
       if (!selection) return undefined;
       try {
         const obtained = await selection.choice.obtain();
-        diagnostics.push(...obtained.warnings.map((message) => ({ level: 'warning' as const, message })));
+        pushAll(
+          diagnostics,
+          obtained.warnings.map((message) => ({ level: 'warning' as const, message })),
+        );
         return { info: obtained.info, tier: selection.tier, label: selection.choice.label };
       } catch (e) {
         fail(failure(e));
@@ -341,8 +346,8 @@ async function resolveWith(
   let found: Awaited<ReturnType<typeof choose>>;
   for (const gather of groups) {
     const candidates = await gather();
-    gathered.push(...candidates);
-    seen.push(...candidates);
+    pushAll(gathered, candidates);
+    pushAll(seen, candidates);
     found = await choose(false);
     if (found) break;
   }

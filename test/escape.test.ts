@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   attrEscape,
   fullAttrEscape,
@@ -10,10 +10,43 @@ import {
   htmlCommentSanitize,
   rot13,
   scriptContentEscape,
+  scriptEscapeSites,
   styleContentEscape,
   cssStringEscape,
 } from '../src/escape.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
+
+/** The characters that the searches `run` makes (`indexOf`, and `exec` of global or sticky expressions) look at. */
+function scannedBy(run: () => unknown): number {
+  let scanned = 0;
+  // The originals, called below with the `this` each spy was called with.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const { exec } = RegExp.prototype;
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const { indexOf } = String.prototype;
+  const execSpy = vi.spyOn(RegExp.prototype, 'exec').mockImplementation(function (this: RegExp, s: string) {
+    const from = this.global || this.sticky ? this.lastIndex : 0;
+    const match = exec.call(this, s);
+    scanned += (match === null ? s.length : match.index) - from;
+    return match;
+  });
+  const indexOfSpy = vi.spyOn(String.prototype, 'indexOf').mockImplementation(function (
+    this: string,
+    search: string,
+    from = 0,
+  ) {
+    const found = indexOf.call(this, search, from);
+    scanned += (found === -1 ? this.length : found) - from;
+    return found;
+  });
+  try {
+    run();
+  } finally {
+    execSpy.mockRestore();
+    indexOfSpy.mockRestore();
+  }
+  return scanned;
+}
 
 describe('attrEscape', () => {
   it('escapes ampersands, quotes, and apostrophes', () => {
@@ -379,6 +412,18 @@ describe('scriptContentEscape', () => {
       const content = scriptContentEscape(randomMarkup(next));
       expect(scriptElementEnd(content + '</script>'), JSON.stringify(content)).toBe(content.length);
     }
+  });
+
+  // #397: each `<!--` restarted the search for a `<script` start tag, which ran to the end of the text when none followed.
+  it.each([
+    ['no script start tag', (n: number) => '<!---->'.repeat(n)],
+    ['a script start tag at the end', (n: number) => '<!---->'.repeat(n) + '<script>'],
+    ['a script start tag in the last comment', (n: number) => '<!---->'.repeat(n) + '<!--<script>'],
+  ] as const)('scans text with many comments in linear time: %s', (_name, build) => {
+    const work = (n: number): number => scannedBy(() => [scriptContentEscape(build(n)), scriptEscapeSites(build(n))]);
+    expect(work(8000)).toBeLessThan(work(2000) * 6);
+    // The size that took seconds before.
+    expect(scriptContentEscape(build(160_000)).length).toBeGreaterThanOrEqual(160_000 * 7);
   });
 
   it('is needed for the text the generator makes', () => {

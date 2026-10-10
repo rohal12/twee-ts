@@ -1,7 +1,8 @@
 /**
  * Shared file I/O utilities.
  */
-import { readFileSync } from 'node:fs';
+import { constants as bufferConstants } from 'node:buffer';
+import { readFileSync, statSync } from 'node:fs';
 import { parse as parsePath } from 'node:path';
 import type { Diagnostic } from './types.js';
 import { normalizeSourceText } from './source-text.js';
@@ -9,6 +10,15 @@ import { normalizeSourceText } from './source-text.js';
 /** Whether `value` is an object other than an array, whose properties can be read by name. */
 export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Append every item to `target` (when there is one), one at a time: spreading them as arguments (`push(...items)`)
+ * overflows the call stack once there are more than the engine takes, which input can make happen.
+ */
+export function pushAll<T>(target: T[] | undefined, items: Iterable<T>): void {
+  if (target === undefined) return;
+  for (const item of items) target.push(item);
 }
 
 /**
@@ -48,16 +58,13 @@ const WINDOWS_1252_C1 = [
   0x90, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x2dc, 0x2122, 0x161, 0x203a, 0x153, 0x9d, 0x17e, 0x178,
 ] as const;
 
+/** The character of each byte value. */
+const WINDOWS_1252_CHARS = Array.from({ length: 256 }, (_, b) =>
+  String.fromCharCode(b >= 0x80 && b <= 0x9f ? (WINDOWS_1252_C1[b - 0x80] ?? b) : b),
+);
+
 function decodeWindows1252(bytes: Uint8Array): string {
-  const chunks: string[] = [];
-  // Chunked, so String.fromCharCode never gets more arguments than the engine allows.
-  for (let start = 0; start < bytes.length; start += 0x2000) {
-    const codes = Array.from(bytes.subarray(start, start + 0x2000), (b) =>
-      b >= 0x80 && b <= 0x9f ? (WINDOWS_1252_C1[b - 0x80] ?? b) : b,
-    );
-    chunks.push(String.fromCharCode(...codes));
-  }
-  return chunks.join('');
+  return Array.from(bytes, (b) => WINDOWS_1252_CHARS[b] ?? '').join('');
 }
 
 /** Byte order marks that name an encoding other than UTF-8. */
@@ -107,8 +114,10 @@ function decodeUTF16(bytes: Uint8Array, bigEndian: boolean, filename: string): s
  *   characters instead of losing them to U+FFFD.
  *
  * The text is returned as decoded: a leading BOM and CR line endings are kept (see {@link normalizeSourceText}).
+ * More bytes than a string holds characters throw an `ERR_FS_FILE_TOO_LARGE` error.
  */
 export function decodeText(bytes: Uint8Array, filename: string): DecodedText {
+  checkTextSize(bytes.length, MAX_STRING_LENGTH);
   if (startsWith(bytes, UTF32LE_BOM) || startsWith(bytes, UTF32BE_BOM)) {
     throw new TextDecodeError(`read ${filename}: UTF-32 text is not supported; save the file as UTF-8.`);
   }
@@ -138,17 +147,39 @@ export function decodeText(bytes: Uint8Array, filename: string): DecodedText {
  *
  * @param diagnostics Receives the warning when the file is not valid UTF-8. Without it, the file is decoded
  *   the same way and the warning is dropped.
- * @throws When the file cannot be read, or a {@link TextDecodeError} when it cannot be decoded.
+ * @throws When the file cannot be read or is larger than a string can hold (`ERR_FS_FILE_TOO_LARGE`), or a
+ *   {@link TextDecodeError} when it cannot be decoded.
  */
 export function readUTF8(filename: string, diagnostics?: Diagnostic[]): string {
+  // Checked before reading, so a file too large to hold as text fails at once rather than after reading it.
+  checkTextSize(statSync(filename).size, MAX_STRING_LENGTH);
   const decoded = decodeText(readFileSync(filename), filename);
-  diagnostics?.push(...decoded.diagnostics);
+  pushAll(diagnostics, decoded.diagnostics);
   return normalizeSourceText(decoded.text);
 }
 
 /** Read a file as base64. */
 export function readBase64(filename: string): string {
+  // Base64 writes 4 characters for every 3 bytes.
+  checkTextSize(statSync(filename).size, Math.floor(MAX_STRING_LENGTH / 4) * 3, ' as base64');
   return readFileSync(filename).toString('base64');
+}
+
+/** The most UTF-16 code units a JavaScript string holds in this engine (2^29 - 24 in V8). */
+export const MAX_STRING_LENGTH = bufferConstants.MAX_STRING_LENGTH;
+
+/**
+ * Throws, as Node.js does for a file too large to read (`ERR_FS_FILE_TOO_LARGE`), when `size` bytes are more than
+ * `limit`: text decoded from more bytes than a string holds code units may not fit in one (UTF-8 and Windows-1252
+ * give at most one code unit per byte), and the engine's own error would not say so.
+ */
+function checkTextSize(size: number, limit: number, as = ''): void {
+  if (size <= limit) return;
+  const error = new Error(
+    `File size (${String(size)} bytes) is greater than the ${String(limit)} bytes twee-ts can read${as}, ` +
+      `as a JavaScript string holds at most ${String(MAX_STRING_LENGTH)} characters`,
+  );
+  throw Object.assign(error, { code: 'ERR_FS_FILE_TOO_LARGE' });
 }
 
 /**

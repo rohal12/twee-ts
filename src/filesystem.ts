@@ -369,7 +369,13 @@ export function isPreviousBuild(path: string): boolean {
   const json = parseJSON(text);
   if (json.ok) return isStoryJson(json.value);
   if (!['html', 'htm'].includes(normalizedFileExt(path))) return false;
-  const doc = parseHtml(text, false);
+  let doc: ReturnType<typeof parseHtml>;
+  try {
+    doc = parseHtml(text, false);
+  } catch {
+    // Nested deeper than any HTML twee-ts writes.
+    return false;
+  }
   const storyData = findStoryData(doc);
   if (storyData !== undefined) return attributeOf(storyData, 'creator') === CREATOR;
   return findStoreArea(doc) !== undefined && documentTextContains(doc, TWINE1_VERSION_TEXT);

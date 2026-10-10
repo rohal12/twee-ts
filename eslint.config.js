@@ -19,6 +19,18 @@ const PROTO_RESTRICTIONS = [
   },
 ];
 
+/**
+ * Spreading into the arguments of a call (`push(...items)`, `Math.max(...values)`, `String.fromCharCode(...codes)`)
+ * puts every element on the call stack, which overflows once input makes the array long enough (#396). The package's
+ * code appends with `pushAll()` (`src/util.ts`) or a loop instead, and passes arrays as arrays.
+ */
+const SPREAD_ARGUMENT_RESTRICTIONS = [
+  {
+    selector: 'CallExpression > SpreadElement.arguments, NewExpression > SpreadElement.arguments',
+    message: 'Spreading into call arguments overflows the stack for long arrays. Use pushAll() or a loop.',
+  },
+];
+
 export default tseslint.config(
   {
     ignores: [
@@ -82,13 +94,19 @@ export default tseslint.config(
     files: ['src/**/*.ts', 'bin/**/*.ts'],
     rules: {
       '@typescript-eslint/consistent-type-assertions': ['error', { assertionStyle: 'never' }],
+      'no-restricted-syntax': ['error', ...PROTO_RESTRICTIONS, ...SPREAD_ARGUMENT_RESTRICTIONS],
     },
   },
   {
     files: ['src/**/*.ts'],
     ignores: ['src/html-structure.ts'],
     rules: {
-      'no-restricted-syntax': ['error', ...PROTO_RESTRICTIONS, ...HTML_STRUCTURE_RESTRICTIONS],
+      'no-restricted-syntax': [
+        'error',
+        ...PROTO_RESTRICTIONS,
+        ...SPREAD_ARGUMENT_RESTRICTIONS,
+        ...HTML_STRUCTURE_RESTRICTIONS,
+      ],
     },
   },
   {

@@ -10,15 +10,19 @@ import type { Diagnostic } from './types.js';
 import {
   analyzeTemplate,
   contentStaysInHead,
+  HtmlNestingError,
   locateHeadEnd,
   locateStoreArea,
   locateTextContainer,
+  removalKeepsStructure,
   replacementIsLiveElement,
   STORE_AREA_DESCRIPTION,
 } from './html-structure.js';
 import type { HeadPlacement, PlaceholderOccurrence, PlaceholderSite } from './html-structure.js';
 import { escapeForContext, htmlEscape, jsStringEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
+import { pushAll } from './util.js';
+import { TweeTsError } from './errors.js';
 
 /** What replaces a placeholder. */
 export type PlaceholderValue =
@@ -79,8 +83,20 @@ interface Edit {
   readonly text: string;
 }
 
-/** Fill a story format template: placeholders, head content and the store area comment. */
+/**
+ * Fill a story format template: placeholders, head content and the store area comment. Throws a TweeTsError naming
+ * the template when it nests elements too deeply to read.
+ */
 export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
+  try {
+    return fillTemplate(fill);
+  } catch (e) {
+    if (!(e instanceof HtmlNestingError)) throw e;
+    throw new TweeTsError(`${fill.owner}: ${e.message}`, [], { code: e.code, cause: e });
+  }
+}
+
+function fillTemplate(fill: TemplateFill): FilledTemplate {
   const { template, tail, owner } = fill;
   // The story data of a pre-1.4 Twine 1 format, between the template and the footer, is a sequence of tiddler
   // elements; one stands in for it while the template and footer are parsed together.
@@ -100,16 +116,18 @@ export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
       isLive: (occurrence, probe) =>
         replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
       container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
+      keepsStructure: (occurrence) =>
+        removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
     };
     const placed = placeholderEdits(document, placeholder, occurrences, owner, locate);
-    edits.push(...placed.edits);
-    diagnostics.push(...placed.diagnostics);
+    pushAll(edits, placed.edits);
+    pushAll(diagnostics, placed.diagnostics);
   }
 
   const head = fill.head ?? '';
   if (head !== '') {
     const placement = locateHeadEnd(analysis.marked, analysis.doc);
-    diagnostics.push(...headDiagnostics(placement, owner, document));
+    pushAll(diagnostics, headDiagnostics(placement, owner, document));
     if (placement !== undefined) {
       // On its own line, as Tweego writes it; but where the head has already ended, the line break would be text
       // after the head, so it is left out there.
@@ -177,6 +195,8 @@ interface MarkupLocator {
   readonly isLive: (occurrence: Found, probe: string) => boolean;
   /** The start of the element of the template's own that holds the occurrence (see `locateTextContainer()`). */
   readonly container: (occurrence: Found) => number | undefined;
+  /** Whether removing the occurrence changes nothing else in the page (see `removalKeepsStructure()`). */
+  readonly keepsStructure: (occurrence: Found) => boolean;
 }
 
 /** The edits for one placeholder, given each of its occurrences and where it sits. */
@@ -194,7 +214,16 @@ function placeholderEdits(
       const inText = delimiters === 'inside' && context.kind === 'text';
       return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
     }
-    return replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
+    const text = replacementFor(value, site, document.slice(0, occurrence.start), document.slice(occurrence.end));
+    // An empty value cannot be escaped; in a context that takes values, the template text around it joining up
+    // matters only where that changes the page (`<!` and `--` making `<!--` in script text that still ends at its end
+    // tag does not). A context that takes no value (JavaScript code) still warns.
+    const empty =
+      value.kind === 'text' &&
+      value.text === '' &&
+      site.delimiters === 'inside' &&
+      escapeForContext('', site.context) !== undefined;
+    return text === undefined && empty && locate.keepsStructure(occurrence) ? '' : text;
   };
   // The markup's comment goes before the element of the template's own that holds a live placeholder, else first.
   const edit = (occurrence: Found, text: string, live: boolean): Edit[] => {
@@ -227,7 +256,7 @@ function placeholderEdits(
   for (const entry of occurrences) {
     const text = replace(entry);
     if (text === undefined) diagnostics.push(unsupportedSite(placeholder, entry, owner, document));
-    edits.push(...edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
+    pushAll(edits, edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
   }
   return { edits, diagnostics };
 }

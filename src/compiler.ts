@@ -52,7 +52,7 @@ import { checkWritable, isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
 import { duplicateInput, failureOfRead, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputProblem } from './input-policy.js';
-import { readUTF8 } from './util.js';
+import { MAX_STRING_LENGTH, pushAll, readUTF8 } from './util.js';
 import { unknownOptionWarnings, validateCompileOptions } from './compile-options.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
@@ -515,7 +515,7 @@ function headContent(
   headFile: string | undefined,
   diagnostics: Diagnostic[],
 ): { readonly head: string; readonly injected: string[] } {
-  diagnostics.push(...modules.diagnostics);
+  pushAll(diagnostics, modules.diagnostics);
   const tags = moduleTags(modules.files, diagnostics);
   const head = [tags.tags, headFile ? readHeadFile(headFile, diagnostics) : '']
     .filter((part) => part.length > 0)
@@ -530,6 +530,44 @@ function headContent(
  * the output mode matters: see checkNamedInputs and checkSkippedOutputs.
  */
 async function buildOutput(options: CompileOptions, context: BuildContext): Promise<CompileResult> {
+  try {
+    return await runBuild(options, context);
+  } catch (e) {
+    throw resourceLimitError(e) ?? e;
+  }
+}
+
+/**
+ * A TweeTsError that says which limit of the JavaScript engine a build reached, for the engine's own error (a
+ * `RangeError` such as "Invalid string length"), or `undefined` for any other error.
+ */
+export function resourceLimitError(e: unknown): TweeTsError | undefined {
+  if (!(e instanceof RangeError)) return undefined;
+  const limit = ENGINE_LIMITS.find(({ pattern }) => pattern.test(e.message));
+  if (limit === undefined) return undefined;
+  return new TweeTsError(`The build stopped at a limit of the JavaScript engine: ${limit.what}.`, [], {
+    code: 'BUILD_FAILED',
+    cause: e,
+  });
+}
+
+/** The engine's messages (V8, SpiderMonkey) for the limits a large input can reach, and what each one means. */
+const ENGINE_LIMITS: readonly { readonly pattern: RegExp; readonly what: string }[] = [
+  {
+    pattern: /\bInvalid string length\b|\bstring (?:is )?too (?:long|large)\b|\ballocation size overflow\b/i,
+    what: `a text it builds would be longer than a string can be (${String(MAX_STRING_LENGTH)} characters); the story or its output is too large`,
+  },
+  {
+    pattern: /\bInvalid (?:typed )?array length\b|\bArray buffer allocation failed\b/i,
+    what: 'a list it builds would be longer than an array can be; the story is too large',
+  },
+  {
+    pattern: /\bstack\b.*\b(?:exceeded|overflow)\b|\btoo much recursion\b/i,
+    what: 'it ran out of call stack space, which twee-ts should never do: please report it with the input that caused it',
+  },
+];
+
+async function runBuild(options: CompileOptions, context: BuildContext): Promise<CompileResult> {
   validateCompileOptions(options, ['sources']);
   const { cache, changedFiles, outputs, extraInputs = [] } = context;
   const written = toBuildOutputs(outputs);
@@ -552,7 +590,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   const sourceInfo = options.sourceInfo ?? false;
 
   options.signal?.throwIfAborted();
-  diagnostics.push(...unknownOptionWarnings(options));
+  pushAll(diagnostics, unknownOptionWarnings(options));
   checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
   // Clear per-compile index cache
@@ -577,7 +615,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   const walked = groups.map((group) => {
     if (group.kind === 'inline') return group;
     const found = getFilenames(group.paths, written, options.exclude);
-    diagnostics.push(...found.diagnostics);
+    pushAll(diagnostics, found.diagnostics);
     if (guardsFolders) checkSkippedOutputs(found.skippedOutputs, 'source', diagnostics, guarded);
     return { kind: 'files' as const, files: found.files };
   });
@@ -676,14 +714,14 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
     case 'html': {
       // Sanity checks for HTML mode
-      diagnostics.push(...startPassageDiagnostics(story, startName, format?.isTwine2 === false ? 'twine1' : 'twine2'));
+      pushAll(diagnostics, startPassageDiagnostics(story, startName, format?.isTwine2 === false ? 'twine1' : 'twine2'));
 
       if (!format) {
         throw new TweeTsError('No story format available for HTML output.', diagnostics);
       }
 
       // A story without a name cannot start in SugarCube, and Twine 1 reads its name from the StoryTitle passage.
-      diagnostics.push(...storyTitleDiagnostics(story, format.isTwine2 ? 'twine2' : 'twine1'));
+      pushAll(diagnostics, storyTitleDiagnostics(story, format.isTwine2 ? 'twine2' : 'twine1'));
 
       // Modules and head file, injected before the template's closing head tag while the template is filled
       const { head, injected } = headContent(modules, options.headFile, diagnostics);
@@ -856,8 +894,8 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
   }
 
   const tagColors = twine2TagColors(story);
-  diagnostics.push(...tagColors.diagnostics);
-  diagnostics.push(...ineffectiveImportDiagnostics(stylesheets));
+  pushAll(diagnostics, tagColors.diagnostics);
+  pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets));
   const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {

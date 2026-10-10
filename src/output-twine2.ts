@@ -24,6 +24,7 @@ import {
 import type { CodePart, CodeText } from './html-output-check.js';
 import { ineffectiveImportDiagnostics } from './css-imports.js';
 import { VERSION } from './version.js';
+import { pushAll } from './util.js';
 
 const CREATOR_NAME = 'Twee-ts';
 
@@ -32,7 +33,7 @@ export function toTwine2Archive(
   startName: string,
   options?: { readonly sourceInfo?: boolean; readonly diagnostics?: Diagnostic[] },
 ): string {
-  options?.diagnostics?.push(...twine2DataDiagnostics(story));
+  if (options?.diagnostics) pushAll(options.diagnostics, twine2DataDiagnostics(story));
   return ifidComment(story) + getTwine2DataChunk(story, startName, options) + '\n';
 }
 
@@ -56,7 +57,7 @@ export function toTwine2HTML(
   checkInsertedText(options?.diagnostics, `The story format "${format.name}" ${format.version}`, template);
   // Advertise the format this HTML was built with (as Tweego does), not whatever StoryData named.
   const built = { ...story, twine2: { ...story.twine2, format: format.name, formatVersion: format.version } };
-  options?.diagnostics?.push(...twine2DataDiagnostics(built));
+  if (options?.diagnostics) pushAll(options.diagnostics, twine2DataDiagnostics(built));
   const filled = fillFormatTemplate({
     template,
     placeholders: [
@@ -78,7 +79,7 @@ export function toTwine2HTML(
     head: options?.head,
     owner: `Story format "${format.name}" ${format.version}`,
   });
-  options?.diagnostics?.push(...filled.diagnostics);
+  pushAll(options?.diagnostics, filled.diagnostics);
   return filled.output;
 }
 

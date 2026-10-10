@@ -30,6 +30,7 @@ import {
 import type { HtmlElement } from './html-structure.js';
 import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { splitTweeFields, trimTweeSpace } from './twee-syntax.js';
+import { pushAll } from './util.js';
 
 export interface DecompileResult {
   story: Story;
@@ -79,7 +80,7 @@ function decompile(html: string, options: DecompileOptions, checks: DecompileChe
     diagnostics.push({ level: 'error', message: 'Malformed HTML source; story data not found.' });
     return { story, diagnostics };
   }
-  diagnostics.push(...otherStoriesDiagnostics(findStories(doc), twine2Data ?? twine1Data, story.name));
+  pushAll(diagnostics, otherStoriesDiagnostics(findStories(doc), twine2Data ?? twine1Data, story.name));
   return { story, diagnostics };
 }
 
@@ -131,7 +132,7 @@ function decompileTwine2(
     }
   }
   if (attr('ifid')) story.ifid = normalizeIFID(attr('ifid'));
-  if (checks.ifid) diagnostics.push(...storyDataIFIDDiagnostics(attr('ifid')));
+  if (checks.ifid) pushAll(diagnostics, storyDataIFIDDiagnostics(attr('ifid')));
   if (attr('zoom')) {
     const parsed = parseDecimal(attr('zoom'));
     if (parsed === undefined) {

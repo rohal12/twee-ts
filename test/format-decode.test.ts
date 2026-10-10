@@ -113,7 +113,7 @@ describe('locating the storyFormat() call', () => {
     expect(decodeFormatJSON(`${'['.repeat(100_000)}${CALL}`)).toMatchObject({
       ok: false,
       reason: expect.stringMatching(
-        /^The story format file is not valid JavaScript: Not enough stack space to parse input at line 1, column \d+\.$/,
+        /^The story format file nests too deeply to read \(the JavaScript parser ran out of stack space\) at line 1, column \d+\.$/,
       ),
     });
     // Nesting acorn can parse is read too.

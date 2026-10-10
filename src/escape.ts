@@ -6,6 +6,7 @@
  * CR (and CRLF) into a line feed before tokenizing, but keeps the CR of a reference, in text and attribute values.
  */
 import type { CssContext, JavaScriptContext } from './code-context.js';
+import { pushAll } from './util.js';
 
 /** The character references the HTML escapers write; any other character is written as a numeric reference. */
 const HTML_REFERENCES: Readonly<Record<string, string>> = {
@@ -244,7 +245,10 @@ export interface EscapeSite {
 export function scriptEscapeSites(s: string): EscapeSite[] {
   const sites = [...s.matchAll(/<\/script/gi)].map((m) => ({ offset: m.index, sequence: m[0] }));
   if (endsDoubleEscaped(s.replace(/<(?=\/script)/gi, '<\\'))) {
-    sites.push(...[...s.matchAll(/<!--/g)].map((m) => ({ offset: m.index, sequence: m[0] })));
+    pushAll(
+      sites,
+      [...s.matchAll(/<!--/g)].map((m) => ({ offset: m.index, sequence: m[0] })),
+    );
   }
   return sites.sort((a, b) => a.offset - b.offset);
 }
@@ -261,6 +265,16 @@ export function styleEscapeSites(s: string): EscapeSite[] {
  */
 function endsDoubleEscaped(s: string): boolean {
   const scriptStartTag = /<script[\t\n\f\r />]/gi;
+  // The first `<script` start tag at or after an offset. Offsets only grow, so a match found from an earlier offset
+  // is still the first one while it lies at or after the new one, and no match stays no match: each part of `s` is
+  // searched once, which keeps the whole walk linear.
+  let found: RegExpExecArray | null | undefined;
+  const scriptStartFrom = (from: number): RegExpExecArray | null => {
+    if (found === null || (found !== undefined && found.index >= from)) return found;
+    scriptStartTag.lastIndex = from;
+    found = scriptStartTag.exec(s);
+    return found;
+  };
   let pos = 0;
   for (;;) {
     // Script data: a `<!--` enters the escaped state.
@@ -270,8 +284,7 @@ function endsDoubleEscaped(s: string): boolean {
     // tag enters the double escaped state.
     const escapedFrom = open + 2;
     const close = s.indexOf('-->', escapedFrom);
-    scriptStartTag.lastIndex = escapedFrom;
-    const start = scriptStartTag.exec(s);
+    const start = scriptStartFrom(escapedFrom);
     if (start === null || (close !== -1 && close < start.index)) {
       if (close === -1) return false;
       pos = close + 3;

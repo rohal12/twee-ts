@@ -4,7 +4,7 @@
  */
 import { join, dirname } from 'node:path';
 import type { Diagnostic, PassageOmission, ReadonlyPassage, ReadonlyStory, StoryFormatInfo } from './types.js';
-import { readUTF8 } from './util.js';
+import { pushAll, readUTF8 } from './util.js';
 import { hasTag, isObfuscatable, passageToTiddler } from './passage.js';
 import { readFormatComponent, readFormatSource } from './formats.js';
 import { DEFAULT_TWINE1_FOOTER, storyDataProbe, twine1ArchiveStoreArea } from './html-structure.js';
@@ -26,7 +26,7 @@ export function toTwine1Archive(
   options?: { readonly diagnostics?: Diagnostic[]; readonly time?: Date },
 ): string {
   const { data, count, diagnostics } = getTwine1PassageChunk(story, options?.time ?? buildTime());
-  options?.diagnostics?.push(...diagnostics);
+  pushAll(options?.diagnostics, diagnostics);
   return twine1ArchiveStoreArea(count, data);
 }
 
@@ -52,7 +52,7 @@ export function toTwine1HTML(
   checkInsertedText(diagnostics, `The story format "${format.name}"`, template);
   const chunk = getTwine1PassageChunk(story, time);
   const { data, count } = chunk;
-  diagnostics?.push(...chunk.diagnostics);
+  pushAll(diagnostics, chunk.diagnostics);
 
   // Component replacements
   // The format's own components come from the verified download when it is one, else from its folder.
@@ -113,7 +113,7 @@ export function toTwine1HTML(
     beforeStoreArea: story.ifid ? `<!-- UUID://${htmlCommentSanitize(story.ifid)}// -->` : undefined,
     owner: `Story format "${format.name}"`,
   });
-  diagnostics?.push(...filled.diagnostics);
+  pushAll(diagnostics, filled.diagnostics);
   return filled.output;
 }
 
@@ -187,7 +187,7 @@ function getTwine1PassageChunk(
         '"Twine.private"), so the story engine could not decode obfuscated passages; they are written unobfuscated.',
     });
   }
-  if (obfuscateRot13) diagnostics.push(...obfuscationCollisions(written));
+  if (obfuscateRot13) pushAll(diagnostics, obfuscationCollisions(written));
   const data = written.map((p, i) => passageToTiddler(p, i + 1, obfuscateRot13, time)).join('');
   const hasText = written.some((p) => /[^\t\n\f\r ]/.test(p.text));
   return { data, count: written.length, hasText, diagnostics };
