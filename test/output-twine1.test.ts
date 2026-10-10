@@ -2,7 +2,7 @@
  * Twine 1 HTML output: format components, the settings that pull in libraries, and where the IFID comment goes.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toTwine1HTML } from '../src/output-twine1.js';
@@ -87,6 +87,82 @@ describe('toTwine1HTML library components', () => {
 
     expect(toTwine1HTML(story(), header, 'Start')).toContain('|/* userlib */<');
   });
+});
+
+describe('toTwine1HTML optional components (#399)', () => {
+  // Each optional component: the header that asks for it, its file, and what the output has without it.
+  const components = [
+    {
+      file: 'userlib.js',
+      header: '<html><head>"USER_LIB"</head><body><div id="storeArea">"STORY"</div></body></html>',
+      without: '"USER_LIB"',
+    },
+    { file: 'footer.html', header: '<html><head></head><body><div id="storeArea">', without: '</div>\n</body>' },
+  ] as const;
+  // Only nothing at the path selects the fallback, as Tweego's os.IsNotExist (a dangling link reads as ENOENT).
+  const absent: readonly (readonly [string, (path: string) => void])[] = [
+    ['missing', () => {}],
+    [
+      'a dangling link',
+      (path) => {
+        symlinkSync(join(dir, 'gone'), path);
+      },
+    ],
+  ];
+  const unusable: readonly (readonly [string, (path: string) => void, RegExp])[] = [
+    [
+      'a folder',
+      (path) => {
+        mkdirSync(path);
+      },
+      /EISDIR/,
+    ],
+    [
+      'undecodable',
+      (path) => {
+        writeFileSync(path, Buffer.from([0xff, 0xfe, 0, 0, 0x41, 0, 0, 0]));
+      },
+      /UTF-32/,
+    ],
+    // ELOOP on POSIX; Windows has its own code for a link to itself.
+    [
+      'a link loop',
+      (path) => {
+        symlinkSync(path, path);
+      },
+      process.platform === 'win32' ? /./ : /ELOOP/,
+    ],
+  ];
+
+  for (const { file, header, without } of components) {
+    for (const [what, make] of absent) {
+      it(`does without ${file} when it is ${what}`, () => {
+        const info = format(header);
+        make(join(dir, 'custom-1', file));
+        expect(toTwine1HTML(story(), info, 'Start')).toContain(without);
+      });
+    }
+    for (const [what, make, cause] of unusable) {
+      it(`stops when ${file} is ${what}, rather than silently leave it out`, () => {
+        const info = format(header);
+        make(join(dir, 'custom-1', file));
+        const render = (): string => toTwine1HTML(story(), info, 'Start');
+        expect(render).toThrow(new RegExp(`^Format component cannot be read: .*${file.replace('.', '\\.')}: `));
+        expect(render).toThrow(cause);
+        expect(render).toThrow(expect.objectContaining({ name: 'TweeTsError', code: 'FORMAT_UNAVAILABLE' }));
+      });
+    }
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      `stops when ${file} can't be read (EACCES), as Tweego does`,
+      () => {
+        const info = format(header);
+        const path = join(dir, 'custom-1', file);
+        writeFileSync(path, 'x');
+        chmodSync(path, 0o000);
+        expect(() => toTwine1HTML(story(), info, 'Start')).toThrow(/EACCES/);
+      },
+    );
+  }
 });
 
 describe('toTwine1HTML IFID comment', () => {

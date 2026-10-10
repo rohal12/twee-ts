@@ -106,7 +106,7 @@ Pruning does not apply to a request by ID: `--format sugarcube-2` uses the `suga
 
 ### Twine 1 Formats
 
-Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name and have no version, so only `--format <folder name>` (or `formatId`) selects one. A Twine 1 header that includes Twine 1's `engine.js`, `jquery.js` or `modernizr.js` reads them from the format directory that holds the format folder.
+Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name and have no version, so only `--format <folder name>` (or `formatId`) selects one. A Twine 1 header that includes Twine 1's `engine.js`, `jquery.js` or `modernizr.js` reads them from the format directory that holds the format folder. A format's own `userlib.js` (for `"USER_LIB"`) and, in a format older than Twine 1.4, `footer.html` are optional: when nothing is at the path (or a dangling link), the placeholder stays and the default footer is used, as in Tweego. One that is there but can't be read (a file twee-ts may not read, a folder, text that can't be decoded) stops the build with `Format component cannot be read: …`.
 
 ## Remote Format Fetching
 

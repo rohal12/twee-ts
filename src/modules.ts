@@ -10,13 +10,15 @@ import { readUTF8, readBase64, fileStem } from './util.js';
 import { cssStringEscape, scriptContentEscape, styleContentEscape } from './escape.js';
 import { codeEscapeDiagnostics, unrepresentableTextDiagnostic } from './html-output-check.js';
 import { fillFormatTemplate } from './template.js';
+import { duplicateInput } from './input-policy.js';
 
 /**
  * Load modules and return HTML tags to inject at the end of the head. `diagnostics` receives a warning for each
  * module that is not valid UTF-8 (it is read as Windows-1252), an error for text HTML cannot carry (U+0000, lone
  * surrogates), a warning for code that escaping it for its element changes (see `codeEscapeDiagnostics()`), and a
- * warning for each module whose element id another module already has (see `moduleIds()`). A caller that loads
- * the modules of one page in several calls passes the same `idFor` to each, so the ids stay unique across them.
+ * warning for each module whose element id another module already has (see `moduleIds()`), and a warning for a
+ * module given again, which is skipped. A caller that loads the modules of one page in several calls passes the
+ * same `idFor` to each, so the ids stay unique across them.
  */
 export function loadModules(
   filenames: string[],
@@ -27,7 +29,11 @@ export function loadModules(
   const headTags: string[] = [];
 
   for (const filename of filenames) {
-    if (processed.has(filename)) continue;
+    if (processed.has(filename)) {
+      // Skipped with a warning, as Tweego skips it (module.go), and as compile() skips a module given twice.
+      diagnostics?.push(duplicateInput('module', filename, filename));
+      continue;
+    }
 
     const ext = normalizedFileExt(filename);
     let tag: string | null = null;

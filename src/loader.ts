@@ -7,7 +7,7 @@ import { statSync } from 'node:fs';
 import type { Story, Diagnostic, InlineSource, Passage, FileCacheEntry } from './types.js';
 import type { DiscoveredFile } from './filesystem.js';
 import { identify } from './path-identity.js';
-import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
+import { duplicateInput, failureOfRead, inputProblem, problemDiagnostic } from './input-policy.js';
 import { normalizedFileExt, mediaTypeFromFilename, mediaTypeFromExt, fontFormatHint } from './media-types.js';
 import { storyAdd, storyHas, storyPrepend } from './story.js';
 import { freezePassage, withGeneratedName } from './passage.js';
@@ -54,15 +54,9 @@ function markLoaded(processedFiles: Set<string>, file: DiscoveredFile): void {
   processedKeys.get(processedFiles)?.set(file.key, file.path);
 }
 
-/** The warning for a file loaded already, under this or another spelling. */
-function duplicateWarning(file: DiscoveredFile, earlier: string): Diagnostic {
-  const same = earlier === file.path ? '' : ` (the same file as ${earlier})`;
-  return { level: 'warning', message: `load ${file.path}: Skipping duplicate${same}.` };
-}
-
 /** The diagnostic the input policy gives a source file that failed to load (see input-policy.ts). */
 function loadFailure(file: DiscoveredFile, e: unknown): Diagnostic | undefined {
-  return problemDiagnostic(inputProblem('source', file.discovery, failureOfError(e), file.path, e));
+  return problemDiagnostic(inputProblem('source', file.discovery, failureOfRead(file.path, e), file.path, e));
 }
 
 /** The diagnostic for a file of a type sources don't load: a warning for a file named directly (FS-17). */
@@ -86,7 +80,7 @@ export function loadSources(
     const filename = file.path;
     const earlier = alreadyLoaded(processedFiles, file);
     if (earlier !== undefined) {
-      diagnostics.push(duplicateWarning(file, earlier));
+      diagnostics.push(duplicateInput('source', file.path, earlier));
       continue;
     }
 
@@ -124,6 +118,16 @@ export function loadInlineSources(
       // Treat as a file path — handled externally
       continue;
     }
+    // The type first: the content of a type in-memory sources don't load is never decoded, nor warned about.
+    const ext = normalizedFileExt(source.filename);
+    const kind = inlineSourceKind(ext);
+    if (kind === undefined) {
+      diagnostics.push({
+        level: 'warning',
+        message: `load ${source.filename}: in-memory sources of type .${ext} are not supported; skipped.`,
+      });
+      continue;
+    }
     // Decode and normalize like readUTF8() does for files, so in-memory and on-disk sources load the same.
     let decoded: DecodedText;
     try {
@@ -139,18 +143,13 @@ export function loadInlineSources(
     diagnostics.push(...decoded.diagnostics);
     const content = normalizeSourceText(decoded.text);
 
-    const ext = normalizedFileExt(source.filename);
-    switch (ext) {
-      case '':
-      case 'tw':
+    switch (kind) {
       case 'twee':
-      case 'tw2':
       case 'twee2': {
-        const twee2 = ext === 'tw2' || ext === 'twee2' || opts.twee2Compat;
         const result = parseTwee(content, {
           filename: source.filename,
           trim: opts.trim ?? true,
-          twee2Compat: twee2,
+          twee2Compat: kind === 'twee2' || (opts.twee2Compat ?? false),
         });
         diagnostics.push(...result.diagnostics);
         for (const p of result.passages) {
@@ -158,18 +157,34 @@ export function loadInlineSources(
         }
         break;
       }
-      case 'css':
-        storyAdd(story, codePassage(basename(source.filename), 'stylesheet', content), diagnostics);
+      case 'stylesheet':
+      case 'script':
+        storyAdd(story, codePassage(basename(source.filename), kind, content), diagnostics);
         break;
-      case 'js':
-        storyAdd(story, codePassage(basename(source.filename), 'script', content), diagnostics);
-        break;
-      default:
-        diagnostics.push({
-          level: 'warning',
-          message: `load ${source.filename}: in-memory sources of type .${ext} are not supported; skipped.`,
-        });
+      default: {
+        const _exhaustive: never = kind;
+        throw new Error(`unhandled in-memory source kind: ${String(_exhaustive)}`);
+      }
     }
+  }
+}
+
+/** What an in-memory source loads as by its extension `ext` (Twee, CSS or JavaScript), or undefined for another type. */
+function inlineSourceKind(ext: string): 'twee' | 'twee2' | 'stylesheet' | 'script' | undefined {
+  switch (ext) {
+    case '':
+    case 'tw':
+    case 'twee':
+      return 'twee';
+    case 'tw2':
+    case 'twee2':
+      return 'twee2';
+    case 'css':
+      return 'stylesheet';
+    case 'js':
+      return 'script';
+    default:
+      return undefined;
   }
 }
 
@@ -371,7 +386,10 @@ export function loadSourcesCached(
     const filename = file.path;
     const earlier = alreadyLoaded(processedFiles, file);
     if (earlier !== undefined) {
-      diagnostics.push(duplicateWarning(file, earlier));
+      diagnostics.push(duplicateInput('source', file.path, earlier));
+      // Not loaded under this path, so its entry is not kept up to date: a change to the file reaches only the
+      // entry of the spelling that loaded it. Dropped, so it can't be replayed stale once this path loads (#400).
+      cache.delete(filename);
       continue;
     }
 

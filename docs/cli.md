@@ -142,7 +142,7 @@ Lint failed.
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-w, --watch`     | Watch for file changes and rebuild automatically. Requires an output file (`-o`, or `output` in the config). A build with errors is reported, the output file keeps the last good build, and the watcher keeps running. A source folder that doesn't exist yet is waited for, and one that is deleted and created again is followed. See [Exit Status](#exit-status). |
 | `-l, --log-stats` | Print passage count, word count, and file count to stderr after compilation, and after every build in watch mode.                                                                                                                                                                                                                                                     |
-| `--log-files`     | Print the source files read to stderr (and, as Tweego's "External files", the modules and head file) after compilation, and after every build in watch mode.                                                                                                                                                                                                          |
+| `--log-files`     | Print the source files read to stderr (and, as Tweego's "External files", the modules injected and the head file) after compilation, and after every build in watch mode.                                                                                                                                                                                             |
 
 ### Config & Project
 
@@ -267,6 +267,8 @@ What happens to an input that can't be used depends on its role and on how it wa
 | text that can't be decoded (invalid UTF-16, UTF-32) | error                                                                     | error                                          | fatal                      | fatal                                                   |
 
 A warning is printed and the build goes on. An error is reported with the other diagnostics, and the CLI writes nothing and exits with 1. A fatal problem stops the build before anything is written. Tweego decides the same where it decides: its walk skips links and unknown types in folders and warns about a path it can't walk, and it stops on a head file it can't read. Messages name the role, the path and the cause: `load head file h.html: ENOENT: no such file or directory, open 'h.html'`, `load module secret.js: EACCES: …`.
+
+A source or module given twice, under the same path or another spelling of it (a link, a folder that holds it), is loaded once, and every repeat is skipped with a warning, as in Tweego: `load module a.js: Skipping duplicate.` Only the modules injected, and the head file, are listed as `External files` (`stats.externalFiles`). The config file found in the working directory is no config only when nothing is at its path; a dangling link there is fatal, as the table says.
 
 ## Examples
 

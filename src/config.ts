@@ -5,13 +5,12 @@
  * configJsonSchema() renders it as the JSON Schema shipped in schemas/twee-ts.config.schema.json; a test
  * keeps the two equal, so the schema an editor checks with and the checks twee-ts makes cannot drift apart.
  */
-import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import type { Diagnostic, ExcludeGlob, TweeTsConfig, OutputMode, WordCountMethod } from './types.js';
 import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { identify } from './path-identity.js';
-import { failureOfError, inputProblem } from './input-policy.js';
+import { failureOfRead, inputProblem } from './input-policy.js';
 import type { InputDiscovery } from './input-policy.js';
 import { TweeTsError } from './errors.js';
 import { isTweeTag } from './twee-syntax.js';
@@ -232,19 +231,16 @@ export function tagAliasProblem(alias: string, target: string): string | undefin
 }
 
 /**
- * Load a config file from the given directory (default: cwd). Returns null if not found.
+ * Load a config file from the given directory (default: cwd). Returns null when nothing is at its path.
  *
  * @param diagnostics Receives warnings that do not stop the config from loading: keys the config does not
  *   define, and a file that is not valid UTF-8 (it is read as Windows-1252).
- * @throws A TweeTsError when the file exists but cannot be read, is not valid JSON or fails {@link validateConfig}.
+ * @throws A TweeTsError when something is at the path but cannot be read (a dangling symbolic link, a link loop,
+ *   a folder that can't be searched, a file it may not read), is not valid JSON or fails {@link validateConfig}.
  */
 export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConfig | null {
   const base = dir ?? process.cwd();
-  const configPath = join(base, CONFIG_FILENAME);
-
-  if (!existsSync(configPath)) return null;
-
-  return readConfig(configPath, 'found', diagnostics);
+  return readConfig(join(base, CONFIG_FILENAME), 'found', diagnostics);
 }
 
 /**
@@ -262,13 +258,29 @@ export function loadConfigFile(filePath: string, diagnostics?: Diagnostic[]): Tw
   return readConfig(filePath, 'named', diagnostics);
 }
 
-function readConfig(filePath: string, discovery: InputDiscovery, diagnostics: Diagnostic[] | undefined): TweeTsConfig {
+/**
+ * Read the config file at `filePath`. A file that can't be read is as the input policy says: no config (null) where
+ * it says `ignore` (a config found in the working directory with nothing at its path), else a TweeTsError. A named
+ * config file is never ignored (see `INPUT_POLICY.config.named`).
+ */
+function readConfig(filePath: string, discovery: 'named', diagnostics: Diagnostic[] | undefined): TweeTsConfig;
+function readConfig(
+  filePath: string,
+  discovery: InputDiscovery,
+  diagnostics: Diagnostic[] | undefined,
+): TweeTsConfig | null;
+function readConfig(
+  filePath: string,
+  discovery: InputDiscovery,
+  diagnostics: Diagnostic[] | undefined,
+): TweeTsConfig | null {
   const readDiagnostics: Diagnostic[] = [];
   let raw: string;
   try {
     raw = readUTF8(filePath, readDiagnostics);
   } catch (e) {
-    const problem = inputProblem('config', discovery, failureOfError(e), filePath, e);
+    const problem = inputProblem('config', discovery, failureOfRead(filePath, e), filePath, e);
+    if (problem.level === 'ignore') return null;
     throw new TweeTsError(`Cannot read config file ${filePath}: ${problem.reason}`, [], {
       code: 'INPUT_UNAVAILABLE',
       cause: e,
