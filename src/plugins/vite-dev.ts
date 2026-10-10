@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
-import type { FileCacheEntry } from '../types.js';
+import type { FileCacheEntry, OutputMode } from '../types.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
 import { sha256Hex } from '../format-cache.js';
 import type { BuildOutputs } from '../filesystem.js';
@@ -89,6 +89,16 @@ export function reloadPayload(base: string, outputFilename: string): { type: 'fu
   }
   return decoded === base ? { type: 'full-reload', path: `/${outputFilename}` } : { type: 'full-reload' };
 }
+
+/** The media type of the story as each output mode writes it. */
+const OUTPUT_MEDIA_TYPES: Readonly<Record<OutputMode, string>> = {
+  html: 'text/html; charset=utf-8',
+  'twine2-archive': 'text/html; charset=utf-8',
+  'twine1-archive': 'text/html; charset=utf-8',
+  twee3: 'text/plain; charset=utf-8',
+  twee1: 'text/plain; charset=utf-8',
+  json: 'application/json; charset=utf-8',
+};
 
 function waitingPage(base: string): string {
   return viteWaitingPage(`${base}@vite/client`);
@@ -292,6 +302,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
   server.watcher.add([...inputs]);
 
+  const outputMode: OutputMode = options.compile().outputMode ?? 'html';
   let html = '';
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
@@ -528,7 +539,8 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       if (entryStale || linkMoved() || globsChanged() || unread.some(touchesEntry)) await bundle();
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
-      html = dev.injectClient(story.output, base);
+      // Only a playable page can run the client; other outputs are served as compiled.
+      html = outputMode === 'html' ? dev.injectClient(story.output, base) : story.output;
       lastError = undefined;
       // A path tells the client to reload only the pages showing the story. Vite's client compares it with the
       // decoded page path and the base as configured, so under a base that has percent-encoded characters
@@ -656,7 +668,8 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     }
     if (paths.includes(path)) {
       catchUp().then(() => {
-        send(req, res, 'text/html; charset=utf-8', html || waitingPage(base));
+        if (html) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
+        else send(req, res, 'text/html; charset=utf-8', waitingPage(base));
       }, next);
       return;
     }

@@ -222,4 +222,4 @@ const compileOptions: PluginCompileOptions = {
 console.log(compileOptions);
 ```
 
-`exclude` never applies to `headFile` and `modules`. Keep the head file outside the source folders: an `.html` file in a source folder is read as a Twine story to import. `outputMode` is accepted too, and the story is then written in that mode under `outputFilename`.
+`exclude` never applies to `headFile` and `modules`. Keep the head file outside the source folders: an `.html` file in a source folder is read as a Twine story to import. `outputMode` is accepted too, and the story is then written in that mode under `outputFilename`. The dev server serves that file as compiled; only playable HTML gets the live-reload client.
