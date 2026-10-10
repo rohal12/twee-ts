@@ -5,6 +5,7 @@
 import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
 import { compileForOutputFile } from './compiler.js';
+import { formatDiagnostic } from './diagnostic-text.js';
 import { storyInspect } from './inspect.js';
 import { describeOmission } from './passage-omission.js';
 import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
@@ -140,10 +141,10 @@ export function formatLintReport(result: LintResult): string {
     lines.push('');
     lines.push(`Diagnostics: ${errors.length} error(s), ${warnings.length} warning(s)`);
     for (const d of errors) {
-      lines.push(`  error: ${d.message}`);
+      lines.push(`  error: ${formatDiagnostic(d)}`);
     }
     for (const d of warnings) {
-      lines.push(`  warning: ${d.message}`);
+      lines.push(`  warning: ${formatDiagnostic(d)}`);
     }
   }
 

@@ -9,6 +9,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { compileForOutputFile, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
 import type { ExtraInput } from '../src/compiler.js';
+import { formatDiagnostic } from '../src/diagnostic-text.js';
 import { WatchPathError } from '../src/filesystem.js';
 import { writeFileAtomic } from '../src/atomic-write.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
@@ -56,12 +57,18 @@ function log(text: string): void {
 
 /**
  * A reader that goes away (`twee-ts … | head`) closes the pipe: the rest of the output is dropped
- * quietly, as other command-line tools do, instead of ending in an unhandled EPIPE error.
+ * quietly, as other command-line tools do, instead of ending in an unhandled EPIPE error. Any other
+ * failure to write (a full disk behind a redirect, an I/O error) is reported once, naming the stream
+ * when `name` is given (standard error cannot report its own failure), and ends the run with status 1.
  */
-function quietOnClosedPipe(stream: NodeJS.WriteStream): void {
+function reportWriteErrors(stream: NodeJS.WriteStream, name?: string): void {
+  let reported = false;
   stream.on('error', (e: NodeJS.ErrnoException) => {
     if (e.code === 'EPIPE' || e.code === 'ERR_STREAM_DESTROYED') return;
-    throw e;
+    process.exitCode = EXIT_FAILED;
+    if (reported || name === undefined) return;
+    reported = true;
+    log(`error: Cannot write ${name}: ${e.message}`);
   });
 }
 
@@ -200,7 +207,6 @@ function startWatch(
   logOptions: BuildRequest['log'],
   extraInputs: readonly ExtraInput[],
 ): number {
-  log('Watch mode started. Press CTRL+C to stop.');
   // As in a one-shot build, a build with errors is not written: the output file keeps
   // the last good build until a save fixes the errors.
   watchWithWriteFilter(
@@ -231,6 +237,8 @@ function startWatch(
     (result) => countErrors(result.diagnostics) === 0,
     { extraInputs },
   );
+  // Only now: watchWithWriteFilter() refuses options that cannot be watched before it watches anything.
+  log('Watch mode started. Press CTRL+C to stop.');
   // Until the watch ends; the status is set by onError if it fails.
   return EXIT_OK;
 }
@@ -335,11 +343,9 @@ function listFormats(config: TweeTsConfig | null): void {
   }
 }
 
-function logDiagnostics(diagnostics: readonly { readonly level: string; readonly message: string }[]): void {
-  for (const d of diagnostics) {
-    if (d.level === 'error') log(`error: ${d.message}`);
-    else log(`warning: ${d.message}`);
-  }
+/** Prints diagnostics to standard error, each with the file and line it is about (see formatDiagnostic). */
+function logDiagnostics(diagnostics: readonly Diagnostic[]): void {
+  for (const d of diagnostics) log(`${d.level === 'error' ? 'error' : 'warning'}: ${formatDiagnostic(d)}`);
 }
 
 /** Prints what a fatal TweeTsError collected (such as why no story format was found) before its message. */
@@ -468,16 +474,8 @@ function runCacheClear(name: string | undefined): void {
   }
 }
 
-quietOnClosedPipe(process.stdout);
-quietOnClosedPipe(process.stderr);
-
-// Node 22 before 22.14 flags path.matchesGlob, which exclude globs use, as experimental; that warning tells a
-// twee-ts user nothing. Other warnings are printed as Node prints them.
-process.removeAllListeners('warning');
-process.on('warning', (warning) => {
-  if (warning.name === 'ExperimentalWarning' && warning.message.startsWith('glob is an experimental feature')) return;
-  log(`(node:${process.pid}) ${warning.name}: ${warning.message}`);
-});
+reportWriteErrors(process.stdout, 'standard output');
+reportWriteErrors(process.stderr);
 
 main(process.argv.slice(2)).then(
   (status) => {

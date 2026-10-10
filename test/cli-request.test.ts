@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { CliUsageError, looksLikeCharset, parseCliArgs, resolveBuild, usageText } from '../src/cli-request.js';
+import { CliUsageError, looksLikeCharset, OPTIONS, parseCliArgs, resolveBuild, usageText } from '../src/cli-request.js';
 import type { BuildRequest, CliRequest } from '../src/cli-request.js';
 
 function request(argv: readonly string[]): CliRequest {
@@ -59,6 +59,8 @@ describe('subcommands are only the first word (FS-02)', () => {
     [['cache', 'list', 'x'], 'cache list takes no arguments'],
     [['cache', 'clear', 'a', 'b'], 'cache clear takes at most one name'],
     [['cache', '-o', 'out.tw'], /takes no options; to build a folder named "cache", write \.\/cache/],
+    // An empty name (an unset variable) is not "everything" (#366).
+    [['cache', 'clear', ''], /^cache clear needs a non-empty name/],
   ])('%j is a usage error', (argv, message) => {
     expect(usage(argv)).toMatch(message);
   });
@@ -75,6 +77,52 @@ describe('usage errors carry a one-line message, never a stack trace (FS-08)', (
     [['--list-charsets'], /twee-ts has no --charset/],
   ])('%j → %s', (argv, message) => {
     expect(usage(argv)).toMatch(message);
+  });
+});
+
+// Tweego reads `-o=file` as `-o file` (internal/option/option.go: the name is what comes before the first `=`) (#385).
+describe('-<letter>=<value> means -<letter> <value>', () => {
+  const shorts = Object.entries(OPTIONS).flatMap(([name, option]) =>
+    'short' in option ? [{ name, short: option.short, type: option.type }] : [],
+  );
+
+  it.each(shorts.filter((o) => o.type === 'string'))('-$short=v is --$name=v and -$short v', ({ name, short }) => {
+    const argv = (...options: string[]): readonly string[] => [...options, 'a.tw'];
+    const expected = parseCliArgs(argv(`--${name}=v`));
+    expect(parseCliArgs(argv(`-${short}=v`))).toEqual(expected);
+    expect(parseCliArgs(argv(`-${short}`, 'v'))).toEqual(expected);
+  });
+
+  it.each(shorts.filter((o) => o.type === 'boolean' && o.name !== 'help'))(
+    '-$short=v is refused: --$name takes no value',
+    ({ short }) => {
+      expect(usage([`-${short}=v`, 'a.tw'])).toMatch(/^option -.*, --.* does not take an argument$/);
+    },
+  );
+
+  it.each([
+    [['-o=a=b', 's.tw'], 'a=b'],
+    [['-o=-', 's.tw'], '-'],
+    [['-o=C:\\out\\story.html', 's.tw'], 'C:\\out\\story.html'],
+    [['-do=x.tw', 's.tw'], 'x.tw'],
+  ])('%j sets the output to %s', (argv, output) => {
+    expect(build(argv).flags.output).toBe(output);
+  });
+
+  it('keeps the other bundled letters', () => {
+    expect(build(['-do=x.tw', 's.tw']).flags).toEqual({ output: 'x.tw', outputMode: 'twee3' });
+  });
+
+  it.each([
+    [['-o=', 's.tw'], '-o, --output needs a non-empty value'],
+    [['-o=a', '-o', 'b', 's.tw'], '-o, --output given more than once'],
+    [['-x=1', 's.tw'], 'unknown option -x'],
+  ])('%j is a usage error', (argv, message) => {
+    expect(usage(argv)).toBe(message);
+  });
+
+  it('leaves a source after -- alone', () => {
+    expect(build(['--', '-o=x']).sources).toEqual(['-o=x']);
   });
 });
 
@@ -259,8 +307,25 @@ describe('a build request', () => {
     expect(request(argv).kind).toBe(kind);
   });
 
-  it('reports an unknown option even next to --help', () => {
-    expect(parseCliArgs(['-h', '--bogus-is-not-reached']).ok).toBe(false);
+  // docs/cli.md: --help wins over every other option, valid or not (#382).
+  it.each([
+    [['--help', '--bogus']],
+    [['--bogus', '--help']],
+    [['-h', '-o']],
+    [['-o', 'a', '-o', 'b', '-h']],
+    [['--help', '--help']],
+    [['-dh']],
+    [['-h', '--version', '--init']],
+    [['-h', '-d=x']],
+    [['-h', '--charset', 'x']],
+    [['--tag-alias', 'bad', '-h']],
+    [['-h', '--', '-d']],
+  ])('%j asks for the help', (argv) => {
+    expect(request(argv)).toEqual({ kind: 'help' });
+  });
+
+  it('does not read --help after -- as a request for help', () => {
+    expect(usage(['--bogus', '--', '--help'])).toBe('unknown option --bogus');
   });
 
   it('lets --list-formats choose the config', () => {

@@ -1,28 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { TweeTsError } from '../src/compiler.js';
-import { fatalError, formatDiagnostic, splitDiagnostics } from '../src/plugins/diagnostics.js';
+import { fatalError, splitDiagnostics } from '../src/plugins/diagnostics.js';
 import type { CompileResult, Diagnostic } from '../src/types.js';
 import { thrownBy } from './helpers/errors.js';
 
 function resultWith(diagnostics: Diagnostic[]): CompileResult {
   return { output: '<html></html>', diagnostics } as unknown as CompileResult;
 }
-
-describe('formatDiagnostic', () => {
-  it('names the file and line, and drops the parser\'s own "line N:" prefix', () => {
-    expect(formatDiagnostic({ level: 'error', message: 'line 4: bad header', file: 'a.tw', line: 4 })).toBe(
-      'a.tw:4: bad header',
-    );
-  });
-
-  it('names a file without a line, keeping the message as it is', () => {
-    expect(formatDiagnostic({ level: 'warning', message: 'line 4: odd', file: 'a.tw' })).toBe('a.tw: line 4: odd');
-  });
-
-  it('gives a message with no file as it is', () => {
-    expect(formatDiagnostic({ level: 'warning', message: 'no start passage' })).toBe('no start passage');
-  });
-});
 
 describe('splitDiagnostics', () => {
   it('returns the warnings when there are no errors', () => {

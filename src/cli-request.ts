@@ -166,6 +166,8 @@ function parseCache(rest: readonly string[]): CliRequest {
       return { kind: 'cache', action };
     case 'clear':
       if (extra.length > 0) throw tooMany();
+      // An empty name (an unset variable) must not mean "everything".
+      if (name === '') throw new CliUsageError('cache clear needs a non-empty name; write cache clear alone for all');
       return name === undefined ? { kind: 'cache-clear' } : { kind: 'cache-clear', name };
     default:
       throw new CliUsageError(`unknown cache subcommand "${action}"; expected list, clear, size or path`);
@@ -198,13 +200,68 @@ export function parseCliArgs(argv: readonly string[]): CliParse {
   }
 }
 
+/** Whether `-h` or `--help` is given before any `--`, whatever else is on the line (even a malformed option). */
+function asksForHelp(argv: readonly string[]): boolean {
+  const { tokens } = parseArgs({
+    args: [...argv],
+    options: OPTIONS,
+    allowPositionals: true,
+    strict: false,
+    tokens: true,
+  });
+  return tokens.some((token) => token.kind === 'option' && token.name === 'help');
+}
+
+/** The option a short letter stands for. */
+function optionOfShort(letter: string): OptionName | undefined {
+  return Object.keys(OPTIONS)
+    .filter(isOptionName)
+    .find((name) => {
+      const option = OPTIONS[name];
+      return 'short' in option && option.short === letter;
+    });
+}
+
+/**
+ * Reads `-<letter>=<value>` as Tweego does, as `-<letter> <value>`: it becomes `--<name>=<value>`, so
+ * node:util's parseArgs doesn't take `=<value>` as the value. A short option that takes no value refuses
+ * one. Letters of other bundled options before it (`-do=x`) stay as they are. After `--`, nothing changes.
+ */
+function expandShortAssignments(argv: readonly string[]): string[] {
+  const terminator = argv.indexOf('--');
+  const options = terminator === -1 ? argv : argv.slice(0, terminator);
+  const expanded = options.flatMap((arg) => {
+    const assignment = /^-([A-Za-z]+)=([\s\S]*)$/.exec(arg);
+    const letters = assignment?.[1];
+    const value = assignment?.[2];
+    if (letters === undefined || value === undefined) return [arg];
+    const name = optionOfShort(letters.slice(-1));
+    // An unknown letter is parseArgs' to report.
+    if (name === undefined) return [arg];
+    if (OPTIONS[name].type !== 'string') {
+      throw new CliUsageError(`option ${optionLabel(name)} does not take an argument`);
+    }
+    const others = letters.slice(0, -1);
+    return [...(others === '' ? [] : [`-${others}`]), `--${name}=${value}`];
+  });
+  return [...expanded, ...argv.slice(options.length)];
+}
+
 function parseRequest(argv: readonly string[]): CliRequest {
   // A subcommand only as the very first word: `twee-ts -o out.html cache` builds a folder named cache.
   if (argv[0] === 'cache') return parseCache(argv.slice(1));
+  // Help is asked for before anything else is checked.
+  if (asksForHelp(argv)) return { kind: 'help' };
 
   let parsed;
   try {
-    parsed = parseArgs({ args: [...argv], options: OPTIONS, allowPositionals: true, strict: true, tokens: true });
+    parsed = parseArgs({
+      args: expandShortAssignments(argv),
+      options: OPTIONS,
+      allowPositionals: true,
+      strict: true,
+      tokens: true,
+    });
   } catch (e) {
     throw new CliUsageError(parseArgsMessage(e));
   }
@@ -229,7 +286,6 @@ function parseRequest(argv: readonly string[]): CliRequest {
   const has = (name: OptionName): boolean => given.has(name);
   const names = [...given.keys()];
 
-  if (has('help')) return { kind: 'help' };
   if (has('charset') || has('list-charsets')) {
     throw new CliUsageError(
       'twee-ts has no --charset: sources are read as UTF-8 (or UTF-16 after a byte order mark), and a file that is not valid UTF-8 as Windows-1252, as Tweego does by default',

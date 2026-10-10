@@ -3,9 +3,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -264,7 +266,7 @@ describe('CLI exit status', () => {
     const src = write('broken.tw', BROKEN_STORY);
     const r = runCli(dir, [...baseArgs, src, '-o', 'out.html']);
     expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/error: line \d+: Malformed twee source; unterminated tag block\./);
+    expect(r.stderr).toMatch(/error: broken\.tw:\d+: Malformed twee source; unterminated tag block\./);
     expect(r.stderr).toContain('output not written');
     expect(existsSync(join(dir, 'out.html'))).toBe(false);
   });
@@ -282,7 +284,7 @@ describe('CLI exit status', () => {
     const r = runCli(dir, [...baseArgs, src]);
     expect(r.status).toBe(1);
     expect(r.stdout).toBe('');
-    expect(r.stderr).toMatch(/error: line \d+: Malformed twee source; unterminated tag block\./);
+    expect(r.stderr).toMatch(/error: broken\.tw:\d+: Malformed twee source; unterminated tag block\./);
   });
 
   it('exits 1 for a missing IFID in Twee output mode', () => {
@@ -302,7 +304,7 @@ describe('CLI exit status', () => {
         'the first build',
       );
       expect(cli.stderr()).toContain('Built:');
-      expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
+      expect(cli.stderr()).toMatch(/error: broken\.tw:\d+: Malformed twee source/);
       expect(cli.stderr()).toContain('output not written');
       expect(existsSync(join(dir, 'out.html'))).toBe(false);
       // A process that exited after the failed build cannot build a good save.
@@ -384,7 +386,7 @@ describe('CLI exit status', () => {
       // stdout and stderr arrive separately: wait for the build line and its report.
       await waitFor(() => builds() >= 2 && /still watching/i.test(cli.stderr()), 'the rebuild of the malformed save');
       expect(readFileSync(out).equals(good)).toBe(true);
-      expect(cli.stderr()).toMatch(/error: line \d+: Malformed twee source/);
+      expect(cli.stderr()).toMatch(/error: story\.tw:\d+: Malformed twee source/);
       expect(cli.stderr()).toContain('output not written');
       expect(cli.child.exitCode).toBeNull();
 
@@ -687,3 +689,179 @@ describe.skipIf(process.platform === 'win32')('config in a folder named with glo
     expect(names(cli.stdout)).toEqual(['SiblingPassage', 'Start']);
   });
 });
+
+describe('CLI diagnostics name their file and line (#394)', () => {
+  // The metadata block of the first passage never closes.
+  const UNTERMINATED = ':: A {"position":"1,1"\nx\n';
+  // The name ends in a backslash that escapes nothing.
+  const DANGLING = ':: Name\\\nx\n';
+
+  it('prints each parse error with the file it is in', () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'ok.tw'), VALID_STORY);
+    writeFileSync(join(dir, 'src', 'bad-one.tw'), UNTERMINATED);
+    writeFileSync(join(dir, 'src', 'bad-two.tw'), UNTERMINATED);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', '-o', '-', 'src']);
+    expect(r.status).toBe(1);
+    const errors = r.stderr.split('\n').filter((line) => line.startsWith('error:'));
+    expect(errors).toEqual([
+      `error: ${join('src', 'bad-one.tw')}:1: Malformed twee source; unterminated metadata block.`,
+      `error: ${join('src', 'bad-two.tw')}:1: Malformed twee source; unterminated metadata block.`,
+    ]);
+  });
+
+  it('prints the dangling-backslash warning with its file, in a build and in the lint report', () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'ok.tw'), VALID_STORY);
+    writeFileSync(join(dir, 'src', 'dangling.tw'), DANGLING);
+    const location = `${join('src', 'dangling.tw')}:1: The passage name "Name" ends in a backslash`;
+    const build = runCli(dir, ['--no-config', '--no-remote', '-a', '-o', 'out.html', 'src']);
+    expect(build.stderr).toContain(`warning: ${location}`);
+    const lint = runCli(dir, ['--no-config', '--no-remote', '--lint', 'src']);
+    expect(lint.stdout).toContain(`  warning: ${location}`);
+  }, 30_000);
+
+  it('does not repeat a file that a message already names', () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'ok.tw'), VALID_STORY);
+    writeFileSync(join(dir, 'src', 'meta.tw'), ':: A {"position": 1}\nx\n');
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', '-o', 'out.html', 'src']);
+    expect(r.stderr).toMatch(
+      /^warning: load src[\\/]meta\.tw: line 1: Malformed twee source; could not decode metadata/m,
+    );
+  });
+});
+
+describe('CLI watch mode that cannot start (#403)', () => {
+  it('prints no start message before the error that prevents it', () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'ok.tw'), VALID_STORY);
+    writeFileSync(join(dir, 'src', 'mine.html'), '<p>authored</p>');
+    const r = runCli(dir, ['--no-config', '--no-remote', '-w', '-o', join('src', 'mine.html'), 'src']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('Output file cannot be an input source');
+    expect(r.stderr).not.toContain('Watch mode started');
+  });
+
+  it('prints the start message once watching has started', async () => {
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    const cli = startCli(dir, ['--no-config', '--no-remote', '-a', '-w', '-o', 'out.html', 'story.tw']);
+    await waitFor(() => cli.stderr().includes('Watch mode started'), 'the start message');
+    expect(cli.stderr()).toContain('Watch mode started. Press CTRL+C to stop.');
+  });
+});
+
+describe('CLI -<letter>=<value> (#385)', () => {
+  it('reads -o=file as -o file, as Tweego does', () => {
+    writeFileSync(join(dir, 's.tw'), VALID_STORY);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', '-o=story.html', 's.tw']);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(dir, 'story.html'), 'utf-8')).toContain('<tw-storydata');
+    expect(existsSync(join(dir, '=story.html'))).toBe(false);
+  });
+
+  it('refuses a value for an option that takes none', () => {
+    writeFileSync(join(dir, 's.tw'), VALID_STORY);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a=true', '-o', 'out.html', 's.tw']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('error: option -a, --archive-twine2 does not take an argument');
+    expect(existsSync(join(dir, 'out.html'))).toBe(false);
+  });
+});
+
+describe('CLI --help wins over malformed options (#382)', () => {
+  it.each([
+    [['--help', '--bogus']],
+    [['--bogus', '--help']],
+    [['-h', '-o']],
+    [['-o', 'a', '-o', 'b', '-h']],
+    [['-d=x', '-h']],
+  ])('%j prints the help', (args) => {
+    const r = runCli(dir, args);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Usage: twee-ts');
+    expect(r.stderr).toBe('');
+  });
+});
+
+describe('CLI cache clear with an empty name (#366)', () => {
+  it('is a usage error and clears nothing', () => {
+    const cache = join(dir, 'cache');
+    withCacheHome(cache, () => {
+      seedIndexDownload('Fixture', '1.0.0', 'window.storyFormat({"name":"Fixture","version":"1.0.0","source":"x"});');
+    });
+    const env = { ...process.env, XDG_CACHE_HOME: cache };
+    const r = runCli(dir, ['cache', 'clear', ''], env);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('error: cache clear needs a non-empty name');
+    expect(runCli(dir, ['cache', 'list'], env).stdout).toContain('Fixture');
+  }, 30_000);
+});
+
+describe('CLI warnings follow Node (#373)', () => {
+  // A preload that emits a warning after the CLI started, as a dependency would.
+  const run = (env: NodeJS.ProcessEnv): CliResult => {
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    const preload = join(dir, 'late-warning.mjs');
+    writeFileSync(preload, "setTimeout(() => process.emitWarning('late warning'), 0);\n");
+    const r = spawnSync(
+      process.execPath,
+      ['--import', pathToFileURL(preload).href, ...NODE_ARGS, '--no-config', '--no-remote', '-a', 'story.tw'],
+      { cwd: dir, env: { ...process.env, ...env }, encoding: 'utf-8', timeout: 30_000 },
+    );
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  it('prints a warning as Node prints it', () => {
+    expect(run({ NODE_NO_WARNINGS: '' }).stderr).toContain('late warning');
+  });
+
+  it.each([
+    ['NODE_NO_WARNINGS=1', { NODE_NO_WARNINGS: '1' }],
+    ['NODE_OPTIONS=--no-warnings', { NODE_OPTIONS: '--no-warnings' }],
+  ])('prints none under %s', (_name, env) => {
+    expect(run(env).stderr).not.toContain('late warning');
+  });
+});
+
+// /dev/full fails every write with ENOSPC.
+describe.skipIf(process.platform !== 'linux' || !existsSync('/dev/full'))(
+  'CLI output that cannot be written to standard output (#374)',
+  () => {
+    /** Runs the CLI with `/dev/full` as standard output (or, with `full: 'stderr'`, as standard error). */
+    const withFullStream = (args: readonly string[], full: 'stdout' | 'stderr' = 'stdout'): CliResult => {
+      writeFileSync(join(dir, 'story.tw'), full === 'stderr' ? WARNING_STORY : VALID_STORY);
+      const fd = openSync('/dev/full', 'w');
+      try {
+        const r = spawnSync(process.execPath, [...NODE_ARGS, '--no-config', ...args], {
+          cwd: dir,
+          stdio: ['ignore', full === 'stdout' ? fd : 'pipe', full === 'stderr' ? fd : 'pipe'],
+          encoding: 'utf-8',
+          timeout: 30_000,
+        });
+        return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+      } finally {
+        closeSync(fd);
+      }
+    };
+
+    it.each([
+      ['the story', ['--no-remote', '-a', 'story.tw']],
+      ['the lint report', ['--no-remote', '--lint', 'story.tw']],
+      ['the format list', ['--list-formats']],
+    ])('ends %s in an error line and status 1, not a stack trace', (_what, args) => {
+      const r = withFullStream(args);
+      expect(r.stderr).toMatch(/^error: Cannot write standard output: .*ENOSPC/m);
+      expect(r.stderr).not.toContain('node:internal');
+      expect(r.status).toBe(1);
+    });
+
+    it('ends a build whose standard error cannot be written in status 1, with the story on standard output', () => {
+      // The duplicate passage warning goes to standard error, which fails.
+      const r = withFullStream(['--no-remote', '-a', 'story.tw'], 'stderr');
+      expect(r.stdout).toContain('<tw-storydata');
+      expect(r.status).toBe(1);
+    });
+  },
+);
