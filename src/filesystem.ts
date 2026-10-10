@@ -207,12 +207,16 @@ function compareNames(a: string, b: string): number {
  * What can't be used (a missing path, a dangling link, an unreadable folder) is handled as the input
  * policy says for `role` (see input-policy.ts): a missing named path is a warning, as in Tweego, and a
  * dangling link found in a folder (an editor's lock file) is skipped without a word.
+ *
+ * `onFolder` is called with each folder the walk lists, just before it lists it, so a caller can tell later
+ * whether what is in the folders walked changed since (the Vite dev server, which then needs no walk).
  */
 export function getFilenames(
   pathnames: readonly string[],
   outputs?: BuildOutputs | string,
   exclude: readonly (string | ExcludeGlob)[] = [],
   role: Extract<InputRole, 'source' | 'module'> = 'source',
+  onFolder?: (folder: string) => void,
 ): FilenamesResult {
   const files: DiscoveredFile[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -232,6 +236,7 @@ export function getFilenames(
 
   function walkDir(pathname: string, discovery: InputDiscovery, folder: string): void {
     let entries: string[];
+    onFolder?.(pathname);
     try {
       entries = readdirSync(pathname).sort(compareNames);
     } catch (e) {
