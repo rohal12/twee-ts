@@ -47,14 +47,14 @@ import { toTwee } from './output-twee.js';
 import { loadHeadContent, moduleIds } from './modules.js';
 import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
-import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
+import { checkWritable, isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
 import { duplicateInput, failureOfRead, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputProblem } from './input-policy.js';
-import { readUTF8, similarKey } from './util.js';
+import { readUTF8 } from './util.js';
+import { unknownOptionWarnings, validateCompileOptions } from './compile-options.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
-import { buildTime } from './build-time.js';
 
 export { TweeTsError };
 
@@ -79,10 +79,11 @@ export async function compile(options: CompileOptions): Promise<CompileResult> {
  * Compile and write to a file. How the file is written depends on what is there (see atomic-write.ts): a
  * regular file is replaced atomically, so a reader sees the previous build or the new one, never part of it,
  * and a failed write leaves the previous build; a FIFO or a device is written through; a read-only file is
- * refused.
+ * refused. An output that can't be written (a read-only file, a missing folder) fails before the build.
  */
 export async function compileToFile(options: CompileToFileOptions): Promise<CompileResult> {
-  const result = await compileForOutputFile(options, options.outFile);
+  validateCompileOptions(options, ['sources', 'outFile']);
+  const result = await compileForOutputFile(options, options.outFile, undefined, [], true);
   // The build may have been aborted after it finished: the previous output stays.
   options.signal?.throwIfAborted();
   writeFileAtomic(options.outFile, result.output);
@@ -102,7 +103,8 @@ export interface ExtraInput {
  * build writes (see BuildOutputs). The caller decides whether the result is written.
  * With no outputs (output to stdout, or none), this is compile(). With `cache`, files
  * are cached as compileIncremental() caches them. `extraInputs` (the CLI's config file)
- * are checked against the outputs as the sources are.
+ * are checked against the outputs as the sources are. With `writesOutput`, the output file
+ * the caller writes afterwards is checked to be writable before any input is read.
  *
  * Throws a TweeTsError (`OUTPUT_IS_INPUT`) when an input would be overwritten (see checkNamedInputs).
  *
@@ -113,8 +115,9 @@ export async function compileForOutputFile(
   outputs: BuildOutputs | string | undefined,
   cache?: Map<string, FileCacheEntry>,
   extraInputs: readonly ExtraInput[] = [],
+  writesOutput = false,
 ): Promise<CompileResult> {
-  return buildOutput(options, { cache, outputs, extraInputs });
+  return buildOutput(options, { cache, outputs, extraInputs, writesOutput });
 }
 
 /**
@@ -185,7 +188,7 @@ export function watchWithWriteFilter(
   shouldWrite: (result: CompileResult) => boolean,
   hooks: WatchHooks = {},
 ): AbortController {
-  validateOptions(options);
+  validateCompileOptions(options, ['sources', 'outFile']);
   const written = toBuildOutputs(options.outFile);
   checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(written), []);
   checkFolderOutputs(options, written);
@@ -337,74 +340,6 @@ function mergeBuildRequests(a: WatchBuildRequest, b: WatchBuildRequest): WatchBu
 
 function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
-}
-
-/**
- * Every option compile(), compileToFile() and watch() read. `satisfies` keeps the list complete: an option
- * added to the types and not here, or listed here and not in the types, is a compile error.
- */
-const OPTION_KEYS: readonly string[] = Object.keys({
-  sources: true,
-  exclude: true,
-  outputMode: true,
-  formatId: true,
-  startPassage: true,
-  formatPaths: true,
-  useTweegoPath: true,
-  modules: true,
-  headFile: true,
-  trim: true,
-  twee2Compat: true,
-  testMode: true,
-  formatIndices: true,
-  formatUrls: true,
-  noRemote: true,
-  signal: true,
-  formatFetchTimeout: true,
-  formatResolutionTimeout: true,
-  useDefaultFormatIndices: true,
-  tagAliases: true,
-  sourceInfo: true,
-  wordCountMethod: true,
-  outFile: true,
-  onBuild: true,
-  onError: true,
-} satisfies Record<keyof WatchOptions, true>);
-
-/** What the options of the plugins and the config file are called in the compile options. */
-const OTHER_NAMES: ReadonlyMap<string, string> = new Map([
-  ['format', 'formatId'],
-  ['output', 'outFile'],
-]);
-
-/**
- * A warning for each option the build does not read, as for a key a config file does not define: called from
- * JavaScript, or with a spread config object, a misspelt option (`format` for `formatId`) would otherwise be
- * left at its default without a word.
- */
-function unknownOptionWarnings(options: CompileOptions): Diagnostic[] {
-  return Object.keys(options)
-    .filter((key) => !OPTION_KEYS.includes(key))
-    .map((key): Diagnostic => {
-      const suggestion = OTHER_NAMES.get(key) ?? similarKey(key, OPTION_KEYS);
-      const hint = suggestion === undefined ? '' : ` (did you mean "${suggestion}"?)`;
-      return { level: 'warning', message: `Unknown compile option "${key}"${hint}; it is ignored.` };
-    });
-}
-
-/** Throws a TweeTsError (`INVALID_OPTIONS`) for an option out of range, before anything is read. */
-function validateOptions(options: CompileOptions): void {
-  const timeouts = [
-    ['formatFetchTimeout', options.formatFetchTimeout],
-    ['formatResolutionTimeout', options.formatResolutionTimeout],
-  ] as const;
-  for (const [option, timeout] of timeouts) {
-    if (timeout !== undefined && !(timeout >= 0)) {
-      throw new TweeTsError(`${option} must be 0 or more milliseconds, not ${timeout}.`, [], {
-        code: 'INVALID_OPTIONS',
-      });
-    }
-  }
 }
 
 /** An input the output must not overwrite, named by the user. */
@@ -591,6 +526,7 @@ function headContent(
  * the output mode matters: see checkNamedInputs and checkSkippedOutputs.
  */
 async function buildOutput(options: CompileOptions, context: BuildContext): Promise<CompileResult> {
+  validateCompileOptions(options, ['sources']);
   const { cache, changedFiles, outputs, extraInputs = [] } = context;
   const written = toBuildOutputs(outputs);
   const outputGuard = outputPaths(written);
@@ -612,9 +548,6 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   const sourceInfo = options.sourceInfo ?? false;
 
   options.signal?.throwIfAborted();
-  validateOptions(options);
-  // Read once, so every time stamp in the output agrees (and SOURCE_DATE_EPOCH is checked before anything is read).
-  const time = buildTime();
   diagnostics.push(...unknownOptionWarnings(options));
   checkNamedInputs(namedInputs(options, extraInputs), outputGuard, diagnostics);
 
@@ -647,6 +580,8 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
   // Modules are read for HTML output only, but checked in every mode.
   const modules = getFilenames(options.modules ?? [], written, [], 'module');
   if (guardsFolders) checkSkippedOutputs(modules.skippedOutputs, 'module', diagnostics, guarded);
+  // Once the output is known to be no input, and before the work: a target that can't be written fails now.
+  if (context.writesOutput === true && typeof outputs === 'string') checkWritable(outputs);
   context.onDiscovered?.([...walked.flatMap((group) => (group.kind === 'files' ? group.files : [])), ...modules.files]);
   // Every file of the build, so that a cache purge while loading one group keeps the others' entries.
   const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.files.map((f) => f.path) : [])));
@@ -728,7 +663,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       break;
 
     case 'twine1-archive':
-      output = toTwine1Archive(story, startName, { diagnostics, time });
+      output = toTwine1Archive(story, startName, { diagnostics });
       break;
 
     case 'json':
@@ -752,7 +687,7 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })
-        : toTwine1HTML(story, format, startName, { head, diagnostics, time });
+        : toTwine1HTML(story, format, startName, { head, diagnostics });
       break;
     }
 
@@ -827,6 +762,12 @@ interface BuildContext {
   readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
   /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
   readonly checkHead?: boolean;
+  /**
+   * Whether the output file named in `outputs` is written after the build: it is then checked to be writable
+   * (see checkWritable) once the inputs are checked and before any is read, so a missing folder or a read-only
+   * file fails before the work.
+   */
+  readonly writesOutput?: boolean;
 }
 
 /** A run of sources of one kind, in the order supplied. */

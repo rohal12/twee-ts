@@ -7,21 +7,27 @@
 import { TweeTsError } from './errors.js';
 
 /**
+ * The last second Twine 1's time stamp can hold, 9999-12-31T23:59:59Z: its `created` attribute has four digits
+ * for the year (YYYYMMDDHHMM).
+ */
+const LAST_SECOND = 253402300799;
+
+/**
  * The build time: `SOURCE_DATE_EPOCH` (whole seconds since 1970, UTC) when it is set and not empty, else now.
- * A value that is not such a number is a TweeTsError (`INVALID_OPTIONS`), as the specification asks: a
- * build must not silently use another time than the one asked for.
+ * Only the output that is stamped (Twine 1) reads it. A value that is not such a number, or is after the year
+ * 9999, is a TweeTsError (`INVALID_OPTIONS`), as the specification asks: a build must not silently use another
+ * time than the one asked for.
  */
 export function buildTime(env: Readonly<Record<string, string | undefined>> = process.env): Date {
   const epoch = env['SOURCE_DATE_EPOCH'];
   if (epoch === undefined || epoch === '') return new Date();
   const seconds = /^[0-9]+$/.test(epoch) ? Number(epoch) : Number.NaN;
-  const time = new Date(seconds * 1000);
-  if (!Number.isSafeInteger(seconds) || Number.isNaN(time.getTime())) {
+  if (!(seconds <= LAST_SECOND)) {
     throw new TweeTsError(
-      `SOURCE_DATE_EPOCH must be a whole number of seconds since 1970-01-01T00:00:00Z, not ${JSON.stringify(epoch)}.`,
+      `SOURCE_DATE_EPOCH must be a whole number of seconds since 1970-01-01T00:00:00Z, at most ${LAST_SECOND} (the end of the year 9999), not ${JSON.stringify(epoch)}.`,
       [],
       { code: 'INVALID_OPTIONS' },
     );
   }
-  return time;
+  return new Date(seconds * 1000);
 }

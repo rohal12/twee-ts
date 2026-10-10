@@ -40,7 +40,7 @@ const result = await compileToFile({
 console.log(`${result.stats.passages} passages written to story.html`);
 ```
 
-The output is written even when `diagnostics` report errors (the CLI instead writes nothing then; see [Exit Status](./cli#exit-status)). How it is written depends on what is at `outFile`, as [Output safety](./cli#output-safety) describes: a regular file is replaced atomically (a temporary file in the same folder, renamed over it), so a reader such as a live-reload server sees the previous build or the new one, never part of one, and a failed write leaves the previous file. A hard-linked file is written in place, a FIFO or device is written through, and a read-only file is refused with an `EACCES` error.
+The output is written even when `diagnostics` report errors (the CLI instead writes nothing then; see [Exit Status](./cli#exit-status)). How it is written depends on what is at `outFile`, as [Output safety](./cli#output-safety) describes: a regular file is replaced atomically (a temporary file in the same folder, renamed over it), so a reader such as a live-reload server sees the previous build or the new one, never part of one, and a failed write leaves the previous file. A hard-linked file, and a writable file in a folder that takes no new file or rename (a read-only folder, a file bind-mounted on its own), are written in place, a FIFO or device is written through, and a read-only file is refused with an `EACCES` error. An output that can't be written (a read-only file, a missing folder) rejects before the sources are read, and the error names `outFile`, never the temporary file.
 
 `outFile` is never read as a source, even inside a source folder or reached through a symbolic link. A build that would write over one of its inputs rejects with a `TweeTsError` whose `code` is `OUTPUT_IS_INPUT`, and writes nothing: `outFile` named as a source, a module or the head file (by any spelling, or as a hard link), `outFile` that is the story format's file, or an existing file of a source type inside a source folder that is not an earlier twee-ts build.
 
@@ -66,7 +66,7 @@ const controller = await watch({
 controller.abort();
 ```
 
-- **Options that can't work** reject the returned promise with a `TweeTsError` before anything is watched: `OUTPUT_IS_INPUT` when `outFile` is an input (see `compileToFile()`), `INVALID_OPTIONS` for an option out of range (a negative `formatFetchTimeout`). They are not passed to `onError`. When a later build fails for such a reason (a link changed to make the output an input, say), the error goes to `onError` and watching stops.
+- **Options that can't work** reject the returned promise with a `TweeTsError` before anything is watched: `OUTPUT_IS_INPUT` when `outFile` is an input (see `compileToFile()`), `INVALID_OPTIONS` for an option that is missing, of the wrong type or out of range (see [Option checks](#option-checks)). They are not passed to `onError`. When a later build fails for such a reason (a link changed to make the output an input, say), the error goes to `onError` and watching stops.
 - **What is watched**: the sources, the modules and the head file, wherever the head file is and whatever its extension. Like `compileToFile()`, every build leaves `outFile` out of the sources and modules.
 - **Every build is written** to `outFile`, including one whose `diagnostics` report errors, and then passed to `onBuild`; a build that fails with a fatal error writes nothing and is passed to `onError`. (The CLI's watch mode instead keeps the last build without errors; see [Exit Status](./cli#exit-status).) Each build replaces `outFile` as `compileToFile()` does.
 - **Order**: builds run one at a time, and each is written and reported as it finishes, in order, so the output never goes back to an older state. Changes saved while a build runs are built together in one follow-up build. While saves keep coming, the output trails the latest save by at most about one build.
@@ -231,7 +231,7 @@ Problems in the sources (a missing start passage, duplicate passages, malformed 
 | `code`               | When                                                                                                                                                                                                                                                  |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BUILD_FAILED`       | No story format is available for HTML output; an unknown `outputMode`                                                                                                                                                                                 |
-| `INVALID_OPTIONS`    | An option out of range (a negative `formatFetchTimeout`); a config file that is not valid JSON or fails validation; bad plugin options; the Vite plugin under a Vite older than 8                                                                     |
+| `INVALID_OPTIONS`    | A compile option that is missing, of the wrong type, empty or out of range (see [Option checks](#option-checks)); a config file that is not valid JSON or fails validation; bad plugin options; the Vite plugin under a Vite older than 8             |
 | `INPUT_UNAVAILABLE`  | The head file (HTML output) or the config file is missing or can't be read                                                                                                                                                                            |
 | `OUTPUT_IS_INPUT`    | The output would overwrite an input (`compileToFile()`, `watch()`, the CLI and the plugins)                                                                                                                                                           |
 | `FORMAT_UNAVAILABLE` | A story format that was found can't be used: `resolveRemoteFormat()` found it nowhere and a source failed (`diagnostics` lists every failure); a Twine 1 format's required file is missing; a format that no longer decodes when its template is read |
@@ -256,6 +256,10 @@ try {
   }
 }
 ```
+
+### Option checks
+
+The compile options are checked as a JavaScript caller may pass them, whatever their types say, before anything is read: by `compile()`, `compileToFile()`, `watch()`, `compileIncremental()`, `lint()` and the plugins (for `compileOptions`, when the plugin is created). An option a config file also sets holds exactly what the config key holds ([Configuration](./configuration)): `formatId`, `startPassage` and `headFile` are non-empty strings, the lists are arrays of non-empty strings, the booleans are booleans, and so on. `sources` is required and is an array of non-empty paths and `{ filename, content }` inline sources; `exclude` also takes `{ base, glob }` objects; `formatFetchTimeout` and `formatResolutionTimeout` may also be `Infinity` (no limit); `signal` is an `AbortSignal`; `outFile` (required by `compileToFile()` and `watch()`) is a non-empty string; `onBuild` and `onError` are functions. An option set to `undefined` is the same as one left out. Anything else is a `TweeTsError` (`INVALID_OPTIONS`) naming each option, such as `Invalid compile option: "formatId" must be a string.` An option the build does not read is a warning in `diagnostics`.
 
 ## Utility Exports
 

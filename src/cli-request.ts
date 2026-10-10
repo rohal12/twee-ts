@@ -283,6 +283,8 @@ function parseRequest(argv: readonly string[]): CliRequest {
       throw new CliUsageError(`${optionLabel(name)} needs a non-empty value`);
     }
   }
+  // As a source anywhere else (the config, the API, the plugins), an empty one names nothing.
+  if (positionals.includes('')) throw new CliUsageError('a source must not be empty');
   const has = (name: OptionName): boolean => given.has(name);
   const names = [...given.keys()];
 

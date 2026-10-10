@@ -12,18 +12,21 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFileAtomic } from '../src/atomic-write.js';
+import { getSystemErrorMap } from 'node:util';
+import { checkWritable, writeFileAtomic } from '../src/atomic-write.js';
 import type * as NodeFs from 'node:fs';
 
-// writeFileSync passes through to the real one unless a test makes it fail part way.
+// writeFileSync and renameSync pass through to the real ones unless a test makes them fail.
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFs>();
-  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
+  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync), renameSync: vi.fn(actual.renameSync) };
 });
 
-const realWriteFileSync = (await vi.importActual<typeof NodeFs>('node:fs')).writeFileSync;
+const { writeFileSync: realWriteFileSync, renameSync: realRenameSync } =
+  await vi.importActual<typeof NodeFs>('node:fs');
 import { textOf } from './helpers/text.js';
 const mockedWriteFileSync = vi.mocked(fs.writeFileSync);
+const mockedRenameSync = vi.mocked(fs.renameSync);
 
 let dir: string;
 
@@ -34,6 +37,8 @@ beforeEach(() => {
 afterEach(() => {
   mockedWriteFileSync.mockReset();
   mockedWriteFileSync.mockImplementation(realWriteFileSync);
+  mockedRenameSync.mockReset();
+  mockedRenameSync.mockImplementation(realRenameSync);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -214,5 +219,159 @@ describe('writeFileAtomic', () => {
       expect(fs.readlinkSync(join(dir, 'b.html'))).toBe('a.html');
       expect(entries()).toEqual(['a.html', 'b.html']);
     });
+  });
+});
+
+/** A system error as Node throws it, naming `path` (the temporary file, say) in its message. */
+function systemError(code: string, syscall: string, path: string): Error {
+  // The platform's own number for the code (libuv's, which differ between POSIX and Windows).
+  const errno = [...getSystemErrorMap()].find(([, [name]]) => name === code)?.[0];
+  return Object.assign(new Error(`${code}: refused, ${syscall} '${path}'`), { code, errno, syscall, path });
+}
+
+const POSIX_USER = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+describe('a folder that takes no temporary file or rename (#383)', () => {
+  const refusals = ['EACCES', 'EPERM', 'EBUSY'] as const;
+  const steps = [
+    ['creating the temporary file', 'temp'],
+    ['the rename', 'rename'],
+  ] as const;
+  const refuse = (step: 'temp' | 'rename', code: string): void => {
+    if (step === 'temp') {
+      mockedWriteFileSync.mockImplementationOnce((file) => {
+        throw systemError(code, 'open', String(file));
+      });
+    } else {
+      // Every attempt, so that the retries on Windows fail too.
+      mockedRenameSync.mockImplementation((from) => {
+        throw systemError(code, 'rename', String(from));
+      });
+    }
+  };
+
+  describe.each(steps)('when %s fails', (_label, step) => {
+    it.each(refusals)('writes an existing writable file in place on %s', (code) => {
+      const path = join(dir, 'out.html');
+      writeFileSync(path, 'old');
+      refuse(step, code);
+      writeFileAtomic(path, 'new');
+      expect(readFileSync(path, 'utf-8')).toBe('new');
+      expect(readdirSync(dir)).toEqual(['out.html']);
+    });
+
+    it.each(refusals)('keeps the error on %s when there is no file to write in place', (code) => {
+      const path = join(dir, 'out.html');
+      refuse(step, code);
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow(expect.objectContaining({ code, message: expect.not.stringContaining('.tmp') }));
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it('keeps any other error, and the previous file', () => {
+      const path = join(dir, 'out.html');
+      writeFileSync(path, 'old');
+      refuse(step, 'ENOSPC');
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow(expect.objectContaining({ code: 'ENOSPC' }));
+      expect(readFileSync(path, 'utf-8')).toBe('old');
+      expect(readdirSync(dir)).toEqual(['out.html']);
+    });
+  });
+
+  describe.skipIf(!POSIX_USER)('in a read-only folder', () => {
+    let folder: string;
+    beforeEach(() => {
+      folder = join(dir, 'out');
+      fs.mkdirSync(folder);
+    });
+    afterEach(() => {
+      chmodSync(folder, 0o755);
+    });
+
+    it('rebuilds a writable file, keeping its permissions, as Tweego does', () => {
+      const path = join(folder, 'story.html');
+      writeFileSync(path, 'old');
+      chmodSync(path, 0o640);
+      chmodSync(folder, 0o555);
+      expect(() => {
+        checkWritable(path);
+      }).not.toThrow();
+      writeFileAtomic(path, 'new');
+      expect(readFileSync(path, 'utf-8')).toBe('new');
+      expect(statSync(path).mode & 0o777).toBe(0o640);
+      expect(readdirSync(folder)).toEqual(['story.html']);
+    });
+
+    it('refuses a read-only file there', () => {
+      const path = join(folder, 'story.html');
+      writeFileSync(path, 'old');
+      chmodSync(path, 0o444);
+      chmodSync(folder, 0o555);
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow(expect.objectContaining({ code: 'EACCES' }));
+      expect(readFileSync(path, 'utf-8')).toBe('old');
+    });
+
+    it('refuses a new file there, naming the output and not the temporary file', () => {
+      const path = join(folder, 'story.html');
+      chmodSync(folder, 0o555);
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow(`Cannot write ${path}: EACCES: permission denied`);
+      expect(readdirSync(folder)).toEqual([]);
+    });
+  });
+});
+
+describe('write errors name the output path given (#388)', () => {
+  it('names the output, not the temporary file, for a system error', () => {
+    const path = join(dir, 'out.html');
+    mockedWriteFileSync.mockImplementationOnce((file) => {
+      throw systemError('ENOSPC', 'write', String(file));
+    });
+    expect(() => {
+      writeFileAtomic(path, 'x');
+    }).toThrow(`Cannot write ${path}: ENOSPC: no space left on device`);
+  });
+
+  it.each([
+    ['a missing folder', (d: string) => join(d, 'missing', 'out.html'), 'ENOENT', 'does not exist'],
+    [
+      'a file as the folder',
+      (d: string) => join(d, 'file', 'out.html'),
+      '(ENOTDIR|ENOENT)',
+      '(ENOTDIR: not a directory|does not exist)',
+    ],
+    ['a folder as the output', (d: string) => d, 'EISDIR', 'the output is a folder'],
+  ])('checks %s before anything is written', (_case, pathIn, code, reason) => {
+    writeFileSync(join(dir, 'file'), '');
+    const path = pathIn(dir);
+    expect(() => {
+      checkWritable(path);
+    }).toThrow(
+      expect.objectContaining({
+        code: expect.stringMatching(new RegExp(`^${code}$`)),
+        message: expect.stringMatching(new RegExp(`^Cannot write .*${reason}`)),
+      }),
+    );
+    expect(() => {
+      writeFileAtomic(path, 'x');
+    }).toThrow(
+      expect.objectContaining({
+        code: expect.stringMatching(new RegExp(`^${code}$`)),
+        message: expect.stringContaining(`Cannot write ${path}: `),
+      }),
+    );
+  });
+
+  it('passes a path that can be written, and a stream', () => {
+    expect(() => {
+      checkWritable(join(dir, 'new.html'));
+      checkWritable('/dev/stdout', 'linux');
+    }).not.toThrow();
   });
 });

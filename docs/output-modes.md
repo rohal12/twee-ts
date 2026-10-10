@@ -32,7 +32,6 @@ Twee has no way to escape passage text, and its parser trims passage names and s
 
 - A line of passage text that starts with `::` (after any byte order marks), which Twee reads as a new passage header. This is common in stylesheets (`::selection`, `::placeholder`, `::-webkit-scrollbar`). In passages tagged `stylesheet` or `script`, such a line is written indented by one space, which leaves the CSS or JavaScript working, so the stylesheet or script reads back whole; only a template literal or a string continued across lines would see the extra space. In other passages, the line is written as it is.
 - A passage name that is empty, has leading or trailing whitespace, or holds a line break.
-- A tag that is empty or holds whitespace (only the API, through `tagAliases`, can make one).
 - A carriage return in passage text, which Twee reads as a line break.
 - A metadata key that reads back as another one (`Position` reads as `position`).
 

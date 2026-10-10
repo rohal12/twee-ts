@@ -160,7 +160,7 @@ describe('formatResolutionTimeout: one time limit for finding the story format',
 
   it.each([-1, Number.NaN])('rejects %s', async (value) => {
     await expect(compile({ sources: storySource(), formatResolutionTimeout: value })).rejects.toThrow(
-      /formatResolutionTimeout must be 0 or more milliseconds/,
+      '"formatResolutionTimeout" must be a number of milliseconds, 0 or more.',
     );
     await expect(resolveRemoteFormat('SugarCube', '2.0.0', { resolutionTimeout: value })).rejects.toMatchObject({
       name: 'TweeTsError',

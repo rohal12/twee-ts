@@ -115,7 +115,10 @@ describe('validateConfig() accepts exactly what the schema accepts', () => {
   it.each([
     [{ output: '' }, false],
     [{ output: '-' }, true],
-    [{ headFile: '' }, true],
+    [{ headFile: '' }, false],
+    [{ formatId: '' }, false],
+    [{ startPassage: '' }, false],
+    [{ formatId: 'harlowe-3', startPassage: 'Begin', headFile: 'head.html' }, true],
     [{ sources: [''] }, false],
     [{ exclude: ['**/*.png'] }, true],
     [{ formatFetchTimeout: -1 }, false],
@@ -153,7 +156,7 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('rebases every path key and every exclude glob, keeping absolute paths, "-" and an empty headFile', () => {
+  it('rebases every path key and every exclude glob, keeping absolute paths and "-"', () => {
     const at = identify(dir).display;
     const config = rebaseConfigPaths(
       {
@@ -161,7 +164,7 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
         exclude: ['src/**/*.png', './art/**', '/abs/**'],
         output: 'out.html',
         modules: ['m.js'],
-        headFile: '',
+        headFile: 'head.html',
         formatPaths: ['formats'],
         formatUrls: ['https://example.com/format.js'],
         outputMode: 'json',
@@ -174,7 +177,7 @@ describe('paths in a config file are relative to its folder (FS-11)', () => {
       exclude: [`${posixAt}/src/**/*.png`, `${posixAt}/art/**`, '/abs/**'],
       output: join(at, 'out.html'),
       modules: [join(at, 'm.js')],
-      headFile: '',
+      headFile: join(at, 'head.html'),
       formatPaths: [join(at, 'formats')],
       formatUrls: ['https://example.com/format.js'],
       outputMode: 'json',

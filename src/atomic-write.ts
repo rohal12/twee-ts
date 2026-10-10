@@ -6,12 +6,15 @@
  * |---|---|
  * | nothing, or a regular file with one link | atomic replace: a temporary file in the same folder, renamed over it |
  * | a regular file with more than one hard link | written in place, so every link sees the new build |
+ * | a writable regular file whose folder takes no temporary file or rename (a read-only folder, a file bind-mounted on its own) | written in place, as Tweego writes it: not atomic |
  * | a read-only regular file | refused (EACCES), as Tweego's `os.Create` refuses it |
  * | a FIFO, a character device (`/dev/null`, a terminal), `/dev/stdout`, `/dev/fd/N`, a Windows device name (`NUL`) | written through, as a stream |
  * | a folder, a socket, a block device | refused |
+ * | nothing, in a folder that does not exist | refused (ENOENT) |
  *
  * A symbolic link (even a dangling one, or a chain of them) is followed to the file it finally points to,
- * which is then written as above; the link stays. A replaced file keeps its permissions.
+ * which is then written as above; the link stays. A replaced file keeps its permissions. An error names the
+ * path the caller gave, never the temporary file.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -29,6 +32,7 @@ import {
 } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { basename, dirname, join, posix, resolve } from 'node:path';
+import { getSystemErrorMessage } from 'node:util';
 import { identify } from './path-identity.js';
 
 /**
@@ -36,8 +40,8 @@ import { identify } from './path-identity.js';
  * previous file or the complete new one, never a partly written file.
  *
  * On failure (a full disk, a missing folder, a refused target) a temporary file is removed, `path` is
- * left as it was, and the error is thrown with `path` in its message, its original `code`, and the
- * original error as its `cause`.
+ * left as it was (unless it was being written in place), and the error is thrown with `path` in its
+ * message, its original `code`, and the original error as its `cause`.
  */
 export function writeFileAtomic(path: string, data: string, platform: NodeJS.Platform = process.platform): void {
   try {
@@ -122,15 +126,49 @@ export function writeToDescriptor(
   }
 }
 
+/**
+ * Throws, as writeFileAtomic() would, when `path` can't be written: a folder, a read-only file, a missing
+ * folder. A caller checks this before a build, so a target that can't be written fails before the work.
+ */
+export function checkWritable(path: string, platform: NodeJS.Platform = process.platform): void {
+  try {
+    planWrite(path, platform);
+  } catch (e) {
+    throw writeError(path, e);
+  }
+}
+
+/** The file `path` is written to (links resolved) and how, or undefined for a stream path; throws when it can't be. */
+function planWrite(
+  path: string,
+  platform: NodeJS.Platform,
+): { readonly target: string; readonly strategy: WriteStrategy } | undefined {
+  if (isStreamPath(path, platform)) return undefined;
+  const target = resolveWriteTarget(path);
+  const stat = statSync(target, { throwIfNoEntry: false });
+  if (stat === undefined) checkFolder(target);
+  return { target, strategy: strategyFor(target, stat) };
+}
+
+/**
+ * Throws when there is no folder to hold the new file `target`: nothing at its path, or a file. (On POSIX a
+ * file there has already failed the look at `target`, with ENOTDIR; Windows reports that look as ENOENT.)
+ */
+function checkFolder(target: string): void {
+  const folder = dirname(target);
+  if (statSync(folder, { throwIfNoEntry: false })?.isDirectory() !== true)
+    throw codeError('ENOENT', `the folder ${folder} does not exist`);
+}
+
 function writeTo(path: string, data: string, platform: NodeJS.Platform): void {
-  if (isStreamPath(path, platform)) {
+  const plan = planWrite(path, platform);
+  if (plan === undefined) {
     const fd = platform === 'win32' ? undefined : ownDescriptor(path);
     if (fd === undefined) writeFileSync(path, data, { encoding: 'utf-8' });
     else writeToDescriptor(fd, data);
     return;
   }
-  const target = resolveWriteTarget(path);
-  const strategy = strategyFor(target, statSync(target, { throwIfNoEntry: false }));
+  const { target, strategy } = plan;
   switch (strategy) {
     case 'stream':
     case 'in-place':
@@ -181,7 +219,11 @@ export function isStreamPath(path: string, platform: NodeJS.Platform): boolean {
   return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(posix.resolve(path));
 }
 
-/** Replaces `target` with a temporary file holding `data`, keeping the permissions of the file replaced. */
+/**
+ * Replaces `target` with a temporary file holding `data`, keeping the permissions of the file replaced. When
+ * the folder refuses the temporary file or the rename and `target` is a file that can be written, it is
+ * written in place instead (see canWriteInPlace).
+ */
 function replaceAtomically(target: string, data: string): void {
   const temp = join(dirname(target), `.${basename(target)}.${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
   try {
@@ -190,8 +232,30 @@ function replaceAtomically(target: string, data: string): void {
     renameWithRetry(temp, target);
   } catch (e) {
     rmSync(temp, { force: true });
-    throw e;
+    if (!canWriteInPlace(target, e)) throw e;
+    writeFileSync(target, data, { encoding: 'utf-8' });
   }
+}
+
+/**
+ * Codes for a folder that takes no new file (EACCES, EPERM: a read-only folder) or no rename over the file
+ * (EBUSY: a file bind-mounted on its own; on Windows also EPERM, EACCES while another program holds it open).
+ */
+const NO_REPLACE_CODES = new Set(['EACCES', 'EPERM', 'EBUSY']);
+
+/**
+ * Whether a replace that failed with `error` falls back to writing `target` in place: the folder refused the
+ * temporary file or the rename, and `target` is a regular file (strategyFor() found it writable). Tweego writes
+ * every output in place, so a file it can rebuild, twee-ts can too; it is then not atomic. Any other failure (a
+ * full disk, no file to write in place) is kept, and a file made read-only meanwhile refuses the write itself.
+ */
+function canWriteInPlace(target: string, error: unknown): boolean {
+  const code = error instanceof Error && 'code' in error ? error.code : undefined;
+  return (
+    typeof code === 'string' &&
+    NO_REPLACE_CODES.has(code) &&
+    statSync(target, { throwIfNoEntry: false })?.isFile() === true
+  );
 }
 
 /** Codes Windows gives a rename over a file that another program (an antivirus, a live server) has open. */
@@ -262,9 +326,17 @@ function keepPermissions(target: string, temp: string): void {
   }
 }
 
-/** `cause` as an error that names `path` and keeps the original error code. */
+/**
+ * `cause` as an error that names `path` and keeps the original error code. A system error's own message names
+ * the file its call was given, which may be the temporary file: its code and description are used instead.
+ */
 function writeError(path: string, cause: unknown): Error {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message =
+    cause instanceof Error && 'errno' in cause && typeof cause.errno === 'number' && 'code' in cause
+      ? `${String(cause.code)}: ${getSystemErrorMessage(cause.errno)}`
+      : cause instanceof Error
+        ? cause.message
+        : String(cause);
   const error: Error & { code?: unknown } = new Error(`Cannot write ${path}: ${message}`, { cause });
   if (cause instanceof Error && 'code' in cause) error.code = cause.code;
   return error;

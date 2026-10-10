@@ -39,16 +39,18 @@ A build never writes over one of its inputs, in any output mode. The output is c
 
 How the output is written depends on what is there:
 
-| Target                                                                        | Written                                                                                                                             |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| nothing, or a regular file                                                    | atomically: a temporary file next to it, renamed into place, so a reader never sees part of a build; the file keeps its permissions |
-| a regular file with more than one hard link                                   | in place, so every link sees the new build                                                                                          |
-| a read-only file                                                              | refused (EACCES), as Tweego refuses it                                                                                              |
-| a symbolic link                                                               | the file it finally points to, as above; the link stays                                                                             |
-| `/dev/null`, a FIFO, a terminal, `/dev/stdout`, `/dev/fd/N`, `NUL` on Windows | written through, as a stream                                                                                                        |
-| a folder, a socket, a block device                                            | refused                                                                                                                             |
+| Target                                                                                                            | Written                                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| nothing, or a regular file                                                                                        | atomically: a temporary file next to it, renamed into place, so a reader never sees part of a build; the file keeps its permissions |
+| a regular file with more than one hard link                                                                       | in place, so every link sees the new build                                                                                          |
+| a writable file in a folder that takes no new file or rename (a read-only folder, a file bind-mounted on its own) | in place, as Tweego writes it; not atomic                                                                                           |
+| a read-only file                                                                                                  | refused (EACCES), as Tweego refuses it                                                                                              |
+| a symbolic link                                                                                                   | the file it finally points to, as above; the link stays                                                                             |
+| `/dev/null`, a FIFO, a terminal, `/dev/stdout`, `/dev/fd/N`, `NUL` on Windows                                     | written through, as a stream                                                                                                        |
+| a folder, a socket, a block device                                                                                | refused                                                                                                                             |
+| nothing, in a folder that does not exist                                                                          | refused (ENOENT); the folder is not created                                                                                         |
 
-On Windows, a rename over a file another program holds open (an antivirus scanner, a live-reload server) is retried for about 0.6 s.
+An output that is refused fails a build (not watch mode, where a later build may find the folder) before the sources are read, and the error names the output path given (`Cannot write out/story.html: ENOENT: the folder out does not exist`), never the temporary file. On Windows, a rename over a file another program holds open (an antivirus scanner, a live-reload server) is retried for about 0.6 s.
 
 ### Output Modes
 
@@ -63,7 +65,7 @@ On Windows, a rename over a file another program holds open (an antivirus scanne
 
 See [Output Modes](./output-modes) for details on each mode.
 
-Twine 1 output (HTML and archive) is stamped with the build time. Set `SOURCE_DATE_EPOCH` (whole seconds since 1970, UTC, as the [Reproducible Builds](https://reproducible-builds.org/specs/source-date-epoch/) project defines it) to build the same bytes every time; a value that is not such a number is an error.
+Twine 1 output (HTML and archive) is stamped with the build time. Set `SOURCE_DATE_EPOCH` (whole seconds since 1970, UTC, as the [Reproducible Builds](https://reproducible-builds.org/specs/source-date-epoch/) project defines it) to build the same bytes every time. A value that is not such a number, or is after 9999-12-31T23:59:59Z (`253402300799`), the last time Twine 1 can record, fails a Twine 1 build; other output never reads the variable.
 
 ### Head Injection
 

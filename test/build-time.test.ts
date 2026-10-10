@@ -59,10 +59,20 @@ describe('Twine 1 archive time stamps', () => {
     expect(first).toContain('created="202311142213"');
   });
 
-  it('fails the build for a SOURCE_DATE_EPOCH it cannot read, whatever the output', async () => {
+  it('fails a stamped build for a SOURCE_DATE_EPOCH it cannot read, and reads it for no other output (#387)', async () => {
     vi.stubEnv('SOURCE_DATE_EPOCH', 'yesterday');
-    await expect(compile({ sources: [{ filename: 'a.tw', content: STORY }], outputMode: 'twee3' })).rejects.toThrow(
-      'SOURCE_DATE_EPOCH must be a whole number of seconds',
+    await expect(archive()).rejects.toThrow('SOURCE_DATE_EPOCH must be a whole number of seconds');
+    const unstamped = ['twee3', 'twee1', 'json', 'twine2-archive'] as const;
+    const results = await Promise.all(
+      unstamped.map((outputMode) => compile({ sources: [{ filename: 'a.tw', content: STORY }], outputMode })),
     );
+    expect(results.map((result) => result.output.length > 0)).toEqual(unstamped.map(() => true));
+  });
+
+  it('refuses a SOURCE_DATE_EPOCH after the year 9999, which Twine 1 time stamps cannot hold (#387)', async () => {
+    vi.stubEnv('SOURCE_DATE_EPOCH', '253402300799');
+    expect(await archive()).toContain('created="999912312359"');
+    vi.stubEnv('SOURCE_DATE_EPOCH', '253402300800');
+    await expect(archive()).rejects.toThrow(/at most 253402300799 \(the end of the year 9999\)/);
   });
 });
