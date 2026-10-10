@@ -16,6 +16,7 @@ import { isRot13Obfuscated } from './twine1-obfuscation.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
 import { buildTime } from './build-time.js';
+import { failureOfRead } from './input-policy.js';
 
 const CREATOR_NAME = 'twee-ts';
 
@@ -115,13 +116,36 @@ export function toTwine1HTML(
   return filled.output;
 }
 
-/** The footer of a pre-1.4 format, or the default one when the format has none. */
+/**
+ * The footer of a pre-1.4 format, or the default one when the format has none (nothing at its path, or a dangling
+ * link, as Tweego tells them). A footer that is there but can't be read is a TweeTsError (see `componentUnavailable()`).
+ */
 function readFooter(formatDir: string, diagnostics: Diagnostic[] | undefined): string {
+  const path = join(formatDir, 'footer.html');
   try {
-    return readUTF8(join(formatDir, 'footer.html'), diagnostics);
-  } catch {
-    return DEFAULT_TWINE1_FOOTER;
+    return readUTF8(path, diagnostics);
+  } catch (e) {
+    if (isAbsent(path, e)) return DEFAULT_TWINE1_FOOTER;
+    throw componentUnavailable('Format component cannot be read', path, e);
   }
+}
+
+/**
+ * Whether reading an optional format component failed because nothing is at its path: only then does the format
+ * do without it, as in Tweego (`os.IsNotExist`, which a dangling link also gives). A folder, a file it may not read
+ * or bytes it can't decode are errors, so the output never silently lacks a part of the format.
+ */
+function isAbsent(path: string, e: unknown): boolean {
+  const failure = failureOfRead(path, e);
+  return failure === 'missing' || failure === 'dangling-link';
+}
+
+/** The TweeTsError for a format component that can't be used. */
+function componentUnavailable(what: string, path: string, e: unknown): TweeTsError {
+  return new TweeTsError(`${what}: ${path}: ${e instanceof Error ? e.message : String(e)}`, [], {
+    code: 'FORMAT_UNAVAILABLE',
+    cause: e,
+  });
 }
 
 /**
@@ -193,13 +217,9 @@ function tryReplaceComponent(
     const content = downloaded?.() ?? readUTF8(componentPath, diagnostics);
     return template.replace(placeholder, () => content);
   } catch (e) {
-    if (required) {
-      throw new TweeTsError(
-        `Required format component not found: ${componentPath}: ${e instanceof Error ? e.message : String(e)}`,
-        [],
-        { code: 'FORMAT_UNAVAILABLE', cause: e },
-      );
-    }
-    return template;
+    if (required) throw componentUnavailable('Required format component not found', componentPath, e);
+    // An optional component is left out only when it is absent (see isAbsent()).
+    if (isAbsent(componentPath, e)) return template;
+    throw componentUnavailable('Format component cannot be read', componentPath, e);
   }
 }

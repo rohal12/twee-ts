@@ -1,6 +1,7 @@
 /**
  * What a build does when an input can't be used: one table for every input role and failure kind,
- * so that sources, modules, the head file and the config file fail the same way for the same cause,
+ * so that sources, modules, the head file and the config file fail the same way for the same cause
+ * (and a source or module given twice is skipped with the same warning, see `duplicateInput()`),
  * and Tweego's choices are kept where Tweego makes one. docs/cli.md shows the same table.
  *
  * Levels:
@@ -13,6 +14,7 @@
  * Every message names the role and the path and gives the cause: `load head file h.html: ENOENT: …`, or for
  * what source discovery finds while walking, as Tweego words it, `path a.tw: …` (`module path m.js: …`).
  */
+import { lstatSync } from 'node:fs';
 import type { Diagnostic } from './types.js';
 
 /** What an input is for. */
@@ -195,6 +197,27 @@ export function problemDiagnostic(problem: InputProblem): Diagnostic | undefined
       throw new Error(`unhandled policy level: ${String(_exhaustive)}`);
     }
   }
+}
+
+/**
+ * The failure kind of an error thrown while opening or reading the file at `path`, telling a dangling symbolic
+ * link (which reads as ENOENT) from a missing file.
+ */
+export function failureOfRead(path: string, e: unknown): InputFailure {
+  const failure = failureOfError(e);
+  if (failure !== 'missing') return failure;
+  try {
+    return lstatSync(path).isSymbolicLink() ? 'dangling-link' : 'missing';
+  } catch {
+    // Nothing to look at (it is missing, or below a file): missing.
+    return 'missing';
+  }
+}
+
+/** The warning for an input given again, under this or another spelling (`earlier`), which is skipped. */
+export function duplicateInput(role: InputRole, path: string, earlier: string): Diagnostic {
+  const same = earlier === path ? '' : ` (the same file as ${earlier})`;
+  return { level: 'warning', message: `load ${ROLE_NOUN[role]}${path}: Skipping duplicate${same}.` };
 }
 
 /** The failure kind of an error thrown while opening or reading a file. */

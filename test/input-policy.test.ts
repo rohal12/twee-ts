@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { INPUT_FAILURES, INPUT_POLICY, failureOfError, inputProblem, problemDiagnostic } from '../src/input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole, PolicyLevel } from '../src/input-policy.js';
 import { compile, TweeTsError } from '../src/compiler.js';
-import { loadConfigFile } from '../src/config.js';
+import { CONFIG_FILENAME, loadConfig, loadConfigFile } from '../src/config.js';
 import { decodeText, TextDecodeError } from '../src/util.js';
 import { identify } from '../src/path-identity.js';
+import { modifyHead } from '../src/modules.js';
+import type { Diagnostic } from '../src/types.js';
 
 const FIXTURES_DIR = join(import.meta.dirname, 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -260,16 +262,66 @@ describe('the input policy applied', () => {
         },
       ]);
       expect(result.output).toContain('window.a = 1;');
+      // Only the module that was injected is an external file (#398).
+      expect(result.stats.externalFiles).toEqual([identify(join(dir, 'mods', 'a.js')).display]);
+    });
+
+    it('lists as external files exactly the modules injected and the head file (#398)', async () => {
+      const mods = join(dir, 'mods');
+      mkdirSync(join(mods, 'sub'), { recursive: true });
+      writeFileSync(join(mods, 'a.css'), 'body{}');
+      writeFileSync(join(mods, 'empty.css'), '  \n');
+      writeFileSync(join(mods, 'font.woff2'), Buffer.from([1, 2, 3]));
+      writeFileSync(join(mods, 'sub', 'b.js'), 'window.b = 1;');
+      writeFileSync(join(mods, 'readme.txt'), 'hi');
+      writeFileSync(join(mods, 'img.png'), Buffer.from([0x89, 0x50]));
+      writeFileSync(join(mods, 'bad.js'), Buffer.from([0xff, 0xfe, 0, 0, 0x41, 0, 0, 0]));
+      const head = join(dir, 'head.html');
+      writeFileSync(head, '<meta name="x">');
+      const result = await compile({ ...options, sources: [story], modules: [mods], headFile: head });
+      // A module that can't be decoded is an error, and is not listed; an empty module is loaded, as in Tweego.
+      expect(result.diagnostics.map((d) => [d.level, d.file])).toEqual([
+        ['error', identify(join(mods, 'bad.js')).display],
+      ]);
       expect(result.stats.externalFiles).toEqual(
-        [named, join(dir, 'mods', 'a.js'), join(dir, 'mods', 'readme.txt')].map((p) => identify(p).display),
+        [join(mods, 'a.css'), join(mods, 'empty.css'), join(mods, 'font.woff2'), join(mods, 'sub', 'b.js'), head].map(
+          (p) => identify(p).display,
+        ),
       );
     });
 
-    it('loads a module named twice once', async () => {
+    it('loads a module given twice once, with a warning, and lists it once (#391)', async () => {
       const module = join(dir, 'a.css');
       writeFileSync(module, 'body{}');
-      const result = await compile({ ...options, sources: [story], modules: [module, join(dir, '.', 'a.css')] });
+      symlinkSync(module, join(dir, 'alias.css'));
+      const result = await compile({
+        ...options,
+        sources: [story],
+        modules: [module, module, join(dir, 'alias.css'), dir],
+      });
       expect(result.output.split('body{}')).toHaveLength(2);
+      const shown = identify(module).display;
+      const alias = {
+        level: 'warning',
+        message: `load module ${identify(join(dir, 'alias.css')).display}: Skipping duplicate (the same file as ${shown}).`,
+      };
+      expect(result.diagnostics).toEqual([
+        { level: 'warning', message: `load module ${shown}: Skipping duplicate.` },
+        alias,
+        // The folder holds both spellings again.
+        { level: 'warning', message: `load module ${shown}: Skipping duplicate.` },
+        alias,
+      ]);
+      expect(result.stats.externalFiles).toEqual([shown]);
+    });
+
+    it('warns about a module given twice to modifyHead(), as Tweego does', () => {
+      const module = join(dir, 'a.js');
+      writeFileSync(module, 'window.a = 1;');
+      const diagnostics: Diagnostic[] = [];
+      const html = modifyHead('<html><head></head><body></body></html>', [module, module], undefined, diagnostics);
+      expect(html.split('window.a = 1;')).toHaveLength(2);
+      expect(diagnostics).toEqual([{ level: 'warning', message: `load module ${module}: Skipping duplicate.` }]);
     });
   });
 
@@ -316,6 +368,20 @@ describe('the input policy applied', () => {
       });
     });
 
+    it('an in-memory source of a type they do not load is skipped with one warning, never decoded (#404)', async () => {
+      // Bytes that are not UTF-8, and bytes that can't be decoded at all (UTF-32): neither is looked at.
+      for (const content of [
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0]),
+        Buffer.from([0xff, 0xfe, 0, 0]),
+        'text',
+      ]) {
+        const result = await compile({ ...options, sources: [story, { filename: 'x.PNG', content }] });
+        expect(result.diagnostics).toEqual([
+          { level: 'warning', message: 'load x.PNG: in-memory sources of type .png are not supported; skipped.' },
+        ]);
+      }
+    });
+
     it('the same file named in two spellings is loaded once', async () => {
       symlinkSync(story, join(dir, 'alias.tw'));
       const result = await compile({ ...options, sources: [story, join(dir, 'alias.tw')] });
@@ -336,6 +402,82 @@ describe('the input policy applied', () => {
       const utf32 = join(dir, 'c.json');
       writeFileSync(utf32, Buffer.from([0xff, 0xfe, 0, 0, 0x7b, 0, 0, 0]));
       expect(() => loadConfigFile(utf32)).toThrow(/UTF-32 text is not supported/);
+    });
+
+    // The config found in the working directory is "none" only when nothing is at its path (#395).
+    describe('the config found in a folder, by policy cell', () => {
+      const found = (): string => join(dir, CONFIG_FILENAME);
+
+      it('is none when nothing is at its path', () => {
+        expect(INPUT_POLICY.config.found.missing).toBe('ignore');
+        expect(loadConfig(dir)).toBeNull();
+      });
+
+      it('is loaded when it is a link to a config', () => {
+        writeFileSync(join(dir, 'real.json'), '{"sources":["src"]}');
+        symlinkSync(join(dir, 'real.json'), found());
+        expect(loadConfig(dir)?.sources).toEqual([join(dir, 'src')].map((p) => identify(p).display));
+      });
+
+      const fatal: readonly (readonly [InputFailure, string, () => void, RegExp])[] = [
+        [
+          'dangling-link',
+          'a dangling link',
+          () => {
+            symlinkSync(join(dir, 'nowhere.json'), found());
+          },
+          /: Symbolic link to a missing target\.$/,
+        ],
+        [
+          'unreadable',
+          'a link loop',
+          () => {
+            symlinkSync(found(), found());
+          },
+          /ELOOP/,
+        ],
+        [
+          'directory',
+          'a folder',
+          () => {
+            mkdirSync(found());
+          },
+          /EISDIR/,
+        ],
+        [
+          'undecodable',
+          'undecodable',
+          () => {
+            writeFileSync(found(), Buffer.from([0xff, 0xfe, 0, 0, 0x7b, 0, 0, 0]));
+          },
+          /UTF-32/,
+        ],
+      ];
+      for (const [failure, what, make, message] of fatal) {
+        it.skipIf(process.platform === 'win32' && failure === 'unreadable')(
+          `is fatal when it is ${what} (${failure})`,
+          () => {
+            make();
+            expect(INPUT_POLICY.config.found[failure]).toBe('fatal');
+            expect(() => loadConfig(dir)).toThrow(message);
+            expect(() => loadConfig(dir)).toThrow(expect.objectContaining({ code: 'INPUT_UNAVAILABLE' }));
+          },
+        );
+      }
+
+      it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+        'is fatal when its folder cannot be searched (unreadable)',
+        () => {
+          const blocked = join(dir, 'blocked');
+          mkdirSync(blocked);
+          chmodSync(blocked, 0o000);
+          try {
+            expect(() => loadConfig(blocked)).toThrow(/^Cannot read config file .*: EACCES/);
+          } finally {
+            chmodSync(blocked, 0o700);
+          }
+        },
+      );
     });
   });
 });

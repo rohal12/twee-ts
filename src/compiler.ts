@@ -3,7 +3,6 @@
  * compile(), compileToFile(), watch().
  * Ported from tweego.go + config.go.
  */
-import { lstatSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import type {
   CompileOptions,
@@ -43,8 +42,8 @@ import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.
 import { clearIndexCache } from './remote-formats.js';
 import { isOwnOutput, writeFileAtomic } from './atomic-write.js';
 import { identify, isKeyInside } from './path-identity.js';
-import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
-import type { InputFailure, InputProblem } from './input-policy.js';
+import { duplicateInput, failureOfRead, inputProblem, problemDiagnostic } from './input-policy.js';
+import type { InputProblem } from './input-policy.js';
 import { readUTF8, similarKey } from './util.js';
 import { VERSION } from './version.js';
 import { TweeTsError } from './errors.js';
@@ -488,18 +487,6 @@ function fatalInput(problem: InputProblem, diagnostics: readonly Diagnostic[]): 
   return new TweeTsError(problem.message, [...diagnostics], { code: 'INPUT_UNAVAILABLE', cause: problem.cause });
 }
 
-/** The failure kind of a file that could not be read, telling a dangling link from a missing file. */
-function readFailure(path: string, e: unknown): InputFailure {
-  const failure = failureOfError(e);
-  if (failure !== 'missing') return failure;
-  try {
-    return lstatSync(path).isSymbolicLink() ? 'dangling-link' : 'missing';
-  } catch {
-    // Nothing to look at (it is missing, or below a file): missing.
-    return 'missing';
-  }
-}
-
 /**
  * The head file's text, trimmed. Any failure to read it is fatal, as in Tweego (`modifyHead`): the output
  * would silently lack what the author put in the head.
@@ -508,22 +495,31 @@ function readHeadFile(path: string, diagnostics: Diagnostic[]): string {
   try {
     return readUTF8(path, diagnostics).trim();
   } catch (e) {
-    throw fatalInput(inputProblem('head', 'named', readFailure(path, e), path, e), diagnostics);
+    throw fatalInput(inputProblem('head', 'named', failureOfRead(path, e), path, e), diagnostics);
   }
 }
 
 /**
- * The module tags for the head, each module read on its own so a failure names its file; a module that
- * can't be read is reported as the input policy says (an error) and left out.
+ * The module tags for the head, each module read on its own so a failure names its file, and the modules loaded
+ * (Tweego's "External files"). A module that can't be read is reported as the input policy says (an error) and
+ * left out, and so is one of a type modules don't load; a module given again, under this or another spelling, is
+ * skipped with a warning, as a source is.
  */
-function moduleTags(files: readonly DiscoveredFile[], diagnostics: Diagnostic[]): string {
-  const seen = new Set<string>();
+function moduleTags(
+  files: readonly DiscoveredFile[],
+  diagnostics: Diagnostic[],
+): { readonly tags: string; readonly loaded: readonly string[] } {
+  const seen = new Map<string, string>();
   const tags: string[] = [];
+  const loaded: string[] = [];
   // One id namespace for the page, kept across the single-module loads below.
   const idFor = moduleIds(diagnostics);
   for (const file of files) {
-    if (seen.has(file.key)) continue;
-    seen.add(file.key);
+    const earlier = seen.get(file.key);
+    if (earlier !== undefined) {
+      diagnostics.push(duplicateInput('module', file.path, earlier));
+      continue;
+    }
     if (!isLoadableType(file.path, 'module')) {
       const diagnostic = problemDiagnostic(
         inputProblem('module', file.discovery, 'unsupported-type', file.path, undefined),
@@ -536,12 +532,16 @@ function moduleTags(files: readonly DiscoveredFile[], diagnostics: Diagnostic[])
       if (tag.length > 0) tags.push(tag);
     } catch (e) {
       const diagnostic = problemDiagnostic(
-        inputProblem('module', file.discovery, readFailure(file.path, e), file.path, e),
+        inputProblem('module', file.discovery, failureOfRead(file.path, e), file.path, e),
       );
       if (diagnostic) diagnostics.push(diagnostic);
+      continue;
     }
+    // Only a module that loaded counts as given: one that failed is tried, and reported, again (as a source is).
+    seen.set(file.key, file.path);
+    loaded.push(file.path);
   }
-  return tags.join('\n');
+  return { tags: tags.join('\n'), loaded };
 }
 
 /**
@@ -709,10 +709,12 @@ async function buildOutput(options: CompileOptions, context: BuildContext): Prom
       // Modules and head file, injected before the template's closing head tag while the template is filled
       diagnostics.push(...modules.diagnostics);
       const { headFile } = options;
-      const head = [moduleTags(modules.files, diagnostics), headFile ? readHeadFile(headFile, diagnostics) : '']
+      const injected = moduleTags(modules.files, diagnostics);
+      const head = [injected.tags, headFile ? readHeadFile(headFile, diagnostics) : '']
         .filter((part) => part.length > 0)
         .join('\n');
-      externalFiles = [...modules.filenames, ...(headFile ? [identify(headFile).display] : [])];
+      // The modules that loaded and the head file: what went into the head, as Tweego lists it.
+      externalFiles = [...injected.loaded, ...(headFile ? [identify(headFile).display] : [])];
 
       output = format.isTwine2
         ? toTwine2HTML(story, format, startName, { sourceInfo, head, diagnostics })

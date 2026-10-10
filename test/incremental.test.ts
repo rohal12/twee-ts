@@ -1,8 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import fc from 'fast-check';
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  utimesSync,
+} from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { CompileResult, Diagnostic, FileCacheEntry, ReadonlyStory } from '../src/types.js';
+import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry, ReadonlyStory } from '../src/types.js';
 import { createStory } from '../src/story.js';
 import { loadSourcesCached } from '../src/loader.js';
 import { compile, compileIncremental } from '../src/compiler.js';
@@ -633,5 +643,125 @@ describe('incremental cache and a file that fails to load', () => {
     const story = createStory();
     loadSourcesCached(story, [a, b], opts, [], new Set(), cache, new Set([b]));
     expect(passageText(story, 'A')).toBe('NEW_A');
+  });
+});
+
+/**
+ * compileIncremental() against compile(), the oracle, after file-system changes reported accurately in
+ * `changedFiles`, where one path to a file can shadow another (a link to a file named on its own): a path
+ * skipped as a duplicate keeps no entry to replay once it loads again (#400).
+ */
+describe.skipIf(process.platform === 'win32')('incremental builds with paths that shadow each other (#400)', () => {
+  const STORY_DATA = {
+    filename: 'StoryData.tw',
+    content: ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n',
+  };
+
+  /** A tree with `src/` and `ext/y.twee`, both sources, and the options that build it. */
+  function tree(): { readonly paths: readonly string[]; readonly options: CompileOptions } {
+    const dir = makeTmpDir();
+    mkdirSync(join(dir, 'src'));
+    mkdirSync(join(dir, 'ext'));
+    const paths = [join(dir, 'src', '01.twee'), join(dir, 'src', '03.twee'), join(dir, 'ext', 'y.twee')];
+    paths.forEach((path, i) => {
+      writeFileSync(path, `:: P${String(i)}\nv0\n`);
+    });
+    return {
+      paths,
+      options: { sources: [STORY_DATA, join(dir, 'src'), join(dir, 'ext', 'y.twee')], outputMode: 'twee3' },
+    };
+  }
+
+  /** Replaces whatever is at `path` (a file or a link) by a link to `target`. */
+  function relink(path: string, target: string): void {
+    rmSync(path);
+    symlinkSync(target, path);
+  }
+
+  /** Replaces whatever is at `path` by a regular file holding `text`. */
+  function replaceByFile(path: string, text: string): void {
+    rmSync(path);
+    writeFileSync(path, text);
+  }
+
+  async function expectOracle(options: CompileOptions, actual: CompileResult): Promise<void> {
+    const expected = await compile(options);
+    expect(actual.output).toBe(expected.output);
+    expect(actual.diagnostics).toEqual(expected.diagnostics);
+  }
+
+  it('reparses a file once the path that shadowed it is gone', async () => {
+    const { paths, options } = tree();
+    const [, link = '', target = ''] = paths;
+    writeFileSync(link, ':: R\nREG1\n');
+    writeFileSync(target, ':: Y\nY1\n');
+    const cache = new Map<string, FileCacheEntry>();
+    await compileIncremental(options, cache);
+
+    relink(link, target);
+    await expectOracle(options, await compileIncremental(options, cache, new Set([link])));
+    writeFileSync(target, ':: Y\nY2\n');
+    await expectOracle(options, await compileIncremental(options, cache, new Set([target])));
+    replaceByFile(link, ':: R\nREG2\n');
+    const last = await compileIncremental(options, cache, new Set([link]));
+    expect(last.output).toContain('Y2');
+    expect(last.output).not.toContain('Y1');
+    await expectOracle(options, last);
+  });
+
+  type Op =
+    | { readonly kind: 'write'; readonly path: number }
+    | { readonly kind: 'edit'; readonly path: number }
+    | { readonly kind: 'link'; readonly path: number; readonly target: number };
+
+  const index = fc.integer({ min: 0, max: 2 });
+  const op: fc.Arbitrary<Op> = fc.oneof(
+    fc.record({ kind: fc.constant('write' as const), path: index }),
+    fc.record({ kind: fc.constant('edit' as const), path: index }),
+    fc.record({ kind: fc.constant('link' as const), path: index, target: index }),
+  );
+
+  /** Applies `step` to the tree; returns the path a watcher reports, or undefined for a step that does nothing. */
+  function apply(paths: readonly string[], step: Op, version: number): string | undefined {
+    const path = paths[step.path] ?? '';
+    const text = `:: P${String(step.path)}\nv${String(version)}\n`;
+    switch (step.kind) {
+      case 'write':
+        replaceByFile(path, text);
+        return path;
+      case 'edit': {
+        // Written where the path leads: the watcher reports the file written.
+        const written = realpathSync(path);
+        writeFileSync(written, text);
+        return written;
+      }
+      case 'link': {
+        const target = paths[step.target] ?? '';
+        // Only to another regular file, so there are no link loops.
+        if (step.target === step.path || lstatSync(target).isSymbolicLink()) return undefined;
+        relink(path, target);
+        return path;
+      }
+      default: {
+        const _exhaustive: never = step;
+        throw new Error(`unhandled op: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+
+  it('equals compile() after any sequence of writes, edits through links and relinks', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.array(op, { maxLength: 8 }), async (ops) => {
+        const { paths, options } = tree();
+        const cache = new Map<string, FileCacheEntry>();
+        await compileIncremental(options, cache);
+        for (const [version, step] of ops.entries()) {
+          const changed = apply(paths, step, version + 1);
+          const changedFiles = new Set(changed === undefined ? [] : [changed]);
+          await expectOracle(options, await compileIncremental(options, cache, changedFiles));
+        }
+      }),
+      { numRuns: 60 },
+    );
   });
 });
