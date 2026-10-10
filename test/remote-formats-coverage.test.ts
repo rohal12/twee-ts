@@ -54,6 +54,9 @@ import {
 } from './helpers/format-server.js';
 import { seedIndexDownload, seedUrlDownload, OFFICIAL_INDEX } from './helpers/format-cache.js';
 
+/** The fetch of this process, before any test stands in for it. */
+const nativeFetch = globalThis.fetch;
+
 // renameSync passes through unless a test stands in for another process that finishes the same
 // cache write first.
 vi.mock('node:fs', async (importOriginal) => {
@@ -434,9 +437,26 @@ describe('requests', () => {
     expect(server.log).toEqual([]);
   });
 
-  describe('connection attempts end with the request (#376)', () => {
-    const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+  const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
 
+  /** Stands in for the first request of a process, with which Node creates `dispatcher` as its global dispatcher. */
+  async function nodeCreates(dispatcher: unknown): Promise<void> {
+    Reflect.set(globalThis, GLOBAL_DISPATCHER, undefined);
+    await ensureGlobalDispatcher(() => {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, dispatcher);
+      return Promise.resolve(new Response(null));
+    });
+  }
+
+  /** Node's own global dispatcher, which twee-ts then takes for one it made Node create. */
+  async function nodeDefault(): Promise<unknown> {
+    if (Reflect.get(globalThis, GLOBAL_DISPATCHER) === undefined) await nativeFetch('data:,');
+    const dispatcher: unknown = Reflect.get(globalThis, GLOBAL_DISPATCHER);
+    await nodeCreates(dispatcher);
+    return dispatcher;
+  }
+
+  describe('connection attempts end with the request (#376)', () => {
     /** Stands in for undici's Agent, the class of the global dispatcher. */
     class FakeAgent {
       static readonly made: FakeAgent[] = [];
@@ -454,16 +474,18 @@ describe('requests', () => {
       }
     }
 
+    /** Stands in for undici's EnvHttpProxyAgent. */
+    class EnvHttpProxyAgent extends FakeAgent {}
+
     let saved: unknown;
-    beforeEach(() => {
+    beforeEach(async () => {
       saved = Reflect.get(globalThis, GLOBAL_DISPATCHER);
-      FakeAgent.made.length = 0;
       FakeAgent.destroyFails = false;
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, new FakeAgent({}));
+      await nodeCreates(new FakeAgent({}));
       FakeAgent.made.length = 0;
     });
-    afterEach(() => {
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, saved);
+    afterEach(async () => {
+      await nodeCreates(saved);
     });
 
     /** Stubs fetch with the format, logging what each request was given. */
@@ -533,12 +555,44 @@ describe('requests', () => {
       ],
       ['a global dispatcher that is no object', () => 'agent'],
     ])('uses the global dispatcher when it finds %s', async (_label, make) => {
-      Reflect.set(globalThis, GLOBAL_DISPATCHER, make());
+      await nodeCreates(make());
       const log = serve();
       await expect(fetchDirectFormat('https://example.test/format.js', { timeout: 1500 })).resolves.toMatchObject({
         name: 'Review',
       });
       expect(log.dispatchers).toEqual([undefined]);
+    });
+
+    // A dispatcher the host installed carries the host's options, which a dispatcher built from its
+    // class would lose; it may also be the one in place before twee-ts's first request.
+    it.each([
+      ['an Agent with its own CA', () => new FakeAgent({ connect: { ca: 'corporate CA' } })],
+      [
+        'an EnvHttpProxyAgent with its own proxy URLs',
+        () => new EnvHttpProxyAgent({ httpProxy: 'http://proxy.test:3128', httpsProxy: 'http://proxy.test:3128' }),
+      ],
+      ['an Agent with default options', () => new FakeAgent({})],
+    ])('uses %s that the host installed as it is', async (_label, make) => {
+      const host = make();
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+      FakeAgent.made.length = 0;
+      const log = serve();
+      await fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
+      expect(log.dispatchers).toEqual([undefined]);
+      expect(FakeAgent.made).toEqual([]);
+      expect(Reflect.get(globalThis, GLOBAL_DISPATCHER)).toBe(host);
+    });
+
+    it('uses a dispatcher in place before its first request as it is', async () => {
+      const host = new FakeAgent({});
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+      FakeAgent.made.length = 0;
+      vi.resetModules();
+      const fresh = await import('../src/remote-formats.js');
+      const log = serve();
+      await fresh.fetchDirectFormat('https://example.test/format.js', { timeout: 1500 });
+      expect(log.dispatchers).toEqual([undefined]);
+      expect(FakeAgent.made).toEqual([]);
     });
 
     it.each([
@@ -603,6 +657,7 @@ describe('requests', () => {
   ])(
     'ends a connection attempt as soon as %s ends the request (#376)',
     async (_label, endRequest) => {
+      await nodeDefault();
       const closed = Promise.withResolvers<number>();
       const opened = Promise.withResolvers<undefined>();
       const server = createServer((socket) => {
@@ -634,6 +689,29 @@ describe('requests', () => {
     },
     10_000,
   );
+
+  it('downloads through a real Agent the host installed, with its options (#376)', async () => {
+    const server = await startFormatServer({ '/format.js': formatJs('Review', '1.0.0') });
+    const port = new URL(server.origin).port;
+    const node = await nodeDefault();
+    const Agent = (node as { constructor: new (options: unknown) => { close: () => Promise<void> } }).constructor;
+    // The host's own name resolution stands in for its CA or proxy: a dispatcher without it fails.
+    const lookup = (_host: string, options: { all?: boolean }, callback: (...args: unknown[]) => void): void => {
+      if (options.all === true) callback(null, [{ address: '127.0.0.1', family: 4 }]);
+      else callback(null, '127.0.0.1', 4);
+    };
+    const host = new Agent({ connect: { lookup } });
+    Reflect.set(globalThis, GLOBAL_DISPATCHER, host);
+    vi.stubGlobal('fetch', nativeFetch);
+    try {
+      await expect(
+        fetchDirectFormat(`http://formats.host-only.test:${port}/format.js`, { timeout: 5000 }),
+      ).resolves.toMatchObject({ name: 'Review' });
+    } finally {
+      Reflect.set(globalThis, GLOBAL_DISPATCHER, node);
+      await host.close();
+    }
+  });
 
   it('refuses a URL it cannot fetch', async () => {
     await expect(fetchDirectFormat('ftp://example.test/format.js')).rejects.toThrow(

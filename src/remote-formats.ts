@@ -310,12 +310,24 @@ function isDispatcher(value: unknown): value is FetchDispatcher {
 const nativeFetch = globalThis.fetch;
 
 /**
+ * The global dispatcher Node created, with its default options, for the request with which
+ * {@link ensureGlobalDispatcher} made it; `undefined` while there is none (a dispatcher that was in
+ * place before may be one the host installed, with options of its own).
+ */
+let nodeDefaultDispatcher: object | undefined;
+
+/**
  * Makes undici create its global dispatcher, which it does with the first request of a process: a
- * request for a data: URL makes no connection. `request` is exported for tests.
+ * request for a data: URL makes no connection. undici creates it during the call, before any other
+ * code can run, so the dispatcher there right after the call is Node's own. `request` is exported
+ * for tests.
  */
 export async function ensureGlobalDispatcher(request: (url: string) => Promise<Response> = nativeFetch): Promise<void> {
   if (Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER) !== undefined) return;
-  await request('data:,').then(
+  const answer = request('data:,');
+  const made: unknown = Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER);
+  if (typeof made === 'object' && made !== null) nodeDefaultDispatcher = made;
+  await answer.then(
     (res) => res.body?.cancel(),
     () => undefined,
   );
@@ -327,15 +339,19 @@ export async function ensureGlobalDispatcher(request: (url: string) => Promise<R
  * alone does not: undici leaves a connection attempt in progress to its own ten-second connect
  * timeout, and a host that drops packets holds the process open that long. undici passes these
  * options on to `net.connect()` and `tls.connect()`: `connect` for a direct connection,
- * `proxyTls` for the connection to a proxy (`NODE_USE_ENV_PROXY`), `requestTls` for TLS through
- * its tunnel. `undefined` where Node gives no such dispatcher (the request then runs on the global
- * one). Node exports no dispatcher class, so this builds one from the class of the global
- * dispatcher, which exists once any request was made.
+ * `proxyTls` for the connection to a proxy, `requestTls` for TLS through its tunnel.
+ *
+ * Node exports no dispatcher class, so this builds one from the class of the global dispatcher, and
+ * only when that is the one Node created with its default options for twee-ts's own first request:
+ * a dispatcher built from another's class would lose the options the host gave it (its CA, its proxy
+ * URLs). Where the global dispatcher was in place before, or was replaced since, the request runs
+ * on it unchanged (`undefined`), and a connection attempt in progress ends at undici's own limit.
  */
 async function requestDispatcher(signal: AbortSignal): Promise<RequestDispatcher | undefined> {
   await ensureGlobalDispatcher();
-  const current: unknown = Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER);
-  const dispatcherClass: unknown = typeof current === 'object' && current !== null ? current.constructor : undefined;
+  const current = nodeDefaultDispatcher;
+  if (current === undefined || Reflect.get(globalThis, UNDICI_GLOBAL_DISPATCHER) !== current) return undefined;
+  const dispatcherClass: unknown = current.constructor;
   if (typeof dispatcherClass !== 'function') return undefined;
   let made: unknown;
   try {
