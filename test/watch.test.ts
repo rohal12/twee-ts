@@ -1327,6 +1327,61 @@ describe('watch with a named source that is the output (#157)', () => {
   });
 });
 
+describe('watch with an output that is an authored file in a source or module folder', () => {
+  let root: string;
+  let controller: AbortController | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'twee-ts-watch-folder-output-'));
+  });
+
+  afterEach(() => {
+    controller?.abort();
+    controller = undefined;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['a source folder', 'sources'],
+    ['a module folder', 'modules'],
+  ] as const)('rejects before watching anything, and leaves the file unchanged: %s', async (_name, role) => {
+    mkdirSync(join(root, 'src'));
+    const file = join(root, 'src', role === 'sources' ? 'Start.tw' : 'theme.css');
+    const content = role === 'sources' ? STORY : 'body { color: red; }\n';
+    writeFileSync(file, content);
+    if (role === 'modules') writeFileSync(join(root, 'story.tw'), STORY);
+    const built: CompileResult[] = [];
+    const errors: Error[] = [];
+    const failure = watch({
+      sources: role === 'sources' ? [join(root, 'src')] : [join(root, 'story.tw')],
+      ...(role === 'modules' ? { modules: [join(root, 'src')] } : {}),
+      outFile: file,
+      onBuild: (result) => built.push(result),
+      onError: (error) => errors.push(error),
+    });
+    await expect(failure).rejects.toMatchObject({ code: 'OUTPUT_IS_INPUT' });
+    expect(built).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(readFileSync(file, 'utf-8')).toBe(content);
+  });
+
+  it('watches an output that is inside a source folder and was built by twee-ts', async () => {
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'Start.tw'), STORY);
+    const out = join(root, 'src', 'story.twee');
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [join(root, 'src')],
+      outputMode: 'twee3',
+      outFile: out,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    expect((await builds.next()).output).toContain('Start');
+    expect(builds.errors).toEqual([]);
+  });
+});
+
 describe('watchFilesystem events and timing (#247)', () => {
   let root: string;
   let story: string;
