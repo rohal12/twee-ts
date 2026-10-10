@@ -102,7 +102,13 @@ export const REVIEW_AREAS: readonly ReviewArea[] = [
   {
     id: 'cli',
     contract: 'The command line and the config file, and its JSON schema',
-    paths: ['bin/twee-ts.ts', 'src/cli-request.ts', 'src/config.ts', 'schemas/twee-ts.config.schema.json'],
+    paths: [
+      'bin/twee-ts.ts',
+      'src/cli-request.ts',
+      'src/stream-errors.ts',
+      'src/config.ts',
+      'schemas/twee-ts.config.schema.json',
+    ],
   },
   {
     id: 'plugins',

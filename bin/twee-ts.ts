@@ -37,6 +37,7 @@ import {
 import type { CompileResult, Diagnostic, TweeTsConfig, WatchOptions } from '../src/types.js';
 import { compareVersions, parseVersion } from '../src/semver.js';
 
+import { isReaderGone } from '../src/stream-errors.js';
 import { VERSION } from '../src/version.js';
 import { generateIFID } from '../src/ifid.js';
 
@@ -57,14 +58,15 @@ function log(text: string): void {
 
 /**
  * A reader that goes away (`twee-ts … | head`) closes the pipe: the rest of the output is dropped
- * quietly, as other command-line tools do, instead of ending in an unhandled EPIPE error. Any other
+ * quietly, as other command-line tools do, instead of ending in an unhandled error (`EPIPE`, or what the
+ * platform reports instead, see `isReaderGone`). Any other
  * failure to write (a full disk behind a redirect, an I/O error) is reported once, naming the stream
  * when `name` is given (standard error cannot report its own failure), and ends the run with status 1.
  */
 function reportWriteErrors(stream: NodeJS.WriteStream, name?: string): void {
   let reported = false;
   stream.on('error', (e: NodeJS.ErrnoException) => {
-    if (e.code === 'EPIPE' || e.code === 'ERR_STREAM_DESTROYED') return;
+    if (isReaderGone(e)) return;
     process.exitCode = EXIT_FAILED;
     if (reported || name === undefined) return;
     reported = true;
