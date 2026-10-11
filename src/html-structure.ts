@@ -48,9 +48,9 @@ export class HtmlNestingError extends TweeTsError {
  * contents count as children of their template). The depth of each parent is remembered, so a check costs a lookup;
  * when the parser moves a node (the adoption agency algorithm), what was remembered is dropped and worked out again,
  * by walking up at most `MAX_HTML_DEPTH` or so parents. Either way the checks add work in proportion to the size of
- * the document.
+ * the document. `watch` is told what the parser puts into the tree.
  */
-function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
+function depthLimitedTreeAdapter(watch: TreeWatch = {}): typeof defaultTreeAdapter {
   const templateOfContent = new WeakMap<ParentNode, ParentNode>();
   const parentOf = (node: ParentNode): ParentNode | null | undefined =>
     'parentNode' in node ? node.parentNode : templateOfContent.get(node);
@@ -84,14 +84,18 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
     }
     known.set(child, { depth, moves });
   };
+  const placed = (parent: ParentNode, child: ChildNode): void => {
+    checkDepth(parent, child);
+    watch.placed?.(parent, child);
+  };
   return {
     ...defaultTreeAdapter,
     appendChild(parent, child) {
-      checkDepth(parent, child);
+      placed(parent, child);
       defaultTreeAdapter.appendChild(parent, child);
     },
     insertBefore(parent, child, reference) {
-      checkDepth(parent, child);
+      placed(parent, child);
       defaultTreeAdapter.insertBefore(parent, child, reference);
     },
     detachNode(node) {
@@ -101,9 +105,28 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
     },
     setTemplateContent(template, content) {
       templateOfContent.set(content, template);
+      watch.templateContent?.(content);
       defaultTreeAdapter.setTemplateContent(template, content);
     },
+    insertText(parent, text) {
+      watch.text?.(parent, text);
+      defaultTreeAdapter.insertText(parent, text);
+    },
+    insertTextBefore(parent, text, reference) {
+      watch.text?.(parent, text);
+      defaultTreeAdapter.insertTextBefore(parent, text, reference);
+    },
   };
+}
+
+/** What a reading of HTML is told as the parser builds the tree (see `depthLimitedTreeAdapter`). */
+interface TreeWatch {
+  /** A node is put into `parent`, or moved there. */
+  readonly placed?: (parent: ParentNode, child: ChildNode) => void;
+  /** A template's content is made. */
+  readonly templateContent?: (content: ParentNode) => void;
+  /** Text is put into `parent`: each run of character tokens the parser keeps, in the order it reads them. */
+  readonly text?: (parent: ParentNode, text: string) => void;
 }
 
 /**
@@ -891,40 +914,61 @@ export function scriptsJQueryRuns(html: string): RunningScript[] {
 
 /**
  * What `htmlText` reads text after: a standards-mode document whose body holds a `div`, as a story's page holds the
- * element a passage is shown in. The `br` turns the body's frameset-ok flag off, as content before that element does,
+ * element a passage is shown in. The `hr` turns the body's frameset-ok flag off, as content before that element does,
  * so a `<frameset>` start tag in the text is ignored. (A fragment parse would read the text in the same context, but
  * ends by moving every top-level node, one at a time, which takes time that grows with the square of their number.)
  */
-const TEXT_CONTEXT = '<!DOCTYPE html><body><br><div>';
+const TEXT_CONTEXT = '<!DOCTYPE html><body><hr><div>';
+
+/**
+ * Elements whose text a browser never shows (the user agent style sheet hides them, or their content is not
+ * rendered): their text is not the text `htmlText` reads.
+ */
+const UNSHOWN_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'script',
+  'style',
+  'title',
+]);
 
 /**
  * The text an HTML parser reads from `html` in the content of a `div` element of a page (see `TEXT_CONTEXT`), as
- * `parseHtml()` reads a document: the characters it inserts as text, in the order it reads them. Start and end tags,
- * comments and doctypes give none, whatever their quoted attribute values hold, and neither does a tag left open at
- * the end, which the parser drops; a `<` that starts none of them (`<3`, `a < b`) is text. A character reference
- * gives the character it stands for. The text of `script`, `style`, `textarea` and the other raw text elements, and
- * the content of a `template`, is text too. The parser drops NUL characters in most places and the line feed just
- * after a `pre`, `listing` or `textarea` start tag. Throws an `HtmlNestingError` when elements nest more than
- * `MAX_HTML_DEPTH` deep, counting the `html`, `body` and `div` elements around the text.
+ * `parseHtml()` reads a document, and a browser shows: the characters it inserts as text, in the order it reads them,
+ * with a space for each `br` element. Start and end tags, comments and doctypes give none, whatever their quoted
+ * attribute values hold, and neither does a tag left open at the end, which the parser drops; a `<` that starts none
+ * of them (`<3`, `a < b`) is text. A character reference gives the character it stands for. The text of `script`,
+ * `style`, `title`, `noscript` (read with scripting on), `noembed`, `noframes` and `iframe` elements and the content
+ * of a `template` is left out; that of a `textarea` is read. Styles and attributes such as `hidden` are not
+ * considered. The parser drops NUL characters in most places and the line feed just after a `pre`, `listing` or
+ * `textarea` start tag. Throws an `HtmlNestingError` when elements nest more than `MAX_HTML_DEPTH` deep, counting the
+ * `html`, `body` and `div` elements around the text.
  */
 export function htmlText(html: string): string {
   const pieces: string[] = [];
-  const adapter = depthLimitedTreeAdapter();
-  parse(TEXT_CONTEXT + html, {
-    scriptingEnabled: true,
-    treeAdapter: {
-      ...adapter,
-      // The parser inserts each run of character tokens it keeps through one of these, in the order it reads them.
-      insertText(parent, text) {
+  // Template contents, and the elements in them: an element stays inside the template whose content it was put in.
+  const unshown = new WeakSet<ParentNode>();
+  const treeAdapter = depthLimitedTreeAdapter({
+    placed(parent, child) {
+      if (!isElement(child)) return;
+      if (unshown.has(parent)) {
+        unshown.add(child);
+      } else if (child.tagName === 'br') {
+        pieces.push(' ');
+      }
+    },
+    templateContent(content) {
+      unshown.add(content);
+    },
+    text(parent, text) {
+      if (!unshown.has(parent) && !(isElement(parent) && UNSHOWN_TEXT_ELEMENTS.has(parent.tagName))) {
         pieces.push(text);
-        adapter.insertText(parent, text);
-      },
-      insertTextBefore(parent, text, reference) {
-        pieces.push(text);
-        adapter.insertTextBefore(parent, text, reference);
-      },
+      }
     },
   });
+  parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter });
   return pieces.join('');
 }
 

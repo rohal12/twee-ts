@@ -4,10 +4,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defaultTreeAdapter, html as htmlSpec, parseFragment } from 'parse5';
 import type { DefaultTreeAdapterTypes } from 'parse5';
-import { countNormalizationSegments, countTextWords, stripComments } from '../src/word-count.js';
-import { findMacroTags } from '../src/sugarcube-macros.js';
+import { countNormalizationSegments, countTextWords, countTextWordsChecked, stripComments } from '../src/word-count.js';
 import { splitTweeFields } from '../src/twee-syntax.js';
-import { HtmlNestingError, MAX_HTML_DEPTH } from '../src/html-structure.js';
+import { MAX_HTML_DEPTH, htmlText } from '../src/html-structure.js';
 import { compile, lint } from '../src/index.js';
 
 /**
@@ -147,14 +146,15 @@ const PROSE_WORD = fc.constantFrom(
 );
 
 /**
- * Text inside quotes: anything but the quote itself and a line break. No `<<`: macro tags are found before HTML is
- * read, so one in an attribute value is a macro tag (see docs/configuration.md).
+ * Text inside quotes: anything but the quote itself and a line break, `<<` and link markup included: a tag is read
+ * before what is in it.
  */
 const quotedText = (quote: string): fc.Arbitrary<string> =>
   fc
-    .array(fc.constantFrom('a', ' ', '>', '>>', '>=', '<', '=', '/', '"', "'", '`', '<b>'), { maxLength: 6 })
-    .map((parts) => parts.join('').replaceAll(quote, ''))
-    .filter((text) => !text.includes('<<'));
+    .array(fc.constantFrom('a', ' ', '>', '>>', '>=', '<', '<<b', '[[x]]', '=', '/', '"', "'", '`', '<b>'), {
+      maxLength: 6,
+    })
+    .map((parts) => parts.join('').replaceAll(quote, ''));
 
 /** A SugarCube macro argument, as SugarCube's macro parser reads it; `>` alone or before `=` never ends the tag. */
 const MACRO_ARG = fc.oneof(
@@ -182,45 +182,60 @@ const ATTRIBUTE = fc.oneof(
   fc.constantFrom(' id=main', ' hidden', ' a = b'),
 );
 
-/** An HTML start tag (perhaps self-closing), end tag or comment, as an HTML parser reads them. */
-const HTML_MARKUP = fc.oneof(
-  fc
-    .tuple(
-      fc.constantFrom('span', 'b', 'i', 'em', 'div', 'p', 'a', 'my-el', 'br', 'img', 'hr', 'SPAN'),
-      fc.array(ATTRIBUTE, { maxLength: 3 }),
-      fc.constantFrom('', '/', ' /'),
-    )
-    .map(([name, attributes, close]) => `<${name}${attributes.join('')}${close}>`),
-  fc.constantFrom('span', 'b', 'div', 'p', 'a', 'my-el', 'SPAN').map((name) => `</${name}>`),
-  fc.constantFrom('<!-- a > b -->', '<!---->', '</ b >'),
-);
-
 const SEPARATOR = fc.constantFrom(' ', '\n', '\t', '  ');
 
-/** Prose words with markup between them, each piece set apart by white space. */
-const proseWithMarkup = fc
-  .array(fc.tuple(fc.array(fc.oneof(MACRO, HTML_MARKUP), { maxLength: 3 }), PROSE_WORD, SEPARATOR), {
-    maxLength: 12,
-  })
-  .map((pieces) => ({
-    words: pieces.length,
-    text: pieces.map(([markup, word, sep]) => [...markup, word].join(sep)).join(' '),
-  }));
+/** A prose word in markup that shows it: an element, or after a void element, a macro tag or a comment. */
+const MARKED_UP_WORD = fc.oneof(
+  fc
+    .tuple(
+      fc.constantFrom('span', 'b', 'i', 'em', 'div', 'p', 'a', 'my-el', 'SPAN'),
+      fc.array(ATTRIBUTE, { maxLength: 3 }),
+      PROSE_WORD,
+      SEPARATOR,
+    )
+    .map(([name, attributes, word, sep]) => `<${name}${attributes.join('')}>${sep}${word}${sep}</${name}>`),
+  fc
+    .tuple(
+      fc.oneof(
+        MACRO,
+        fc
+          .tuple(fc.constantFrom('br', 'img', 'hr', 'span'), fc.array(ATTRIBUTE, { maxLength: 3 }))
+          .map(([name, attributes]) => `<${name}${attributes.join('')}${name === 'span' ? '/' : ''}>`),
+        fc.constantFrom('<!-- a > b -->', '<!---->', '/* c > d */', '/% e %/'),
+      ),
+      PROSE_WORD,
+      SEPARATOR,
+    )
+    .map(([markup, word, sep]) => `${markup}${sep}${word}`),
+);
 
-/** The text content of `html` read as the content of a `div` element, by parse5's tree (the differential oracle). */
+/** Prose words with markup around them, each piece set apart by white space. */
+const proseWithMarkup = fc
+  .array(fc.oneof(PROSE_WORD, MARKED_UP_WORD), { maxLength: 12 })
+  .map((pieces) => ({ words: pieces.length, text: pieces.join(' ') }));
+
+/** Elements whose text a browser doesn't show. */
+const UNSHOWN = new Set(['iframe', 'noembed', 'noframes', 'noscript', 'script', 'style', 'title']);
+
+/**
+ * The text a browser shows of `html` read as the content of a `div` element, from parse5's tree (the differential
+ * oracle): text outside the elements above and template contents, with a space for each `br`.
+ */
 function htmlTreeText(html: string): string {
   const context = defaultTreeAdapter.createElement('div', htmlSpec.NS.HTML, []);
   const fragment = parseFragment(context, html, { scriptingEnabled: true });
   const text: string[] = [];
   const visit = (node: DefaultTreeAdapterTypes.Node): void => {
     if (node.nodeName === '#text' && 'value' in node) text.push(node.value);
+    if (node.nodeName === 'br') text.push(' ');
+    if (UNSHOWN.has(node.nodeName)) return;
     if ('childNodes' in node) node.childNodes.forEach(visit);
   };
   visit(fragment);
   return text.join('');
 }
 
-/** Characters that make macros, tags, comments, character references and their text, but no links or tables. */
+/** Characters and names that make tags, comments, character references, hidden elements, tables and their text. */
 const HTML_ALPHABET = fc.constantFrom(
   '<',
   '>',
@@ -238,14 +253,34 @@ const HTML_ALPHABET = fc.constantFrom(
   '3',
   ' ',
   '\n',
-  '<<',
-  '>>',
   'amp',
   'lt',
+  'script',
+  'style',
+  'title',
+  'template',
+  'noscript',
+  'textarea',
+  'br',
+  'table',
+  'td',
+  'svg',
 );
 
+describe('htmlText', () => {
+  it('gives the text a browser shows of HTML (differential against the parse5 tree)', () => {
+    fc.assert(
+      fc.property(fc.array(HTML_ALPHABET, { maxLength: 24 }), (parts) => {
+        const s = parts.join('');
+        expect(splitTweeFields(htmlText(s))).toEqual(splitTweeFields(htmlTreeText(s)));
+      }),
+      { numRuns: 20_000 },
+    );
+  });
+});
+
 describe("countTextWords 'whitespace'", () => {
-  it('counts the prose between SugarCube macros and HTML markup, however their arguments use > (#421, #422)', () => {
+  it('counts the prose around SugarCube macros and HTML markup, however their arguments use > (#421, #422)', () => {
     fc.assert(
       fc.property(proseWithMarkup, ({ words, text }) => {
         expect(countTextWords(text, 'whitespace')).toBe(words);
@@ -254,24 +289,10 @@ describe("countTextWords 'whitespace'", () => {
     );
   });
 
-  it('counts the words of the text an HTML parser reads, after macros (differential against the parse5 tree)', () => {
-    fc.assert(
-      fc.property(fc.array(HTML_ALPHABET, { maxLength: 24 }), (parts) => {
-        const s = parts.join('');
-        const withoutMacros = findMacroTags(stripComments(s)).reduceRight(
-          (rest, tag) => rest.slice(0, tag.start) + rest.slice(tag.end),
-          stripComments(s),
-        );
-        expect(countTextWords(s, 'whitespace')).toBe(splitTweeFields(htmlTreeText(withoutMacros)).length);
-      }),
-      { numRuns: 20_000 },
-    );
-  });
-
-  it('counts what the markup expressions leave for prose without markup characters (differential)', () => {
+  it('counts what the markup expressions leave for prose without tags or comments (differential)', () => {
     fc.assert(
       fc.property(
-        sharedGrammar.filter((s) => !/[<>]/.test(s)),
+        sharedGrammar.filter((s) => !/[<>/]/.test(s)),
         (s) => {
           expect(countTextWords(s, 'whitespace')).toBe(whitespaceOracle(s));
         },
@@ -280,19 +301,19 @@ describe("countTextWords 'whitespace'", () => {
     );
   });
 
+  // The counts SugarCube 2.37.3 gives in Chromium (see word-count-sugarcube.test.ts), with a condition that holds.
   it.each([
     ['no macro', 'Well done!', 2],
-    ['a < condition', '<<if $score < 10>>\nWell done!\n<</if>>', 2],
-    ['a > condition', '<<if $score > 10>>\nWell done!\n<</if>>', 2],
-    ['a >= condition', '<<if $score >= 10>>\nWell done!\n<</if>>', 2],
+    ['a < condition', '<<if 1 < 10>>\nWell done!\n<</if>>', 2],
+    ['a > condition', '<<if 11 > 10>>\nWell done!\n<</if>>', 2],
+    ['a >= condition', '<<if 10 >= 10>>\nWell done!\n<</if>>', 2],
     ['a quoted > argument', '<<set $label to "A > B">>Well done!', 2],
     ['a single-quoted >> argument', "<<set $label to 'A >> B'>>Well done!", 2],
-    ['a backquoted > argument', '<<print `${$a > 1}`>> Well done!', 2],
-    ['nested macro text in a string', '<<link "Go" "<<goto Room>>">> Well done! <</link>>', 2],
-    ['link markup holding > in a macro', '<<link [[A>B|Room]]>>Well done!<</link>>', 2],
+    ['a backquoted > argument', '<<set $x to `${1 > 0}`>> Well done!', 2],
+    ['nested macro text in a string', '<<set $x to "<<goto Room>>">> Well done!', 2],
     ['a >> that ends the tag early', '<<set $x to 1 >> 2>> Well done!', 3],
     ['text that is no macro', '<< Well done! >>', 4],
-    ['an unclosed macro, whose `<if $score >` is a tag', '<<if $score > 10 Well done!', 4],
+    ['an unclosed macro, which SugarCube shows', '<<if $score > 10 Well done!', 6],
   ])('counts the prose around a macro with %s (#421)', (_label, text, words) => {
     expect(countTextWords(text, 'whitespace')).toBe(words);
   });
@@ -305,25 +326,55 @@ describe("countTextWords 'whitespace'", () => {
     ['comparisons in prose', 'A < B and C > D', 7],
     ['plain text', 'Well done!', 2],
     ['a valid tag', 'I love you. <b>Always</b>', 4],
-    ['an end tag with spaces', 'Well </b > done!', 2],
+    ['an end tag no start tag opened, which SugarCube shows', 'Well </b > done!', 4],
+    ['end tags that close in turn', '<b><i>x</b></i> y', 2],
     ['a self-closing tag', 'Well<br/> done!', 2],
+    ['a line break between words', 'two<br>words', 2],
+    ['words joined by a tag', 'a<b>b</b>', 1],
     ['a no-break space reference', 'Well&nbsp;done!', 2],
     ['an escaped tag', '&lt;b&gt; Well', 2],
     ['an upper-case tag', '<SPAN CLASS="x > y">Well</SPAN> done!', 2],
-    ['a bogus comment', 'Well <!x> <?y> </3> done!', 2],
+    ['markup SugarCube shows as text', 'Well <!x> <?y> </3> done!', 5],
     ['a tag split by a line break', '<span\ntitle="a > b"\n>Well done!</span>', 2],
     ['textarea text', '<textarea><b>Well</b> done!</textarea>', 2],
     ['text a table moves before itself', '<table>Well <tr><td>done!</td></tr></table>', 2],
-    ['a tag left open at the end', 'Well done! <span title="a > b"', 2],
+    ['a tag left open at the end', 'Well done! <span title="a > b"', 6],
+    ['a start tag left open at the end', 'Well done <b', 3],
     ['a frameset tag', '<frameset>Well done!</frameset>', 2],
-    ['a stray end tag of the element it is read in', 'Well</div> done!</body></html> again', 3],
+    ['end tags of the page around the passage', 'Well</div> done!</body></html> again', 3],
+    ['a script element', '<script>var a = 1;</script>Well done!', 2],
+    ['a style element', '<style>p { color: red }</style>Well done!', 2],
+    ['a noscript element', '<noscript>no js here</noscript>Well done!', 2],
+    ['a template', '<template>hidden words</template>Well done!', 2],
+    ['a title element', '<title>t t</title> x', 1],
+    ['a << in an attribute value', '<a title="<<b">Well done and many words</a>. <<set $y to 2>>', 5],
   ])('counts the text around HTML with %s (#422)', (_label, text, words) => {
+    expect(countTextWords(text, 'whitespace')).toBe(words);
+  });
+
+  it.each([
+    ['a comment left open', 'Intro <!-- TODO\nThe rest of a long passage that the reader sees.', 12],
+    ['a block comment left open', 'a /* b c', 3],
+    ['a SugarCube comment left open', 'a /% b c', 3],
+    ['closed comments', 'a <!-- b --> c /* d */ e /% f %/ g', 4],
+  ])('drops only the opener of %s, as SugarCube does', (_label, text, words) => {
     expect(countTextWords(text, 'whitespace')).toBe(words);
   });
 
   it('reads link text as text, not as HTML', () => {
     expect(countTextWords('[[a <b and c>|Room]] d', 'whitespace')).toBe(5);
     expect(countTextWords('[[I <3 you|Room]]', 'whitespace')).toBe(3);
+  });
+
+  it('counts the words of the text without tags when the HTML nests too deeply to read', () => {
+    // SugarCube shows one span: an element opened in both branches of an <<if>>, as text, nests 520 deep.
+    const branches = '<<if $a>><span class="a"><<else>><span class="b"><</if>>Text</span>\n'.repeat(520);
+    expect(countTextWordsChecked(branches, 'whitespace')).toEqual({ words: 520, htmlTooDeep: true });
+    expect(countTextWordsChecked('<div>'.repeat(MAX_HTML_DEPTH) + 'a b', 'whitespace')).toEqual({
+      words: 2,
+      htmlTooDeep: true,
+    });
+    expect(countTextWordsChecked('<div>'.repeat(10) + 'a b', 'whitespace')).toEqual({ words: 2, htmlTooDeep: false });
   });
 
   it.each([
@@ -361,6 +412,11 @@ describe('word counts take linear time on adversarial text', () => {
     ['tags with quoted >', '<br title="a > b">'.repeat(50_000)],
     ['unclosed attribute quotes', '<b title="'.repeat(50_000)],
     ['prose comparisons', 'a < b > c <3 '.repeat(50_000)],
+    ['unclosed style tags', '<style title="'.repeat(50_000)],
+    ['many links and no tag', '[[x]] '.repeat(100_000)],
+    ['stray end tags', '</b > '.repeat(100_000)],
+    ['deep nesting', '<b>x '.repeat(100_000)],
+    ['end tags far from their start tags', '<b>'.repeat(400) + 'x </i>'.repeat(100_000)],
     ['combining marks', 'a' + '\u0301'.repeat(400_000)],
   ])('%s', (_label, text) => {
     for (const method of ['tweego', 'whitespace'] as const) {
@@ -392,14 +448,24 @@ describe('whitespace word counts through the public API (#421, #422)', () => {
     expect(linted.stats.words).toBe(words);
   });
 
-  it('names the passage whose HTML nests too deeply to count', async () => {
-    const text = '<div>'.repeat(MAX_HTML_DEPTH + 1);
-    expect(() => countTextWords(text, 'whitespace')).toThrow(HtmlNestingError);
-    await expect(compile({ sources: story(text), outputMode: 'json', wordCountMethod: 'whitespace' })).rejects.toThrow(
-      /^story\.tw:4: Passage "Start": HTML nests more than 512 elements deep\.$/,
-    );
-    // The default method reads no HTML.
-    const compiled = await compile({ sources: story(text), outputMode: 'json' });
-    expect(compiled.stats.words).toBeGreaterThan(0);
+  it('warns about a passage whose HTML nests too deeply to read, counts its text and builds the story', async () => {
+    const text = '<<if $a>><span class="a"><<else>><span class="b"><</if>>Text</span>\n'.repeat(520) + 'Done';
+    const warning = {
+      level: 'warning',
+      message:
+        'Passage "Start": its HTML nests more than 512 elements deep, so its words are counted without reading its HTML.',
+      file: 'story.tw',
+      line: 4,
+    };
+    const compiled = await compile({ sources: story(text), outputMode: 'json', wordCountMethod: 'whitespace' });
+    expect(compiled.output).toContain('Done');
+    expect(compiled.stats.words).toBe(521);
+    expect(compiled.diagnostics).toContainEqual(warning);
+    const linted = await lint({ sources: story(text), wordCountMethod: 'whitespace' });
+    expect(linted.stats.words).toBe(521);
+    expect(linted.diagnostics).toContainEqual(warning);
+    // The default method reads no HTML, and doesn't warn.
+    const tweego = await compile({ sources: story(text), outputMode: 'json' });
+    expect(tweego.diagnostics.filter((d) => d.message.includes('nests'))).toEqual([]);
   });
 });

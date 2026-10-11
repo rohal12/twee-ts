@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { applyTagAliases, countWords } from '../src/passage.js';
-import type { Passage } from '../src/types.js';
+import type { Diagnostic, Passage } from '../src/types.js';
 
 function mkPassage(name: string, tags: string[], text = ''): Passage {
   return { name, tags: [...tags], text };
@@ -184,10 +184,20 @@ describe('countWords', () => {
       expect(countWords(p, 'whitespace')).toBe(2);
     });
 
-    it('names a passage without a source whose HTML nests too deeply to count', () => {
-      const p = mkPassage('Deep', [], '<b>'.repeat(600));
-      expect(() => countWords(p, 'whitespace')).toThrow(/^Passage "Deep": HTML nests more than 512 elements deep\.$/);
-      expect(countWords(p, 'tweego')).toBe(360);
+    it('counts the text of a passage whose HTML nests too deeply to read, and warns, naming it', () => {
+      const p = mkPassage('Deep', [], '<b>'.repeat(600) + 'Still counted');
+      const diagnostics: Diagnostic[] = [];
+      expect(countWords(p, 'whitespace', diagnostics)).toBe(2);
+      expect(diagnostics).toEqual([
+        {
+          level: 'warning',
+          message:
+            'Passage "Deep": its HTML nests more than 512 elements deep, so its words are counted without reading its HTML.',
+        },
+      ]);
+      expect(countWords(p, 'whitespace')).toBe(2);
+      expect(countWords(p, 'tweego', diagnostics)).toBe(363);
+      expect(diagnostics).toHaveLength(1);
     });
 
     it('handles multiple whitespace', () => {

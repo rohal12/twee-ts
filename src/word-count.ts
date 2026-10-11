@@ -4,9 +4,9 @@
  */
 import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
-import { readSquareBracketedMarkup } from './link-markup.js';
-import { findMacroTags } from './sugarcube-macros.js';
-import { htmlText } from './html-structure.js';
+import { htmlEndTagAt, readHtmlStartTag, startsOwnElement, walkPassageMarkup } from './sugarcube-macros.js';
+import type { HtmlStartTagRead } from './sugarcube-macros.js';
+import { HtmlNestingError, htmlText } from './html-structure.js';
 import { htmlEscape } from './escape.js';
 
 /** The comment forms Tweego strips before counting: `/% %/`, `/* *\/` and `<!-- -->`. */
@@ -433,42 +433,133 @@ export function countNormalizationSegments(text: string): number {
 
 // --- Markup removal for the 'whitespace' method ---
 
-/**
- * `text` without its SugarCube macro tags, opening and closing, as SugarCube's macro parser finds them
- * (`findMacroTags`): a `>` or `>=` operator, and a `>>` in a quoted string, comment or link markup, doesn't end a
- * tag. Text that no tag starts at, such as `<< x >>` or a `<<` without a `>>` after it, is kept. Linear time.
- */
-function stripMacros(text: string): string {
-  let out = '';
-  let kept = 0;
-  for (const tag of findMacroTags(text)) {
-    out += text.slice(kept, tag.start);
-    kept = tag.end;
-  }
-  return out + text.slice(kept);
+/** Passage text as the `'whitespace'` method reads it, before HTML. */
+interface MarkupText {
+  /** HTML for `htmlText`: the start and end tags SugarCube reads, and text, in which any other `<` is `&lt;`. */
+  readonly html: string;
+  /** The text alone, with no tag: what is counted when the HTML can't be read. */
+  readonly prose: string;
 }
 
 /**
- * `text` with each SugarCube link, `[[Link]]`, `[[Text|Link]]`, `[[Text->Link]]` or `[[Link<-Text]]`, with or
- * without a setter, replaced by the text it displays, written as HTML text so that the HTML reading after this keeps
- * it as it is. Links are read as `readSquareBracketedMarkup` reads them, leftmost first and without overlaps, within
- * an allowance of four times the text plus a fixed one, so the time stays linear.
+ * Reads passage markup as SugarCube's wikifier walks it (`walkPassageMarkup`), leftmost first: macro tags,
+ * `<<script>>` bodies, comments (and the opener of one that isn't closed) and italics markup are dropped, link
+ * markup gives the text it shows, a `<script>` element is kept whole, and an HTML start tag that SugarCube's
+ * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. In the text
+ * between them, a start tag of the elements SugarCube reads with parsers of their own (`<style>`, `<svg>`, `<html>`,
+ * `<nowiki>`) is kept, and so is an end tag of an element whose start tag was kept and that no end tag has closed
+ * yet; any other `<` is text. Linear time: the start tags read here may read four times the text plus an allowance,
+ * after which a `<` is text.
  */
-function linksToText(text: string): string {
+function readMarkup(text: string): MarkupText {
+  const html: string[] = [];
+  const prose: string[] = [];
+  // The names of the elements whose start tags were kept and are not closed yet.
+  const open: string[] = [];
   const budget = { left: 4 * text.length + 100_000 };
-  let out = '';
+  const spend = (characters: number): void => {
+    budget.left -= characters;
+  };
+  const keepStartTag = (start: number, tag: HtmlStartTagRead): void => {
+    html.push(text.slice(start, tag.end));
+    if (tag.container) open.push(tag.name);
+  };
+  const keepText = (start: number, end: number): void => {
+    const part = text.slice(start, end);
+    html.push(part);
+    prose.push(part);
+  };
+  let nextAngle = -1;
   let kept = 0;
-  for (let i = text.indexOf('[['); i !== -1;) {
-    const markup = readSquareBracketedMarkup(text, i, budget);
-    if (markup?.label === undefined) {
-      i = text.indexOf('[[', i + 1);
-      continue;
+  /** The text from `kept` to `end`, where the walk read no markup. */
+  const between = (end: number): void => {
+    let from = kept;
+    for (;;) {
+      if (nextAngle !== -1 && nextAngle < from) nextAngle = text.indexOf('<', from);
+      if (nextAngle === -1 || nextAngle >= end) break;
+      const at = nextAngle;
+      keepText(from, at);
+      const endTag = htmlEndTagAt(text, at);
+      const closes = endTag === undefined || endTag.end > end ? -1 : open.lastIndexOf(endTag.name);
+      if (endTag !== undefined && closes !== -1) {
+        html.push(text.slice(at, endTag.end));
+        open.length = closes;
+        from = endTag.end;
+        continue;
+      }
+      const startTag = budget.left < 0 || !startsOwnElement(text, at) ? undefined : readHtmlStartTag(text, at, spend);
+      if (startTag !== undefined && startTag.end <= end) {
+        keepStartTag(at, startTag);
+        from = startTag.end;
+        continue;
+      }
+      html.push('&lt;');
+      prose.push('<');
+      from = at + 1;
     }
-    out += text.slice(kept, i) + htmlEscape(markup.label);
-    kept = markup.end;
-    i = text.indexOf('[[', kept);
+    keepText(from, end);
+    kept = end;
+  };
+  nextAngle = text.indexOf('<');
+  walkPassageMarkup(text, (region) => {
+    between(region.start);
+    switch (region.kind) {
+      case 'link':
+        if (region.label !== undefined) {
+          html.push(htmlEscape(region.label));
+          prose.push(region.label);
+        }
+        break;
+      case 'html-tag':
+        keepStartTag(region.start, region.tag);
+        break;
+      case 'script-element':
+        // A complete element is kept for the HTML parser, which leaves its text out; SugarCube reads an opener
+        // without a `</script>` and shows nothing for it.
+        if (region.complete) html.push(text.slice(region.start, region.end));
+        break;
+      case 'macro':
+      case 'script-body':
+      case 'comment':
+        break;
+      default: {
+        const _exhaustive: never = region;
+        throw new Error(`Unhandled markup region: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+    kept = region.end;
+  });
+  between(text.length);
+  return { html: html.join(''), prose: prose.join('') };
+}
+
+const NUL = String.fromCharCode(0);
+
+/** The words of passage text, and whether its HTML nests too deeply to read (see `countWhitespaceWords`). */
+export interface WordCount {
+  readonly words: number;
+  /** The `'whitespace'` method could not read the HTML, so the words of its text without tags were counted. */
+  readonly htmlTooDeep: boolean;
+}
+
+/**
+ * The words of passage text that a reader sees, as SugarCube shows it: the text `readMarkup` leaves, read as HTML
+ * (`htmlText`), split at white space. When its elements nest more than `MAX_HTML_DEPTH` deep, which a passage that
+ * opens an element in each branch of an `<<if>>` can do without nesting at all when shown, the words of the text
+ * without tags are counted instead.
+ */
+function countWhitespaceWords(text: string): WordCount {
+  const { html, prose } = readMarkup(text);
+  // Text that holds no tag, character reference or NUL reads as itself.
+  if (!html.includes('<') && !html.includes('&') && !html.includes(NUL)) {
+    return { words: splitTweeFields(html).length, htmlTooDeep: false };
   }
-  return out + text.slice(kept);
+  try {
+    return { words: splitTweeFields(htmlText(html)).length, htmlTooDeep: false };
+  } catch (e) {
+    if (!(e instanceof HtmlNestingError)) throw e;
+    return { words: splitTweeFields(prose).length, htmlTooDeep: true };
+  }
 }
 
 /**
@@ -477,23 +568,26 @@ function linksToText(text: string): string {
  * - `'tweego'` (default), as Tweego counts them: line feeds and comments are removed, the rest is decomposed
  *   (NFKD) and its normalization segments counted (a letter with its accents is one), and every five, or
  *   part of five, make a word.
- * - `'whitespace'`: comments and SugarCube macro tags (`<<…>>`, see `stripMacros`) are removed, link markup is
- *   replaced by its text, and the rest is read as HTML (see `htmlText`): tags, however their attributes are quoted,
- *   give no text, a `<` that starts no tag is text, and character references give their characters. The runs of
- *   non-white-space characters in that text are counted. Throws an `HtmlNestingError` when elements nest more than
- *   `MAX_HTML_DEPTH` deep.
+ * - `'whitespace'`: the words a reader sees when SugarCube shows the passage (see `countWhitespaceWords`): macro
+ *   tags, comments and tags give none, link markup gives the text it shows, a `<` that starts no tag is text, and
+ *   character references give their characters. The runs of non-white-space characters are counted.
  */
-export function countTextWords(text: string, method: WordCountMethod): number {
+export function countTextWordsChecked(text: string, method: WordCountMethod): WordCount {
   switch (method) {
     case 'tweego': {
       const count = countNormalizationSegments(stripComments(text.replaceAll('\n', '')));
-      return Math.ceil(count / 5);
+      return { words: Math.ceil(count / 5), htmlTooDeep: false };
     }
     case 'whitespace':
-      return splitTweeFields(htmlText(linksToText(stripMacros(stripComments(text))))).length;
+      return countWhitespaceWords(text);
     default: {
       const _exhaustive: never = method;
       throw new Error(`Unhandled word count method: ${String(_exhaustive)}`);
     }
   }
+}
+
+/** The number of words in passage text (see `countTextWordsChecked`). */
+export function countTextWords(text: string, method: WordCountMethod): number {
+  return countTextWordsChecked(text, method).words;
 }
