@@ -69,12 +69,15 @@ export async function lintForOutputFile(
 ): Promise<LintResult> {
   const result = await compileForLint(options, outFile);
   const map = storyInspect(result.story, { target: 'twine2' });
+  // The build here is JSON output; the HTML output may report the same warning (a stylesheet import both ignore) too.
+  const reported = new Set(result.diagnostics.map((d) => `${d.level}\n${d.message}`));
+  const markup = twine2MarkupDiagnostics(result.story).filter((d) => !reported.has(`${d.level}\n${d.message}`));
 
   return {
     diagnostics: [
       ...result.diagnostics,
       // What Twine 2 HTML output reports beyond JSON output about the story's own data.
-      ...twine2MarkupDiagnostics(result.story),
+      ...markup,
       ...startPassageDiagnostics(result.story, map.start, 'twine2'),
       ...storyTitleDiagnostics(result.story, 'twine2'),
     ],

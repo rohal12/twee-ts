@@ -17,7 +17,7 @@ import type {
   InlineSource,
   FileCacheEntry,
 } from './types.js';
-import { ineffectiveImportDiagnostics } from './css-imports.js';
+import { ineffectiveImportDiagnostics, joinWithLineFeeds } from './css-imports.js';
 import type { StylesheetSource } from './css-imports.js';
 import { createStory, getStoryStats, snapshot } from './story.js';
 import {
@@ -895,7 +895,8 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
 
   const tagColors = twine2TagColors(story);
   pushAll(diagnostics, tagColors.diagnostics);
-  pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets));
+  const style = joinWithLineFeeds(stylesheets);
+  pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets, style));
   const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {
@@ -908,7 +909,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
     ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
     creator: CREATOR_NAME,
     'creator-version': VERSION,
-    style: stylesheets.map((sheet) => sheet.text).join('\n'),
+    style: style.text,
     script: scripts.map((text, i) => (i < scripts.length - 1 ? terminateScript(text) : text)).join(''),
     passages: storyPassages,
   };

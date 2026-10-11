@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { compile } from '../src/compiler.js';
-import { ineffectiveImportDiagnostics } from '../src/css-imports.js';
+import { ineffectiveImportDiagnostics, joinWithLineFeeds } from '../src/css-imports.js';
 import type { CompileOptions } from '../src/types.js';
 
 const IFID = '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}';
@@ -68,7 +68,7 @@ describe('ineffective @import rules (#352)', () => {
     ['an escaped character in a leading import', ['@import url(x\\;y);\na {}'], 0],
     ['a layered block before an import', ['@layer a { p {} }\n' + IMPORT], 1],
   ] as const)('%s', (_name, texts, count) => {
-    const found = ineffectiveImportDiagnostics(sheets(...texts));
+    const found = ineffectiveImportDiagnostics(sheets(...texts), joinWithLineFeeds(sheets(...texts)));
 
     expect(found.map((d) => d.level)).toEqual(Array<string>(count).fill('warning'));
   });

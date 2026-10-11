@@ -4,10 +4,7 @@
  */
 
 /** The import every case ends with, and the source that holds it. */
-export const IMPORT = '@import url("https://fonts.example/i.css");';
-
-/** The joiner between stylesheet sources: a line end, and a comment that names the next source. */
-export const JOINER = '\n/**/\n';
+export const IMPORT = '@import url("i.css");';
 
 export interface Predecessor {
   readonly name: string;
@@ -16,13 +13,22 @@ export interface Predecessor {
   /** Whether the import after it is ignored (CSS Cascade, "@import"; CSS Syntax for stray tokens). */
   readonly blocks: boolean;
   /**
+   * Whether it is ignored in JSON output and lint, when that differs: JSON output joins the stylesheets with a line
+   * feed only, where HTML and archive output put a comment between them, which closes a comment the stylesheet before
+   * it left open.
+   */
+  readonly jsonBlocks?: boolean;
+  /**
    * `sources` when the case is only meaningful with the import in a source of its own: a block, statement or at-rule
    * that stays open at the end of the first source swallows the start of the next, whereas in one source the import
    * is simply inside the block (invalid by itself, whatever precedes it).
    */
   readonly where?: 'sources';
-  /** `varies` when the browsers differ (an unknown rule, an `@charset` away from the start), so no browser decides. */
-  readonly engines?: 'varies';
+  /**
+   * `some` when only some browsers know the at-rule, so a browser that does not keeps the import: the compiler warns
+   * (a browser that knows it ignores the import), and a browser may only disagree by keeping it.
+   */
+  readonly engines?: 'some';
 }
 
 const allowed = (name: string, css: string, extra: Partial<Predecessor> = {}): Predecessor => ({
@@ -44,25 +50,35 @@ export const PREDECESSORS: readonly Predecessor[] = [
   allowed('nothing', ''),
   allowed('whitespace', ' \n\t'),
   allowed('a comment holding a rule', '/* a { } @namespace x url(y); */'),
-  allowed('an unclosed comment (the next source’s header closes it)', '/* a {', { where: 'sources' }),
+  allowed('an unclosed comment (HTML output’s header closes it, JSON output’s line feed does not)', '/* note', {
+    where: 'sources',
+    jsonBlocks: true,
+  }),
   allowed('CDO and CDC', '<!-- -->'),
   allowed('a string in a comment', '/* " */'),
   // The two things that may come first.
   allowed('@charset at the very start', '@charset "utf-8";'),
   allowed('@charset at the very start and a line end', '@charset "utf-8";\n'),
   allowed('@charset and a layer statement', '@charset "utf-8";\n@layer a, b;'),
+  allowed('an import, then a charset', '@import "a.css";\n@charset "UTF-8";'),
+  allowed('a layer statement, then a charset', '@layer a;@charset "UTF-8";'),
   allowed('a layer statement', '@layer a;'),
   allowed('a layer statement of several names', '@layer a, b.c, d;'),
   allowed('a layer statement in capitals', '@LAYER a;'),
   allowed('a layer statement written with an escape', '@\\6c ayer a;'),
   allowed('layer statements around a comment', '@layer a;/* x */@layer b;'),
-  allowed('another import', '@import url("data:text/css,a%7B%7D");'),
+  allowed('another import', '@import url("b.css");'),
   allowed('an import with a media query', '@import "a.css" screen;'),
   allowed('an import with a layer', '@import "a.css" layer(x) supports(display: grid) screen;'),
   allowed('an import in capitals', '@IMPORT "a.css";'),
   allowed('an import with escaped letters', '@im\\port "a.css";'),
   allowed('an import written with an escape and a CRLF', '@\\69\r\nmport "a.css";'),
   allowed('an import written with an escape', '@\\69 mport "a.css";'),
+  allowed('an import whose url is written with an escape', '@import \\75 rl(a{b.css);'),
+  allowed('an import whose url is written with an escaped first letter', '@import \\url(a{b.css);'),
+  allowed('an import with a url that holds a brace', '@import url(a{b.css);'),
+  allowed('an import of a url with spaces', '@import url(  a.css  );'),
+  allowed('an import of a function url', '@import url( "a.css" );'),
   allowed('a layer statement, an import and another import', '@layer a;@import "a.css";@import "b.css";'),
   // A rule no browser can parse is dropped, and ends nothing.
   allowed('a rule with a stray parenthesis in its selector', 'a b c ) {}'),
@@ -70,14 +86,34 @@ export const PREDECESSORS: readonly Predecessor[] = [
   allowed('a rule with no selector', '{}'),
   allowed('a rule with a string in its selector', '"x" {}'),
   allowed('a rule with a url in its selector', 'url(x) {}'),
+  allowed('an import without a url or a string, then a layer statement', '@import;@layer a;'),
+  allowed('an import of a name, then a layer statement', '@import foo;@layer a;'),
+  allowed('an import of a bad url, then a layer statement', '@import url(a"b);@layer a;'),
+  allowed('a layer block listing two names', '@layer a, b { p {} }'),
+  allowed('a layer block with a bad name', '@layer 1 { p {} }'),
+  allowed('a layer statement with a bad name', '@layer a..b;'),
+  allowed('a layer statement without a name', '@layer;'),
+  allowed('a namespace rule without a url', '@namespace;'),
+  allowed('a namespace rule with a bad url', '@namespace x url(a b);'),
+  allowed('a rule with a number for a selector', '1.5e3 {}'),
+  allowed('a rule with a signed number for a selector', '+.5 {}'),
+  allowed('a rule with a percentage for a selector', '50% {}'),
+  allowed('a rule with a dimension for a selector', '2px {}'),
   allowed('a stray declaration that ends at a block', 'color: red; @font-face { font-family: x }'),
   // Anything else is a rule that ends the place for imports.
+  blocking('a namespace rule with a function url', '@namespace x url( "y" );'),
+  blocking('a namespace rule with a url with an escape', '@namespace x url(a\\62 c);'),
   blocking('a namespace rule', '@namespace svg url("http://www.w3.org/2000/svg");'),
   blocking('a namespace rule with an escaped quote in a string', '@namespace x "a\\"b";'),
   blocking('a default namespace rule', '@namespace url(http://www.w3.org/1999/xhtml);'),
   blocking('a namespace rule in capitals', '@NAMESPACE svg url(http://www.w3.org/2000/svg);'),
   blocking('a namespace rule written with an escape', '@\\6e amespace svg url(http://www.w3.org/2000/svg);'),
   blocking('an import, then a namespace rule', '@import "a.css";@namespace svg url(http://www.w3.org/2000/svg);'),
+  blocking('a rule with a hash selector', '#a {}'),
+  blocking('a rule with an escaped hash selector', '#\\61  {}'),
+  blocking('a rule with a function selector', ':is(a, b) {}'),
+  blocking('a rule with an attribute selector holding a brace', 'a[b="}"] {}'),
+  blocking('a rule with a dash in front of an escape', '-\\61  {}'),
   blocking('a style rule', 'body { margin: 0; }'),
   blocking('an empty style rule', 'a {}'),
   blocking('a style rule with a semicolon in a string', 'a::after { content: ";" }'),
@@ -94,7 +130,7 @@ export const PREDECESSORS: readonly Predecessor[] = [
   blocking('a counter-style rule', '@counter-style x { system: cyclic; symbols: "a" }'),
   blocking('a starting-style rule', '@starting-style {}'),
   blocking('a font-palette-values rule', '@font-palette-values --x {}'),
-  blocking('a view-transition rule', '@view-transition { navigation: auto }'),
+  blocking('a view-transition rule', '@view-transition { navigation: auto }', { engines: 'some' }),
   blocking('a layer block', '@layer a { p {} }'),
   blocking('an empty layer block', '@layer a {}'),
   blocking('an anonymous layer block', '@layer { p {} }'),
@@ -127,23 +163,30 @@ export const PREDECESSORS: readonly Predecessor[] = [
   blocking('an unclosed url in a block', 'a { background: url(x', { where: 'sources' }),
   blocking('a block that holds a url with braces', 'a { b: url(a{b) ', { where: 'sources' }),
   blocking('a style rule with braces in an unquoted url', 'a { b: url(a{b) }'),
-  // What the browsers differ about: an at-rule or a rule they drop, and a charset away from the start. They are
-  // reported, since a browser may take them for the rule that ends the place for imports.
-  blocking('an unknown at-rule with a block', '@foo bar {}', { engines: 'varies' }),
-  blocking('an unknown at-rule without a block', '@foo bar;', { engines: 'varies' }),
-  blocking('an at-rule named by a dash', '@-x;', { engines: 'varies' }),
-  blocking('an at-rule named by two dashes', '@--x;', { engines: 'varies' }),
-  blocking('an at-rule named by a dash and an escape', '@-\\61  x;', { engines: 'varies' }),
-  blocking('an at-rule named by an escape of zero', '@\\0 x;', { engines: 'varies' }),
-  blocking('an at-rule named by an escape beyond Unicode', '@\\110000 x;', { engines: 'varies' }),
-  blocking('an at-rule named by an escape of a surrogate', '@\\d800 x;', { engines: 'varies' }),
+  // Rules no browser knows, and `@charset` (CSS Syntax: an unknown at-rule; the encoding is read from the bytes), are
+  // dropped, whatever they are named and wherever they stand.
+  allowed('an unknown at-rule with a block', '@foo bar {}'),
+  allowed('an unknown at-rule without a block', '@foo bar;'),
+  allowed('an at-rule named by a dash', '@-x;'),
+  allowed('an at-rule named by two dashes', '@--x;'),
+  allowed('an at-rule named by a dash and an escape', '@-\\61  x;'),
+  allowed('an at-rule named by an escape of zero', '@\\0 x;'),
+  allowed('an at-rule named by an escape beyond Unicode', '@\\110000 x;'),
+  allowed('an at-rule named by an escape of a surrogate', '@\\d800 x;'),
+  allowed('a known at-rule without its block', '@media print;'),
+  allowed('a charset in single quotes', "@charset 'utf-8';"),
+  allowed('a charset after a comment', '/* c */@charset "utf-8";'),
+  allowed('a charset after whitespace', ' @charset "utf-8";'),
+  allowed('a charset in capitals', '@CHARSET "utf-8";'),
+  allowed('a charset written with an escape', '@\\63harset "utf-8";'),
+  allowed('a second charset', '@charset "utf-8";@charset "utf-8";'),
+  allowed('a charset with a block', '@charset "utf-8" {}'),
   blocking('a charset after a rule', 'a{}\n@charset "utf-8";'),
-  blocking('a charset in single quotes', "@charset 'utf-8';", { engines: 'varies' }),
-  blocking('a charset after a comment', '/* c */@charset "utf-8";', { engines: 'varies' }),
-  blocking('a charset in capitals', '@CHARSET "utf-8";', { engines: 'varies' }),
-  blocking('a charset written with an escape', '@\\63harset "utf-8";', { engines: 'varies' }),
-  blocking('a second charset', '@charset "utf-8";@charset "utf-8";', { engines: 'varies' }),
-  blocking('a charset with a block', '@charset "utf-8" {}', { engines: 'varies' }),
+  // A url or a comment that is not closed runs on, into the sources after it.
+  blocking('a url that is not closed', 'url(', { where: 'sources' }),
+  blocking('a url that is not closed, then a selector with a quoted brace', 'url(\na[b="}"] {}', { where: 'sources' }),
+  blocking('a hash and a block that is not closed', '#url({) {}', { where: 'sources' }),
+  blocking('a bad url in a block that is not closed', 'a { b: url(a"b) ', { where: 'sources' }),
 ];
 
 /** The sources of a case: the predecessor and the import together, or in a source each. */
