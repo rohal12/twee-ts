@@ -8,6 +8,7 @@ import { countNormalizationSegments, countTextWords, countTextWordsChecked, stri
 import { splitTweeFields } from '../src/twee-syntax.js';
 import { MAX_HTML_DEPTH, htmlText } from '../src/html-structure.js';
 import { compile, lint } from '../src/index.js';
+import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 
 /**
  * Tweego's comment expression, `(?s:/%.*?%/|/\*.*?\*\/|<!--.*?-->)`, as a JavaScript expression. Both engines
@@ -458,38 +459,48 @@ describe("countTextWords 'whitespace'", () => {
   });
 });
 
+// The time limit only ends a hang: what the test checks is how the time grows (see helpers/growth.ts). Each input is
+// made of `n` units (each case was written at 100,000); the fastest readers get a larger `n`, so that the smaller
+// input still takes long enough to time.
 describe('word counts take linear time on adversarial text', () => {
-  it.each([
-    ['unclosed comments', '/*'.repeat(100_000) + '/%'.repeat(100_000) + '<!--'.repeat(50_000)],
-    ['unclosed macros', '<<'.repeat(200_000)],
-    ['unclosed links', '[['.repeat(200_000) + '|'.repeat(1000)],
-    ['unclosed tags', '<'.repeat(400_000)],
-    ['unclosed macros with comparisons', '<<if $a > 1</if> '.repeat(50_000)],
-    ['top-level elements', '<span>x</span>'.repeat(50_000)],
-    ['macros with comparisons', '<<if $a >= 1>>x'.repeat(50_000)],
-    ['tags with quoted >', '<br title="a > b">'.repeat(50_000)],
-    ['unclosed attribute quotes', '<b title="'.repeat(50_000)],
-    ['prose comparisons', 'a < b > c <3 '.repeat(50_000)],
-    ['unclosed style tags', '<style title="'.repeat(50_000)],
-    ['many links and no tag', '[[x]] '.repeat(100_000)],
-    ['stray end tags', '</b > '.repeat(100_000)],
-    ['deep nesting', '<b>x '.repeat(100_000)],
-    ['end tags far from their start tags', '<b>'.repeat(400) + 'x </i>'.repeat(100_000)],
-    ['end tags no start tag opened, after many', '<b>'.repeat(100_000) + '</i>'.repeat(100_000)],
-    ['end tags no start tag opened, after many spans', '<span>'.repeat(100_000) + 'x</i> '.repeat(100_000)],
-    ['end tags closing many at once', ('<b>'.repeat(1000) + '<i></b>').repeat(200)],
-    ['unclosed own elements', '<style>a '.repeat(50_000) + '<html>b '.repeat(50_000) + '<nowiki>c '.repeat(50_000)],
-    ['unbalanced svg elements', '<svg>a '.repeat(100_000) + '</svg>'.repeat(10)],
-    ['svg openers without a >', '<svg '.repeat(100_000)],
-    ['nested svg elements', '<svg>'.repeat(100_000) + '</svg>'.repeat(100_000)],
-    ['end tags of an element opened among many', '<b><i>'.repeat(100_000) + '</b>'.repeat(100_000)],
-    ['style openers without a >', '<style '.repeat(100_000)],
-    ['combining marks', 'a' + '\u0301'.repeat(400_000)],
-  ])('%s', (_label, text) => {
+  const half = (n: number): number => Math.floor(n / 2);
+  const N = 50_000;
+  const cases: readonly (readonly [string, (n: number) => string, number?])[] = [
+    ['unclosed comments', (n) => '/*'.repeat(n) + '/%'.repeat(n) + '<!--'.repeat(half(n))],
+    ['unclosed macros', (n) => '<<'.repeat(2 * n)],
+    ['unclosed links', (n) => '[['.repeat(2 * n) + '|'.repeat(n / 100), 4 * N],
+    ['unclosed tags', (n) => '<'.repeat(4 * n)],
+    ['unclosed macros with comparisons', (n) => '<<if $a > 1</if> '.repeat(half(n))],
+    ['top-level elements', (n) => '<span>x</span>'.repeat(half(n))],
+    ['macros with comparisons', (n) => '<<if $a >= 1>>x'.repeat(half(n)), 4 * N],
+    ['tags with quoted >', (n) => '<br title="a > b">'.repeat(half(n))],
+    ['unclosed attribute quotes', (n) => '<b title="'.repeat(half(n))],
+    ['prose comparisons', (n) => 'a < b > c <3 '.repeat(half(n))],
+    ['unclosed style tags', (n) => '<style title="'.repeat(half(n))],
+    ['many links and no tag', (n) => '[[x]] '.repeat(n)],
+    ['stray end tags', (n) => '</b > '.repeat(n)],
+    ['deep nesting', (n) => '<b>x '.repeat(n)],
+    ['end tags far from their start tags', (n) => '<b>'.repeat(400) + 'x </i>'.repeat(n)],
+    ['end tags no start tag opened, after many', (n) => '<b>'.repeat(n) + '</i>'.repeat(n)],
+    ['end tags no start tag opened, after many spans', (n) => '<span>'.repeat(n) + 'x</i> '.repeat(n)],
+    ['end tags closing many at once', (n) => ('<b>'.repeat(1000) + '<i></b>').repeat(n / 500)],
+    [
+      'unclosed own elements',
+      (n) => '<style>a '.repeat(half(n)) + '<html>b '.repeat(half(n)) + '<nowiki>c '.repeat(half(n)),
+    ],
+    ['unbalanced svg elements', (n) => '<svg>a '.repeat(n) + '</svg>'.repeat(10)],
+    ['svg openers without a >', (n) => '<svg '.repeat(n)],
+    ['nested svg elements', (n) => '<svg>'.repeat(n) + '</svg>'.repeat(n)],
+    ['end tags of an element opened among many', (n) => '<b><i>'.repeat(n) + '</b>'.repeat(n)],
+    ['style openers without a >', (n) => '<style '.repeat(n)],
+    ['combining marks', (n) => 'a' + '\u0301'.repeat(4 * n), 20 * N],
+  ];
+  it.each(cases.map(([label, make, n = N]) => ({ label, make, n })))('$label', { timeout: 120_000 }, ({ make, n }) => {
     for (const method of ['tweego', 'whitespace'] as const) {
-      const started = performance.now();
-      countTextWords(text, method);
-      expect(performance.now() - started).toBeLessThan(3000);
+      expect(
+        growth(make, (text) => countTextWords(text, method), n),
+        method,
+      ).toBeLessThan(LINEAR_GROWTH);
     }
   });
 });
