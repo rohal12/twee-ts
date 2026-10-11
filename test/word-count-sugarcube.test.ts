@@ -71,6 +71,9 @@ const markup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> =>
       '<html><!-- open</html>',
       '<svg><!-- open</svg>',
       '<styles>not a style</style>',
+      '<svg-x>left open',
+      '<style-x>left open',
+      '<svg-x><text>drawn</text></svg-x>',
     ),
   );
 
@@ -155,6 +158,13 @@ describe.runIf(oracle !== undefined || process.env['CI'] !== undefined)(
         '<styles>a</style> b',
         '<style-x>a</style> b',
         '<svgx>a</svgx> b',
+        '<svg-icon name="x"></svg-icon> word',
+        '<svg-icon> a b c',
+        '<style-box> a b c',
+        '<svgx>',
+        '<styles>',
+        '<text> <math> </text> <!-- open </math>',
+        '<text> <math> </text> <!-- open </math> a b',
       ];
       const shown = await counts(cases);
       expect(cases.map((text) => countTextWords(text, 'whitespace'))).toEqual(shown);

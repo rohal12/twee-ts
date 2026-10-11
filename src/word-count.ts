@@ -444,33 +444,21 @@ interface MarkupText {
 }
 
 /**
- * The elements whose start tags `readMarkup` kept and no end tag has closed yet, innermost last. Each name keeps the
- * places it has on the stack, so finding the innermost element of a name takes constant time, and closing elements
- * takes time in proportion to how many were opened: the work of all calls together is linear.
+ * The elements whose start tags `readMarkup` kept and no end tag has closed yet, innermost last. As SugarCube's
+ * `htmlTag` parser reads an element's content up to its own end tag, only the innermost element can be closed: an end
+ * tag of an outer one inside it is text. Each call takes constant time.
  */
 class OpenElements {
   private readonly names: string[] = [];
-  private readonly places = new Map<string, number[]>();
 
   open(name: string): void {
-    const places = this.places.get(name);
-    if (places === undefined) {
-      this.places.set(name, [this.names.length]);
-    } else {
-      places.push(this.names.length);
-    }
     this.names.push(name);
   }
 
-  /** Closes the innermost open element named `name`, and those opened inside it; false when none is open. */
+  /** Closes the innermost open element if it is named `name`; false when it is not. */
   close(name: string): boolean {
-    const places = this.places.get(name);
-    const place = places?.[places.length - 1];
-    if (place === undefined) return false;
-    while (this.names.length > place) {
-      const closed = this.names.pop();
-      if (closed !== undefined) this.places.get(closed)?.pop();
-    }
+    if (this.names[this.names.length - 1] !== name) return false;
+    this.names.pop();
     return true;
   }
 }
@@ -480,10 +468,11 @@ class OpenElements {
  * `<<script>>` bodies, comments (and the opener of one that isn't closed) and italics markup are dropped, link
  * markup gives the text it shows, a `<script>` element is kept whole, and an HTML start tag that SugarCube's
  * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. An element
- * SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: a `<style>` element
- * shows nothing, the text an `<svg>` element or the content of `<html>` shows, read as HTML of its own, is kept as
- * text, and so is the content of `<nowiki>`; without its end, the parser drops its opener, and so does this. In the
- * text between them, an end tag is kept when it closes an element whose start tag was kept, and any other `<` is text.
+ * SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: the text a `<style>`
+ * or `<svg>` element (any tag name these start, as `<styles>`) or the content of `<html>` shows, read as HTML of its
+ * own, is kept as text (a `<style>` element shows none), and so is the content of `<nowiki>`; without its end, the
+ * parser drops its opener, and so does this. In the text between them, an end tag is kept when it closes the
+ * innermost element whose start tag was kept, and any other `<` is text.
  *
  * Linear time (see `OpenElements` and `ownElementReader`).
  */
@@ -502,14 +491,16 @@ function readMarkup(text: string): MarkupText {
     if (closed === undefined) return;
     switch (own.kind) {
       case 'style':
-        return;
       case 'svg':
       case 'html':
-        // SugarCube parses the element (or the content) as HTML of its own, so nothing left open in it reaches
-        // what follows. HTML nested too deeply to read gives no text.
+        // SugarCube parses the element (or, for `<html>`, the content) as HTML of its own, so nothing left open in it
+        // reaches what follows: a `<style>` element shows nothing, a `<styles>` element its text. HTML nested too
+        // deeply to read gives no text.
         try {
           keepText(
-            htmlText(own.kind === 'svg' ? text.slice(start, closed.end) : text.slice(own.openerEnd, closed.contentEnd)),
+            htmlText(
+              own.kind === 'html' ? text.slice(own.openerEnd, closed.contentEnd) : text.slice(start, closed.end),
+            ),
           );
         } catch (e) {
           if (!(e instanceof HtmlNestingError)) throw e;

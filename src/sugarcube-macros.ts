@@ -978,8 +978,6 @@ const OWN_CLOSE_RES: Readonly<Record<'style' | 'html' | 'nowiki', RegExp>> = {
 };
 // The tags `svgTag` counts to find the end of an `<svg>` element, without their `[^>]*>`, which is found apart.
 const SVG_TAG_START_RE = /<\/?[Ss][Vv][Gg]/g;
-// What may follow a tag name: white space, `/` or `>`.
-const TAG_NAME_END_RE = /^[\s/>]$/;
 
 /**
  * Returns a function that reads the element SugarCube reads with a parser of its own at `start`, as that parser reads
@@ -993,14 +991,11 @@ function ownElementReader(text: string): (start: number) => OwnElement | undefin
   let angle = text.indexOf('>');
   let svgElements: ReadonlyMap<number, OwnElement> | undefined;
   return (start) => {
-    // SugarCube reads `<svg` and `<style` only when the tag name ends there (`<styles>` is markup of another kind).
-    const ends = (name: string): boolean =>
-      startsWithFolded(text, start, name) && TAG_NAME_END_RE.test(text.charAt(start + name.length));
-    if (ends('<svg')) {
+    // As SugarCube's patterns, with no end to the tag name: `<svg-icon>` and `<styles>` are read by these parsers too.
+    if (startsWithFolded(text, start, '<svg')) {
       svgElements ??= svgElementsOf(text);
       return svgElements.get(start);
     }
-    if (startsWithFolded(text, start, '<s') && !ends('<style')) return undefined;
     const kind = startsWithFolded(text, start, '<style')
       ? 'style'
       : startsWithFolded(text, start, '<html>')
