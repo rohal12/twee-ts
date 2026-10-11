@@ -43,18 +43,18 @@ export interface SugarCubeOracle {
 
 /**
  * Run in the page (as source, so this module needs no DOM types): wikifies each text into an element of the page and
- * gives the text the reader sees, or null where SugarCube shows an error. A text node is seen when its element is
+ * gives the text the reader sees, or null where SugarCube shows an error or throws. A text node is seen when its element is
  * rendered (not hidden, not inside an iframe) and the browser lays the text out in boxes, which it doesn't for text an
  * SVG or MathML element doesn't render; white space between rendered elements still parts words, and a textarea's
- * text, shown as its value, has no boxes of its own but counts.
+ * text, shown as its value, has no boxes of its own but counts. A `br` element, shown, is white space.
  */
 const SHOWN_TEXTS = `(sources) => sources.map((source) => {
   const range = document.createRange();
   const shown = (node) => {
     const element = node.parentElement;
     if (!element.checkVisibility() || element.closest('iframe') !== null) return false;
-    // A textarea shows its text as its value, which has no boxes of its own.
-    if (node.textContent.trim() === '' || element.localName === 'textarea') return true;
+    // A textarea (an HTML one: a MathML or SVG element of that name is no control) shows its text as its value, which has no boxes of its own.
+    if (node.textContent.trim() === '' || element instanceof HTMLTextAreaElement) return true;
     range.selectNodeContents(node);
     return range.getClientRects().length > 0;
   };
@@ -67,12 +67,15 @@ const SHOWN_TEXTS = `(sources) => sources.map((source) => {
     const walker = document.createTreeWalker(out, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       if (node instanceof Element) {
-        if (node.localName === 'br') text += ' ';
+        if (node.localName === 'br' && node.checkVisibility() && node.closest('iframe') === null) text += ' ';
       } else if (shown(node)) {
         text += node.textContent;
       }
     }
     return text;
+  } catch {
+    // The wikifier threw on this text (SugarCube cannot show it), as for an error shown in the passage.
+    return null;
   } finally {
     out.remove();
   }

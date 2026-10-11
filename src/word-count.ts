@@ -6,8 +6,8 @@ import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
 import { htmlEndTagAt, walkPassageMarkup } from './sugarcube-macros.js';
 import type { OwnElement } from './sugarcube-macros.js';
-import { HtmlNestingError, htmlText } from './html-structure.js';
-import { htmlEscape } from './escape.js';
+import { HtmlNestingError, parseAppended, wikifiedText } from './html-structure.js';
+import type { WikifiedPiece } from './html-structure.js';
 
 /** The comment forms Tweego strips before counting: `/% %/`, `/* *\/` and `<!-- -->`. */
 const COMMENTS: readonly (readonly [open: string, close: string])[] = [
@@ -435,8 +435,8 @@ export function countNormalizationSegments(text: string): number {
 
 /** Passage text as the `'whitespace'` method reads it, before HTML. */
 interface MarkupText {
-  /** HTML for `htmlText`: the start and end tags SugarCube reads, and text, in which any other `<` is `&lt;`. */
-  readonly html: string;
+  /** What SugarCube's wikifier reads: the start and end tags of HTML elements, and text (see `wikifiedText`). */
+  readonly pieces: readonly WikifiedPiece[];
   /** The text alone, with no tag: what is counted when the HTML can't be read. */
   readonly prose: string;
   /** An `<svg>` element or `<html>` content nests elements more than `MAX_HTML_DEPTH` deep. */
@@ -466,23 +466,23 @@ class OpenElements {
 /**
  * Reads passage markup as SugarCube's wikifier walks it (`walkPassageMarkup`), leftmost first: macro tags,
  * `<<script>>` bodies, comments (and the opener of one that isn't closed) and italics markup are dropped, link
- * markup gives the text it shows, a `<script>` element is kept whole, and an HTML start tag that SugarCube's
+ * markup gives the text it shows, a `<script>` element shows nothing, and an HTML start tag that SugarCube's
  * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. An element
  * SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: the text a `<style>`
  * or `<svg>` element (any tag name these start, as `<styles>`) or the content of `<html>` shows, read as HTML of its
- * own, is kept as text (a `<style>` element shows none), and so is the content of `<nowiki>`; without its end, the
- * parser drops its opener, and so does this. In the text between them, an end tag is kept when it closes the
- * innermost element whose start tag was kept, and any other `<` is text.
+ * own, is kept as the nodes jQuery makes of it (a `<style>` element shows no text), and so is the content of
+ * `<nowiki>`, as text; without its end, the parser drops its opener, and so does this. In the text between them, an
+ * end tag is kept when it closes the innermost element whose start tag was kept, and any other `<` is text.
  *
  * Linear time (see `OpenElements` and `ownElementReader`).
  */
 function readMarkup(text: string): MarkupText {
-  const html: string[] = [];
+  const pieces: WikifiedPiece[] = [];
   const prose: string[] = [];
   let htmlTooDeep = false;
   const open = new OpenElements();
-  const keepText = (part: string): void => {
-    html.push(htmlEscape(part));
+  const keepText = (kind: 'link' | 'verbatim', part: string): void => {
+    pieces.push({ kind, text: part });
     prose.push(part);
   };
   /** Reads an element SugarCube reads with a parser of its own, at `start`. */
@@ -497,18 +497,18 @@ function readMarkup(text: string): MarkupText {
         // reaches what follows: a `<style>` element shows nothing, a `<styles>` element its text. HTML nested too
         // deeply to read gives no text.
         try {
-          keepText(
-            htmlText(
-              own.kind === 'html' ? text.slice(own.openerEnd, closed.contentEnd) : text.slice(start, closed.end),
-            ),
+          const appended = parseAppended(
+            own.kind === 'html' ? text.slice(own.openerEnd, closed.contentEnd) : text.slice(start, closed.end),
           );
+          pieces.push(appended.piece);
+          prose.push(appended.text);
         } catch (e) {
           if (!(e instanceof HtmlNestingError)) throw e;
           htmlTooDeep = true;
         }
         return;
       case 'nowiki':
-        keepText(text.slice(own.openerEnd, closed.contentEnd));
+        keepText('verbatim', text.slice(own.openerEnd, closed.contentEnd));
         return;
       default: {
         const _exhaustive: never = own.kind;
@@ -516,29 +516,34 @@ function readMarkup(text: string): MarkupText {
       }
     }
   };
+  /** Text between markup, which the wikifier reads as it is, line feeds as line breaks. */
+  const keepPassageText = (part: string): void => {
+    if (part === '') return;
+    pieces.push({ kind: 'text', text: part });
+    prose.push(part);
+  };
   let nextAngle = text.indexOf('<');
   /** The text from `from` to `end`, where the walk read no markup. */
   const between = (from: number, end: number): void => {
     let at = from;
+    // The wikifier makes one text node of text that no markup interrupts, a `<` that starts none included.
+    let run = '';
     for (;;) {
       if (nextAngle !== -1 && nextAngle < at) nextAngle = text.indexOf('<', at);
       if (nextAngle === -1 || nextAngle >= end) break;
-      const part = text.slice(at, nextAngle);
-      html.push(part);
-      prose.push(part);
+      run += text.slice(at, nextAngle);
       const endTag = htmlEndTagAt(text, nextAngle);
       if (endTag !== undefined && endTag.end <= end && open.close(endTag.name)) {
-        html.push(text.slice(nextAngle, endTag.end));
+        keepPassageText(run);
+        run = '';
+        pieces.push({ kind: 'end' });
         at = endTag.end;
       } else {
-        html.push('&lt;');
-        prose.push('<');
+        run += '<';
         at = nextAngle + 1;
       }
     }
-    const part = text.slice(at, end);
-    html.push(part);
-    prose.push(part);
+    keepPassageText(run + text.slice(at, end));
   };
   let kept = 0;
   walkPassageMarkup(
@@ -547,16 +552,14 @@ function readMarkup(text: string): MarkupText {
       between(kept, region.start);
       switch (region.kind) {
         case 'link':
-          if (region.label !== undefined) keepText(region.label);
+          if (region.label !== undefined) keepText('link', region.label);
           break;
         case 'html-tag':
-          html.push(text.slice(region.start, region.end));
+          pieces.push({ kind: 'start', name: region.tag.name, container: region.tag.container });
           if (region.tag.container) open.open(region.tag.name);
           break;
         case 'script-element':
-          // A complete element is kept for the HTML parser, which leaves its text out; SugarCube reads an opener
-          // without a `</script>` and shows nothing for it.
-          if (region.complete) html.push(text.slice(region.start, region.end));
+          // SugarCube shows nothing for a `<script>` element, or for an opener without a `</script>`.
           break;
         case 'own-element':
           readOwnElement(region.start, region.element);
@@ -575,10 +578,8 @@ function readMarkup(text: string): MarkupText {
     { ownElements: true },
   );
   between(kept, text.length);
-  return { html: html.join(''), prose: prose.join(''), htmlTooDeep };
+  return { pieces, prose: prose.join(''), htmlTooDeep };
 }
-
-const NUL = String.fromCharCode(0);
 
 /** The words of passage text, and whether its HTML nests too deeply to read (see `countWhitespaceWords`). */
 export interface WordCount {
@@ -588,21 +589,16 @@ export interface WordCount {
 }
 
 /**
- * The words of passage text that a reader sees, as SugarCube shows it: the text `readMarkup` leaves, read as HTML
- * (`htmlText`), split at white space. When its elements nest more than `MAX_HTML_DEPTH` deep, which a passage that
+ * The words of passage text that a reader sees, as SugarCube shows it: the text `readMarkup` leaves, with the elements
+ * SugarCube makes one at a time (`wikifiedText`), split at white space. When its elements nest more than `MAX_HTML_DEPTH` deep, which a passage that
  * opens an element in each branch of an `<<if>>` can do without nesting at all when shown, the words of the text
  * without tags are counted instead.
  */
 function countWhitespaceWords(text: string): WordCount {
-  const { html, prose, htmlTooDeep } = readMarkup(text);
+  const { pieces, prose, htmlTooDeep } = readMarkup(text);
   if (htmlTooDeep) return { words: splitTweeFields(prose).length, htmlTooDeep };
-  // Text that holds no tag, character reference or NUL reads as itself.
-  if (!html.includes('<') && !html.includes('&') && !html.includes(NUL)) {
-    return { words: splitTweeFields(html).length, htmlTooDeep: false };
-  }
   try {
-    // SugarCube makes the elements of passage markup one by one, so those inside `<math>` are HTML elements.
-    return { words: splitTweeFields(htmlText(html, { mathText: false })).length, htmlTooDeep: false };
+    return { words: splitTweeFields(wikifiedText(pieces)).length, htmlTooDeep: false };
   } catch (e) {
     if (!(e instanceof HtmlNestingError)) throw e;
     return { words: splitTweeFields(prose).length, htmlTooDeep: true };
