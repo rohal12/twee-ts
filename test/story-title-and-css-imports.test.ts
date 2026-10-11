@@ -52,10 +52,11 @@ describe('ineffective @import rules (#352)', () => {
     ['an import first', [`${IMPORT}body { margin: 0; }`], 0],
     ['an import alone', [IMPORT], 0],
     ['import then rules, then nothing', [IMPORT, 'body {}'], 0],
+    ['charset and layer statement before the import', ['@charset "utf-8";\n@layer a, b;\n' + IMPORT + 'a{}'], 0],
     [
-      'charset, layer statement and namespace before the import',
-      ['@charset "utf-8";\n@layer a, b;\n@namespace x url(y);\n' + IMPORT + 'a{}'],
-      0,
+      'a namespace rule before the import (CSS Cascade allows only @charset and @layer statements)',
+      ['@namespace x url(y);\n' + IMPORT],
+      1,
     ],
     [
       'a rule hidden in a comment or string',
