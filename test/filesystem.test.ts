@@ -416,6 +416,11 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     /** Waits (up to `timeoutMs`) for the next rebuild's changed files. */
     next(timeoutMs?: number): Promise<ReadonlySet<string> | undefined>;
     /**
+     * Waits for the initial build, and returns it. On macOS it also waits for the full build that follows once the
+     * FSEvents stream the watches replaced runs again (folder-stream.ts), so the next build is the one a change makes.
+     */
+    started(): Promise<ReadonlySet<string> | undefined>;
+    /**
      * Makes the first change after the initial build with `write(attempt)`, repeating it until
      * the watcher reports a rebuild, and returns that rebuild's changed files. macOS starts its
      * file-system event stream a moment after fs.watch returns, and a change made before then is
@@ -457,12 +462,17 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
         }
       }
     };
-    return { next, firstChange };
+    const started = async (): Promise<ReadonlySet<string> | undefined> => {
+      const initial = await next();
+      if (process.platform === 'darwin') await next();
+      return initial;
+    };
+    return { next, started, firstChange };
   }
 
   it('reports a change under the path source discovery gives the file', async () => {
     const builds = watchBuilds([start]);
-    expect(await builds.next()).toBeUndefined(); // the initial full build
+    expect(await builds.started()).toBeUndefined(); // the initial full build
     const changed = await builds.firstChange((n) => {
       writeFileSync(start, `:: Start\nTwo ${n}\n`);
     });
@@ -471,7 +481,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
 
   it('ignores a hard link of an output that was missing when the watch started (#268)', async () => {
     const builds = watchBuilds([story]);
-    await builds.next();
+    await builds.started();
     writeFileSync(outFile, 'built');
     linkSync(outFile, join(story, 'alias.html'));
     // The alias is a build input, so an event for it must not start a build; the source change does, once.
@@ -484,7 +494,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
 
   it('keeps watching a file that an editor saved by replacing it', async () => {
     const builds = watchBuilds([start]);
-    await builds.next();
+    await builds.started();
     const temp = join(story, '.start.tw.swp');
     const replaced = await builds.firstChange((n) => {
       writeFileSync(temp, `:: Start\nTwo ${n}\n`);
@@ -501,7 +511,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     const deep = join(nested, 'deep.tw');
     writeFileSync(deep, ':: Deep\none\n');
     const builds = watchBuilds([story]);
-    await builds.next();
+    await builds.started();
     // A build reports the file, or is a full one: macOS FSEvents may deliver the folder's creation (made just
     // before the watch began) as an event of the folder, which schedules a full build.
     const reports = (changed: ReadonlySet<string> | undefined, file: string): boolean =>
@@ -525,7 +535,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
 
   it('does not rebuild for a change to a file of a type it does not build for', async () => {
     const builds = watchBuilds([story]);
-    await builds.next();
+    await builds.started();
     const changed = await builds.firstChange((n) => {
       writeFileSync(join(story, 'notes.unknown'), `not a source ${n}`);
       writeFileSync(start, `:: Start\nTwo ${n}\n`);
@@ -537,7 +547,7 @@ describe('watchFilesystem on individual files', { timeout: 20_000 }, () => {
     const head = join(tmpDir, 'head.txt');
     writeFileSync(head, '<meta name="a">');
     const builds = watchBuilds([story, head]);
-    await builds.next();
+    await builds.started();
     const changed = [
       ...((await builds.firstChange((n) => {
         writeFileSync(head, `<meta name="b${n}">`);

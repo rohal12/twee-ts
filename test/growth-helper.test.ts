@@ -6,9 +6,15 @@
 import { describe, it, expect } from 'vitest';
 import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 
-/** Blocks for `ms` milliseconds: work whose time is the size of its input, on any machine. */
-function blockFor(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+/**
+ * Runs for `ms` milliseconds: work whose time is the size of its input, on any machine. It spins on the clock rather
+ * than sleeping, because a sleep on Windows lasts a whole timer tick (about 15 ms) whatever was asked for.
+ */
+function blockFor(ms: number): number {
+  const end = performance.now() + ms;
+  let spins = 0;
+  while (performance.now() < end) spins++;
+  return spins;
 }
 
 describe('growth', () => {

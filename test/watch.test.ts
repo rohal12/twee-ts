@@ -145,6 +145,10 @@ describe('watchFilesystem', () => {
       join(root, 'out.html'),
       (files) => builds.push(files),
       (file) => file.endsWith('.png'),
+      undefined,
+      {},
+      // Only the build timer counts here, not the timer of the probe a shared folder stream (macOS) adds.
+      { shared: false },
     );
     try {
       expect(builds).toEqual([undefined]); // the initial full build
