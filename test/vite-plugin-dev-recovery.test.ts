@@ -4,7 +4,16 @@ import { extname, join } from 'node:path';
 import { createServer } from 'vite';
 import type { Plugin, ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { makeProject, cleanUp, serverUrl, watcherReady, STORY, storyWith, COMPILE } from './helpers/plugins.js';
+import {
+  makeProject,
+  cleanUp,
+  NO_DEP_OPTIMIZER,
+  serverUrl,
+  watcherReady,
+  STORY,
+  storyWith,
+  COMPILE,
+} from './helpers/plugins.js';
 
 let server: ViteDevServer | undefined;
 
@@ -22,6 +31,7 @@ async function start(root: string, entry: string, watcher = true): Promise<strin
 /** Like start(), with `extra` among the user's plugins, which the entry build runs too. */
 async function startWith(root: string, entry: string, extra?: Plugin, watcher = false): Promise<string> {
   server = await createServer({
+    ...NO_DEP_OPTIMIZER,
     configFile: false,
     root,
     logLevel: 'silent',
@@ -209,6 +219,7 @@ describe('vite plugin dev: an entry file edited while it is bundled, with no wat
 
   async function startWith(root: string, entry: string, extra: Plugin[]): Promise<string> {
     server = await createServer({
+      ...NO_DEP_OPTIMIZER,
       configFile: false,
       root,
       logLevel: 'silent',

@@ -4,14 +4,14 @@
  * document mode the production build gets.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { attr, elements, parentTag, parseDocument } from './helpers/html.js';
-import { serverUrl } from './helpers/plugins.js';
+import { NO_DEP_OPTIMIZER, removeProjects, serverUrl } from './helpers/plugins.js';
 
 const STORY = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\nHello.\n';
 
@@ -21,7 +21,7 @@ let server: ViteDevServer | undefined;
 afterEach(async () => {
   await server?.close();
   server = undefined;
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  await removeProjects(dirs.splice(0));
 });
 
 /** Serve a story with a format whose source is `source`, at `base`; returns the served page. */
@@ -37,6 +37,7 @@ async function serve(source: string, base = '/'): Promise<string> {
     writeFileSync(join(dir, name), content);
   }
   server = await createServer({
+    ...NO_DEP_OPTIMIZER,
     configFile: false,
     root: dir,
     base,

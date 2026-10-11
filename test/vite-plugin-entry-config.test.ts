@@ -19,6 +19,7 @@ import {
   cleanUp,
   COMPILE,
   makeProject,
+  NO_DEP_OPTIMIZER,
   runEntry,
   SETTLED,
   startServer,
@@ -360,6 +361,7 @@ describe('vite plugin entry: quiet entry builds (D1)', () => {
        import { readdirSync, writeFileSync } from 'node:fs';
        import { tweeTsPlugin } from ${JSON.stringify(pluginUrl)};
        const server = await createServer({ configFile: false, root: process.env.PROJECT, logLevel: 'silent',
+         ...${JSON.stringify(NO_DEP_OPTIMIZER)},
          server: { host: '127.0.0.1', port: 0 }, plugins: [tweeTsPlugin(${options(dir, 'index.html')})] });
        await server.listen();
        const url = 'http://127.0.0.1:' + server.httpServer.address().port + '/';

@@ -17,6 +17,7 @@ import {
   cleanUp,
   COMPILE,
   makeProject,
+  NO_DEP_OPTIMIZER,
   runEntry,
   startServer,
   STORY,
@@ -197,6 +198,7 @@ describe('vite plugin dev requests: in middleware mode', () => {
   it('serves the story below the base and leaves every other request to the app that mounts Vite', async () => {
     const dir = makeProject({ 'story/start.tw': STORY });
     const vite = await createServer({
+      ...NO_DEP_OPTIMIZER,
       configFile: false,
       root: dir,
       base: '/game/',

@@ -4,7 +4,16 @@ import { join } from 'node:path';
 import { createLogger, createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { makeProject, cleanUp, serverUrl, watcherReady, STORY, storyWith, COMPILE } from './helpers/plugins.js';
+import {
+  makeProject,
+  cleanUp,
+  NO_DEP_OPTIMIZER,
+  serverUrl,
+  watcherReady,
+  STORY,
+  storyWith,
+  COMPILE,
+} from './helpers/plugins.js';
 
 let server: ViteDevServer | undefined;
 
@@ -35,6 +44,7 @@ async function start(root: string, watcher: boolean): Promise<Dev> {
     if (message.includes('[twee-ts]')) errors++;
   };
   server = await createServer({
+    ...NO_DEP_OPTIMIZER,
     configFile: false,
     root,
     logLevel: 'silent',

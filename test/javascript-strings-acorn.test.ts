@@ -15,6 +15,7 @@ import { storyInspect } from '../src/inspect.js';
 import { parseTwee } from '../src/parser.js';
 import { StoryBuilder } from '../src/story.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
+import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 import { lineTerminator, stringLiteral, templateLiteral } from './helpers/js-arbitraries.js';
 
 const ORACLE_OPTIONS: Options = {
@@ -364,13 +365,11 @@ describe('javaScriptStrings on source that does not parse', () => {
     expect(javaScriptStrings('x = `a ${ "b" + \'c\n"d" }`')).toEqual(['b', 'd']);
   });
 
+  // The time limit only ends a hang: what the test checks is how the time grows (see helpers/growth.ts).
   it('takes linear time on source built to restart the tokenizer often', { timeout: 120_000 }, () => {
-    const n = 50_000;
-    for (const source of ["'\n".repeat(n), '@'.repeat(n), '@a'.repeat(n), 'x = /[\n'.repeat(n), '"\\x"\n'.repeat(n)]) {
-      const start = performance.now();
-      javaScriptStrings(source);
-      // A fraction of a second each on a laptop; reading quadratically would take a minute or more.
-      expect(performance.now() - start, JSON.stringify(source.slice(0, 8))).toBeLessThan(20_000);
+    for (const unit of ["'\n", '@', '@a', 'x = /[\n', '"\\x"\n']) {
+      const source = (n: number): string => unit.repeat(n);
+      expect(growth(source, javaScriptStrings, 5000), JSON.stringify(unit)).toBeLessThan(LINEAR_GROWTH);
     }
   });
 });

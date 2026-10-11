@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
@@ -17,15 +17,24 @@ import {
 import { createServer } from 'node:net';
 import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { seedIndexDownload, seedUrlDownload, withCacheHome } from './helpers/format-cache.js';
+import { BUILD_TIMEOUT_MS, cliNodeArgs } from './helpers/package-build.js';
+import { removeDir } from './helpers/remove-dir.js';
 
-const ROOT = resolve(import.meta.dirname, '..');
-const BIN = join(ROOT, 'bin', 'twee-ts.ts');
-// The CLI runs from a temporary directory, where a bare `tsx` would not resolve.
-const TSX_LOADER = pathToFileURL(join(ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href;
-const NODE_ARGS = ['--import', TSX_LOADER, BIN];
+// The CLI as it ships, built once for this file (see helpers/package-build.ts): each test's time is the CLI's own.
+let built = '';
+let nodeArgs: readonly string[] = [];
+
+beforeAll(() => {
+  built = mkdtempSync(join(tmpdir(), 'twee-ts-cli-build-'));
+  nodeArgs = cliNodeArgs(built);
+}, BUILD_TIMEOUT_MS);
+
+afterAll(() => {
+  if (built !== '') removeDir(built);
+});
 
 interface CliResult {
   readonly status: number | null;
@@ -34,7 +43,7 @@ interface CliResult {
 }
 
 function runCli(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = process.env): CliResult {
-  const r = spawnSync(process.execPath, [...NODE_ARGS, ...args], { cwd, env, encoding: 'utf-8', timeout: 30_000 });
+  const r = spawnSync(process.execPath, [...nodeArgs, ...args], { cwd, env, encoding: 'utf-8', timeout: 30_000 });
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -71,7 +80,7 @@ async function stopRunningClis(): Promise<void> {
 }
 
 function startCli(cwd: string, args: readonly string[]): RunningCli {
-  const child = spawn(process.execPath, [...NODE_ARGS, ...args], { cwd });
+  const child = spawn(process.execPath, [...nodeArgs, ...args], { cwd });
   running.add(child);
   let stdout = '';
   let stderr = '';
@@ -878,7 +887,7 @@ describe('CLI warnings follow Node (#373)', () => {
     writeFileSync(preload, "setTimeout(() => process.emitWarning('late warning'), 0);\n");
     const r = spawnSync(
       process.execPath,
-      ['--import', pathToFileURL(preload).href, ...NODE_ARGS, '--no-config', '--no-remote', '-a', 'story.tw'],
+      ['--import', pathToFileURL(preload).href, ...nodeArgs, '--no-config', '--no-remote', '-a', 'story.tw'],
       { cwd: dir, env: { ...process.env, ...env }, encoding: 'utf-8', timeout: 30_000 },
     );
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };
@@ -905,7 +914,7 @@ describe.skipIf(process.platform !== 'linux' || !existsSync('/dev/full'))(
       writeFileSync(join(dir, 'story.tw'), full === 'stderr' ? WARNING_STORY : VALID_STORY);
       const fd = openSync('/dev/full', 'w');
       try {
-        const r = spawnSync(process.execPath, [...NODE_ARGS, '--no-config', ...args], {
+        const r = spawnSync(process.execPath, [...nodeArgs, '--no-config', ...args], {
           cwd: dir,
           stdio: ['ignore', full === 'stdout' ? fd : 'pipe', full === 'stderr' ? fd : 'pipe'],
           encoding: 'utf-8',

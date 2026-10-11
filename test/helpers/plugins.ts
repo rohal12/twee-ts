@@ -2,14 +2,15 @@
  * Shared set-up for the bundler plugin tests: temporary projects, dev servers
  * on a free loopback port, and builds held in memory.
  */
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { build, createServer, version } from 'vite';
 import type { InlineConfig, ViteDevServer } from 'vite';
+import { removeDir } from './remove-dir.js';
 
 const FORMATS = join(__dirname, '..', 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -110,13 +111,58 @@ export function tempDir(): string {
 }
 
 /**
- * Closes the servers started and removes the projects made since the last call; for afterEach. On Windows a file
- * that a closing watcher or bundler still holds, or creates as the folder is removed, fails the removal for a moment
- * (EBUSY, EPERM, ENOTEMPTY), so it is retried, as Node.js retries those.
+ * Leaves Vite's dependency optimizer out of a test's dev server (#436). The optimizer writes its cache into the
+ * project (`.vite/deps`, in a project with no package.json) when the crawl of the first requests ends, and the
+ * server's close() does not wait for a write under way then: on Windows the rename into place is retried for up to
+ * 5 s while something holds the files, and removing the project meanwhile failed with ENOTEMPTY. No test is about the
+ * optimizer, and with discovery off and nothing to include, Vite starts none.
  */
+export const NO_DEP_OPTIMIZER = { optimizeDeps: { noDiscovery: true } } as const satisfies InlineConfig;
+
+/** What is below `dir`, links not followed: every entry, with each file's size; nothing once it is gone. */
+function treeOf(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const below = (folder: string): string[] =>
+    readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(folder, entry.name);
+      if (entry.isDirectory()) return [path, ...below(path)];
+      return [entry.isFile() ? `${path} (${String(lstatSync(path).size)} bytes)` : path];
+    });
+  return below(dir).sort();
+}
+
+/**
+ * Fails when something still writes into a project after its servers and watchers closed (#436), or when Vite left
+ * its dependency cache there. Each project is listed just after the close and again an event-loop turn later, after
+ * the I/O that a closed server still had under way has completed.
+ */
+async function checkNothingWritesAfterClose(projects: readonly string[]): Promise<void> {
+  const atClose = projects.map(treeOf);
+  if (atClose.every((tree) => tree.length === 0)) return;
+  await new Promise((done) => setImmediate(done));
+  for (const [i, dir] of projects.entries()) {
+    const later = treeOf(dir);
+    const cache = later.filter((path) => relative(dir, path).split(sep).includes('.vite'));
+    if (cache.length > 0) throw new Error(`Vite wrote its dependency cache into the project: ${cache.join(', ')}`);
+    const before = atClose[i] ?? [];
+    const changed = [...later.filter((path) => !before.includes(path)), ...before.filter((p) => !later.includes(p))];
+    if (changed.length > 0) throw new Error(`the project changed after its servers closed: ${changed.join(', ')}`);
+  }
+}
+
+/** Removes `projects` once their servers and watchers have closed, failing if anything still writes into them. */
+export async function removeProjects(projects: readonly string[]): Promise<void> {
+  try {
+    await checkNothingWritesAfterClose(projects);
+  } finally {
+    for (const dir of projects) removeDir(dir);
+  }
+}
+
+/** Closes the servers and watchers started and removes the projects made since the last call; for afterEach. */
 export async function cleanUp(): Promise<void> {
   await Promise.all([...servers.splice(0), ...watchers.splice(0)].map((closable) => closable.close()));
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await removeProjects(dirs.splice(0));
 }
 
 /** Every file below `dir`, but in node_modules and .git. */
@@ -155,6 +201,7 @@ export async function startServer(config: InlineConfig): Promise<{ server: ViteD
   const server = await createServer({
     configFile: false,
     logLevel: 'silent',
+    ...NO_DEP_OPTIMIZER,
     ...config,
     server: { host: '127.0.0.1', port: 0, ...config.server },
   });

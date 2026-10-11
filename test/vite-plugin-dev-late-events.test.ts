@@ -119,7 +119,14 @@ async function page(url: string): Promise<string> {
   return (await fetch(url)).text();
 }
 
-/** Longer than the dev server's debounce, so a rebuild an event started is queued, and a request then waits for it. */
+/**
+ * Resolves after the dev server has queued the rebuild for every watcher event already delivered, so that a request
+ * made then waits for that rebuild to finish (the request first waits for the rebuilds queued, see catchUp in
+ * vite-dev.ts). This is an order, not a guess at how long a rebuild takes (#436): an event the watcher delivers sets
+ * the server's debounce timer (50 ms) at once, in the same process, and Node runs timers in the order they are due,
+ * so this timer, due later than any debounce timer set before it, runs after that one however loaded the machine
+ * is. The events the tests release are delivered synchronously by release().
+ */
 const settle = (): Promise<void> => new Promise((done) => setTimeout(done, 300));
 
 describe('vite plugin dev: a watcher event for a change a request already caught up with (#343)', () => {
@@ -184,7 +191,6 @@ describe('vite plugin dev: a watcher event for a change a request already caught
     pinned.times.set(resolve(dep), { mtimeMs: 1_000_000, ctimeMs: 1_000_000 });
     expect(await page(url)).toContain('DEP_ONE');
     const before = observed.bundles();
-    await settle();
     // The same length, in place: size and inode stay as they were too.
     writeFileSync(dep, "export const value = 'DEP_TWO';\n");
     await expect.poll(() => page(url), { timeout: 10_000, interval: 100 }).toContain('DEP_TWO');

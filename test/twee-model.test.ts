@@ -11,6 +11,7 @@ import { decompileHTML } from '../src/html-parser.js';
 import { toTwee } from '../src/output-twee.js';
 import { parseTwee } from '../src/parser.js';
 import { storyInspect } from '../src/inspect.js';
+import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 import {
   StoryBuilder,
   createStory,
@@ -262,15 +263,14 @@ describe('T-12: orphans are the passages no chain of links reaches', () => {
     expect(inspect(':: Start\nHi\n:: StoryMenu\n[[Menu]]\n:: Menu\n[[Deep]]\n:: Deep\nx')).toEqual([]);
   });
 
-  it('takes linear time on a long chain of passages and on long passage text', () => {
-    const chain = Array.from({ length: 20_000 }, (_, i) => `:: P${i}\n[[P${i + 1}]]`).join('\n');
-    const longText = ':: Start\n' + 'line [[Start]] <<goto "Start">>\n'.repeat(100_000);
-    for (const source of [`:: Start\n[[P0]]\n${chain}`, longText]) {
-      const started = performance.now();
-      inspect(source);
-      expect(performance.now() - started).toBeLessThan(5000);
-    }
-    expect(inspect(`:: Start\n[[P0]]\n${chain}`)).toEqual([]);
+  // The time limit only ends a hang: what the test checks is how the time grows (see helpers/growth.ts).
+  it('takes linear time on a long chain of passages and on long passage text', { timeout: 60_000 }, () => {
+    const chain = (n: number): string =>
+      `:: Start\n[[P0]]\n${Array.from({ length: n }, (_, i) => `:: P${i}\n[[P${i + 1}]]`).join('\n')}`;
+    const longText = (n: number): string => ':: Start\n' + 'line [[Start]] <<goto "Start">>\n'.repeat(n);
+    expect(growth(chain, inspect, 5000)).toBeLessThan(LINEAR_GROWTH);
+    expect(growth(longText, inspect, 25_000)).toBeLessThan(LINEAR_GROWTH);
+    expect(inspect(chain(20_000))).toEqual([]);
   });
 
   it('starts from the StoryData start passage', () => {
