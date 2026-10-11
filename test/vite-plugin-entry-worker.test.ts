@@ -229,14 +229,14 @@ const LINKS = {
 } as const;
 
 // Linux only for the build watch, as for the sources: the bundler's watcher on macOS reports no replacement of a link.
-describe
-  .skipIf(process.platform === 'win32')
-  .each(MODES.filter((mode) => DEV_MODES.includes(mode) || process.platform === 'linux'))(
+describe.skipIf(process.platform === 'win32').each(MODES)(
   'a link a worker imports through is retargeted (#424): %s',
   (mode) => {
-    it.each(
-      Object.entries(WORKERS).flatMap(([worker, start]) => Object.keys(LINKS).map((name) => [worker, name, start])),
-    )(
+    it
+      .skipIf(!DEV_MODES.includes(mode) && process.platform !== 'linux')
+      .each(
+        Object.entries(WORKERS).flatMap(([worker, start]) => Object.keys(LINKS).map((name) => [worker, name, start])),
+      )(
       'bundles the new target (%s, %s)',
       async (_worker, name, start) => {
         const linkCase = LINKS[name as keyof typeof LINKS];
@@ -280,39 +280,92 @@ describe("the user's worker.plugins (#424)", () => {
   });
 });
 
-describe.runIf(buildWatchSeesFolders)('vite build watch under a Vite with no vite:worker plugin (#424)', () => {
-  it('warns once, and bundles a file added to a worker glob when a worker module changes', async () => {
-    const root = workerProject(WORKERS['?worker'], GLOBS.keys, { 'app/data/a.js': "export default 'A';" });
-    // Vite's worker plugin under another name, as a Vite version without it would leave the plugin none to call.
-    const hide: Plugin = {
-      name: 'hide-vite-worker',
-      configResolved(config) {
-        const worker = config.plugins.find((candidate) => candidate.name === 'vite:worker');
-        if (worker !== undefined) worker.name = 'vite:worker (hidden)';
-      },
-    };
-    const warnings: string[] = [];
-    const logger = createLogger('warn');
-    logger.warn = (message) => {
-      warnings.push(message);
-    };
-    await startBuildWatch({
-      root,
-      logLevel: 'warn',
-      customLogger: logger,
-      plugins: [hide, plugin(root, 'story.html')],
-      build: { outDir: join(root, 'out') },
-    });
-    const read = (): string[] => selected(textBelow(join(root, 'out')));
-    expect(read()).toEqual(['a']);
-    write(join(root, 'app/data/b.js'), "export default 'B';");
-    write(join(root, 'app/data/c.js'), "export default 'C';");
-    await vi.waitFor(() => {
-      expect(warnings.filter((warning) => warning.includes('no vite:worker plugin'))).toHaveLength(1);
-    }, SETTLED);
-    writeFileSync(join(root, 'app/worker.js'), `${GLOBS.keys}// edited\n`);
-    await vi.waitFor(() => {
-      expect(read()).toEqual(['a', 'b', 'c']);
-    }, SETTLED);
-  }, 60_000);
-});
+/** What a Vite version without what twee-ts calls to let go of a worker's bundle would leave. */
+const WORKER_PLUGIN_GONE: Readonly<Record<string, readonly [(worker: Plugin) => void, readonly string[]]>> = {
+  // Vite's own worker plugin still lets go of the worker's bundle when one of its modules changes.
+  'no vite:worker plugin': [
+    (worker) => {
+      worker.name = 'vite:worker (hidden)';
+    },
+    ['a', 'b', 'c'],
+  ],
+  // Without the hook nothing lets go of it, so the worker stays as it was first bundled.
+  'a vite:worker plugin with no watchChange hook': [
+    (worker) => {
+      Reflect.deleteProperty(worker, 'watchChange');
+    },
+    ['a'],
+  ],
+};
+
+describe.runIf(buildWatchSeesFolders).each(Object.entries(WORKER_PLUGIN_GONE))(
+  'vite build watch under a Vite with %s (#424)',
+  (_gone, [remove, afterEdit]) => {
+    it('warns once that a file added to a worker glob waits for a change to a worker module', async () => {
+      const root = workerProject(WORKERS['?worker'], GLOBS.keys, { 'app/data/a.js': "export default 'A';" });
+      const hide: Plugin = {
+        name: 'hide-vite-worker',
+        configResolved(config) {
+          const worker = config.plugins.find((candidate) => candidate.name === 'vite:worker');
+          if (worker !== undefined) remove(worker);
+        },
+      };
+      const warnings: string[] = [];
+      const logger = createLogger('warn');
+      logger.warn = (message) => {
+        warnings.push(message);
+      };
+      await startBuildWatch({
+        root,
+        logLevel: 'warn',
+        customLogger: logger,
+        plugins: [hide, plugin(root, 'story.html')],
+        build: { outDir: join(root, 'out') },
+      });
+      const read = (): string[] => selected(textBelow(join(root, 'out')));
+      expect(read()).toEqual(['a']);
+      write(join(root, 'app/data/b.js'), "export default 'B';");
+      write(join(root, 'app/data/c.js'), "export default 'C';");
+      await vi.waitFor(() => {
+        expect(
+          warnings.filter((warning) => warning.includes('no vite:worker plugin with a watchChange hook')),
+        ).toHaveLength(1);
+      }, SETTLED);
+      writeFileSync(join(root, 'app/worker.js'), `${GLOBS.keys}// edited\n`);
+      await vi.waitFor(() => {
+        expect(read()).toEqual(afterEdit);
+      }, SETTLED);
+    }, 60_000);
+  },
+);
+
+// A recursive worker glob reaches into a folder linked in after the first build: a file added to that folder lets go
+// of the worker's bundle too, as one added to the glob's own folder does.
+describe.skipIf(process.platform !== 'linux' || !buildWatchSeesFolders)(
+  'vite build watch: a recursive worker glob through a folder linked in later (#424)',
+  () => {
+    it('bundles a file added to the linked folder', async () => {
+      const root = workerProject(
+        WORKERS['?worker'],
+        "self.found = Object.keys(import.meta.glob('./data/**/*.js'));\n",
+        {
+          'app/data/a.js': "export default 'A';",
+        },
+      );
+      const shared = makeProject({ 'b.js': "export default 'B';" });
+      await startBuildWatch({ root, plugins: [plugin(root, 'story.html')], build: { outDir: join(root, 'out') } });
+      const read = (): string => textBelow(join(root, 'out'));
+      const found = (text: string): string[] =>
+        ['data/a.js', 'data/shared/b.js', 'data/shared/c.js'].filter((name) => text.includes(name));
+      expect(found(read())).toEqual(['data/a.js']);
+      symlinkSync(shared, join(root, 'app/data/shared'));
+      await vi.waitFor(() => {
+        expect(found(read())).toEqual(['data/a.js', 'data/shared/b.js']);
+      }, SETTLED);
+      writeFileSync(join(shared, 'c.js'), "export default 'C';");
+      await vi.waitFor(() => {
+        expect(found(read())).toEqual(['data/a.js', 'data/shared/b.js', 'data/shared/c.js']);
+      }, SETTLED);
+    }, 60_000);
+  },
+);

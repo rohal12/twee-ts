@@ -4,6 +4,7 @@
  * it can (see entryInputSettings), and otherwise, and always in dev, with a
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
+import { existsSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { build, createIdResolver, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
@@ -493,6 +494,8 @@ function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin
   return overrides.size === 0 ? plugin : withOverrides(plugin, overrides);
 }
 
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+
 /** A resolver Vite makes for plugins (see keptPath). */
 type IdResolver = ReturnType<typeof createIdResolver>;
 
@@ -541,17 +544,23 @@ async function keptPath(
 
 /**
  * The paths an import of `source` by `importer` is written as, absolute and with forward slashes, when it is written
- * as a path: relative to the importer, absolute, or from the root with `/` (which Vite tries first); also when that
- * reaches nothing yet, so creating it shows. None for a bare name or an alias.
+ * as a path: relative to the importer, or absolute; also when that reaches nothing yet, so creating it shows. None for
+ * a bare name or an alias. An absolute path that starts with `/` is read as Vite reads it: from the root first, unless
+ * it already names a path inside the root, and as a path of the file system when that is where it reaches a file.
  */
 function writtenPaths(source: string, importer: string | undefined, root: string): string[] {
   const from = importer === undefined ? undefined : fileOfId(importer);
-  const written = isAbsolute(source)
-    ? [...(/^[/\\]/.test(source) ? [join(root, source)] : []), source]
-    : from !== undefined && isAbsolute(from) && /^\.\.?(?:[/\\]|$)/.test(source)
-      ? [resolve(dirname(from), source)]
-      : [];
-  return written.map(fileOfId);
+  if (isAbsolute(source)) {
+    const file = fileOfId(source);
+    const fromRoot =
+      /^[/\\]/.test(source) && !file.startsWith(`${toPosix(root).replace(/\/$/, '')}/`) && !existsSync(file)
+        ? [fileOfId(join(root, source))]
+        : [];
+    return [...fromRoot, file];
+  }
+  return from !== undefined && isAbsolute(from) && /^\.\.?(?:[/\\]|$)/.test(source)
+    ? [fileOfId(resolve(dirname(from), source))]
+    : [];
 }
 
 /**
@@ -566,12 +575,13 @@ export async function importSpellings(
   root: string,
 ): Promise<{ readonly spellings: readonly string[]; readonly kept: string | undefined }> {
   if (source.startsWith('\0') || (importer?.startsWith('\0') ?? false)) return { spellings: [], kept: undefined };
-  const resolved = await keptPath(context, source, importer);
+  const written = writtenPaths(source, importer, root);
+  // A path written to a file that is there is the one Vite's resolver takes, links and all; only an import written
+  // otherwise (a bare name, an alias, a missing extension, a folder) is resolved, which halves the work of a graph
+  // of relative imports.
+  const resolved = written.find(isFile) ?? (await keptPath(context, source, importer));
   const kept = resolved !== undefined && isAbsolute(resolved) ? resolved : undefined;
-  return {
-    spellings: [...new Set([...writtenPaths(source, importer, root), ...(kept === undefined ? [] : [kept])])],
-    kept,
-  };
+  return { spellings: [...new Set([...written, ...(kept === undefined ? [] : [kept])])], kept };
 }
 
 /**

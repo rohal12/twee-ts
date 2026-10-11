@@ -39,7 +39,8 @@ const pkg = (name: string, extra: Record<string, unknown> = {}): string =>
  * project, and `<root>` and `<outside>` in a file's content or a link's target stand for the two folders. The link
  * at `link` first points at `initial`, then at `after`; `edit` is the file the new target reads from (relative to
  * the project, or to the outside folder with `outside/`), whose later edit is bundled too. `alias` is the
- * configuration's `resolve.alias`.
+ * configuration's `resolve.alias`; `chain` holds links made first, which never change (a link to the link that is
+ * retargeted).
  */
 interface LinkCase {
   readonly files: Readonly<Record<string, string>>;
@@ -48,6 +49,7 @@ interface LinkCase {
   readonly after: string;
   readonly edit: string;
   readonly alias?: Readonly<Record<string, string>>;
+  readonly chain?: Readonly<Record<string, string>>;
 }
 
 const PACKAGE_FILES = {
@@ -211,6 +213,68 @@ const CASES: Readonly<Record<string, LinkCase>> = {
     after: 'b.js',
     edit: 'b.js',
   },
+  // The retarget changes the file the import resolves to, not only the file behind the same path.
+  'a folder whose index changes from JavaScript to TypeScript is a link': {
+    files: { 'one/index.js': exported('A'), 'two/index.ts': exported('B'), 'entry.js': IMPORTING('./lib') },
+    link: 'lib',
+    initial: 'one',
+    after: 'two',
+    edit: 'two/index.ts',
+  },
+  'an import without its extension reaches a file of another extension in a linked folder': {
+    files: {
+      'one/dependency.js': exported('A'),
+      'two/dependency.ts': exported('B'),
+      'entry.js': IMPORTING('./lib/dependency'),
+    },
+    link: 'lib',
+    initial: 'one',
+    after: 'two',
+    edit: 'two/dependency.ts',
+  },
+  'a linked package folder whose exports change': {
+    files: {
+      'packages/v1/package.json': pkg('dependency', { exports: './index.js' }),
+      'packages/v1/index.js': exported('A'),
+      'packages/v2/package.json': pkg('dependency', { exports: './main.js' }),
+      'packages/v2/main.js': exported('B'),
+      'entry.js': IMPORTING('dependency'),
+    },
+    link: 'node_modules/dependency',
+    initial: '../packages/v1',
+    after: '../packages/v2',
+    edit: 'packages/v2/main.js',
+  },
+  'a linked package folder whose main field changes': {
+    files: {
+      'packages/v1/package.json': pkg('dependency', { main: './index.js' }),
+      'packages/v1/index.js': exported('A'),
+      'packages/v2/package.json': pkg('dependency', { main: './lib/main.js' }),
+      'packages/v2/lib/main.js': exported('B'),
+      'entry.js': IMPORTING('dependency'),
+    },
+    link: 'node_modules/dependency',
+    initial: '../packages/v1',
+    after: '../packages/v2',
+    edit: 'packages/v2/lib/main.js',
+  },
+  // A chain of links: the import's own link stays, the one it leads to is retargeted.
+  'a link to a file link that is retargeted': {
+    files: { 'a.js': exported('A'), 'b.js': exported('B'), 'entry.js': IMPORTING('./dependency.js') },
+    chain: { 'dependency.js': 'mid.js' },
+    link: 'mid.js',
+    initial: 'a.js',
+    after: 'b.js',
+    edit: 'b.js',
+  },
+  'a folder link to a folder link that is retargeted': {
+    files: { 'one/lib.js': exported('A'), 'two/lib.js': exported('B'), 'entry.js': IMPORTING('./lib/lib.js') },
+    chain: { lib: 'mid' },
+    link: 'mid',
+    initial: 'one',
+    after: 'two',
+    edit: 'two/lib.js',
+  },
 };
 
 /** A project for `linkCase`, with its link pointing at the initial target; returns the two folders. */
@@ -222,6 +286,7 @@ function linkProject(linkCase: LinkCase): { root: string; outside: string } {
     const [dir, file] = name.startsWith('outside/') ? [outside, name.slice('outside/'.length)] : [root, name];
     writeFiles(dir, { [file]: fill(content) });
   }
+  for (const [path, target] of Object.entries(linkCase.chain ?? {})) symlinkSync(fill(target), join(root, path));
   const link = join(root, linkCase.link);
   mkdirSync(dirname(link), { recursive: true });
   symlinkSync(fill(linkCase.initial), link);

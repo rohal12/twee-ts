@@ -242,13 +242,16 @@ async function expectBuildWatchSees(
   read: (html: string) => unknown,
   before: unknown,
   after: unknown,
+  separate = false,
 ): Promise<void> {
+  // A separate entry: the build has an input of its own, and bundles the entry in a build of its own.
+  const input = separate ? { rolldownOptions: { input: write(join(root, 'outer.js'), 'globalThis.outer = 1;') } } : {};
   const started: unknown = await build({
     configFile: false,
     root,
     logLevel: 'silent',
     plugins: [tweeTsPlugin({ ...pluginOptions, outputFilename: 'story.html' })],
-    build: { watch: {}, outDir: join(root, 'out') },
+    build: { watch: {}, outDir: join(root, 'out'), ...input },
   });
   const watcher = started as {
     on(event: 'event', listener: (event: { code: string }) => void): void;
@@ -336,19 +339,53 @@ const workerFound = (html: string): string[] => ['a', 'b'].filter((name) => html
  * A project whose entry, `app/entry.js`, starts an inline worker, `app/worker.js`, whose glob selects `app/data`
  * (holding `a.js`); `add` adds `b.js` there.
  */
-function workerProject(root: string): { pluginOptions: TweeTsVitePluginOptions; add: () => void } {
+function workerProject(
+  root: string,
+  start = "import Started from './worker.js?worker&inline'; globalThis.start = () => new Started();",
+): { pluginOptions: TweeTsVitePluginOptions; add: () => void } {
   const { formatId, options } = localFormat(root);
   const storyFile = write(join(root, 'story', 'story.tw'), story());
   write(join(root, 'app', 'data', 'a.js'), 'export default "a";');
   write(join(root, 'app', 'worker.js'), "self.found = Object.keys(import.meta.glob('./data/*.js'));");
-  const entry = write(
-    join(root, 'app', 'entry.js'),
-    "import Started from './worker.js?worker&inline'; globalThis.start = () => new Started();",
-  );
+  const entry = write(join(root, 'app', 'entry.js'), start);
   return {
     pluginOptions: { sources: [storyFile], format: formatId, entry, compileOptions: options },
     add: () => write(join(root, 'app', 'data', 'b.js'), 'export default "b";'),
   };
+}
+
+/**
+ * Expects the dev server (with no watcher) to bundle a file added to the glob of a worker started with
+ * `new Worker(new URL(…))`, a file of its own the story names and the server serves.
+ */
+async function expectDevFollowsUrlWorkerGlob(root: string): Promise<void> {
+  const { pluginOptions, add } = workerProject(
+    root,
+    "globalThis.start = () => new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });",
+  );
+  const server = await createServer({
+    configFile: false,
+    root,
+    logLevel: 'silent',
+    plugins: [tweeTsPlugin(pluginOptions)],
+    server: { host: '127.0.0.1', port: 0, watch: null },
+  });
+  try {
+    await server.listen();
+    const [url = ''] = server.resolvedUrls?.local ?? [];
+    // The story, and the worker files it names.
+    const read = async (): Promise<string[]> => {
+      const html = await (await fetch(url)).text();
+      const names = [...html.matchAll(/assets\/[\w.-]+\.js/g)].map(([name]) => name);
+      const workers = await Promise.all(names.map(async (name) => (await fetch(`${url}${name}`)).text()));
+      return workerFound([html, ...workers].join('\n'));
+    };
+    expect(await read()).toEqual(['a']);
+    add();
+    expect(await read(), 'the worker kept the files its glob selected before').toEqual(['a', 'b']);
+  } finally {
+    await server.close();
+  }
 }
 
 function expectDevFollowsWorkerGlob(root: string, watcher = false): Promise<void> {
@@ -421,11 +458,20 @@ defineContracts(
       const { pluginOptions, add } = workerProject(root);
       return expectBuildWatchSees(root, pluginOptions, add, workerFound, ['a'], ['a', 'b']);
     },
+    'dev URL worker glob gains a file': expectDevFollowsUrlWorkerGlob,
+    'build watch separate entry worker glob gains a file': (root) => {
+      const { pluginOptions, add } = workerProject(root);
+      return expectBuildWatchSees(root, pluginOptions, add, workerFound, ['a'], ['a', 'b'], true);
+    },
+    'build watch separate entry bare package link retargeted': (root) => {
+      const { pluginOptions, retarget } = packageLinkProject(root);
+      return expectBuildWatchSees(root, pluginOptions, retarget, foundIn, 'v1', 'v2', true);
+    },
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {
     skip: (variant) => {
-      if (variant === 'build watch bare package link retargeted' && process.platform !== 'linux') {
+      if (variant.startsWith('build watch') && variant.endsWith('link retargeted') && process.platform !== 'linux') {
         // The bundler's watcher on macOS reports no replacement of a link (docs/plugins.md, Build watch).
         return 'Linux only';
       }

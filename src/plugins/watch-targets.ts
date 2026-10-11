@@ -5,8 +5,8 @@
  * watch a registered folder recursively; earlier ones see only the folder's own
  * entries. So every path is registered on its own as well.
  */
-import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
+import { dirname, join, parse, resolve } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -81,8 +81,9 @@ export function watchTargets(
 
 /**
  * The paths to register, besides the real paths of the files a bundle read, so that the build watch sees what
- * changes how the entry's imports resolve: each spelling (absolute) of an import that reaches a file through a
- * link, as authored, with the links above it (replacing one changes the file the import reads); and for a spelling
+ * changes how the entry's imports resolve: for each spelling (absolute) of an import that reaches a file through
+ * links, every link on the way (see linksOnTheWay), the links a link leads through too (replacing any of them changes
+ * the file the import reads); and for a spelling
  * that reaches nothing, the nearest folder that exists, where creating the file shows (a bundle that failed for a
  * missing import). A folder that holds a build output is left out, since the watcher would report what the build
  * writes there and rebuild for ever: a file created straight in it is read with the next build something else starts.
@@ -93,8 +94,7 @@ export function importWatchTargets(authored: Iterable<string>, outputs: OutputPa
   for (const spelling of authored) {
     if (existsSync(spelling)) {
       if (toPosix(realPathOf(spelling)) === toPosix(spelling)) continue;
-      for (const link of linkedAncestors(spelling, outputs)) targets.add(link);
-      if (isLink(spelling)) targets.add(toPosix(spelling));
+      for (const link of linksOnTheWay(spelling)) if (!outputs.holds(realPathOf(link))) targets.add(toPosix(link));
       continue;
     }
     missing.push(spelling);
@@ -132,6 +132,52 @@ function linkedAncestors(path: string, outputs: OutputPaths): string[] {
   const links: string[] = [];
   for (let folder = dirname(path); dirname(dirname(folder)) !== dirname(folder); folder = dirname(folder)) {
     if (isLink(folder) && !outputs.holds(realPathOf(folder))) links.unshift(toPosix(folder));
+  }
+  return links;
+}
+
+/** How many links the file system follows for one path before it gives up (ELOOP on Linux). */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * Every link the file system follows to reach `path`, in the order it follows them: each link along the path, and
+ * along the target each one leads to, so every hop of a link to a link (a chain) is there. A link directly in the
+ * root of the file system (`/var` on macOS) is the system's own alias and is left out. The walk ends where a name
+ * reaches nothing, or after as many hops as the file system follows.
+ */
+export function linksOnTheWay(path: string): string[] {
+  const links: string[] = [];
+  const start = resolve(path);
+  let reached = parse(start).root;
+  let rest = start
+    .slice(reached.length)
+    .split(/[/\\]/)
+    .filter((name) => name !== '');
+  for (let hops = 0; rest.length > 0 && hops <= MAX_LINK_HOPS;) {
+    const [name = '', ...more] = rest;
+    const next = join(reached, name);
+    let target: string | undefined;
+    try {
+      target = lstatSync(next).isSymbolicLink() ? readlinkSync(next) : undefined;
+    } catch {
+      break; // Reaches nothing.
+    }
+    if (target === undefined) {
+      reached = next;
+      rest = more;
+      continue;
+    }
+    hops += 1;
+    if (dirname(next) !== dirname(dirname(next))) links.push(next);
+    const followed = resolve(reached, target);
+    reached = parse(followed).root;
+    rest = [
+      ...followed
+        .slice(reached.length)
+        .split(/[/\\]/)
+        .filter((part) => part !== ''),
+      ...more,
+    ];
   }
   return links;
 }

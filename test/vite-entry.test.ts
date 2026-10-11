@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 import { toPosix } from '../src/plugins/paths.js';
 import type { ImportHookContext } from '../src/plugins/vite-entry.js';
@@ -135,10 +136,16 @@ describe('importSpellings', () => {
       '/dependency.js',
       [at('/project/dependency.js'), '/dependency.js'],
     ],
+    ['a path inside the root, given whole', '/project/app/dependency.js', [at('/project/app/dependency.js')]],
     ['a bare name', 'dependency', []],
     ['an alias', '@/dependency', []],
   ])('takes %s as written, with no resolver', async (_form, source, expected) => {
     expect(await importSpellings(failing, source, importer, root)).toEqual({ spellings: expected, kept: undefined });
+  });
+
+  it('takes an absolute path that reaches a file outside the root as it is, and as the file it reaches', async () => {
+    const file = toPosix(fileURLToPath(import.meta.url));
+    expect(await importSpellings(failing, file, importer, root)).toEqual({ spellings: [file], kept: file });
   });
 
   it.each([

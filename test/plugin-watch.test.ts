@@ -13,7 +13,7 @@ import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
-import { missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
+import { linksOnTheWay, missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
 import {
   cleanUp,
   COMPILE,
@@ -319,5 +319,40 @@ describe('missingImportFolders', () => {
   it('never gives the root of the file system, which no watcher is asked to watch whole', () => {
     const missing = join(realpathSync('/'), 'twee-ts-no-such-folder', 'x.js');
     expect(missingImportFolders([missing])).toEqual([]);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('linksOnTheWay', () => {
+  /** The links on the way to `path` below `dir`, relative to it. */
+  const on = (dir: string, path: string): string[] =>
+    linksOnTheWay(join(dir, path)).map((link) => toPosix(relative(dir, link)));
+
+  it('lists every hop of a chain of file links, and of folder links, in the order they are followed', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'one'));
+    writeFileSync(join(dir, 'one', 'a.js'), '');
+    symlinkSync('a.js', join(dir, 'one', 'mid.js'));
+    symlinkSync('mid.js', join(dir, 'one', 'dependency.js'));
+    symlinkSync('one', join(dir, 'mid'));
+    symlinkSync('mid', join(dir, 'lib'));
+    expect(on(dir, 'one/dependency.js')).toEqual(['one/dependency.js', 'one/mid.js']);
+    expect(on(dir, 'lib/dependency.js')).toEqual(['lib', 'mid', 'one/dependency.js', 'one/mid.js']);
+    expect(on(dir, 'one/a.js')).toEqual([]);
+  });
+
+  it('follows a link with an absolute target, and stops where a name reaches nothing', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'real'));
+    symlinkSync(join(dir, 'real'), join(dir, 'linked'));
+    symlinkSync('nowhere.js', join(dir, 'real', 'dangling.js'));
+    expect(on(dir, 'linked/missing/x.js')).toEqual(['linked']);
+    expect(on(dir, 'linked/dangling.js')).toEqual(['linked', 'real/dangling.js']);
+  });
+
+  it('ends a loop of links after as many hops as the file system follows', () => {
+    const dir = tempDir();
+    symlinkSync('b', join(dir, 'a'));
+    symlinkSync('a', join(dir, 'b'));
+    expect(on(dir, 'a/x.js').length).toBeLessThanOrEqual(41);
   });
 });

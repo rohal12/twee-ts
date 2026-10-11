@@ -149,6 +149,46 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
   },
 );
 
+const sockets: WebSocket[] = [];
+afterEach(() => {
+  for (const socket of sockets.splice(0)) socket.close();
+});
+
+/** An HMR client of the dev server, as Vite's client in a page is one. */
+interface HmrClient {
+  /** The type of each message the server sent it, in order. */
+  readonly received: readonly string[];
+  /** How many of them were a full-reload. */
+  readonly reloads: () => number;
+  readonly socket: WebSocket;
+}
+
+/**
+ * Connects to the HMR socket of the dev server at `origin` (base `/`) as Vite's client does, and records the
+ * messages it receives from then on. Resolves once the socket is open, so the server counts it as a page; rejects
+ * when it closes or fails first.
+ */
+async function hmrClient(origin: string): Promise<HmrClient> {
+  const socket = new WebSocket(`${origin.replace('http', 'ws')}/`, 'vite-hmr');
+  sockets.push(socket);
+  const received: string[] = [];
+  socket.addEventListener('message', (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    const type = typeof message === 'object' && message !== null && 'type' in message ? message.type : undefined;
+    received.push(String(type));
+  });
+  await new Promise((open, fail) => {
+    socket.addEventListener('open', open);
+    socket.addEventListener('error', () => {
+      fail(new Error('the HMR socket failed before it opened'));
+    });
+    socket.addEventListener('close', () => {
+      fail(new Error('the HMR socket closed before it opened'));
+    });
+  });
+  return { received, reloads: () => received.filter((type) => type === 'full-reload').length, socket };
+}
+
 /** A page function, as source (the tests have no DOM types), that tells whether the first passage reads `text`. */
 const passageIs = (text: string): string =>
   `document.querySelector('tw-passagedata')?.textContent === ${JSON.stringify(text)}`;
@@ -250,10 +290,18 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
         server: watcher ? {} : { watch: null },
       });
       const pageUrl = `${url}/index.html`;
+      // The server's messages to its pages, received by a client of its own that stays connected. Vite holds a
+      // full-reload sent while no page is connected for the next one that connects, which then loads twice; with
+      // this client connected, the reload after the new bundle is received here, and is the signal to wait on.
+      const client = await hmrClient(url);
       expect(await workerOutcome(pageUrl)).toBe('worker:A');
+      const before = client.reloads();
       mkdirSync(join(dir, 'data'), { recursive: true });
       writeFileSync(join(dir, 'data/b.js'), "export default 'B';");
-      await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:A,B');
+      // With no watcher, a request has the server catch up; with one, it may already have.
+      await fetch(pageUrl);
+      await expect.poll(() => client.reloads(), { timeout: 10_000 }).toBeGreaterThan(before);
+      expect(await workerOutcome(pageUrl)).toBe('worker:A,B');
     });
   },
 );
