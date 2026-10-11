@@ -25,7 +25,7 @@ import {
 } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { toPosix } from '../src/plugins/paths.js';
-import { buildWatchSeesFolders, watcherReady, serverUrl } from './helpers/plugins.js';
+import { buildWatchSeesFolders, NO_DEP_OPTIMIZER, removeProjects, watcherReady, serverUrl } from './helpers/plugins.js';
 
 export const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 export const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -107,8 +107,8 @@ function assetProject(): string {
   return dir;
 }
 
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  await removeProjects(dirs.splice(0));
 });
 
 /**
@@ -694,6 +694,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
   ): Promise<string> {
     const { server: serverOptions, ...rest } = extra;
     server = await createServer({
+      ...NO_DEP_OPTIMIZER,
       configFile: configFile ?? false,
       root: dir,
       logLevel: 'silent',
@@ -860,6 +861,7 @@ describe('vite plugin: dev server', { timeout: 30_000 }, () => {
     // No file watcher: the test delivers the change itself, while fake timers hold the
     // plugin's debounce, so the change is still waiting when the server closes.
     const mw = await createServer({
+      ...NO_DEP_OPTIMIZER,
       configFile: false,
       root: dir,
       logLevel: 'silent',

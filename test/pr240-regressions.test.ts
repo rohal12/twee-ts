@@ -27,7 +27,8 @@ import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import type { CompileOptions, CompileResult, FileCacheEntry, OutputMode } from '../src/types.js';
 import { judgeHeadFile, judgeModule, judgeViteClient } from './helpers/insertion-judges.js';
-import { cleanUp, COMPILE, startBuildWatch, tempDir } from './helpers/plugins.js';
+import { cleanUp, COMPILE, NO_DEP_OPTIMIZER, startBuildWatch, tempDir } from './helpers/plugins.js';
+import { removeDir } from './helpers/remove-dir.js';
 
 const IFID = 'D674C58C-DEFA-4F70-B7A2-27742230C0FC';
 /** Symbolic links need privileges on Windows. */
@@ -48,7 +49,7 @@ afterEach(async () => {
   await cleanUp();
   if (savedTweegoPath === undefined) delete process.env['TWEEGO_PATH'];
   else process.env['TWEEGO_PATH'] = savedTweegoPath;
-  rmSync(root, { recursive: true, force: true });
+  removeDir(root);
 });
 
 const story = (text: string): string => `:: StoryTitle\nT\n:: StoryData\n{"ifid":"${IFID}"}\n:: Start\n${text}`;
@@ -307,6 +308,7 @@ describe.skipIf(!LINKS)('#242: exclude globs for sources named through a folder 
   it('starts no rebuild in the dev server for a change the watcher reports by the real path', async () => {
     const { real, alias, glob } = project();
     const server = await createServer({
+      ...NO_DEP_OPTIMIZER,
       configFile: false,
       root: real,
       logLevel: 'silent',

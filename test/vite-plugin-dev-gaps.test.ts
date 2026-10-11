@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { attr, elements, parentTag } from './helpers/html.js';
@@ -16,7 +16,7 @@ import {
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { reloadPayload } from '../src/plugins/vite-dev.js';
 import { compileJavaScript } from './helpers/javascript.js';
-import { watcherReady, serverUrl } from './helpers/plugins.js';
+import { NO_DEP_OPTIMIZER, removeProjects, watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -42,12 +42,13 @@ let server: ViteDevServer | undefined;
 afterEach(async () => {
   await server?.close();
   server = undefined;
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  await removeProjects(dirs.splice(0));
 });
 
 /** Starts a dev server on a free port with no logging unless `customLogger` is given; returns its base URL. */
 async function start(dir: string, options: Parameters<typeof tweeTsPlugin>[0], customLogger?: Logger): Promise<string> {
   server = await createServer({
+    ...NO_DEP_OPTIMIZER,
     configFile: false,
     root: dir,
     logLevel: 'silent',
@@ -279,6 +280,7 @@ describe('vite plugin: user configuration in the dev entry build', { timeout: 30
 
   async function serve(config: InlineConfig): Promise<string> {
     server = await createServer({
+      ...NO_DEP_OPTIMIZER,
       logLevel: 'silent',
       ...config,
       server: { host: '127.0.0.1', port: 0, strictPort: false },

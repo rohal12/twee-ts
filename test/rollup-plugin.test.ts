@@ -7,7 +7,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -25,6 +24,7 @@ import {
 } from 'rollup';
 import { build } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
+import { removeDir } from './helpers/remove-dir.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -69,7 +69,7 @@ function makeProject(story: string): string {
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) removeDir(dir);
 });
 
 function storyPlugin(dir: string, format = 'test-format-1'): ReturnType<typeof tweeTsPlugin> {

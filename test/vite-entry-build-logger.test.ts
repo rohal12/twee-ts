@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLogger, createServer, type Logger, type Plugin, type ViteDevServer } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { watcherReady, serverUrl } from './helpers/plugins.js';
+import { NO_DEP_OPTIMIZER, removeProjects, watcherReady, serverUrl } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -17,7 +17,7 @@ let server: ViteDevServer | undefined;
 afterEach(async () => {
   await server?.close();
   server = undefined;
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  await removeProjects(dirs.splice(0));
 });
 
 function makeProject(files: Record<string, string>): string {
@@ -38,6 +38,7 @@ async function serve(
   extra: { base?: string } = {},
 ): Promise<string> {
   server = await createServer({
+    ...NO_DEP_OPTIMIZER,
     configFile: false,
     root: dir,
     ...extra,

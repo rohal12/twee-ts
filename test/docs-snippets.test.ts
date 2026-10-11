@@ -17,23 +17,14 @@
  * UNTESTED lists them, so a new one is a visible change. See test/helpers/docs.ts for the syntax.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import {
-  copyFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { allCodeBlocks, blockId, REPO, shellWords } from './helpers/docs.js';
 import type { CodeBlock } from './helpers/docs.js';
+import { BUILD_TIMEOUT_MS, buildPackage, CAN_BUILD } from './helpers/package-build.js';
 import { parseTwee } from '../src/parser.js';
 import { parseFormatJSON } from '../src/format-decode.js';
 import { unknownConfigKeyWarnings, validateConfig } from '../src/config.js';
@@ -262,16 +253,7 @@ function setUpWorkspace(): Workspace {
   const root = mkdtempSync(join(tmpdir(), 'twee-ts-docs-'));
   workspaceRoot = root;
   const consumer = join(root, 'consumer');
-  const pkg = join(consumer, 'node_modules', '@rohal12', 'twee-ts');
-  mkdirSync(pkg, { recursive: true });
-  copyFileSync(join(REPO, 'package.json'), join(pkg, 'package.json'));
-  cpSync(join(REPO, 'schemas'), join(pkg, 'schemas'), { recursive: true });
-  const build = spawnSync(
-    process.execPath,
-    [join(REPO, 'node_modules', 'tsdown', 'dist', 'run.mjs'), '--out-dir', join(pkg, 'dist')],
-    { cwd: REPO, encoding: 'utf8' },
-  );
-  if (build.status !== 0) throw new Error(`tsdown failed\n${build.stdout}\n${build.stderr}`);
+  const cli = buildPackage(join(consumer, 'node_modules', '@rohal12', 'twee-ts'));
   const offline = join(root, 'offline.mjs');
   writeFileSync(
     offline,
@@ -280,7 +262,7 @@ function setUpWorkspace(): Workspace {
   return {
     root,
     consumer,
-    cli: join(pkg, 'dist', 'bin', 'twee-ts.js'),
+    cli,
     offline,
     typecheck: '',
     snippets: new Map(),
@@ -442,20 +424,12 @@ function shownOutput(block: CodeBlock): string[] {
   return block.code.split('\n').filter((l) => !l.startsWith('$ ') && l.trim() !== '' && !/^\d+$/.test(l));
 }
 
-/**
- * The examples run against the package built with tsdown, which needs Node 22.18+ (or 24.11+). CI runs
- * them on the latest Node 24.
- */
-const CAN_BUILD = ((): boolean => {
-  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
-  return (major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major >= 26;
-})();
-
+// The examples run against the package built with tsdown (see helpers/package-build.ts).
 beforeAll(() => {
   if (!CAN_BUILD) return;
   ws = setUpWorkspace();
   compileSnippets();
-}, 180_000);
+}, BUILD_TIMEOUT_MS);
 
 afterAll(() => {
   if (workspaceRoot !== '') rmSync(workspaceRoot, { recursive: true, force: true });

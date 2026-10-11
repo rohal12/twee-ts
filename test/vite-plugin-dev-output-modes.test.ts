@@ -6,7 +6,17 @@ import type { ViteDevServer } from 'vite';
 import { parseTwee } from '../src/index.js';
 import type { OutputMode } from '../src/index.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { makeProject, cleanUp, serverUrl, buildFiles, textOf, COMPILE, STORY, storyWith } from './helpers/plugins.js';
+import {
+  makeProject,
+  cleanUp,
+  NO_DEP_OPTIMIZER,
+  serverUrl,
+  buildFiles,
+  textOf,
+  COMPILE,
+  STORY,
+  storyWith,
+} from './helpers/plugins.js';
 
 let server: ViteDevServer | undefined;
 
@@ -50,7 +60,11 @@ describe('vite plugin dev: output modes other than playable HTML (#358)', () => 
         }),
       ],
     });
-    server = await createServer({ ...config(), server: { host: '127.0.0.1', port: 0, watch: null } });
+    server = await createServer({
+      ...NO_DEP_OPTIMIZER,
+      ...config(),
+      server: { host: '127.0.0.1', port: 0, watch: null },
+    });
     await server.listen();
     const url = `${serverUrl(server)}/${name}`;
     const first = await fetch(url);

@@ -4,19 +4,33 @@
  * Usage errors exit with 2, build errors with 1. Compared with Tweego's documented behaviour (usage.go,
  * config.go) where it has one.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_SFA_INDICES } from '../src/remote-formats.js';
+import { BUILD_TIMEOUT_MS, cliNodeArgs } from './helpers/package-build.js';
+import { removeDir } from './helpers/remove-dir.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const BIN = join(ROOT, 'bin', 'twee-ts.ts');
 const TSX_LOADER = pathToFileURL(join(ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href;
 const FORMAT_DIR = join(ROOT, 'test', 'fixtures', 'storyformats');
 const ENV = { ...process.env, TWEEGO_PATH: FORMAT_DIR };
+
+// The CLI as it ships, built once for this file (see helpers/package-build.ts): each test's time is the CLI's own.
+let built = '';
+let cliArgs: readonly string[] = [];
+
+beforeAll(() => {
+  built = mkdtempSync(join(tmpdir(), 'twee-ts-cli-build-'));
+  cliArgs = cliNodeArgs(built);
+}, BUILD_TIMEOUT_MS);
+
+afterAll(() => {
+  if (built !== '') removeDir(built);
+});
 
 interface Run {
   readonly status: number | null;
@@ -25,7 +39,7 @@ interface Run {
 }
 
 function cli(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = ENV): Run {
-  const r = spawnSync(process.execPath, ['--import', TSX_LOADER, BIN, ...args], {
+  const r = spawnSync(process.execPath, [...cliArgs, ...args], {
     cwd,
     env,
     encoding: 'utf-8',
@@ -274,7 +288,7 @@ describe('a reader that closes the pipe early (FS-09)', () => {
   it('ends quietly instead of with an unhandled EPIPE', async () => {
     const big = Array.from({ length: 30_000 }, (_, i) => `:: P${i}\n${'x'.repeat(80)}\n`).join('\n');
     writeFileSync(join(dir, 'big.tw'), `${STORY_DATA}\n:: Start\nx\n\n${big}`);
-    const child = spawn(process.execPath, ['--import', TSX_LOADER, BIN, '--no-config', '-d', 'big.tw'], {
+    const child = spawn(process.execPath, [...cliArgs, '--no-config', '-d', 'big.tw'], {
       cwd: dir,
       env: ENV,
     });
@@ -295,14 +309,10 @@ describe('a reader that closes the pipe early (FS-09)', () => {
 
 describe('watch mode stops on an error no edit can fix (FS-13)', () => {
   it('exits with 1 when the output is a source, instead of watching on', async () => {
-    const child = spawn(
-      process.execPath,
-      ['--import', TSX_LOADER, BIN, '--no-config', '-d', '-w', '-o', 'a.tw', 'a.tw'],
-      {
-        cwd: dir,
-        env: ENV,
-      },
-    );
+    const child = spawn(process.execPath, [...cliArgs, '--no-config', '-d', '-w', '-o', 'a.tw', 'a.tw'], {
+      cwd: dir,
+      env: ENV,
+    });
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     const timer = setTimeout(() => child.kill(), 20_000);
