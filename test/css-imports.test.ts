@@ -114,6 +114,12 @@ describe('what may come before an @import (#352)', () => {
     expect([escaped, names(hash)]).toEqual([[], ['sheet 2']]);
   });
 
+  it('takes a comment end that is no comment for the delimiters it is, across sources', () => {
+    // `*/` then `a {}` read as `* / a`, a selector no browser accepts: the rule is dropped and the import is kept.
+    expect(diagnose(['*/', 'a {}', IMPORT])).toEqual([]);
+    expect(diagnose(['*/', 'a {}', IMPORT], joinedLikeJson)).toEqual([]);
+  });
+
   it('ends a comment that a source leaves open where the output does', () => {
     const texts = ['/* note', '@import "m1.css";'];
 
@@ -161,6 +167,11 @@ describe('what may come before an @import (#352)', () => {
     '\\10ffff ',
     '\\1F600 x',
     '\\😀',
+    '('.repeat(200),
+    `a{${'('.repeat(100)}${')'.repeat(100)}}`,
+    'a'.repeat(100),
+    `.${'\\61 '.repeat(100)}b {}`,
+    `@${'a'.repeat(100)} {}`,
   ])('reads %j to its end without a warning', (text) => {
     expect(diagnose([text])).toEqual([]);
   });
@@ -182,7 +193,7 @@ describe('every entry point reports what the scanner does (#352)', () => {
   type Sources = Pick<CompileOptions, 'sources'>;
   /**
    * How many warnings each entry gives for a case: HTML and archive output join the stylesheets with a comment, JSON
-   * output with a line feed, and lint reports both (once, when they agree).
+   * output with a line feed, and lint reports for the Twine 2 HTML output, so it gives the warnings of HTML's join.
    */
   const ENTRIES = [
     [
@@ -200,11 +211,7 @@ describe('every entry point reports what the scanner does (#352)', () => {
       async (o: Sources) => (await compile({ ...base(), ...o, outputMode: 'json' })).diagnostics,
       (p: Predecessor) => p.jsonBlocks ?? p.blocks,
     ],
-    [
-      'lint',
-      async (o: Sources) => (await lint({ ...base(), ...o })).diagnostics,
-      (p: Predecessor) => p.blocks || p.jsonBlocks === true,
-    ],
+    ['lint', async (o: Sources) => (await lint({ ...base(), ...o })).diagnostics, (p: Predecessor) => p.blocks],
   ] as const;
   const KINDS = [
     ['stylesheet passages', viaPassages],

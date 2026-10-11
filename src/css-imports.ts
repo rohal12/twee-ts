@@ -10,19 +10,25 @@
  * into tokens (comments, strings, escapes, `url()` and the rest) and section 5.4.1 consumes the list of rules. A rule
  * ends the place for imports when a browser would keep it:
  *
- * - a style rule with a block and a prelude that can be a selector (one holding a `;`, a stray `)`, `]` or `}`, an
- *   at-keyword, a string, a url or a number, or no prelude, or no block, is dropped and ends nothing);
+ * - a style rule with a block and a prelude that can be a selector (a prelude holding a token no selector holds, such
+ *   as `;`, `!`, `/`, a stray `)`, `]` or `}`, an at-keyword, a string, a url, a number or an unrestricted hash, or no
+ *   prelude, or no block, is dropped and ends nothing);
  * - `@namespace` with a name and a url, `@layer` with a block (and at most one name) and every at-rule some browser
- *   supports, with its block (the list is KNOWN_AT_RULES);
+ *   supports (the names are in KNOWN_AT_RULES), with its block and a prelude of the shape that at-rule takes;
  * - an `@layer` statement after an `@import`, which browsers take for the end of the imports though the specification
  *   ignores it; layer statements belong before the first import.
  *
  * An at-rule no browser knows, `@charset` wherever it stands (CSS Syntax treats it as an unknown at-rule; the
- * encoding is read from the bytes), `@import` without a url or string, and `@layer` or `@namespace` that is not
- * valid are dropped and end nothing. A selector this does not check (that `a !` is not one) counts as a rule.
+ * encoding is read from the bytes), `@import` without a url or string, and a rule whose prelude is not of the shape
+ * its at-rule takes are dropped and end nothing. What this does not check counts as a rule: a selector that is
+ * invalid by its meaning (a namespace prefix that is not declared), the descriptors in the block of `@property`, and
+ * the prelude of `@media`, `@container` and `@scope`, which browsers read leniently or by their own grammar.
  *
  * Each `@import` the sources write at their own top level, read on its own, that the joined stylesheet does not keep
  * as an import rule is reported with its source.
+ *
+ * The input is read as a stream of tokens, one at a time, so the memory it takes does not grow with the input but
+ * with how deep it nests (a byte for each open bracket) and with the number of `@import` rules it holds.
  */
 import type { Diagnostic } from './types.js';
 
@@ -77,7 +83,10 @@ type TokenType =
   | 'lbrace'
   | 'rbrace';
 
-/** A token: its type, where it starts, and its value (a name lower-cased, a delimiter's character). */
+/**
+ * A token: its type, where it starts, and its value: a name lower-cased (and cut at MAX_NAME characters, which no name
+ * the rules compare it with reaches), a delimiter's character, `id` for a hash that is an ID.
+ */
 interface Token {
   readonly type: TokenType;
   readonly start: number;
@@ -85,6 +94,9 @@ interface Token {
 }
 
 const EOF: Token = { type: 'eof', start: -1, value: '' };
+
+/** The longest name kept: longer than any at-rule name, function name or keyword the rules compare it with. */
+const MAX_NAME = 64;
 
 /** The characters a character class admits; the empty string (the end of the input) is in none. */
 const isOneOf = (ch: string, set: string): boolean => ch !== '' && set.includes(ch);
@@ -115,8 +127,9 @@ function wouldStartIdent(css: string, i: number): boolean {
 /** Whether a number starts at `i`. */
 function wouldStartNumber(css: string, i: number): boolean {
   const ch = css.charAt(i);
-  if (ch === '+' || ch === '-')
+  if (ch === '+' || ch === '-') {
     return isDigit(css.charAt(i + 1)) || (css.charAt(i + 1) === '.' && isDigit(css.charAt(i + 2)));
+  }
   if (ch === '.') return isDigit(css.charAt(i + 1));
   return isDigit(ch);
 }
@@ -140,18 +153,18 @@ function consumeEscape(css: string, i: number): { readonly text: string; readonl
   return { text: codePointName(code), end };
 }
 
-/** An identifier sequence that starts at `i`: its value with the escapes decoded, and where it ends. */
+/** An identifier sequence that starts at `i`: its value with the escapes decoded (cut at MAX_NAME), and where it ends. */
 function consumeIdentSequence(css: string, i: number): { readonly value: string; readonly end: number } {
   let value = '';
   let end = i;
   for (;;) {
     const ch = css.charAt(end);
     if (isNameChar(ch)) {
-      value += ch;
+      if (value.length < MAX_NAME) value += ch;
       end += 1;
     } else if (validEscape(css, end)) {
       const escape = consumeEscape(css, end + 1);
-      value += escape.text;
+      if (value.length < MAX_NAME) value += escape.text;
       end = escape.end;
     } else {
       return { value, end };
@@ -268,196 +281,346 @@ const PUNCTUATION: ReadonlyMap<string, TokenType> = new Map([
   ['}', 'rbrace'],
 ]);
 
-/** The tokens of `css` (CSS Syntax Level 3, section 4), comments left out. */
-function tokenize(css: string): Token[] {
-  const tokens: Token[] = [];
+/**
+ * The tokens of `css` (CSS Syntax Level 3, section 4), comments left out, one for each call; the end of the input
+ * is the `eof` token, over and over.
+ */
+function createTokenizer(css: string): () => Token {
   let i = 0;
-  const push = (type: TokenType, start: number, end: number, value = ''): void => {
-    tokens.push({ type, start, value });
+  const emit = (type: TokenType, start: number, end: number, value = ''): Token => {
     i = end;
+    return { type, start, value };
   };
-  while (i < css.length) {
-    const ch = css.charAt(i);
-    const next = css.charAt(i + 1);
-    const punctuation = PUNCTUATION.get(ch);
-    if (ch === '/' && next === '*') {
-      const close = css.indexOf('*/', i + 2);
-      i = close === -1 ? css.length : close + 2;
-    } else if (isWhitespace(ch)) {
-      let end = i + 1;
-      while (isWhitespace(css.charAt(end))) end += 1;
-      push('ws', i, end);
-    } else if (ch === '"' || ch === "'") {
-      const string = consumeString(css, i);
-      push(string.type, i, string.end);
-    } else if (ch === '#' && (isNameChar(next) || validEscape(css, i + 1))) {
-      push('hash', i, consumeIdentSequence(css, i + 1).end);
-    } else if (punctuation !== undefined) {
-      push(punctuation, i, i + 1);
-    } else if (wouldStartNumber(css, i)) {
-      const numberEnd = consumeNumber(css, i);
-      if (wouldStartIdent(css, numberEnd)) push('dimension', i, consumeIdentSequence(css, numberEnd).end);
-      else if (css.charAt(numberEnd) === '%') push('percentage', i, numberEnd + 1);
-      else push('number', i, numberEnd);
-    } else if (css.startsWith('<!--', i)) {
-      push('cdo', i, i + 4);
-    } else if (css.startsWith('-->', i)) {
-      push('cdc', i, i + 3);
-    } else if (ch === '@' && wouldStartIdent(css, i + 1)) {
-      const name = consumeIdentSequence(css, i + 1);
-      push('atkeyword', i, name.end, name.value.toLowerCase());
-    } else if (wouldStartIdent(css, i)) {
-      const identLike = consumeIdentLike(css, i);
-      tokens.push(identLike.token);
-      i = identLike.end;
-    } else {
-      push('delim', i, i + 1, ch);
+  return (): Token => {
+    for (;;) {
+      if (i >= css.length) return EOF;
+      const ch = css.charAt(i);
+      const next = css.charAt(i + 1);
+      const punctuation = PUNCTUATION.get(ch);
+      if (ch === '/' && next === '*') {
+        const close = css.indexOf('*/', i + 2);
+        i = close === -1 ? css.length : close + 2;
+      } else if (isWhitespace(ch)) {
+        let end = i + 1;
+        while (isWhitespace(css.charAt(end))) end += 1;
+        return emit('ws', i, end);
+      } else if (ch === '"' || ch === "'") {
+        const string = consumeString(css, i);
+        return emit(string.type, i, string.end);
+      } else if (ch === '#' && (isNameChar(next) || validEscape(css, i + 1))) {
+        // A hash is an ID when an identifier starts after it; otherwise it can not be an ID selector.
+        return emit('hash', i, consumeIdentSequence(css, i + 1).end, wouldStartIdent(css, i + 1) ? 'id' : '');
+      } else if (punctuation !== undefined) {
+        return emit(punctuation, i, i + 1);
+      } else if (wouldStartNumber(css, i)) {
+        const numberEnd = consumeNumber(css, i);
+        if (wouldStartIdent(css, numberEnd)) return emit('dimension', i, consumeIdentSequence(css, numberEnd).end);
+        if (css.charAt(numberEnd) === '%') return emit('percentage', i, numberEnd + 1);
+        return emit('number', i, numberEnd);
+      } else if (css.startsWith('<!--', i)) {
+        return emit('cdo', i, i + 4);
+      } else if (css.startsWith('-->', i)) {
+        return emit('cdc', i, i + 3);
+      } else if (ch === '@' && wouldStartIdent(css, i + 1)) {
+        const name = consumeIdentSequence(css, i + 1);
+        return emit('atkeyword', i, name.end, name.value.toLowerCase());
+      } else if (wouldStartIdent(css, i)) {
+        const identLike = consumeIdentLike(css, i);
+        i = identLike.end;
+        return identLike.token;
+      } else {
+        return emit('delim', i, i + 1, ch);
+      }
     }
-  }
-  return tokens;
+  };
 }
 
-/** The type that closes the block an opening token starts. */
-const MIRROR: ReadonlyMap<TokenType, TokenType> = new Map([
-  ['lparen', 'rparen'],
-  ['function', 'rparen'],
-  ['lbracket', 'rbracket'],
-  ['lbrace', 'rbrace'],
+/** The codes of the brackets a token opens and closes, for the stack of open blocks. */
+const OPENS: ReadonlyMap<TokenType, number> = new Map([
+  ['lparen', 1],
+  ['function', 1],
+  ['lbracket', 2],
+  ['lbrace', 3],
+]);
+const CLOSES: ReadonlyMap<TokenType, number> = new Map([
+  ['rparen', 1],
+  ['rbracket', 2],
+  ['rbrace', 3],
 ]);
 
-/** A token of the prelude of a rule, with its place among the tokens. */
-interface Component {
-  readonly token: Token;
-  readonly index: number;
+/** A stack of bytes that grows as it is used: a byte for each block that is open. */
+class ByteStack {
+  private bytes = new Uint8Array(64);
+  size = 0;
+
+  push(code: number): void {
+    if (this.size === this.bytes.length) {
+      const grown = new Uint8Array(this.bytes.length * 2);
+      grown.set(this.bytes);
+      this.bytes = grown;
+    }
+    this.bytes[this.size] = code;
+    this.size += 1;
+  }
+
+  /** The code on top. */
+  top(): number {
+    return Number(this.bytes[this.size - 1]);
+  }
+
+  pop(): void {
+    this.size -= 1;
+  }
 }
 
-/** The prelude of a rule and what ended it. */
-interface Prelude {
-  readonly components: readonly Component[];
-  readonly hasBlock: boolean;
-  /** Where the next rule starts. */
-  readonly next: number;
+/** The delimiters a selector holds outside brackets: universal, class, combinators, namespace and nesting. */
+const SELECTOR_DELIMS = '*.>+~|&';
+
+/** Whether a token can be at the top level of a selector (it is not whitespace). */
+function inSelector(token: Token): boolean {
+  switch (token.type) {
+    case 'ident':
+    case 'function':
+    case 'colon':
+    case 'comma':
+    case 'lbracket':
+      return true;
+    case 'hash':
+      return token.value === 'id';
+    case 'delim':
+      return SELECTOR_DELIMS.includes(token.value);
+    default:
+      return false;
+  }
 }
+
+/** Where a prelude is in a list of layer names, `a`, `a.b`, separated by commas. */
+type LayerState = 'name' | 'after-name' | 'after-dot' | 'bad';
 
 /**
- * The names of the at-rules some browser supports, which end the place for imports (with their block). An at-rule
- * no browser knows is dropped.
+ * What the prelude of a rule is, kept as it is read: the tokens of the prelude are not kept, since a prelude may be
+ * as long as the input. Whitespace and comments are no components.
  */
-const KNOWN_AT_RULES: ReadonlySet<string> = new Set([
-  'media',
-  'supports',
-  'font-face',
-  'keyframes',
-  '-webkit-keyframes',
-  '-moz-keyframes',
-  '-o-keyframes',
-  'page',
-  'property',
-  'container',
-  'scope',
-  'counter-style',
-  'starting-style',
-  'font-palette-values',
-  'font-feature-values',
-  'view-transition',
-  'position-try',
-  'color-profile',
-  'function',
-  'document',
-  '-moz-document',
-  'viewport',
-  '-ms-viewport',
+class Prelude {
+  /** The number of components, up to 3. */
+  count = 0;
+  first: Token = EOF;
+  /** Whether a whitespace separates the last component from the one before. */
+  private gap = false;
+  /** Whether every component is one a selector holds. */
+  selectorOk = true;
+  /** Whether every component is an identifier or a colon, as in the prelude of `@page`. */
+  pageOk = true;
+  private layerState: LayerState = 'name';
+  /** The number of layer names, up to 2. */
+  layerNames = 0;
+  /** Whether the first and second components are as a `@namespace` prelude has them: a url or a string last. */
+  private namespaceShape: 'start' | 'name' | 'done' | 'bad' = 'start';
+
+  add(token: Token): void {
+    if (token.type === 'ws') {
+      this.gap = true;
+      return;
+    }
+    const adjacent = !this.gap;
+    this.gap = false;
+    if (this.count < 3) this.count += 1;
+    if (this.count === 1) this.first = token;
+    if (!inSelector(token)) this.selectorOk = false;
+    if (token.type !== 'ident' && token.type !== 'colon') this.pageOk = false;
+    this.layerState = this.nextLayerState(token, adjacent);
+    this.namespaceShape = this.nextNamespaceShape(token);
+  }
+
+  private nextLayerState(token: Token, adjacent: boolean): LayerState {
+    switch (this.layerState) {
+      case 'name':
+        if (token.type !== 'ident') return 'bad';
+        this.layerNames = Math.min(this.layerNames + 1, 2);
+        return 'after-name';
+      case 'after-name':
+        if (token.type === 'comma') return 'name';
+        return token.type === 'delim' && token.value === '.' && adjacent ? 'after-dot' : 'bad';
+      case 'after-dot':
+        return token.type === 'ident' && adjacent ? 'after-name' : 'bad';
+      case 'bad':
+        return 'bad';
+    }
+  }
+
+  private nextNamespaceShape(token: Token): 'start' | 'name' | 'done' | 'bad' {
+    switch (this.namespaceShape) {
+      case 'start':
+        if (token.type === 'ident') return 'name';
+        return isUrlOrString(token) ? 'done' : 'bad';
+      case 'name':
+        return isUrlOrString(token) ? 'done' : 'bad';
+      case 'done':
+      case 'bad':
+        return 'bad';
+    }
+  }
+
+  /** Whether the components are a list of layer names (none at all included). */
+  get layerNamesOk(): boolean {
+    return this.count === 0 || this.layerState === 'after-name';
+  }
+
+  /** Whether the components are the name (optional) and the url or string that `@namespace` takes. */
+  get namespaceOk(): boolean {
+    return this.namespaceShape === 'done';
+  }
+
+  /** Whether the components can be a selector. */
+  get isSelector(): boolean {
+    return this.count > 0 && this.selectorOk;
+  }
+
+  /** Whether the only component is an identifier. */
+  get isOneIdent(): boolean {
+    return this.count === 1 && this.first.type === 'ident';
+  }
+
+  /** Whether the only component is an identifier that starts with two dashes. */
+  get isOneDashedIdent(): boolean {
+    return this.isOneIdent && this.first.value.startsWith('--');
+  }
+}
+
+/** Whether a token is a url or a string, the argument `@import` and `@namespace` take. */
+const isUrlOrString = (token: Token): boolean =>
+  token.type === 'string' || token.type === 'url' || (token.type === 'function' && token.value === 'url');
+
+/** Whether the prelude is a keyframes name: one identifier or string. */
+const keyframesName = (p: Prelude): boolean => p.count === 1 && (p.first.type === 'ident' || p.first.type === 'string');
+
+/**
+ * The names of the at-rules some browser supports, which end the place for imports (with their block), and what
+ * their prelude must be for a browser to keep the rule. An at-rule no browser knows is dropped. A rule without a check
+ * is kept with any prelude.
+ */
+const KNOWN_AT_RULES: ReadonlyMap<string, ((prelude: Prelude) => boolean) | undefined> = new Map<
+  string,
+  ((prelude: Prelude) => boolean) | undefined
+>([
+  ['media', undefined],
+  [
+    'supports',
+    (p) => ['lparen', 'function'].includes(p.first.type) || (p.first.type === 'ident' && p.first.value === 'not'),
+  ],
+  ['font-face', (p) => p.count === 0],
+  ['keyframes', keyframesName],
+  ['-webkit-keyframes', keyframesName],
+  ['-moz-keyframes', keyframesName],
+  ['page', (p) => p.pageOk],
+  ['property', (p) => p.isOneDashedIdent],
+  ['container', (p) => p.count > 0],
+  ['scope', undefined],
+  ['counter-style', (p) => p.isOneIdent],
+  ['starting-style', (p) => p.count === 0],
+  ['font-palette-values', (p) => p.isOneDashedIdent],
+  ['font-feature-values', undefined],
+  ['view-transition', (p) => p.count === 0],
+  ['position-try', (p) => p.isOneDashedIdent],
+  ['function', undefined],
 ]);
 
-/** Token types a selector never holds at the top level of a prelude. */
-const NOT_IN_A_SELECTOR: ReadonlySet<TokenType> = new Set([
-  'semicolon',
-  'rparen',
-  'rbracket',
-  'rbrace',
-  'atkeyword',
-  'string',
-  'badstring',
-  'url',
-  'badurl',
-  'number',
-  'percentage',
-  'dimension',
-  'cdo',
-  'cdc',
-]);
+/** What an at-rule is, as far as the position of `@import` is concerned. */
+type AtRuleKind = 'import' | 'layer-statement' | 'rule' | 'dropped';
+
+function classifyAtRule(name: string, prelude: Prelude, hasBlock: boolean): AtRuleKind {
+  switch (name) {
+    case 'import':
+      return !hasBlock && isUrlOrString(prelude.first) ? 'import' : 'dropped';
+    case 'layer':
+      if (!prelude.layerNamesOk) return 'dropped';
+      if (hasBlock) return prelude.layerNames <= 1 ? 'rule' : 'dropped';
+      return prelude.layerNames > 0 ? 'layer-statement' : 'dropped';
+    case 'namespace':
+      return !hasBlock && prelude.namespaceOk ? 'rule' : 'dropped';
+    default: {
+      const check = KNOWN_AT_RULES.get(name);
+      return hasBlock && KNOWN_AT_RULES.has(name) && (check === undefined || check(prelude)) ? 'rule' : 'dropped';
+    }
+  }
+}
 
 /** What the list of rules reads from a stylesheet. */
 interface Rules {
-  /** Where the `@import` rules that a browser keeps start. */
-  readonly kept: ReadonlySet<number>;
+  /** Where the `@import` rules that a browser keeps start, in order. */
+  readonly kept: readonly number[];
   /**
    * Where the `@import` rules written at the stylesheet's top level start, whether kept or not, and the `@import`
-   * at-keywords inside the preludes of other rules, which those rules swallow. An `@import` that is no import rule
-   * by itself (no url or string, or a block) is not among them.
+   * at-keywords inside the preludes of other rules, which those rules swallow, in order. An `@import` that is no
+   * import rule by itself (no url or string, or a block) is not among them. Left empty unless asked for.
    */
   readonly written: readonly number[];
 }
 
-/** The rules of a stylesheet (CSS Syntax Level 3, section 5.4.1), as far as `@import` is concerned. */
-function consumeRules(css: string): Rules {
-  const tokens = tokenize(css);
-  const tokenAt = (index: number): Token => tokens[index] ?? EOF;
-  const kept = new Set<number>();
+/**
+ * The rules of a stylesheet (CSS Syntax Level 3, section 5.4.1), as far as `@import` is concerned, read token by
+ * token.
+ */
+function consumeRules(css: string, collectWritten: boolean): Rules {
+  const nextToken = createTokenizer(css);
+  let token = nextToken();
+  const kept: number[] = [];
   const written: number[] = [];
+  const closers = new ByteStack();
 
-  /** The index after the block that the token at `index` opens. */
-  const skipBlock = (index: number): number => {
-    const closers: TokenType[] = [];
-    let at = index;
+  /** Skips the block that the current token opens; the current token is then the first after it. */
+  const skipBlock = (): void => {
+    closers.size = 0;
     do {
-      const { type } = tokenAt(at);
-      if (type === 'eof') return at;
-      if (type === closers.at(-1)) closers.pop();
-      else {
-        const mirror = MIRROR.get(type);
-        if (mirror !== undefined) closers.push(mirror);
-      }
-      at += 1;
-    } while (closers.length > 0);
-    return at;
+      const closes = CLOSES.get(token.type);
+      const opens = OPENS.get(token.type);
+      if (token.type === 'eof') return;
+      if (closes !== undefined && closes === closers.top()) closers.pop();
+      else if (opens !== undefined) closers.push(opens);
+      token = nextToken();
+    } while (closers.size > 0);
   };
 
-  /** The prelude from `from` to the block that ends it, to a `;` when `statement`, or to the end. */
-  const consumePrelude = (from: number, statement: boolean): Prelude => {
-    const components: Component[] = [];
-    let at = from;
+  /** Reads the prelude from the current token to the block that ends it, to a `;` when `statement`, or to the end. */
+  const consumePrelude = (statement: boolean): { readonly prelude: Prelude; readonly hasBlock: boolean } => {
+    const prelude = new Prelude();
     for (;;) {
-      const token = tokenAt(at);
-      if (token.type === 'eof') return { components, hasBlock: false, next: at };
-      if (token.type === 'lbrace') return { components, hasBlock: true, next: skipBlock(at) };
-      if (statement && token.type === 'semicolon') return { components, hasBlock: false, next: at + 1 };
-      if (token.type === 'atkeyword' && token.value === 'import') written.push(token.start);
-      if (token.type !== 'ws') components.push({ token, index: at });
-      at = MIRROR.has(token.type) ? skipBlock(at) : at + 1;
+      if (token.type === 'eof') return { prelude, hasBlock: false };
+      if (token.type === 'lbrace') {
+        skipBlock();
+        return { prelude, hasBlock: true };
+      }
+      if (statement && token.type === 'semicolon') {
+        token = nextToken();
+        return { prelude, hasBlock: false };
+      }
+      if (collectWritten && token.type === 'atkeyword' && token.value === 'import') written.push(token.start);
+      prelude.add(token);
+      if (OPENS.has(token.type)) skipBlock();
+      else token = nextToken();
     }
   };
 
   let ruleSeen = false;
   let importSeen = false;
-  let at = 0;
   for (;;) {
-    const token = tokenAt(at);
     if (token.type === 'eof') break;
     if (token.type === 'ws' || token.type === 'cdo' || token.type === 'cdc') {
-      at += 1;
+      token = nextToken();
     } else if (token.type !== 'atkeyword') {
-      const prelude = consumePrelude(at, false);
-      at = prelude.next;
-      if (prelude.hasBlock && isSelectorPrelude(prelude.components)) ruleSeen = true;
+      const { prelude, hasBlock } = consumePrelude(false);
+      if (hasBlock && prelude.isSelector) ruleSeen = true;
     } else {
-      const prelude = consumePrelude(at + 1, true);
-      at = prelude.next;
-      const kind = classifyAtRule(token.value, prelude);
+      const { value: name, start } = token;
+      token = nextToken();
+      const mark = written.length;
+      const { prelude, hasBlock } = consumePrelude(true);
+      const kind = classifyAtRule(name, prelude, hasBlock);
       if (kind === 'import') {
-        written.push(token.start);
+        // Before the at-keywords its prelude swallowed, to keep the positions in order.
+        if (collectWritten) written.splice(mark, 0, start);
         if (!ruleSeen) {
-          kept.add(token.start);
+          kept.push(start);
           importSeen = true;
         }
       } else if (kind === 'rule' || (kind === 'layer-statement' && importSeen)) {
@@ -468,65 +631,16 @@ function consumeRules(css: string): Rules {
   return { kept, written };
 }
 
-/** Whether the prelude can be a selector, as far as its top-level tokens tell. */
-function isSelectorPrelude(components: readonly Component[]): boolean {
-  return components.length > 0 && components.every((c) => !NOT_IN_A_SELECTOR.has(c.token.type));
-}
-
-/** Whether a component is a url or a string, the argument `@import` and `@namespace` take. */
-const isUrlOrString = ({ token }: Component): boolean =>
-  token.type === 'string' || token.type === 'url' || (token.type === 'function' && token.value === 'url');
-
-/**
- * How many layer names the prelude lists, if it is a list of layer names (`a`, `a.b`, separated by commas), else
- * undefined.
- */
-function layerNames(components: readonly Component[]): number | undefined {
-  if (components.length === 0) return 0;
-  const indexAt = (at: number): number => Number(components[at]?.index);
-  let at = 0;
-  let count = 0;
-  for (;;) {
-    if (components[at]?.token.type !== 'ident') return undefined;
-    at += 1;
-    // A dot joins two names with nothing between.
-    while (
-      components[at]?.token.type === 'delim' &&
-      components[at]?.token.value === '.' &&
-      components[at + 1]?.token.type === 'ident' &&
-      indexAt(at) === indexAt(at - 1) + 1 &&
-      indexAt(at + 1) === indexAt(at) + 1
-    ) {
-      at += 2;
-    }
-    count += 1;
-    if (at >= components.length) return count;
-    if (components[at]?.token.type !== 'comma') return undefined;
-    at += 1;
+/** Whether `target` is in the ascending list. */
+function includesSorted(list: readonly number[], target: number): boolean {
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (Number(list[middle]) < target) low = middle + 1;
+    else high = middle;
   }
-}
-
-/** What an at-rule is, as far as the position of `@import` is concerned. */
-type AtRuleKind = 'import' | 'layer-statement' | 'rule' | 'dropped';
-
-function classifyAtRule(name: string, prelude: Prelude): AtRuleKind {
-  const [first, ...rest] = prelude.components;
-  switch (name) {
-    case 'import':
-      return !prelude.hasBlock && first !== undefined && isUrlOrString(first) ? 'import' : 'dropped';
-    case 'layer': {
-      const names = layerNames(prelude.components);
-      if (names === undefined) return 'dropped';
-      if (prelude.hasBlock) return names <= 1 ? 'rule' : 'dropped';
-      return names > 0 ? 'layer-statement' : 'dropped';
-    }
-    case 'namespace': {
-      const argument = first?.token.type === 'ident' ? rest : prelude.components;
-      return !prelude.hasBlock && argument.length === 1 && argument.every(isUrlOrString) ? 'rule' : 'dropped';
-    }
-    default:
-      return prelude.hasBlock && KNOWN_AT_RULES.has(name) ? 'rule' : 'dropped';
-  }
+  return Number(list[low]) === target;
 }
 
 /**
@@ -538,11 +652,14 @@ export function ineffectiveImportDiagnostics(
   sources: readonly StylesheetSource[],
   joined: JoinedStylesheet,
 ): Diagnostic[] {
-  const { kept } = consumeRules(joined.text);
+  // A single source is the whole stylesheet, so one reading serves both.
+  const single = sources.length === 1 && joined.parts[0]?.start === 0 && joined.text === sources[0]?.text;
+  const { kept, written: writtenBySingle } = consumeRules(joined.text, single);
   return sources.flatMap(({ label, text }, index): Diagnostic[] => {
     const start = Number(joined.parts[index]?.start);
     // The imports the source writes at its own top level, read on its own, that the stylesheet does not keep.
-    const count = consumeRules(text).written.filter((at) => !kept.has(start + at)).length;
+    const written = single ? writtenBySingle : consumeRules(text, true).written;
+    const count = written.filter((at) => !includesSorted(kept, start + at)).length;
     if (count === 0) return [];
     return [
       {

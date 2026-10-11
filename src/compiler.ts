@@ -709,7 +709,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
       break;
 
     case 'json':
-      output = storyToJSON(story, startName, diagnostics);
+      output = storyToJSON(story, startName, diagnostics, context.checkHead !== true);
       break;
 
     case 'html': {
@@ -864,9 +864,11 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
  * https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md
  * `start` is the start passage the other output modes use (`startName`): the one StoryData or the options name,
  * else the default `Start` when the JSON lists a passage of that name. `tag-colors` holds the tag colors Twine 2
- * output writes; `diagnostics` receives a warning for each color left out (see `twine2TagColors()`).
+ * output writes; `diagnostics` receives a warning for each color left out (see `twine2TagColors()`), and for each
+ * `@import` that the `style` joined here makes ineffective unless `reportStyleImports` is false (lint, which reports
+ * those of the Twine 2 HTML output's join instead).
  */
-function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[]): string {
+function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[], reportStyleImports: boolean): string {
   // Gather script and stylesheet content, excluding them from passages.
   const scripts: string[] = [];
   const stylesheets: StylesheetSource[] = [];
@@ -896,7 +898,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
   const tagColors = twine2TagColors(story);
   pushAll(diagnostics, tagColors.diagnostics);
   const style = joinWithLineFeeds(stylesheets);
-  pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets, style));
+  if (reportStyleImports) pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets, style));
   const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {
