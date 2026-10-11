@@ -5,7 +5,7 @@
  * watch, and the registered paths are checked on their own.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { watch } from 'rollup';
 import type { RollupWatcher } from 'rollup';
@@ -40,6 +40,12 @@ async function applyUntil(change: () => void, check: () => void): Promise<void> 
 function relink(at: string, target: string | undefined): void {
   rmSync(at, { force: true });
   if (target !== undefined) symlinkSync(target, at);
+}
+
+/** Points the link `at` to `target` in one step, so that the link never lacks (as `ln -sfn` and `mv` do). */
+function replaceLink(at: string, target: string): void {
+  symlinkSync(target, `${at}.new`);
+  renameSync(`${at}.new`, at);
 }
 
 const text = (file: string): string => readFileSync(file, 'utf-8');
@@ -322,13 +328,13 @@ describe.skipIf(noRelinkWatch)('createLinkWatch (#434)', () => {
       rmSync(join(dir, 'other.tw'));
       await applyUntil(
         () => {
-          relink(link, join(dir, 'two.tw'));
+          replaceLink(link, join(dir, 'two.tw'));
         },
         () => {
           expect(text(watch.signal)).toBe('1');
         },
       );
-      relink(link, join(dir, 'one.tw'));
+      replaceLink(link, join(dir, 'one.tw'));
       await vi.waitFor(() => {
         expect(text(watch.signal)).toBe('2');
       }, settled);
