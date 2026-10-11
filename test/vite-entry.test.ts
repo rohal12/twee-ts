@@ -136,7 +136,8 @@ describe('importSpellings', () => {
       '/dependency.js',
       [at('/project/dependency.js'), '/dependency.js'],
     ],
-    ['a path inside the root, given whole', '/project/app/dependency.js', [at('/project/app/dependency.js')]],
+    // Built with the drive of the root, as an import Vite resolves is spelled on Windows.
+    ['a path inside the root, given whole', at('/project/app/dependency.js'), [at('/project/app/dependency.js')]],
     ['a bare name', 'dependency', []],
     ['an alias', '@/dependency', []],
   ])('takes %s as written, with no resolver', async (_form, source, expected) => {

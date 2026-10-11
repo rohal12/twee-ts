@@ -397,3 +397,66 @@ describe.runIf(process.platform === 'linux' && buildWatchSeesFolders).each([
     60_000,
   );
 });
+
+/**
+ * A plugin of the user's that resolves an import itself decides the module, whatever a link on the way of Vite's own
+ * resolution leads to: the plugin resolves `dependency` to `packages/v1` while `node_modules/dependency` is relinked
+ * to `packages/v2`. Every mode keeps the plugin's choice, as a fresh build does (#320 review).
+ */
+describe.skipIf(process.platform === 'win32').each([
+  ['dev, watcher', 'dev'],
+  ['dev, no watcher', 'dev'],
+  ['build watch, inside the build', 'inside'],
+  ['build watch, in a build of its own', 'separate'],
+] as const)('a plugin that resolves an import itself, %s', (mode, kind) => {
+  it.skipIf(kind !== 'dev' && (process.platform !== 'linux' || !buildWatchSeesFolders))(
+    "keeps the plugin's module after the package folder's link is relinked",
+    async () => {
+      const root = makeProject({
+        ...PACKAGE_FILES,
+        'story/start.tw': STORY,
+        'outer.js': 'globalThis.outer = 1;',
+        'entry.js': IMPORTING('dependency'),
+      });
+      mkdirSync(join(root, 'node_modules'));
+      symlinkSync('../packages/v1', join(root, 'node_modules/dependency'));
+      const chooser: Plugin = {
+        name: 'choose-dependency',
+        enforce: 'pre',
+        resolveId: (source) => (source === 'dependency' ? join(root, 'packages/v1/index.js') : undefined),
+      };
+      const plugins = [
+        chooser,
+        tweeTsPlugin({
+          sources: [join(root, 'story')],
+          format: 'test-format-1',
+          entry: join(root, 'entry.js'),
+          outputFilename: 'story.html',
+          compileOptions: COMPILE,
+        }),
+      ];
+      let read: () => Promise<string>;
+      if (kind === 'dev') {
+        const { url } = await startServer({ root, server: mode === 'dev, watcher' ? {} : { watch: null }, plugins });
+        read = async () => (await fetch(`${url}/story.html`)).text();
+      } else {
+        await startBuildWatch({
+          root,
+          plugins,
+          build: {
+            outDir: join(root, 'out'),
+            ...(kind === 'separate' ? { rolldownOptions: { input: join(root, 'outer.js') } } : {}),
+          },
+        });
+        read = () => Promise.resolve(readFileSync(join(root, 'out/story.html'), 'utf-8'));
+      }
+      expect(seen(await read())).toEqual(['A']);
+      unlinkSync(join(root, 'node_modules/dependency'));
+      symlinkSync('../packages/v2', join(root, 'node_modules/dependency'));
+      writeFileSync(join(root, 'story/start.tw'), storyWith('Changed.'));
+      await expect.poll(async () => (await read()).includes('Changed.'), SETTLED).toBe(true);
+      expect(seen(await read())).toEqual(['A']);
+    },
+    60_000,
+  );
+});

@@ -169,6 +169,47 @@ function isStoryBuild(config: ResolvedConfig): boolean {
   return config.command === 'build' && !config.build.ssr;
 }
 
+/** An import as written: its importer and its source. */
+function importKey(importer: string | undefined, source: string): string {
+  return `${importer ?? ''}\0${source}`;
+}
+
+/** Whether a plugin is Vite's own (its resolver, alias and the rest) or one of twee-ts's. */
+function isOwnPlugin(plugin: Plugin): boolean {
+  return (
+    plugin.name === 'alias' ||
+    plugin.name.startsWith('vite:') ||
+    plugin.name.startsWith('builtin:') ||
+    plugin.name === PLUGIN_NAME ||
+    plugin.name.startsWith(`${PLUGIN_NAME}:`)
+  );
+}
+
+/**
+ * `plugin` with a `resolveId` hook that passes each import it resolves (see importKey) to `claim`; the plugin object
+ * itself is left untouched. A plugin without a `resolveId` hook in JavaScript is returned as it is.
+ */
+function claimingPlugin(plugin: Plugin, claim: (key: string) => void): Plugin {
+  const hook = plugin.resolveId;
+  const handler: unknown = typeof hook === 'function' ? hook : hook?.handler;
+  if (typeof handler !== 'function') return plugin;
+  const claiming = async function (this: unknown, ...args: unknown[]): Promise<unknown> {
+    const result: unknown = await Reflect.apply(handler, this, args);
+    const [source, importer] = args;
+    if (result !== null && result !== undefined && typeof source === 'string') {
+      claim(importKey(typeof importer === 'string' ? importer : undefined, source));
+    }
+    return result;
+  };
+  const wrapped = typeof hook === 'function' ? claiming : { ...hook, handler: claiming };
+  return new Proxy(plugin, {
+    get(target, key, receiver) {
+      const value: unknown = key === 'resolveId' ? wrapped : Reflect.get(target, key, receiver);
+      return value;
+    },
+  });
+}
+
 /** The part of a build hook's context that registering watch targets uses. */
 type WatchHookContext = ImportHookContext & {
   readonly environment: { readonly config: ResolvedConfig };
@@ -228,6 +269,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // its importer and its source. Not by the path it reaches the file through, which a retarget may change too (a
   // package's `exports`, a folder's index of another extension).
   const keptTargets = new Map<string, Set<string>>();
+  // The imports one of the user's plugins resolved itself (see importKey), in `vite build --watch`: their module is
+  // the plugin's choice, which no link changes.
+  const claimed = new Set<string>();
   const outputsOf = (config: ResolvedConfig): OutputPaths => {
     const known = watchOutputs.get(config);
     if (known !== undefined) return known;
@@ -351,6 +395,18 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     configResolved(config) {
       if (entryPath === undefined) return;
+      // `vite build --watch` with the entry inside the build: note the imports the user's plugins resolve (see
+      // resolveId below). Vite builds each environment's plugins from this list after this hook.
+      if (config.command === 'build' && config.build.watch && bundlesEntryInside(config)) {
+        config.plugins.forEach((plugin, at) => {
+          if (!isOwnPlugin(plugin))
+            Reflect.set(
+              config.plugins,
+              at,
+              claimingPlugin(plugin, (key) => claimed.add(key)),
+            );
+        });
+      }
       if (resolved.inputs.some((input) => isSameOrInside(entryPath, input))) {
         config.logger.warn(
           `[twee-ts] The entry ${toPosix(entryPath)} is inside the story sources (${resolved.sources.join(', ')}). ` +
@@ -443,11 +499,14 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         // new build would find (#320).
         if (kept === undefined) return undefined;
         const now = canonicalPath(kept);
-        const written = `${importer ?? ''}\0${id}`;
+        const written = importKey(importer, id);
         const targets = keptTargets.get(written) ?? new Set<string>();
         keptTargets.set(written, targets.add(now));
         if (targets.size < 2) return undefined;
+        claimed.delete(written);
         const resolved = await this.resolve(id, importer, { ...options, skipSelf: true });
+        // A plugin of the user's that resolved the import decided the module itself: it is left as it chose.
+        if (claimed.has(written)) return undefined;
         if (resolved === null || resolved.external === true || resolved.external === 'absolute') return undefined;
         const file = canonicalPath(fileOfId(resolved.id));
         if (file === now || !targets.has(file)) return undefined;

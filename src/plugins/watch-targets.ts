@@ -6,7 +6,7 @@
  * entries. So every path is registered on its own as well.
  */
 import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
-import { dirname, join, parse, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -147,14 +147,23 @@ const MAX_LINK_HOPS = 40;
  */
 export function linksOnTheWay(path: string): string[] {
   const links: string[] = [];
+  /** The names of a path or a link's target below its root; `..` is kept for the walk to take. */
+  const names = (text: string, root: string): string[] =>
+    text
+      .slice(root.length)
+      .split(/[/\\]/)
+      .filter((name) => name !== '' && name !== '.');
   const start = resolve(path);
   let reached = parse(start).root;
-  let rest = start
-    .slice(reached.length)
-    .split(/[/\\]/)
-    .filter((name) => name !== '');
+  let rest = names(start, reached);
   for (let hops = 0; rest.length > 0 && hops <= MAX_LINK_HOPS;) {
     const [name = '', ...more] = rest;
+    rest = more;
+    if (name === '..') {
+      // Up from where the links before it led, as the file system takes it.
+      reached = dirname(reached);
+      continue;
+    }
     const next = join(reached, name);
     let target: string | undefined;
     try {
@@ -164,20 +173,14 @@ export function linksOnTheWay(path: string): string[] {
     }
     if (target === undefined) {
       reached = next;
-      rest = more;
       continue;
     }
     hops += 1;
     if (dirname(next) !== dirname(dirname(next))) links.push(next);
-    const followed = resolve(reached, target);
-    reached = parse(followed).root;
-    rest = [
-      ...followed
-        .slice(reached.length)
-        .split(/[/\\]/)
-        .filter((part) => part !== ''),
-      ...more,
-    ];
+    // A relative target goes on from the folder that holds the link; an absolute one from its root.
+    const root = isAbsolute(target) ? parse(target).root : '';
+    if (root !== '') reached = root;
+    rest = [...names(target, root), ...rest];
   }
   return links;
 }

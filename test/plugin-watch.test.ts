@@ -349,6 +349,16 @@ describe.skipIf(process.platform === 'win32')('linksOnTheWay', () => {
     expect(on(dir, 'linked/dangling.js')).toEqual(['linked', 'real/dangling.js']);
   });
 
+  it('takes `..` in a link target after the link before it, as the file system does', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'deep', 'inner'), { recursive: true });
+    writeFileSync(join(dir, 'deep', 'f2.js'), '');
+    // `x` leads into deep/inner, so x/.. is deep (where f2.js is), not the folder holding x.
+    symlinkSync('deep/inner', join(dir, 'x'));
+    symlinkSync('x/../f2.js', join(dir, 'y'));
+    expect(on(dir, 'y')).toEqual(['y', 'x']);
+  });
+
   it('ends a loop of links after as many hops as the file system follows', () => {
     const dir = tempDir();
     symlinkSync('b', join(dir, 'a'));
