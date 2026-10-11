@@ -478,6 +478,63 @@ describe('prerelease versions in local format folders (#162)', () => {
   }
 });
 
+describe('keeping a stable version next to a newer prerelease (#423, docs/story-formats.md)', () => {
+  const REVIEW_INDEX = 'https://formats.example.test/index.json';
+  const reviewStory = story({ format: 'Review', 'format-version': '1.0.0' });
+  const installStableAndBeta = (): string => {
+    const formats = join(cacheRoot, 'formats');
+    writeFormat(formats, 'stable', 'Review', '1.0.0', 'STABLE');
+    writeFormat(formats, 'beta', 'Review', '1.1.0-beta.1', 'BETA');
+    return formats;
+  };
+
+  it('builds with the beta although StoryData names the exact stable version', async () => {
+    const result = await compile(
+      options({ sources: reviewStory, formatPaths: [installStableAndBeta()], noRemote: true }),
+    );
+    expect(result.format?.version).toBe('1.1.0-beta.1');
+    expect(markerOf(result.output)).toBe('BETA');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('builds with the stable folder when its ID is requested, over StoryData', async () => {
+    const result = await compile(
+      options({ sources: reviewStory, formatId: 'stable', formatPaths: [installStableAndBeta()], noRemote: true }),
+    );
+    expect(result.format?.version).toBe('1.0.0');
+    expect(markerOf(result.output)).toBe('STABLE');
+  });
+
+  it('builds with the exact stable version once the beta is not in a searched directory', async () => {
+    const formats = join(cacheRoot, 'formats');
+    writeFormat(formats, 'stable', 'Review', '1.0.0', 'STABLE');
+    writeFormat(join(cacheRoot, 'elsewhere'), 'beta', 'Review', '1.1.0-beta.1', 'BETA');
+    const result = await compile(options({ sources: reviewStory, formatPaths: [formats], noRemote: true }));
+    expect(markerOf(result.output)).toBe('STABLE');
+  });
+
+  it('finds the exact stable version in a format index that lists the beta too', async () => {
+    stubFetch({
+      [REVIEW_INDEX]: indexJson(sfaEntry('Review', '1.1.0-beta.1'), sfaEntry('Review', '1.0.0')),
+      'https://formats.example.test/twine2/Review/1.0.0/format.js': formatJs('Review', '1.0.0'),
+      'https://formats.example.test/twine2/Review/1.1.0-beta.1/format.js': formatJs('Review', '1.1.0-beta.1'),
+    });
+    const result = await compile(options({ sources: reviewStory, formatIndices: [REVIEW_INDEX] }));
+    expect(result.format?.version).toBe('1.0.0');
+  });
+
+  it('uses a local beta before asking an index for the exact stable version', async () => {
+    const formats = join(cacheRoot, 'formats');
+    writeFormat(formats, 'beta', 'Review', '1.1.0-beta.1', 'BETA');
+    const calls = stubFetch({ [REVIEW_INDEX]: indexJson(sfaEntry('Review', '1.0.0')) });
+    const result = await compile(
+      options({ sources: reviewStory, formatPaths: [formats], formatIndices: [REVIEW_INDEX] }),
+    );
+    expect(result.format?.version).toBe('1.1.0-beta.1');
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('format directory precedence (#163)', () => {
   let home = '';
   let cwd = '';

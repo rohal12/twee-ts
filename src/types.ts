@@ -33,7 +33,10 @@ export interface ExcludeGlob {
  * property set to `undefined` means the same as leaving it out.
  *
  * - `formatId` and `startPassage` win over StoryData's `format`/`format-version` and `start`; without
- *   either, the default is 'sugarcube-2' and 'Start'.
+ *   either, the default is 'sugarcube-2' and 'Start'. A `formatId` that is a local folder name uses
+ *   that folder as it is, so it keeps a stable format when a newer prerelease is installed; an exact
+ *   `format-version` in StoryData does not, because name requests see only the greatest local
+ *   version of each name and major version.
  * - `formatUrls` and `formatIndices` take absolute `http:`/`https:` URLs. The local formats are
  *   consulted first, then each format URL (requested again, conditionally, on every online build),
  *   then each index, then the Story Formats Archive. A download is cached for the URL or index it

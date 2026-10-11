@@ -104,6 +104,15 @@ Versions compare by SemVer precedence, so a release outranks its prereleases (`2
 
 Pruning does not apply to a request by ID: `--format sugarcube-2` uses the `sugarcube-2` folder even when `sugarcube-2.37` holds a newer SugarCube 2.
 
+### Keeping a Stable Version
+
+Pruning happens before the requested version is looked at, so a prerelease in a local folder hides the release it follows, and naming the release's exact version in `StoryData` does not bring it back. With `Review` 1.0.0 in a folder `stable` and `Review` 1.1.0-beta.1 in a folder `beta`, both under a searched directory, a story whose `StoryData` says `"format": "Review", "format-version": "1.0.0"` is built with 1.1.0-beta.1, without a warning: the 1.0.0 folder is not a candidate, and 1.1.0-beta.1 answers as a newer version of the same major. To build with the stable one:
+
+- **Request its folder by ID**: `twee-ts -f stable` or `formatId: 'stable'`. An ID request uses that folder as it is, whatever other folders hold, and wins over `StoryData`'s `format` and `format-version`.
+- **Or keep the prerelease out of every searched directory** (see [Search Order](#search-order)), for example by installing it in a directory that none of those search. Then the stable version is the greatest, and an exact `format-version` finds it.
+
+An exact `format-version` does work among the versions of one source that offers several: a [format index](#custom-remote-sources) with both `1.0.0` and `1.1.0-beta.1` yields 1.0.0 for `"format-version": "1.0.0"`. But local folders are consulted first (see [How a Format Is Chosen](#how-a-format-is-chosen)), so a local `Review` of the same major version above the requested one is chosen before an index is asked for the exact one. Hence the advice is the same when the prerelease is installed locally and the stable version comes from an index: request the stable one by ID, or remove the prerelease.
+
 ### Twine 1 Formats
 
 Twine 1 format directories (containing `header.html` instead of `format.js`) use the folder name as the format name and have no version, so only `--format <folder name>` (or `formatId`) selects one. A Twine 1 header that includes Twine 1's `engine.js`, `jquery.js` or `modernizr.js` reads them from the format directory that holds the format folder. A format's own `userlib.js` (for `"USER_LIB"`) and, in a format older than Twine 1.4, `footer.html` are optional: when nothing is at the path (or a dangling link), the placeholder stays and the default footer is used, as in Tweego. One that is there but can't be read (a file twee-ts may not read, a folder, text that can't be decoded) stops the build with `Format component cannot be read: …`.
@@ -204,7 +213,7 @@ This is the whole policy, and it is the same for every source.
 
 **Identity.** Format names match without regard to letter case (`sugarcube` finds `SugarCube`). A format ID matches a format when it is the format's local folder name (without regard to case), or the format's name in lower case with each run of whitespace replaced by `-`, followed by `-` and its major version (SugarCube 2.37.3 is `sugarcube-2`). A name-and-version request matches only Twine 2 formats; an ID can also name a Twine 1 format.
 
-**Versions** compare by [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) precedence (see [Format Metadata](#format-metadata) for what counts as a version): a prerelease ranks below its release (`2.1.0-rc.1` is older than `2.1.0`), and build metadata is ignored (`2.1.0+b7` is `2.1.0`). Prereleases are otherwise ordinary versions: as in Tweego, `2.38.0-beta.1` is the greatest SugarCube 2 when a source has it. Name an exact version in `StoryData` to avoid that.
+**Versions** compare by [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) precedence (see [Format Metadata](#format-metadata) for what counts as a version): a prerelease ranks below its release (`2.1.0-rc.1` is older than `2.1.0`), and build metadata is ignored (`2.1.0+b7` is `2.1.0`). Prereleases are otherwise ordinary versions: as in Tweego, `2.38.0-beta.1` is the greatest SugarCube 2 when a source has it. An exact version in `StoryData` does not keep a prerelease out of the local folders, because they are pruned to the greatest version first (see below); [Keeping a Stable Version](#keeping-a-stable-version) says what does.
 
 **Tiers.** A candidate answers a request in one of these tiers, best first:
 
@@ -227,7 +236,7 @@ warning: Story format "SugarCube" at version "2.38.0" is not available; using Su
 
 As the earliest source wins, sources are consulted one at a time, and later ones are not contacted once one answers.
 
-**Local folders, as in Tweego.** For a name request, only the greatest version of each name and major version among the local folders is a candidate ([SemVer Version Pruning](#semver-version-pruning)), so `StoryData` SugarCube 2.36.1 uses a local 2.37.3 even when a local 2.36.1 exists. For an ID request, every folder is a candidate, so a pinned folder is used as it is.
+**Local folders, as in Tweego.** For a name request, only the greatest version of each name and major version among the local folders is a candidate ([SemVer Version Pruning](#semver-version-pruning)), so `StoryData` SugarCube 2.36.1 uses a local 2.37.3 even when a local 2.36.1 exists; an exact version in `StoryData` therefore cannot select a local version that a greater one of the same name and major hides, a prerelease included. For an ID request, every folder is a candidate, so a pinned folder is used as it is ([Keeping a Stable Version](#keeping-a-stable-version)).
 
 **A missing or unparseable `format-version`** takes the greatest version of any major version, with a warning (Tweego's, for an unparseable one):
 
