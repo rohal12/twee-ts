@@ -82,7 +82,8 @@ specs/                 Specification conformance tests (Twee 3, Twine HTML/archi
 - **Fix the defect class, not the case.** Enumerate the input dimension (spec states, grammar productions, file types, option sources, platforms) and cover it with table-driven, property-based (fast-check) or differential tests against an oracle; every reported defect gets a regression test that failed first.
 - **Duplication budget.** `duplication-budget.json` may only go down; remove a new clone rather than raise it.
 - **Docs are tested.** Every code block in README.md and docs/ is type-checked and run (see `test/docs-snippets.test.ts`); CLI flags, config keys and exported names are compared with the code. Update docs with behaviour.
-- **Required checks** before pushing: `pnpm run format`, `typecheck`, `lint`, `knip`, `pnpm test`, `pnpm test:coverage` (thresholds never lowered, no `v8 ignore`), `pnpm run build`, `pnpm run duplication jscpd` and `pnpm run duplication fallow`. Incompatible behaviour changes carry a `BREAKING CHANGE:` footer and a CHANGELOG `[Unreleased]` entry.
+- **Required checks run in CI.** The CI pipeline runs the full suite on every push: format, typecheck, lint, knip, `pnpm test` on three OSes, coverage (thresholds never lowered, no `v8 ignore`), build, contracts and both duplication tools. Locally, run only the fast checks (`pnpm run format`, `typecheck`, `lint`) and the test files you changed. Don't run the full suite or coverage before pushing; push and watch CI (`gh pr checks <n> --watch`). Incompatible behaviour changes carry a `BREAKING CHANGE:` footer and a CHANGELOG `[Unreleased]` entry.
+- **One PR per round.** Collect the fixes for a batch of issues on one branch and open one PR with a `Fixes #N` line per issue. Don't open a PR per issue: separate PRs conflict with each other (CHANGELOG, shared helpers) and each merge needs a rebase.
 
 ## Code style
 
@@ -175,8 +176,7 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
 1. **Create a release branch** named `release/X.Y.Z`
 2. **Rebase onto latest main** before committing — ensures clean history
-3. **Run all checks**: `pnpm run format && pnpm run typecheck && pnpm test && pnpm run build`, then **record the
-   validation evidence**. The release workflow's gate refuses to publish without a committed record for the exact
+3. **Push and let CI run the checks**, then **record the validation evidence**. The release workflow's gate refuses to publish without a committed record for the exact
    revision: the required CI checks passed on the frozen commit, and three independent full review sweeps of it (one
    per method, every review area) left no P1/P2 finding open. Follow "How to prepare a release" in
    [docs/compiler-validation.md](docs/compiler-validation.md), check with
