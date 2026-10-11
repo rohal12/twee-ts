@@ -149,6 +149,32 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
   },
 );
 
+const sockets: WebSocket[] = [];
+afterEach(() => {
+  for (const socket of sockets.splice(0)) socket.close();
+});
+
+/**
+ * Connects to the HMR socket of the dev server at `origin` (base `/`) as Vite's client does, and counts the
+ * full-reload messages it receives from then on. Resolves once the socket is open, so the server counts it as a page.
+ */
+async function hmrReloads(origin: string): Promise<{ count: () => number }> {
+  const socket = new WebSocket(`${origin.replace('http', 'ws')}/`, 'vite-hmr');
+  sockets.push(socket);
+  let count = 0;
+  socket.addEventListener('message', (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'full-reload') {
+      count++;
+    }
+  });
+  await new Promise((open, fail) => {
+    socket.addEventListener('open', open);
+    socket.addEventListener('error', fail);
+  });
+  return { count: () => count };
+}
+
 /** A page function, as source (the tests have no DOM types), that tells whether the first passage reads `text`. */
 const passageIs = (text: string): string =>
   `document.querySelector('tw-passagedata')?.textContent === ${JSON.stringify(text)}`;
@@ -204,6 +230,10 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       });
       const { url } = await startServer({ root: dir, publicDir: false, plugins: [plugin], server: { watch: null } });
       const pageUrl = `${url}/index.html`;
+      // The server's messages to its pages, received by a client of its own that stays connected. Vite holds a
+      // full-reload sent while no page is connected for the next one that connects, which then loads twice; with this
+      // client connected, the reload after the story compiles again is received here, and is the signal to wait on.
+      const reloads = await hmrReloads(url);
       expect(await workerOutcome(pageUrl)).toBe('worker:42');
 
       // The story no longer compiles, then a module of the worker changes: the bundle succeeds, the story does not.
@@ -216,7 +246,9 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:42');
 
       writeFileSync(join(dir, 'story/start.tw'), STORY);
+      const before = reloads.count();
       await fetch(pageUrl);
+      await expect.poll(() => reloads.count(), { timeout: 10_000 }).toBeGreaterThan(before);
       await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:84');
     });
   },
