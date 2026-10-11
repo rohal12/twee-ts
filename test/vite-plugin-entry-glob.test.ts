@@ -352,7 +352,15 @@ async function watchBuild(dir: string, separate: boolean, after: Plugin[] = []):
   await vi.waitFor(() => {
     if (!events.includes('END') && !events.includes('ERROR')) throw new Error('the first build has not finished');
   }, SETTLED);
-  return () => (runEntry(userScript(readFileSync(join(dir, 'out/story.html'), 'utf-8'))) as { found?: unknown }).found;
+  // The output only while the watcher is idle after a good build. A build empties the output folder before it writes
+  // (`emptyOutDir`), and the watcher may start one at any time: macOS FSEvents reports the project's own files, written
+  // just before the watcher started, a moment after the first build. Callers read it in vi.waitFor.
+  return () => {
+    const last = events.at(-1);
+    const failed = events.lastIndexOf('ERROR') > events.lastIndexOf('START');
+    if (last !== 'END' || failed) throw new Error(`the watcher is not idle after a good build: ${events.join(', ')}`);
+    return (runEntry(userScript(readFileSync(join(dir, 'out/story.html'), 'utf-8'))) as { found?: unknown }).found;
+  };
 }
 
 describe.each([
@@ -365,7 +373,9 @@ describe.each([
       const dir = globProject(FORMS.lazy.call);
       write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
       const found = await watchBuild(dir, separate);
-      expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+      }, SETTLED);
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
         expect(found()).toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
@@ -382,7 +392,9 @@ describe.each([
       linkFolder(shared, join(dir, 'app/levels/shared'));
       write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
       const found = await watchBuild(dir, separate);
-      expect(found()).toEqual(['./levels/shared/one.js']);
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['./levels/shared/one.js']);
+      }, SETTLED);
       write(join(shared, 'two.js'), 'export default 2;');
       await vi.waitFor(() => {
         expect(found()).toEqual(['./levels/shared/one.js', './levels/shared/two.js']);
@@ -414,7 +426,9 @@ describe.each([
         },
       };
       const found = await watchBuild(dir, separate, [component]);
-      expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+      }, SETTLED);
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
         expect(found()).toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
