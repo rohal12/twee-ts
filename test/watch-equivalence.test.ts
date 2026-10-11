@@ -231,40 +231,53 @@ function apply(op: Op): void {
   }
 }
 
+/** Applies `ops` one by one to a fresh tree, watched, and checks after each that the output equals a fresh compile. */
+async function replay(ops: readonly Op[]): Promise<void> {
+  rmSync(src, { recursive: true, force: true });
+  rmSync(outside, { recursive: true, force: true });
+  rmSync(outFile, { force: true });
+  mkdirSync(src);
+  mkdirSync(outside);
+  // A tree with something for every operation to work on.
+  writeFileSync(join(src, 'a.tw'), passage('a.tw', 'zero'));
+  mkdirSync(join(src, 'd1'));
+  writeFileSync(join(src, 'd1', 'c.tw'), passage('d1/c.tw', 'zero'));
+  mkdirSync(join(outside, 'd2'));
+  writeFileSync(join(outside, 'd2', 'e.tw'), passage('d2/e.tw', 'zero'));
+  for (const target of TARGETS) writeFileSync(join(outside, target), passage(`target ${target}`, 'zero'));
+  if (LINKS) symlinkSync(join(outside, 't1.tw'), join(src, 'l1.tw'));
+  // The source file info in the output makes every path change show.
+  const w = startWatch([STORY_DATA, src], { outputMode: 'twine2-archive', sourceInfo: true });
+  try {
+    await converges(w, () => 'initial build');
+    await primed(w, join(src, 'a.tw'));
+    await converges(w, () => 'after priming');
+    for (const [i, op] of ops.entries()) {
+      apply(op);
+      await converges(w, () => `after ${JSON.stringify(ops.slice(0, i + 1))}`);
+    }
+  } finally {
+    w.controller.abort();
+  }
+}
+
 describe('watch output equals a fresh compile after any sequence of operations', { timeout: 300_000 }, () => {
   it('for generated sequences', async () => {
     expect.hasAssertions();
-    await fc.assert(
-      fc.asyncProperty(fc.array(opArb, { minLength: 1, maxLength: 8 }), async (ops) => {
-        rmSync(src, { recursive: true, force: true });
-        rmSync(outside, { recursive: true, force: true });
-        rmSync(outFile, { force: true });
-        mkdirSync(src);
-        mkdirSync(outside);
-        // A tree with something for every operation to work on.
-        writeFileSync(join(src, 'a.tw'), passage('a.tw', 'zero'));
-        mkdirSync(join(src, 'd1'));
-        writeFileSync(join(src, 'd1', 'c.tw'), passage('d1/c.tw', 'zero'));
-        mkdirSync(join(outside, 'd2'));
-        writeFileSync(join(outside, 'd2', 'e.tw'), passage('d2/e.tw', 'zero'));
-        for (const target of TARGETS) writeFileSync(join(outside, target), passage(`target ${target}`, 'zero'));
-        if (LINKS) symlinkSync(join(outside, 't1.tw'), join(src, 'l1.tw'));
-        // The source file info in the output makes every path change show.
-        const w = startWatch([STORY_DATA, src], { outputMode: 'twine2-archive', sourceInfo: true });
-        try {
-          await converges(w, () => 'initial build');
-          await primed(w, join(src, 'a.tw'));
-          await converges(w, () => 'after priming');
-          for (const [i, op] of ops.entries()) {
-            apply(op);
-            await converges(w, () => `after ${JSON.stringify(ops.slice(0, i + 1))}`);
-          }
-        } finally {
-          w.controller.abort();
-        }
-      }),
-      { numRuns: 30 },
-    );
+    await fc.assert(fc.asyncProperty(fc.array(opArb, { minLength: 1, maxLength: 8 }), replay), { numRuns: 30 });
+  });
+
+  // CI run 38136948300 (macOS, seed -1901776366, path "25"): the build after l2.tw was linked started watches on the
+  // link's target, which replaced the FSEvents stream of every folder watch, and d3 with its file, created right
+  // after, never showed (#436).
+  it.skipIf(!LINKS)('after a link whose watches start right before a folder is made (#436)', async () => {
+    expect.hasAssertions();
+    await replay([
+      { kind: 'link', name: 'l2.tw', target: 't2.tw' },
+      { kind: 'mkdirWithFile', dir: 'd3', text: 'one' },
+      { kind: 'link', name: 'l1.tw', target: 't2.tw' },
+      { kind: 'write', file: 'd2/e.tw', text: 'two' },
+    ]);
   });
 });
 

@@ -33,6 +33,7 @@ import type {
   BuildOutputs,
   DiscoveredFile,
   FilenamesResult,
+  FolderStream,
   OutputPaths,
   SkippedOutput,
   WatchTiming,
@@ -295,6 +296,7 @@ export function watchWithWriteFilter(
     ignore,
     reportError,
     hooks.timing,
+    hooks.stream,
   );
 
   const outer = options.signal;
@@ -321,6 +323,8 @@ export interface WatchHooks {
   readonly onIdle?: () => void;
   /** How long to wait for changes to settle (see watchFilesystem); tests shorten it. */
   readonly timing?: WatchTiming;
+  /** Whether folder watches share one event stream (see watchFilesystem); tests set it. */
+  readonly stream?: FolderStream;
   /** Inputs besides the compile options' own (the CLI's config file), which the output must not overwrite. */
   readonly extraInputs?: readonly ExtraInput[];
 }

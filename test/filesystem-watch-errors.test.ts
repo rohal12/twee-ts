@@ -55,6 +55,9 @@ function watchDir(withErrorHandler = true): void {
     () => {},
     () => false,
     withErrorHandler ? (e) => errors.push(e) : undefined,
+    undefined,
+    // The watches this folder needs, without the probe a shared folder stream (macOS) adds (folder-stream.test.ts).
+    { shared: false },
   );
 }
 

@@ -22,6 +22,7 @@ import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js'
 import type { Diagnostic, ExcludeGlob } from './types.js';
 import { attributeOf, documentTextContains, findStoreArea, findStoryData, parseHtml } from './html-structure.js';
 import { JsonObject, parseJSON } from './json-decode.js';
+import { onStreamRunning, streamReplaced } from './folder-stream.js';
 import type { JsonValue } from './json-decode.js';
 
 /**
@@ -548,6 +549,17 @@ export interface WatchTiming {
   readonly maxWaitMs?: number;
 }
 
+/** How the folder watches of the process share one event stream (see folder-stream.ts). */
+export interface FolderStream {
+  /**
+   * Whether starting or closing a folder watch replaces the stream every folder watch reports through, so that
+   * changes made meanwhile go unreported: true on macOS (FSEvents). Tests set it to check the handling elsewhere.
+   */
+  readonly shared?: boolean;
+  /** Where the probe that learns when the stream runs again makes its folder (the system's temporary folder). */
+  readonly probeParent?: string;
+}
+
 /** Every folder below `dir` (links to folders not followed), by identity key, `dir` included. */
 function foldersUnder(dir: string): Set<string> {
   const found = new Set<string>([identify(dir).key]);
@@ -591,6 +603,10 @@ function foldersUnder(dir: string): Set<string> {
  * replacing or retargeting any of them rebuilds. When that sets up a path's watches again, the next build
  * is a full one, since changes made in between went unseen. A path that can't be watched is passed to
  * `onError` as a WatchPathError, once while the failure persists; the other paths are still watched.
+ *
+ * Where folder watches share one event stream (`stream.shared`, macOS), starting or closing any of them loses the
+ * changes made while the stream is replaced, in every watched folder: once the new stream runs, a full build reads
+ * them (#436).
  */
 export function watchFilesystem(
   pathnames: string[],
@@ -601,6 +617,7 @@ export function watchFilesystem(
     // Errors are dropped when the caller does not ask for them.
   },
   timing: WatchTiming = {},
+  stream: FolderStream = {},
 ): WatchHandle {
   const output = outputPaths(toBuildOutputs(outFilename));
   const debounceMs = timing.debounceMs ?? 500;
@@ -663,6 +680,17 @@ export function watchFilesystem(
   };
   const roots: Root[] = pathnames.map((path) => makeRoot(path, false));
 
+  // Each start or close of folder watches may have lost changes: build in full once the stream runs again.
+  const shared = stream.shared ?? process.platform === 'darwin';
+  const leaveStream = shared
+    ? onStreamRunning(() => {
+        scheduleBuild();
+      }, stream.probeParent)
+    : undefined;
+  const watchesChanged = (): void => {
+    if (shared) streamReplaced();
+  };
+
   // A watched path that is a file counts whatever its type.
   const isNamedFile = (abs: string): boolean => roots.some((r) => r.abs === abs && r.state.self.kind === 'file');
 
@@ -722,6 +750,7 @@ export function watchFilesystem(
       });
       watcher.on('error', (e) => {
         watcher.close();
+        watchesChanged();
         root.watchers = root.watchers.filter((w) => w !== watcher);
         root.failed = true;
         if (!closed && !recheck(root, false)) report(root, e);
@@ -767,6 +796,7 @@ export function watchFilesystem(
       });
     if (anchorsStarted.every(Boolean) && selfStarted) root.lastReport = undefined;
     else root.failed = true;
+    watchesChanged();
   }
 
   /**
@@ -812,6 +842,9 @@ export function watchFilesystem(
       if (buildTimer) clearTimeout(buildTimer);
       buildTimer = null;
       for (const root of roots) for (const w of root.watchers) w.close();
+      leaveStream?.();
+      // The other watches of the process report through the stream these watches leave.
+      if (shared) streamReplaced();
     },
     track(files) {
       if (closed) return;
@@ -829,6 +862,7 @@ export function watchFilesystem(
           // still waited for: Node's recursive watch on Linux may not report a link created again in its
           // place.
           for (const w of root.watchers) w.close();
+          watchesChanged();
           roots.splice(i, 1);
         }
       }
