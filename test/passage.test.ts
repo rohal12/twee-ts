@@ -184,6 +184,12 @@ describe('countWords', () => {
       expect(countWords(p, 'whitespace')).toBe(2);
     });
 
+    it('names a passage without a source whose HTML nests too deeply to count', () => {
+      const p = mkPassage('Deep', [], '<b>'.repeat(600));
+      expect(() => countWords(p, 'whitespace')).toThrow(/^Passage "Deep": HTML nests more than 512 elements deep\.$/);
+      expect(countWords(p, 'tweego')).toBe(360);
+    });
+
     it('handles multiple whitespace', () => {
       const p = mkPassage('A', [], '  Hello   world  \n  foo  ');
       expect(countWords(p, 'whitespace')).toBe(3);

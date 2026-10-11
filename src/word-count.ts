@@ -5,24 +5,9 @@
 import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
 import { readSquareBracketedMarkup } from './link-markup.js';
-
-/**
- * The first index of a character at or after a position, for positions that never decrease: each search
- * starts where the last one for that character ended, so all searches together take linear time.
- */
-class ForwardFinder {
-  private readonly found = new Map<string, number>();
-  constructor(private readonly text: string) {}
-
-  next(ch: string, from: number): number {
-    const last = this.found.get(ch);
-    // -1: no `ch` at or after an earlier position, so none at or after this one either.
-    if (last !== undefined && (last === -1 || last >= from)) return last;
-    const at = this.text.indexOf(ch, from);
-    this.found.set(ch, at);
-    return at;
-  }
-}
+import { findMacroTags } from './sugarcube-macros.js';
+import { htmlText } from './html-structure.js';
+import { htmlEscape } from './escape.js';
 
 /** The comment forms Tweego strips before counting: `/% %/`, `/* *\/` and `<!-- -->`. */
 const COMMENTS: readonly (readonly [open: string, close: string])[] = [
@@ -449,67 +434,41 @@ export function countNormalizationSegments(text: string): number {
 // --- Markup removal for the 'whitespace' method ---
 
 /**
- * What a markup form is at a position where it may start: a match (its end, and the text that replaces it),
- * `none` when it does not match there, or `never` when it matches neither there nor anywhere later.
+ * `text` without its SugarCube macro tags, opening and closing, as SugarCube's macro parser finds them
+ * (`findMacroTags`): a `>` or `>=` operator, and a `>>` in a quoted string, comment or link markup, doesn't end a
+ * tag. Text that no tag starts at, such as `<< x >>` or a `<<` without a `>>` after it, is kept. Linear time.
  */
-type MarkupMatch = { readonly end: number; readonly replacement: string } | 'none' | 'never';
-
-/**
- * Replace each match of a markup form in `text`, leftmost first and without overlaps, as a global regular
- * expression replace does. A match can start only at an occurrence of `open`; `matchAt` decides whether one
- * does, finding the characters it needs with `finder`, whose searches only move forward. Linear time.
- */
-function replaceMarkup(
-  text: string,
-  open: string,
-  matchAt: (start: number, finder: ForwardFinder) => MarkupMatch,
-): string {
-  const finder = new ForwardFinder(text);
+function stripMacros(text: string): string {
   let out = '';
   let kept = 0;
-  for (let i = text.indexOf(open); i !== -1;) {
-    const match = matchAt(i, finder);
-    if (match === 'never') break;
-    if (match === 'none') {
-      i = text.indexOf(open, i + 1);
-      continue;
-    }
-    out += text.slice(kept, i) + match.replacement;
-    kept = match.end;
-    i = text.indexOf(open, kept);
+  for (const tag of findMacroTags(text)) {
+    out += text.slice(kept, tag.start);
+    kept = tag.end;
   }
   return out + text.slice(kept);
 }
 
-/** `text` without SugarCube macro calls: `<<` up to the first `>` after it, when another `>` follows that. */
-function stripMacros(text: string): string {
-  return replaceMarkup(text, '<<', (i, finder) => {
-    const gt = finder.next('>', i + 2);
-    if (gt === -1) return 'never';
-    return text[gt + 1] === '>' ? { end: gt + 2, replacement: '' } : 'none';
-  });
-}
-
 /**
  * `text` with each SugarCube link, `[[Link]]`, `[[Text|Link]]`, `[[Text->Link]]` or `[[Link<-Text]]`, with or
- * without a setter, replaced by the text it displays. Links are read as `readSquareBracketedMarkup` reads them,
- * within an allowance of four times the text plus a fixed one, so the time stays linear.
+ * without a setter, replaced by the text it displays, written as HTML text so that the HTML reading after this keeps
+ * it as it is. Links are read as `readSquareBracketedMarkup` reads them, leftmost first and without overlaps, within
+ * an allowance of four times the text plus a fixed one, so the time stays linear.
  */
 function linksToText(text: string): string {
   const budget = { left: 4 * text.length + 100_000 };
-  return replaceMarkup(text, '[[', (i) => {
+  let out = '';
+  let kept = 0;
+  for (let i = text.indexOf('[['); i !== -1;) {
     const markup = readSquareBracketedMarkup(text, i, budget);
-    return markup?.label === undefined ? 'none' : { end: markup.end, replacement: markup.label };
-  });
-}
-
-/** `text` without HTML tags: `<`, at least one character, then the first `>`. */
-function stripTags(text: string): string {
-  return replaceMarkup(text, '<', (i, finder) => {
-    const gt = finder.next('>', i + 1);
-    if (gt === -1) return 'never';
-    return gt > i + 1 ? { end: gt + 1, replacement: '' } : 'none';
-  });
+    if (markup?.label === undefined) {
+      i = text.indexOf('[[', i + 1);
+      continue;
+    }
+    out += text.slice(kept, i) + htmlEscape(markup.label);
+    kept = markup.end;
+    i = text.indexOf('[[', kept);
+  }
+  return out + text.slice(kept);
 }
 
 /**
@@ -518,8 +477,11 @@ function stripTags(text: string): string {
  * - `'tweego'` (default), as Tweego counts them: line feeds and comments are removed, the rest is decomposed
  *   (NFKD) and its normalization segments counted (a letter with its accents is one), and every five, or
  *   part of five, make a word.
- * - `'whitespace'`: comments, macro calls (`<<…>>`), link markup (keeping the link text) and HTML tags are
- *   removed, and the runs of non-white-space characters counted.
+ * - `'whitespace'`: comments and SugarCube macro tags (`<<…>>`, see `stripMacros`) are removed, link markup is
+ *   replaced by its text, and the rest is read as HTML (see `htmlText`): tags, however their attributes are quoted,
+ *   give no text, a `<` that starts no tag is text, and character references give their characters. The runs of
+ *   non-white-space characters in that text are counted. Throws an `HtmlNestingError` when elements nest more than
+ *   `MAX_HTML_DEPTH` deep.
  */
 export function countTextWords(text: string, method: WordCountMethod): number {
   switch (method) {
@@ -528,7 +490,7 @@ export function countTextWords(text: string, method: WordCountMethod): number {
       return Math.ceil(count / 5);
     }
     case 'whitespace':
-      return splitTweeFields(stripTags(linksToText(stripMacros(stripComments(text))))).length;
+      return splitTweeFields(htmlText(linksToText(stripMacros(stripComments(text))))).length;
     default: {
       const _exhaustive: never = method;
       throw new Error(`Unhandled word count method: ${String(_exhaustive)}`);

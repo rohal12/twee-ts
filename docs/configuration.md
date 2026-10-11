@@ -118,6 +118,15 @@ Like Tweego, twee-ts loads every file it supports from `sources`: Twee, CSS, Jav
 | `sourceInfo`      | `boolean` | `false`    | Embed source file/line as `data-` attributes on passage elements.                                                                                                      |
 | `wordCountMethod` | `string`  | `"tweego"` | Word counting: `"tweego"` (characters / 5 after NFKD normalization, matches Tweego) or `"whitespace"` (words between white space, after removing comments and markup). |
 
+The `"whitespace"` method reads passage text in four steps, and counts the runs of characters between white space in what is left:
+
+1. Comments (`/* */`, `/% %/`, `<!-- -->`) are removed, as the `"tweego"` method removes them.
+2. SugarCube macro tags, opening and closing, are removed as SugarCube's macro parser finds them: `<<`, a macro name, and arguments up to the first `>>` outside a quoted string, comment or link markup. A `>` or `>=` operator, or a `>` or `>>` in a string, doesn't end a tag (`<<if $score >= 10>>`, `<<set $label to "A > B">>`). Text that starts no macro tag, such as `<< x >>` or a `<<` with no `>>` after it, is prose.
+3. Link markup is replaced by the text the link shows (`[[Go home|Home]]` counts as `Go home`), which is counted as prose.
+4. The rest is read as an HTML parser reads it inside an element of the page: start and end tags give no words, whatever their quoted attribute values hold (`<span title="score > 10">`), and neither do comments or a tag left open at the end of the passage. A `<` that starts no tag is prose (`I <3 you`, `A < B and C > D`), and a character reference counts as the character it stands for (`one&nbsp;two` is two words). The text of `script`, `style` and `textarea` elements counts.
+
+Words on either side of a tag or macro tag with no white space between them count as one (`two<br>words` is one word). Macro tags are found before HTML is read, so a `<<` in an attribute value starts a macro tag where one can be read. A passage whose HTML nests elements deeper than twee-ts reads HTML (512 elements, Chromium's limit, counting the page's `html` and `body` elements and the element the passage is shown in) can't be counted this way: the build stops with an error naming the passage.
+
 ### Head Injection
 
 | Key        | Type       | Default | Description                                                                                                                                                            |

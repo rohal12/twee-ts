@@ -890,6 +890,45 @@ export function scriptsJQueryRuns(html: string): RunningScript[] {
 }
 
 /**
+ * What `htmlText` reads text after: a standards-mode document whose body holds a `div`, as a story's page holds the
+ * element a passage is shown in. The `br` turns the body's frameset-ok flag off, as content before that element does,
+ * so a `<frameset>` start tag in the text is ignored. (A fragment parse would read the text in the same context, but
+ * ends by moving every top-level node, one at a time, which takes time that grows with the square of their number.)
+ */
+const TEXT_CONTEXT = '<!DOCTYPE html><body><br><div>';
+
+/**
+ * The text an HTML parser reads from `html` in the content of a `div` element of a page (see `TEXT_CONTEXT`), as
+ * `parseHtml()` reads a document: the characters it inserts as text, in the order it reads them. Start and end tags,
+ * comments and doctypes give none, whatever their quoted attribute values hold, and neither does a tag left open at
+ * the end, which the parser drops; a `<` that starts none of them (`<3`, `a < b`) is text. A character reference
+ * gives the character it stands for. The text of `script`, `style`, `textarea` and the other raw text elements, and
+ * the content of a `template`, is text too. The parser drops NUL characters in most places and the line feed just
+ * after a `pre`, `listing` or `textarea` start tag. Throws an `HtmlNestingError` when elements nest more than
+ * `MAX_HTML_DEPTH` deep, counting the `html`, `body` and `div` elements around the text.
+ */
+export function htmlText(html: string): string {
+  const pieces: string[] = [];
+  const adapter = depthLimitedTreeAdapter();
+  parse(TEXT_CONTEXT + html, {
+    scriptingEnabled: true,
+    treeAdapter: {
+      ...adapter,
+      // The parser inserts each run of character tokens it keeps through one of these, in the order it reads them.
+      insertText(parent, text) {
+        pieces.push(text);
+        adapter.insertText(parent, text);
+      },
+      insertTextBefore(parent, text, reference) {
+        pieces.push(text);
+        adapter.insertTextBefore(parent, text, reference);
+      },
+    },
+  });
+  return pieces.join('');
+}
+
+/**
  * The attributes of the element that SugarCube 2's `htmlTag` parser makes from a start tag it matched in passage
  * markup (`startTag`): it sets the `innerHTML` of an element (a `div` here) to the start tag, then takes the first
  * child, the first child of that, and so on. A start tag that gives no node (such as `<td>` outside a table) leaves

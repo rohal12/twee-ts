@@ -243,6 +243,19 @@ describe('CLI exit status', () => {
     expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('<tw-storydata');
   });
 
+  it('counts the prose around macros and tags that hold > with --word-count-method whitespace (#421, #422)', () => {
+    const src = write(
+      'story.tw',
+      VALID_STORY.replace(
+        'Hello.',
+        '<<if $score >= 10>><span title="Use score > 10 points">Well done!</span><</if>> I <3 you. A < B',
+      ),
+    );
+    const r = runCli(dir, [...baseArgs, '--log-stats', '--word-count-method', 'whitespace', src, '-o', 'out.html']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('\nStatistics:\n  Passages: 3\n  Words: 8\n  Files: 1\n');
+  });
+
   it('exits 0 and writes stdout for a valid story', () => {
     const src = write('story.tw', VALID_STORY);
     const r = runCli(dir, [...baseArgs, src]);

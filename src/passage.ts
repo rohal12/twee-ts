@@ -6,6 +6,8 @@ import type { Passage, ReadonlyPassage, PassageMetadata, OutputMode, WordCountMe
 import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, rot13 } from './escape.js';
 import { tweeEscape } from './twee-syntax.js';
 import { countTextWords } from './word-count.js';
+import { HtmlNestingError } from './html-structure.js';
+import { TweeTsError } from './errors.js';
 import type { DecodeIssue, FieldReader, TextDecodeResult } from './json-decode.js';
 import { jsonString, nullAsZero, ownRecord, readObjectText, formatJsonPath } from './json-decode.js';
 import { pushAll } from './util.js';
@@ -254,9 +256,18 @@ export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13
   return `<div tiddler=${quote(name)} tags=${quote(tags)} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${tiddlerEscape(encode(p.text))}</div>`;
 }
 
-/** Count the words in a passage's text (see `countTextWords` for the methods). */
+/**
+ * Count the words in a passage's text (see `countTextWords` for the methods). Throws a TweeTsError naming the
+ * passage when its HTML nests elements too deeply to read.
+ */
 export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego'): number {
-  return countTextWords(p.text, method);
+  try {
+    return countTextWords(p.text, method);
+  } catch (e) {
+    if (!(e instanceof HtmlNestingError)) throw e;
+    const where = p.source === undefined ? '' : `${p.source.file}:${String(p.source.line)}: `;
+    throw new TweeTsError(`${where}Passage "${p.name}": ${e.message}`, [], { code: e.code, cause: e });
+  }
 }
 
 /**
