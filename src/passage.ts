@@ -2,10 +2,11 @@
  * Passage helpers and output methods.
  * Ported from passage.go / passagedata.go.
  */
-import type { Passage, ReadonlyPassage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
+import type { Diagnostic, Passage, ReadonlyPassage, PassageMetadata, OutputMode, WordCountMethod } from './types.js';
 import { attrEscape, fullAttrEscape, htmlEscape, tiddlerEscape, rot13 } from './escape.js';
 import { tweeEscape } from './twee-syntax.js';
-import { countTextWords } from './word-count.js';
+import { countTextWordsChecked } from './word-count.js';
+import { MAX_HTML_DEPTH } from './html-structure.js';
 import type { DecodeIssue, FieldReader, TextDecodeResult } from './json-decode.js';
 import { jsonString, nullAsZero, ownRecord, readObjectText, formatJsonPath } from './json-decode.js';
 import { pushAll } from './util.js';
@@ -254,9 +255,25 @@ export function passageToTiddler(p: ReadonlyPassage, pid: number, obfuscateRot13
   return `<div tiddler=${quote(name)} tags=${quote(tags)} created=${quote(created)} modifier=${quote('twee')} twine-position=${quote(attrEscape(position))}>${tiddlerEscape(encode(p.text))}</div>`;
 }
 
-/** Count the words in a passage's text (see `countTextWords` for the methods). */
-export function countWords(p: ReadonlyPassage, method: WordCountMethod = 'tweego'): number {
-  return countTextWords(p.text, method);
+/**
+ * Count the words in a passage's text (see `countTextWordsChecked` for the methods). When its HTML nests elements
+ * too deeply to read, the words of its text without tags are counted, and a warning naming the passage is added to
+ * `diagnostics`.
+ */
+export function countWords(
+  p: ReadonlyPassage,
+  method: WordCountMethod = 'tweego',
+  diagnostics: Diagnostic[] = [],
+): number {
+  const { words, htmlTooDeep } = countTextWordsChecked(p.text, method);
+  if (htmlTooDeep) {
+    diagnostics.push({
+      level: 'warning',
+      message: `Passage "${p.name}": its HTML nests more than ${String(MAX_HTML_DEPTH)} elements deep, so its words are counted without reading its HTML.`,
+      ...(p.source === undefined ? {} : { file: p.source.file, line: p.source.line }),
+    });
+  }
+  return words;
 }
 
 /**

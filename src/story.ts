@@ -651,17 +651,21 @@ function storyRename(story: Story, from: string, to: string, diagnostics: Diagno
   return true;
 }
 
-/** Get story passage count and word count stats. */
+/**
+ * Get story passage count and word count stats. A passage whose words could only be counted another way adds a
+ * warning to `diagnostics` (see `countWords`).
+ */
 export function getStoryStats(
   story: Story,
   wordCountMethod: WordCountMethod = 'tweego',
+  diagnostics: Diagnostic[] = [],
 ): { passages: number; storyPassages: number; words: number } {
   let storyPassages = 0;
   let words = 0;
   for (const p of story.passages) {
     if (isStoryPassage(p)) {
       storyPassages++;
-      words += countWords(p, wordCountMethod);
+      words += countWords(p, wordCountMethod, diagnostics);
     }
   }
   return { passages: story.passages.length, storyPassages, words };

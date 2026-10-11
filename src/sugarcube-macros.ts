@@ -611,7 +611,7 @@ function linkMarkupAt(
   text: string,
   start: number,
   budget?: { left: number },
-): { link: PassageLink | undefined; end: number } | undefined {
+): { link: PassageLink | undefined; label: string | undefined; end: number } | undefined {
   const markup = readSquareBracketedMarkup(text, start, budget);
   if (markup === undefined) {
     return undefined;
@@ -619,6 +619,7 @@ function linkMarkupAt(
   const passage = text.slice(start, markup.end).includes(SUBSTITUTION) ? undefined : markup.link;
   return {
     link: passage === undefined ? undefined : { via: 'markup', passage: linkDestination(passage) },
+    label: markup.label,
     end: markup.end,
   };
 }
@@ -710,6 +711,19 @@ const HTML_TAG_NAME_RE = new RegExp(
   `[A-Za-z](?:${CUSTOM_ELEMENT_NAME_CHAR}*-${CUSTOM_ELEMENT_NAME_CHAR}*|[0-9A-Za-z]*)`,
   'y',
 );
+// The end tag that SugarCube's `htmlTag` parser looks for to close an element: `<\/name\s*>`.
+const HTML_END_TAG_RE = new RegExp(String.raw`<\/(${HTML_TAG_NAME_RE.source})\s*>`, 'y');
+
+/**
+ * The end tag at `start`, if one is there: `</`, a tag name and optional white space before `>`, the terminator
+ * SugarCube's `htmlTag` parser looks for after a start tag. Its name is given in lower case, as the parser matches it.
+ */
+export function htmlEndTagAt(text: string, start: number): { readonly name: string; readonly end: number } | undefined {
+  HTML_END_TAG_RE.lastIndex = start;
+  const name = HTML_END_TAG_RE.exec(text)?.[1];
+  return name === undefined ? undefined : { name: name.toLowerCase(), end: HTML_END_TAG_RE.lastIndex };
+}
+
 // The parts of SugarCube's `htmlTag` pattern after the name: an attribute name, and an unquoted value.
 const ATTRIBUTE_NAME_RE = /[^\u0000-\u001F\u007F-\u009F\s"'>/=]+/y;
 const UNQUOTED_VALUE_RE = /[^\s"'=<>`]+/y;
@@ -720,6 +734,15 @@ const TAG_SPACES_RE = /\s*/y;
  * which go on to the next `>`).
  */
 const OTHER_TAG_OPENER_RE = /<(?:[Hh][Tt][Mm][Ll]>|[Nn][Oo][Ww][Ii][Kk][Ii]>|[Ss][Tt][Yy][Ll][Ee]|[Ss][Vv][Gg])/y;
+
+/**
+ * Whether the start tag of an element that SugarCube reads with a parser of its own, rather than `htmlTag`, may start
+ * at `start`: `<html>`, `<nowiki>`, `<style` or `<svg`.
+ */
+function startsOwnElement(text: string, start: number): boolean {
+  OTHER_TAG_OPENER_RE.lastIndex = start;
+  return OTHER_TAG_OPENER_RE.test(text);
+}
 /** The `htmlTag` parser's `mediaTags`: a `data-passage` on them names a media passage, not a link. */
 const MEDIA_TAGS: ReadonlySet<string> = new Set(['audio', 'img', 'source', 'track', 'video']);
 /** The `htmlTag` parser's `voidTags`, which need no end tag. */
@@ -746,6 +769,31 @@ const VOID_TAGS: ReadonlySet<string> = new Set([
 interface HtmlStartTag {
   readonly name: string;
   readonly end: number;
+}
+
+/**
+ * An HTML start tag as SugarCube's `htmlTag` parser reads it: its name in lower case, where it ends, and whether it
+ * opens an element that an end tag closes (one not void and not written with `/>`).
+ */
+interface HtmlStartTagRead {
+  readonly name: string;
+  readonly end: number;
+  readonly container: boolean;
+}
+
+/**
+ * The start tag that SugarCube's `htmlTag` pattern matches at `start` in `text`, if it does (see `htmlStartTagAt`).
+ * `spend` is told how many characters were read.
+ */
+function readHtmlStartTag(
+  text: string,
+  start: number,
+  spend: (characters: number) => void,
+): HtmlStartTagRead | undefined {
+  const tag = htmlStartTagAt(text, start, spend);
+  if (tag === undefined) return undefined;
+  const name = tag.name.toLowerCase();
+  return { name, end: tag.end, container: !VOID_TAGS.has(name) && !text.startsWith('/>', tag.end - 2) };
 }
 
 /**
@@ -808,6 +856,7 @@ function htmlTagReader(
 ): (start: number) => {
   readonly link: PassageLink | undefined;
   readonly end: number;
+  readonly tag: HtmlStartTagRead | undefined;
 } {
   const spend = (characters: number): void => {
     budget.left -= characters;
@@ -826,17 +875,16 @@ function htmlTagReader(
     return found !== -1;
   };
   return (start) => {
-    OTHER_TAG_OPENER_RE.lastIndex = start;
-    const tag = budget.left < 0 || OTHER_TAG_OPENER_RE.test(text) ? undefined : htmlStartTagAt(text, start, spend);
+    const tag = budget.left < 0 || startsOwnElement(text, start) ? undefined : readHtmlStartTag(text, start, spend);
     if (tag === undefined) {
       // Not a start tag `htmlTag` reads: read on as markup.
-      return { link: undefined, end: start + 1 };
+      return { link: undefined, end: start + 1, tag: undefined };
     }
-    const name = tag.name.toLowerCase();
+    const { name } = tag;
     const markup = text.slice(start, tag.end);
-    const isVoid = VOID_TAGS.has(name) || markup.endsWith('/>');
-    const passage = MEDIA_TAGS.has(name) || (!isVoid && !hasEndTag(name, start)) ? undefined : dataPassage(markup);
-    return { link: passage === undefined ? undefined : { via: 'data-passage', passage }, end: tag.end };
+    const passage =
+      MEDIA_TAGS.has(name) || (tag.container && !hasEndTag(name, start)) ? undefined : dataPassage(markup);
+    return { link: passage === undefined ? undefined : { via: 'data-passage', passage }, end: tag.end, tag };
   };
 }
 
@@ -877,20 +925,136 @@ type CommentKind = '/*' | '/%' | '<!--';
  * of the same kind that starts before that stop fails too, so it isn't made.
  */
 function commentReader(text: string): (kind: CommentKind, start: number) => number | undefined {
-  const failedUntil = new Map<CommentKind, number>();
-  return (kind, start) => {
-    if (start < (failedUntil.get(kind) ?? -1)) {
+  const findCloser = closerReader(text, COMMENT_CLOSE_RES);
+  return (kind, start) => findCloser(kind, start + kind.length)?.end;
+}
+
+/**
+ * Returns a function that finds the closer of a kind from a position, with that kind's pattern in `res`: the closer
+ * or a line terminator it may not cross (a match of one character), as SugarCube's `(?:.|\n)*?` stops. Calls of one
+ * kind must come in increasing order: a search that fails stops at a line terminator or the end, and a later one of
+ * the same kind that starts before that stop fails too, so it isn't made. So all searches take linear time.
+ */
+function closerReader<K extends string>(
+  text: string,
+  res: Readonly<Record<K, RegExp>>,
+): (kind: K, from: number) => { readonly start: number; readonly end: number } | undefined {
+  const failedUntil = new Map<K, number>();
+  return (kind, from) => {
+    if (from < (failedUntil.get(kind) ?? -1)) {
       return undefined;
     }
-    const re = COMMENT_CLOSE_RES[kind];
-    re.lastIndex = start + kind.length;
+    const re = res[kind];
+    re.lastIndex = from;
     const m = re.exec(text);
     if (m !== null && m[0].length > 1) {
-      return m.index + m[0].length;
+      return { start: m.index, end: m.index + m[0].length };
     }
     failedUntil.set(kind, m === null ? text.length : m.index);
     return undefined;
   };
+}
+
+/** The elements SugarCube reads with parsers of their own: `styleTag`, `svgTag`, `verbatimHtml`, `verbatimText`. */
+type OwnElementKind = 'style' | 'svg' | 'html' | 'nowiki';
+
+/**
+ * An element SugarCube reads with a parser of its own, at a `<` where `startsOwnElement` holds: where its opener ends,
+ * and, when the parser finds its end, where its content lies and where it ends. Without an end, SugarCube drops the
+ * opener and reads on after it.
+ */
+export interface OwnElement {
+  readonly kind: OwnElementKind;
+  readonly openerEnd: number;
+  readonly closed: { readonly contentEnd: number; readonly end: number } | undefined;
+}
+
+// What SugarCube's `(?:.|\n)` doesn't match: the line terminators other than a line feed.
+const BODY_STOPS = `[\\r${String.fromCharCode(0x2028, 0x2029)}]`;
+const OWN_CLOSE_RES: Readonly<Record<'style' | 'html' | 'nowiki', RegExp>> = {
+  style: new RegExp(`<\\/[Ss][Tt][Yy][Ll][Ee]>|${BODY_STOPS}`, 'g'),
+  html: new RegExp(`<\\/[Hh][Tt][Mm][Ll]>|${BODY_STOPS}`, 'g'),
+  nowiki: new RegExp(`<\\/[Nn][Oo][Ww][Ii][Kk][Ii]>|${BODY_STOPS}`, 'g'),
+};
+// The tags `svgTag` counts to find the end of an `<svg>` element, without their `[^>]*>`, which is found apart.
+const SVG_TAG_START_RE = /<\/?[Ss][Vv][Gg]/g;
+
+/**
+ * Returns a function that reads the element SugarCube reads with a parser of its own at `start`, as that parser reads
+ * it, or gives `undefined` where its pattern doesn't match (an `<svg` or `<style` with no `>` after it). Positions
+ * must come in increasing order. All readings take linear time: openers' `>` and closers are searched forward, and
+ * the ends of `<svg>` elements are worked out once, from the depth after each `<svg` or `</svg` tag.
+ */
+function ownElementReader(text: string): (start: number) => OwnElement | undefined {
+  const findCloser = closerReader(text, OWN_CLOSE_RES);
+  // The first `>` at or after the last `<style` read.
+  let angle = text.indexOf('>');
+  let svgElements: ReadonlyMap<number, OwnElement> | undefined;
+  return (start) => {
+    // As SugarCube's patterns, with no end to the tag name: `<svg-icon>` and `<styles>` are read by these parsers too.
+    if (startsWithFolded(text, start, '<svg')) {
+      svgElements ??= svgElementsOf(text);
+      return svgElements.get(start);
+    }
+    const kind = startsWithFolded(text, start, '<style')
+      ? 'style'
+      : startsWithFolded(text, start, '<html>')
+        ? 'html'
+        : 'nowiki';
+    if (kind === 'style' && angle !== -1 && angle < start) angle = text.indexOf('>', start);
+    // `<html>` and `<nowiki>` end at their fixed `>`; `<style` runs to the next.
+    const gt = kind === 'style' ? angle : start + (kind === 'html' ? 5 : 7);
+    if (gt === -1) return undefined;
+    const closer = findCloser(kind, gt + 1);
+    return {
+      kind,
+      openerEnd: gt + 1,
+      closed: closer === undefined ? undefined : { contentEnd: closer.start, end: closer.end },
+    };
+  };
+}
+
+/** Whether `text` has `prefix` at `start`, ignoring the case of ASCII letters. */
+function startsWithFolded(text: string, start: number, prefix: string): boolean {
+  return text.slice(start, start + prefix.length).toLowerCase() === prefix;
+}
+
+/**
+ * The `<svg>` elements SugarCube's `svgTag` parser reads, by where their opener starts: each `<svg` tag its pattern
+ * matches (`<svg[^>]*>`, searched from the start of the text), ending just past the first `</svg…>` tag after which
+ * as many `</svg` tags as `<svg` tags follow the opener, or not closed when there is none.
+ */
+function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
+  const tags: { readonly start: number; readonly end: number; readonly step: number }[] = [];
+  let angle = -1;
+  SVG_TAG_START_RE.lastIndex = 0;
+  for (let m = SVG_TAG_START_RE.exec(text); m !== null; m = SVG_TAG_START_RE.exec(text)) {
+    if (angle < m.index) angle = text.indexOf('>', m.index);
+    if (angle === -1) break;
+    tags.push({ start: m.index, end: angle + 1, step: m[0].length === 4 ? 1 : -1 });
+    // `[^>]*>` runs to the `>`: the next tag starts after it.
+    SVG_TAG_START_RE.lastIndex = angle + 1;
+  }
+  // depth[k]: opening tags minus closing tags among the first k; atOrBelow[k]: the first j > k with depth[j] <= depth[k].
+  const depth = [0];
+  tags.forEach((tag, k) => depth.push((depth[k] ?? 0) + tag.step));
+  const atOrBelow: (number | undefined)[] = [];
+  const candidates: number[] = [];
+  for (let k = depth.length - 1; k >= 0; k--) {
+    const here = depth[k] ?? 0;
+    while (candidates.length > 0 && (depth[candidates[candidates.length - 1] ?? 0] ?? 0) > here) candidates.pop();
+    atOrBelow[k] = candidates[candidates.length - 1];
+    candidates.push(k);
+  }
+  return new Map(
+    tags.flatMap((tag, k): [number, OwnElement][] => {
+      if (tag.step < 0) return [];
+      const j = atOrBelow[k];
+      const closer = j === undefined ? undefined : tags[j - 1];
+      const closed = closer === undefined ? undefined : { contentEnd: closer.start, end: closer.end };
+      return [[tag.start, { kind: 'svg', openerEnd: tag.end, closed }]];
+    }),
+  );
 }
 
 /** Where a `<script>` element's opener ends and its content ends, if it is complete. */
@@ -1096,26 +1260,81 @@ export function findPassageLinks(text: string): PassageLink[] {
   return markupPassageLinks(text, readContext(text));
 }
 
-function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
-  if (
-    context.depth > MAX_STRING_DEPTH ||
-    (!text.includes('<<') && !text.includes('[[') && !HAS_TAG_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
-  ) {
-    return [];
-  }
+/**
+ * A part of passage markup that `walkPassageMarkup` reads apart from text. The text between parts is what the
+ * wikifier prints, apart from markup this module doesn't tell apart (see `findPassageLinks`).
+ */
+export type MarkupRegion =
+  /** A macro tag, and where a `<<link`, `<<button` or `<<goto` first appears unquoted in its arguments. */
+  | { readonly kind: 'macro'; readonly start: number; readonly end: number; readonly scanned: ScannedTag }
+  /** The body of a `<<script>>` tag, JavaScript up to `codeEnd`, and its closing tag up to `end`. */
+  | { readonly kind: 'script-body'; readonly start: number; readonly codeEnd: number; readonly end: number }
+  /** Link or image markup, the passage it names, if known, and the text a link shows. */
+  | {
+      readonly kind: 'link';
+      readonly start: number;
+      readonly end: number;
+      readonly link: PassageLink | undefined;
+      readonly label: string | undefined;
+    }
+  /**
+   * A comment, or the opener of one that isn't closed, which SugarCube drops; or italics markup (`//`), which shows
+   * no text of its own.
+   */
+  | { readonly kind: 'comment'; readonly start: number; readonly end: number }
+  /**
+   * A `<script>` element up to its `</script>`, whose content starts at `contentStart`; or, when it isn't closed
+   * (`complete` false), only its opener, after which the content is read as markup.
+   */
+  | {
+      readonly kind: 'script-element';
+      readonly start: number;
+      readonly contentStart: number;
+      readonly end: number;
+      readonly complete: boolean;
+    }
+  /** An HTML start tag that SugarCube's `htmlTag` parser matches, and the passage its `data-passage` names. */
+  | {
+      readonly kind: 'html-tag';
+      readonly start: number;
+      readonly end: number;
+      readonly link: PassageLink | undefined;
+      readonly tag: HtmlStartTagRead;
+    }
+  /**
+   * An element SugarCube reads with a parser of its own (`<style>`, `<svg>`, `<html>`, `<nowiki>`), up to its end, or
+   * only its opener when the parser finds no end; told apart only when the walk is asked to (see `walkPassageMarkup`).
+   */
+  | { readonly kind: 'own-element'; readonly start: number; readonly end: number; readonly element: OwnElement };
+
+/**
+ * Walks passage markup in order, as SugarCube's wikifier walks it (see `findPassageLinks`), telling `visit` about
+ * each part it reads apart from text, in order and without overlaps. With `ownElements`, the elements SugarCube reads
+ * with parsers of their own are read as those parsers read them (see `ownElementReader`), and the walk goes on after
+ * them; without, as the link check reads them, their tags are markup and what they hold is walked.
+ */
+export function walkPassageMarkup(
+  text: string,
+  visit: (region: MarkupRegion) => void,
+  options: { readonly ownElements?: boolean } = {},
+): void {
+  walkMarkup(text, readContext(text), visit, options.ownElements ?? false);
+}
+
+function walkMarkup(
+  text: string,
+  context: ReadContext,
+  visit: (region: MarkupRegion) => void,
+  ownElements = false,
+): void {
+  const readOwnElement = ownElements ? ownElementReader(text) : undefined;
   const matchTagAt = tagMatcher(text);
-  // For the calls inside tags' arguments, which also come in increasing order.
-  const matchInnerTagAt = tagMatcher(text);
   const readComment = commentReader(text);
   const readScriptElement = scriptElementReader(text);
   const readHtmlTag = htmlTagReader(text, context.tagBudget);
   let findScriptCloser: ((opener: MacroTag) => MacroTag | undefined) | undefined;
-  const links: PassageLink[] = [];
 
-  /**
-   * Reads the region `opener` opens, adding the passage that link markup names and the links and
-   * calls in a `<script>` element; returns where the walk goes on.
-   */
+  /** Reads the region `opener` opens, telling `visit` about it; returns where the walk goes on. */
   const regionEnd = (opener: RegExpExecArray): number => {
     const start = opener.index;
     const kind = regionKind(opener[0]);
@@ -1126,40 +1345,45 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
           // SugarCube prints the opener it matched and reads on after it.
           return start + opener[0].length;
         }
-        if (markup.link !== undefined) {
-          links.push(markup.link);
-        }
+        visit({ kind: 'link', start, end: markup.end, link: markup.link, label: markup.label });
         return markup.end;
       }
       case '//':
         // Italics, whose text is read on; `//*` is not a comment.
+        visit({ kind: 'comment', start, end: start + 2 });
         return start + 2;
       case '/*':
       case '/%':
-      case '<!--':
-        return readComment(kind, start) ?? start + kind.length;
+      case '<!--': {
+        // A comment that isn't closed: SugarCube drops its opener and reads on.
+        const end = readComment(kind, start) ?? start + kind.length;
+        visit({ kind: 'comment', start, end });
+        return end;
+      }
       case 'script': {
         const element = readScriptElement(start);
         if (element.openerEnd === undefined) {
           // Not an opener SugarCube reads.
           return start + 1;
         }
-        if (element.close === undefined) {
-          // SugarCube reads the opener and nothing more; the content is markup.
-          return element.openerEnd;
-        }
-        append(
-          links,
-          scriptElementPassageLinks(text.slice(start, element.close + 9), element.openerEnd - start, context),
-        );
-        return element.close + 9;
+        const complete = element.close !== undefined;
+        // Unclosed, SugarCube reads the opener and nothing more; the content is markup.
+        const end = element.close === undefined ? element.openerEnd : element.close + 9;
+        visit({ kind: 'script-element', start, contentStart: element.openerEnd, end, complete });
+        return end;
       }
       case 'tag': {
-        const tag = readHtmlTag(start);
-        if (tag.link !== undefined) {
-          links.push(tag.link);
+        const own = readOwnElement !== undefined && startsOwnElement(text, start) ? readOwnElement(start) : undefined;
+        if (own !== undefined) {
+          const end = own.closed?.end ?? own.openerEnd;
+          visit({ kind: 'own-element', start, end, element: own });
+          return end;
         }
-        return tag.end;
+        const read = readHtmlTag(start);
+        if (read.tag !== undefined) {
+          visit({ kind: 'html-tag', start, end: read.end, link: read.link, tag: read.tag });
+        }
+        return read.end;
       }
       default: {
         const _exhaustive: never = kind;
@@ -1185,31 +1409,79 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
       continue;
     }
     if (macro === -1) {
-      return links;
+      return;
     }
     const scanned = matchTagAt(macro);
     if (scanned === undefined) {
       pos = macro + 2;
       continue;
     }
-    const { tag, innerCall } = scanned;
-    append(links, tagPassageLinks(tag, context));
-    if (innerCall !== undefined) {
-      const inner = innerPassageLink(matchInnerTagAt, innerCall);
-      if (inner !== undefined) {
-        links.push(inner);
-      }
-    }
+    const { tag } = scanned;
+    visit({ kind: 'macro', start: tag.start, end: tag.end, scanned });
     pos = tag.end;
     if (tag.name === 'script') {
       findScriptCloser ??= scriptBodyCloser(text, context.budget);
       const closer = findScriptCloser(tag);
       if (closer !== undefined) {
-        append(links, javaScriptPassageLinks(text.slice(tag.end, closer.start), context, 'strict'));
+        visit({ kind: 'script-body', start: tag.end, codeEnd: closer.start, end: closer.end });
         pos = closer.end;
       }
     }
   }
+}
+
+function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
+  if (
+    context.depth > MAX_STRING_DEPTH ||
+    (!text.includes('<<') && !text.includes('[[') && !HAS_TAG_OPEN_RE.test(text) && !HAS_IMAGE_OPEN_RE.test(text))
+  ) {
+    return [];
+  }
+  // For the calls inside tags' arguments, which also come in increasing order.
+  const matchInnerTagAt = tagMatcher(text);
+  const links: PassageLink[] = [];
+  walkMarkup(text, context, (region) => {
+    switch (region.kind) {
+      case 'link':
+      case 'html-tag':
+        if (region.link !== undefined) {
+          links.push(region.link);
+        }
+        return;
+      case 'macro': {
+        const { tag, innerCall } = region.scanned;
+        append(links, tagPassageLinks(tag, context));
+        const inner = innerCall === undefined ? undefined : innerPassageLink(matchInnerTagAt, innerCall);
+        if (inner !== undefined) {
+          links.push(inner);
+        }
+        return;
+      }
+      case 'script-body':
+        append(links, javaScriptPassageLinks(text.slice(region.start, region.codeEnd), context, 'strict'));
+        return;
+      case 'script-element':
+        if (region.complete) {
+          append(
+            links,
+            scriptElementPassageLinks(
+              text.slice(region.start, region.end),
+              region.contentStart - region.start,
+              context,
+            ),
+          );
+        }
+        return;
+      case 'comment':
+      case 'own-element':
+        return;
+      default: {
+        const _exhaustive: never = region;
+        throw new Error(`unhandled region: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  });
+  return links;
 }
 
 /**

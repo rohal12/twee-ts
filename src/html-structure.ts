@@ -48,9 +48,9 @@ export class HtmlNestingError extends TweeTsError {
  * contents count as children of their template). The depth of each parent is remembered, so a check costs a lookup;
  * when the parser moves a node (the adoption agency algorithm), what was remembered is dropped and worked out again,
  * by walking up at most `MAX_HTML_DEPTH` or so parents. Either way the checks add work in proportion to the size of
- * the document.
+ * the document. `watch` is told what the parser puts into the tree.
  */
-function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
+function depthLimitedTreeAdapter(watch: TreeWatch = {}): typeof defaultTreeAdapter {
   const templateOfContent = new WeakMap<ParentNode, ParentNode>();
   const parentOf = (node: ParentNode): ParentNode | null | undefined =>
     'parentNode' in node ? node.parentNode : templateOfContent.get(node);
@@ -84,14 +84,18 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
     }
     known.set(child, { depth, moves });
   };
+  const placed = (parent: ParentNode, child: ChildNode): void => {
+    checkDepth(parent, child);
+    watch.placed?.(parent, child);
+  };
   return {
     ...defaultTreeAdapter,
     appendChild(parent, child) {
-      checkDepth(parent, child);
+      placed(parent, child);
       defaultTreeAdapter.appendChild(parent, child);
     },
     insertBefore(parent, child, reference) {
-      checkDepth(parent, child);
+      placed(parent, child);
       defaultTreeAdapter.insertBefore(parent, child, reference);
     },
     detachNode(node) {
@@ -101,9 +105,28 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
     },
     setTemplateContent(template, content) {
       templateOfContent.set(content, template);
+      watch.templateContent?.(content);
       defaultTreeAdapter.setTemplateContent(template, content);
     },
+    insertText(parent, text) {
+      watch.text?.(parent, text);
+      defaultTreeAdapter.insertText(parent, text);
+    },
+    insertTextBefore(parent, text, reference) {
+      watch.text?.(parent, text);
+      defaultTreeAdapter.insertTextBefore(parent, text, reference);
+    },
   };
+}
+
+/** What a reading of HTML is told as the parser builds the tree (see `depthLimitedTreeAdapter`). */
+interface TreeWatch {
+  /** A node is put into `parent`, or moved there. */
+  readonly placed?: (parent: ParentNode, child: ChildNode) => void;
+  /** A template's content is made. */
+  readonly templateContent?: (content: ParentNode) => void;
+  /** Text is put into `parent`: each run of character tokens the parser keeps, in the order it reads them. */
+  readonly text?: (parent: ParentNode, text: string) => void;
 }
 
 /**
@@ -887,6 +910,129 @@ export function scriptsJQueryRuns(html: string): RunningScript[] {
     if (running !== undefined) scripts.push(running);
   }
   return scripts;
+}
+
+/**
+ * What `htmlText` reads text after: a standards-mode document whose body holds a `div`, as a story's page holds the
+ * element a passage is shown in. The `hr` turns the body's frameset-ok flag off, as content before that element does,
+ * so a `<frameset>` start tag in the text is ignored. (A fragment parse would read the text in the same context, but
+ * ends by moving every top-level node, one at a time, which takes time that grows with the square of their number.)
+ */
+const TEXT_CONTEXT = '<!DOCTYPE html><body><hr><div>';
+
+/**
+ * Elements whose text a browser never shows (the user agent style sheet hides them, or their content is not
+ * rendered): their text is not the text `htmlText` reads.
+ */
+const UNSHOWN_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'script',
+  'style',
+  'title',
+]);
+
+/** SVG elements that render nothing of what they hold: definitions, paint servers, metadata. */
+const UNRENDERED_SVG_ELEMENTS: ReadonlySet<string> = new Set([
+  'clipPath',
+  'defs',
+  'desc',
+  'filter',
+  'linearGradient',
+  'marker',
+  'mask',
+  'metadata',
+  'pattern',
+  'radialGradient',
+  'symbol',
+]);
+
+/** SVG elements whose text is rendered inside a `text` element; `text` itself renders its text anywhere. */
+const SVG_TEXT_CHILDREN: ReadonlySet<string> = new Set(['a', 'textPath', 'tspan']);
+
+/** The MathML token elements, the only MathML elements that render their text. */
+const MATHML_TOKEN_ELEMENTS: ReadonlySet<string> = new Set(['mi', 'mn', 'mo', 'ms', 'mtext']);
+
+/** How `htmlText` reads MathML. */
+export interface HtmlTextOptions {
+  /**
+   * Whether MathML token elements show their text, as they do when a browser parses the HTML whole (the default).
+   * When false, no text inside a `math` element shows, as when each element is made apart (SugarCube's `htmlTag`
+   * parser makes the elements inside `<math>` HTML elements, which a `math` element doesn't render).
+   */
+  readonly mathText?: boolean;
+}
+
+/**
+ * The text an HTML parser reads from `html` in the content of a `div` element of a page (see `TEXT_CONTEXT`), as
+ * `parseHtml()` reads a document, and a browser shows: the characters it inserts as text, in the order it reads them,
+ * with a space for each `br` element. Start and end tags, comments and doctypes give none, whatever their quoted
+ * attribute values hold, and neither does a tag left open at the end, which the parser drops; a `<` that starts none
+ * of them (`<3`, `a < b`) is text. A character reference gives the character it stands for. Left out:
+ * - the text of `script`, `style`, `title`, `noscript` (read with scripting on), `noembed`, `noframes` and `iframe`
+ *   elements and the content of a `template`; that of a `textarea` is read;
+ * - in SVG, text outside a `text` element (and the `tspan`, `textPath` and `a` elements in one) or a
+ *   `foreignObject`, and everything in definitions, paint servers and metadata (`defs`, `symbol`, `mask`, `title`…);
+ * - in MathML, text outside a token element (`mi`, `mn`, `mo`, `ms`, `mtext`), or all of it (see `options`).
+ * Styles and attributes such as `hidden` are not considered. The parser drops NUL characters in most places and the
+ * line feed just after a `pre`, `listing` or `textarea` start tag. Throws an `HtmlNestingError` when elements nest
+ * more than `MAX_HTML_DEPTH` deep, counting the `html`, `body` and `div` elements around the text.
+ */
+export function htmlText(html: string, options: HtmlTextOptions = {}): string {
+  const mathText = options.mathText ?? true;
+  const pieces: string[] = [];
+  // Elements and template contents nothing in which shows. An element stays where it was put: the parser moves
+  // elements only between places of the same kind (formatting elements, foster parenting), never out of a template
+  // content or a foreign element.
+  const unshown = new WeakSet<ParentNode>();
+  // SVG elements that render their text: `text`, and the text content elements in one.
+  const svgText = new WeakSet<ParentNode>();
+  const treeAdapter = depthLimitedTreeAdapter({
+    placed(parent, child) {
+      if (!isElement(child)) return;
+      if (unshown.has(parent)) {
+        unshown.add(child);
+        return;
+      }
+      switch (child.namespaceURI) {
+        case htmlSpec.NS.SVG:
+          if (UNRENDERED_SVG_ELEMENTS.has(child.tagName)) {
+            unshown.add(child);
+          } else if (child.tagName === 'text' || (SVG_TEXT_CHILDREN.has(child.tagName) && svgText.has(parent))) {
+            svgText.add(child);
+          }
+          return;
+        case htmlSpec.NS.MATHML:
+          if (!mathText) unshown.add(child);
+          return;
+        default:
+          if (child.tagName === 'br') pieces.push(' ');
+      }
+    },
+    templateContent(content) {
+      unshown.add(content);
+    },
+    text(parent, text) {
+      if (shows(parent)) pieces.push(text);
+    },
+  });
+  const shows = (parent: ParentNode): boolean => {
+    if (unshown.has(parent)) return false;
+    if (!isElement(parent)) return true;
+    if (UNSHOWN_TEXT_ELEMENTS.has(parent.tagName)) return false;
+    switch (parent.namespaceURI) {
+      case htmlSpec.NS.SVG:
+        return svgText.has(parent) || parent.tagName === 'foreignObject';
+      case htmlSpec.NS.MATHML:
+        return MATHML_TOKEN_ELEMENTS.has(parent.tagName);
+      default:
+        return true;
+    }
+  };
+  parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter });
+  return pieces.join('');
 }
 
 /**

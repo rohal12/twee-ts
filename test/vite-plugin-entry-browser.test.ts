@@ -14,31 +14,12 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { chromium } from 'playwright-core';
-import type { Browser, LaunchOptions } from 'playwright-core';
 import type { InlineConfig } from 'vite';
+import { launchChromium } from './helpers/chromium.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { COMPILE, STORY, buildFiles, cleanUp, makeProject, startServer, storyWith } from './helpers/plugins.js';
 
 afterEach(cleanUp);
-
-/** Launches the first Chromium that starts, or gives undefined. */
-async function launchChromium(): Promise<Browser | undefined> {
-  const path = process.env['CHROME_PATH'];
-  const attempts: LaunchOptions[] = [
-    ...(path === undefined || path === '' ? [] : [{ executablePath: path }]),
-    {},
-    { channel: 'chrome' },
-  ];
-  for (const options of attempts) {
-    try {
-      return await chromium.launch(options);
-    } catch {
-      // Not installed there: try the next.
-    }
-  }
-  return undefined;
-}
 
 const browser = await launchChromium();
 afterAll(async () => {

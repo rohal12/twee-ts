@@ -743,7 +743,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
 
   // Compute stats
   const stats: CompileStats = {
-    ...getStoryStats(story, options.wordCountMethod),
+    ...getStoryStats(story, options.wordCountMethod, diagnostics),
     files: [...processedFiles],
     ...(externalFiles === undefined ? {} : { externalFiles }),
   };
