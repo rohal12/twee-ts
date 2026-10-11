@@ -219,13 +219,34 @@ export function isStreamPath(path: string, platform: NodeJS.Platform): boolean {
   return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(posix.resolve(path));
 }
 
+/** The most bytes (UTF-8) of the target's name that a temporary name repeats. */
+const TEMPORARY_NAME_ROOM = 100;
+
+/**
+ * The name of the temporary file for a target named `targetName` (a name, not a path): the start of the target's
+ * name, cut to {@link TEMPORARY_NAME_ROOM} bytes so a leftover file shows what it was for, then the process and a
+ * random token. Whatever the target's name, the result stays well below the 255 that file systems allow in a name,
+ * counted in bytes (Linux, macOS) or in UTF-16 code units (Windows), because a cut never splits a character and a
+ * kept byte is at least one code unit. It is a name in the target's own folder, so the rename stays atomic.
+ */
+export function temporaryName(targetName: string, pid: number, token: string): string {
+  let kept = '';
+  let bytes = 0;
+  for (const character of targetName) {
+    bytes += Buffer.byteLength(character);
+    if (bytes > TEMPORARY_NAME_ROOM) break;
+    kept += character;
+  }
+  return `.${kept}.${pid}-${token}.tmp`;
+}
+
 /**
  * Replaces `target` with a temporary file holding `data`, keeping the permissions of the file replaced. When
  * the folder refuses the temporary file or the rename and `target` is a file that can be written, it is
  * written in place instead (see canWriteInPlace).
  */
 function replaceAtomically(target: string, data: string): void {
-  const temp = join(dirname(target), `.${basename(target)}.${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
+  const temp = join(dirname(target), temporaryName(basename(target), process.pid, randomBytes(6).toString('hex')));
   try {
     writeFileSync(temp, data, { encoding: 'utf-8', flag: 'wx' });
     keepPermissions(target, temp);
