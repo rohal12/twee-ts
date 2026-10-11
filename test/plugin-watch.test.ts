@@ -189,8 +189,8 @@ async function editExcludedThenSource(
   out: string,
   changes: string[],
 ): Promise<readonly string[]> {
+  // vi.waitFor runs its callback at once, which makes the first save.
   const saveUntilBuilt = async (text: string): Promise<void> => {
-    writeFileSync(project.start, storyWith(text));
     await vi.waitFor(() => {
       // A watcher may not be ready right after the first build; the edit is saved again until it is built.
       if (!readFileSync(out, 'utf-8').includes(text)) writeFileSync(project.start, storyWith(text));
@@ -205,15 +205,20 @@ async function editExcludedThenSource(
   // done when the watcher has reported two saves made after the image's: by then it has
   // reported the image too, had it watched it.
   const sourceChanges = (): number => changes.filter((id) => id.endsWith('/start.tw')).length;
-  await saveUntilBuilt('NEW_TEXT');
-  await vi.waitFor(() => {
-    expect(sourceChanges()).toBeGreaterThan(0);
-  }, SETTLED);
-  const seen = sourceChanges();
-  await saveUntilBuilt('LAST_TEXT');
-  await vi.waitFor(() => {
-    expect(sourceChanges()).toBeGreaterThan(seen);
-  }, SETTLED);
+  // The watcher drops a change to a file within 50 ms of the last one it reported for it (chokidar's throttle; on
+  // Linux Rollup also watches a changed file anew), while a build already under way may still read that save. So
+  // the edit is saved again until it is both built and reported after `reported` changes.
+  const saveUntilBuiltAndReported = async (text: string, reported: number): Promise<void> => {
+    await vi.waitFor(() => {
+      if (!readFileSync(out, 'utf-8').includes(text) || sourceChanges() <= reported) {
+        writeFileSync(project.start, storyWith(text));
+      }
+      expect(readFileSync(out, 'utf-8')).toContain(text);
+      expect(sourceChanges()).toBeGreaterThan(reported);
+    }, SETTLED);
+  };
+  await saveUntilBuiltAndReported('NEW_TEXT', 0);
+  await saveUntilBuiltAndReported('LAST_TEXT', sourceChanges());
   return changes;
 }
 
