@@ -505,8 +505,8 @@ describe("countTextWords 'whitespace'", () => {
 });
 
 // The time limit only ends a hang: what the test checks is how the time grows (see helpers/growth.ts). Each input is
-// made of `n` units (each case was written at 100,000); the fastest readers get a larger `n`, so that the smaller
-// input still takes long enough to time.
+// made of `n` units (each case was written at 100,000); the fastest readers start at a larger `n`, and growth()
+// doubles it further on a runner where the smaller input is still too fast to time.
 describe('word counts take linear time on adversarial text', () => {
   const half = (n: number): number => Math.floor(n / 2);
   const N = 50_000;

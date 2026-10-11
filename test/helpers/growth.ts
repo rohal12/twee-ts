@@ -25,18 +25,35 @@ function timed<T>(run: (input: T) => unknown, input: T): number {
   return performance.now() - started;
 }
 
+/** How many times `growth` may double the size it was given before it gives up on reaching MIN_TIMED_MS. */
+const MAX_DOUBLINGS = 12;
+
 /**
- * How many times as long `run` takes on `make(n * SCALE)` as on `make(n)`. The inputs are made before anything is
- * timed. Each size is timed ROUNDS times, the two sizes in turn, and the fastest time of each counts: load on the
- * machine slows both sizes alike, and a pause in one timing (garbage collection, another process) drops out.
+ * The fastest of ROUNDS timings of `run` on `make(n)` and on `make(n * SCALE)`. The inputs are made before anything
+ * is timed, and the two sizes are timed in turn: load on the machine slows both sizes alike, and a pause in one
+ * timing (garbage collection, another process) drops out.
  */
-export function growth<T>(make: (n: number) => T, run: (input: T) => unknown, n: number): number {
+function fastestPair<T>(make: (n: number) => T, run: (input: T) => unknown, n: number): readonly [number, number] {
   const inputs = [make(n), make(n * SCALE)] as const;
   const fastest = [Infinity, Infinity];
   for (let round = 0; round < ROUNDS; round++) {
     for (const [i, input] of inputs.entries()) fastest[i] = Math.min(fastest[i] ?? Infinity, timed(run, input));
   }
   const [small = Infinity, large = Infinity] = fastest;
-  if (small < MIN_TIMED_MS) throw new Error(`the input of size ${String(n)} takes under ${String(MIN_TIMED_MS)} ms`);
-  return large / small;
+  return [small, large];
+}
+
+/**
+ * How many times as long `run` takes on `make(n * SCALE)` as on `make(n)`, `n` starting at the size given. How fast
+ * a size runs depends on the machine, so while the smaller input takes under MIN_TIMED_MS, `n` is doubled (at most
+ * MAX_DOUBLINGS times) and both sizes are timed again: the ratio is always measured on inputs long enough to time.
+ */
+export function growth<T>(make: (n: number) => T, run: (input: T) => unknown, n: number): number {
+  for (let doublings = 0, size = n; doublings <= MAX_DOUBLINGS; doublings++, size *= 2) {
+    const [small, large] = fastestPair(make, run, size);
+    if (small >= MIN_TIMED_MS) return large / small;
+  }
+  throw new Error(
+    `the input of size ${String(n * 2 ** MAX_DOUBLINGS)} (${String(n)} doubled ${String(MAX_DOUBLINGS)} times) takes under ${String(MIN_TIMED_MS)} ms`,
+  );
 }
