@@ -20,9 +20,17 @@
  *
  * An at-rule no browser knows, `@charset` wherever it stands (CSS Syntax treats it as an unknown at-rule; the
  * encoding is read from the bytes), `@import` without a url or string, and a rule whose prelude is not of the shape
- * its at-rule takes are dropped and end nothing. What this does not check counts as a rule: a selector that is
- * invalid by its meaning (a namespace prefix that is not declared), the descriptors in the block of `@property`, and
- * the prelude of `@media`, `@container` and `@scope`, which browsers read leniently or by their own grammar.
+ * its at-rule takes are dropped and end nothing. What this does not check counts as a rule, though browsers drop
+ * it (so a warning may come after one of these, and a browser keeps the import):
+ *
+ * - selectors invalid by their grammar or meaning: a leading combinator (`> a {}`), a trailing comma (`a, {}`), an
+ *   unknown pseudo-class or a malformed one (`a:foo {}`, `a::: {}`), a custom property name (`--x: y {}`), a namespace
+ *   prefix that is not declared (`a|b {}`);
+ * - preludes whose value is invalid: `@keyframes none` and `initial`, `@counter-style none` and `decimal` (reserved
+ *   names), `@font-feature-values {}`, `@function foo {}` (no function name), `@supports (a:b) foo {}`,
+ *   `@container 1px {}`, `@scope 1px {}`, `@page a, {}`, and the descriptors in the block of `@property`.
+ *
+ * The preludes of `@media`, `@container` and `@scope` are read by their own grammars, which browsers apply leniently.
  *
  * Each `@import` the sources write at their own top level, read on its own, that the joined stylesheet does not keep
  * as an import rule is reported with its source.
@@ -409,7 +417,7 @@ class Prelude {
   private gap = false;
   /** Whether every component is one a selector holds. */
   selectorOk = true;
-  /** Whether every component is an identifier or a colon, as in the prelude of `@page`. */
+  /** Whether every component is an identifier, a colon or a comma, as in the prelude of `@page`. */
   pageOk = true;
   private layerState: LayerState = 'name';
   /** The number of layer names, up to 2. */
@@ -427,7 +435,7 @@ class Prelude {
     if (this.count < 3) this.count += 1;
     if (this.count === 1) this.first = token;
     if (!inSelector(token)) this.selectorOk = false;
-    if (token.type !== 'ident' && token.type !== 'colon') this.pageOk = false;
+    if (token.type !== 'ident' && token.type !== 'colon' && token.type !== 'comma') this.pageOk = false;
     this.layerState = this.nextLayerState(token, adjacent);
     this.namespaceShape = this.nextNamespaceShape(token);
   }
@@ -520,6 +528,8 @@ const KNOWN_AT_RULES: ReadonlyMap<string, ((prelude: Prelude) => boolean) | unde
   ['starting-style', (p) => p.count === 0],
   ['font-palette-values', (p) => p.isOneDashedIdent],
   ['font-feature-values', undefined],
+  // Firefox reads this in author stylesheets for `url-prefix()` only; the other conditions are dropped.
+  ['-moz-document', (p) => p.count === 1 && p.first.type === 'function' && p.first.value === 'url-prefix'],
   ['view-transition', (p) => p.count === 0],
   ['position-try', (p) => p.isOneDashedIdent],
   ['function', undefined],

@@ -509,7 +509,7 @@ console.log(errors, unknown, json);
 
 ### Lint
 
-`lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult>` compiles the story and checks its links against what Twine 2 output emits. `formatLintReport(result: LintResult): string` is the report `--lint` prints.
+`lint(options: Omit<CompileOptions, 'outputMode'>): Promise<LintResult>` compiles the story and checks its links against what Twine 2 output emits. It reports the stylesheet problems of the Twine 2 HTML output too, such as an `@import` that browsers ignore in the stylesheet that output writes. `formatLintReport(result: LintResult): string` is the report `--lint` prints.
 
 ```typescript
 import { lint, formatLintReport } from '@rohal12/twee-ts';

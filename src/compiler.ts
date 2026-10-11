@@ -133,7 +133,7 @@ export async function compileForLint(
   options: Omit<CompileOptions, 'outputMode'>,
   outputs: string | undefined,
 ): Promise<CompileResult> {
-  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true });
+  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true, omitStyleImports: true });
 }
 
 /**
@@ -709,7 +709,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
       break;
 
     case 'json':
-      output = storyToJSON(story, startName, diagnostics, context.checkHead !== true);
+      output = storyToJSON(story, startName, diagnostics, context.omitStyleImports !== true);
       break;
 
     case 'html': {
@@ -804,6 +804,11 @@ interface BuildContext {
   readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
   /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
   readonly checkHead?: boolean;
+  /**
+   * Leave out the warnings about `@import` rules that JSON output's stylesheet makes ineffective (for lint, which
+   * reports those of the Twine 2 HTML output's stylesheet instead).
+   */
+  readonly omitStyleImports?: boolean;
   /**
    * Whether the output file named in `outputs` is written after the build: it is then checked to be writable
    * (see checkWritable) once the inputs are checked and before any is read, so a missing folder or a read-only

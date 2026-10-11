@@ -123,6 +123,15 @@ function build(texts: readonly string[], mode: Mode): Promise<Built> {
 const MODES: readonly Mode[] = ['html', 'twine2-archive', 'json'];
 const RUNS = Number(process.env['CSS_IMPORTS_RUNS'] ?? '300');
 
+/** Pieces that only some browsers know as rules: the compiler warns after them, and a browser may keep the import. */
+const SOME_BROWSERS: readonly string[] = [
+  '@-moz-document url-prefix() {}',
+  '@-moz-keyframes k {}',
+  '@function --f() { result: 1 }',
+  '@view-transition { navigation: auto }',
+  '@page a, b {}',
+];
+
 // Statements that build a sequence: each is a `.css` file of its own, the imports numbered by their place.
 const piece = (n: number): fc.Arbitrary<string> =>
   fc.oneof(
@@ -191,6 +200,9 @@ const piece = (n: number): fc.Arbitrary<string> =>
       '@counter-style {}',
       '@-o-keyframes k {}',
       '@document url(x) {}',
+      '@-moz-document url(x) {}',
+      ...SOME_BROWSERS,
+      '@page a, b {}',
     ),
   );
 const sequence = fc
@@ -250,7 +262,12 @@ for (const engine of ENGINES) {
                 : [],
             );
 
-            expect([...warned].sort()).toEqual(ignoredByBrowser.sort());
+            // With a piece only some browsers know, a browser may keep an import the compiler warns about, not the reverse.
+            const partial = pieces.some((text) => SOME_BROWSERS.includes(text));
+            const actual = partial ? ignoredByBrowser.filter((source) => !warned.has(source)) : [...warned].sort();
+            const expected = partial ? [] : ignoredByBrowser.sort();
+
+            expect(actual).toEqual(expected);
           }),
           { numRuns: RUNS },
         );
