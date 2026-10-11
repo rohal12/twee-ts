@@ -189,8 +189,8 @@ async function editExcludedThenSource(
   out: string,
   changes: string[],
 ): Promise<readonly string[]> {
+  // vi.waitFor runs its callback at once, which makes the first save.
   const saveUntilBuilt = async (text: string): Promise<void> => {
-    writeFileSync(project.start, storyWith(text));
     await vi.waitFor(() => {
       // A watcher may not be ready right after the first build; the edit is saved again until it is built.
       if (!readFileSync(out, 'utf-8').includes(text)) writeFileSync(project.start, storyWith(text));
@@ -209,7 +209,6 @@ async function editExcludedThenSource(
   // Linux Rollup also watches a changed file anew), while a build already under way may still read that save. So
   // the edit is saved again until it is both built and reported after `reported` changes.
   const saveUntilBuiltAndReported = async (text: string, reported: number): Promise<void> => {
-    writeFileSync(project.start, storyWith(text));
     await vi.waitFor(() => {
       if (!readFileSync(out, 'utf-8').includes(text) || sourceChanges() <= reported) {
         writeFileSync(project.start, storyWith(text));
