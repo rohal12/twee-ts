@@ -38,7 +38,7 @@ const quoted = (quote: string): fc.Arbitrary<string> =>
     .map((parts) => parts.join('').replaceAll(quote, ''));
 
 /** Markup that shows its own words, or none, whatever SugarCube's state: no condition is false, no macro prints. */
-const markup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> =>
+const leafMarkup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> =>
   fc.oneof(
     fc.constantFrom('1 > 0', '2 >= 1', '"A > B"', "'x >> y'", '`a > b`').map((arg) => `<<set $x to ${arg}>>`),
     fc.constantFrom('<<run 1 > 2>>', '<!-- a > b -->', '/* c > d */', '/% e %/', '<!-- left open'),
@@ -78,6 +78,46 @@ const markup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> =>
   );
 
 const SEPARATOR = fc.constantFrom(' ', '\n', '  ');
+
+/** Markup, and elements around it that the markup depends on (see `structure`). */
+const markup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> => fc.oneof(leafMarkup(word), structure(word));
+
+/**
+ * The elements whose reading depends on the context around a tag (#435): list items and table parts, which a start tag
+ * of their own gives no node outside their parent, and foreign content (`<math>`, `<html>`). Each is generated as a
+ * start or end tag on its own, as a whole element around prose and other markup, left open, and closed in the wrong
+ * order.
+ */
+const STRUCTURE = ['ul', 'li', 'table', 'tr', 'td', 'math', 'html'] as const;
+const structure = (word: fc.Arbitrary<string>, depth = 2): fc.Arbitrary<string> => {
+  const tag = fc.constantFrom(...STRUCTURE);
+  const content = fc.oneof(
+    word,
+    leafMarkup(word),
+    fc.constantFrom('<b>bold</b>', '<br>', '<mi>x</mi>', '<mrow>y</mrow>', '<<set $x to 1>>', '[[a|Start]]'),
+    tag.map((name) => `<${name}>`),
+    tag.map((name) => `</${name}>`),
+    ...(depth > 0 ? [structure(word, depth - 1)] : []),
+  );
+  const inside = fc.array(content, { maxLength: 4 });
+  return fc.oneof(
+    tag.map((name) => `<${name}>`),
+    tag.map((name) => `</${name}>`),
+    fc.constantFrom(
+      '<ul><li>a</li><li>b</li></ul>',
+      '<table><tr><td>a</td><td>b</td></tr></table>',
+      '<table><tr><td>a</td></tr><tr><td>b</td></tr></table>',
+    ),
+    fc.tuple(tag, inside, SEPARATOR).map(([name, parts, sep]) => `<${name}>${parts.join(sep)}</${name}>`),
+    fc.tuple(tag, inside, SEPARATOR).map(([name, parts, sep]) => `<${name}>${parts.join(sep)}`),
+    fc
+      .tuple(tag, tag, inside, SEPARATOR)
+      .map(([outer, nested, parts, sep]) => `<${outer}><${nested}>${parts.join(sep)}</${outer}></${nested}>`),
+    fc
+      .tuple(tag, tag, inside, SEPARATOR)
+      .map(([outer, nested, parts, sep]) => `<${outer}><${nested}>${parts.join(sep)}</${nested}></${outer}>`),
+  );
+};
 
 /**
  * How many passages the sampled comparison takes, and from which seed: fixed, so a run can be repeated. A run with
@@ -165,6 +205,44 @@ describe.runIf(oracle !== undefined || process.env['CI'] !== undefined)(
         '<styles>',
         '<text> <math> </text> <!-- open </math>',
         '<text> <math> </text> <!-- open </math> a b',
+        // The fourth review (#435): elements that depend on their context, lists, tables and foreign content.
+        '<table>Well\ndone!</table>',
+        '<table>Well\n</table>done!',
+        '<ul>y\n</ul>done!',
+        '<ul>a\n<li>x\ny</li>\nb</ul>',
+        '<ul><li>a</li>\n<li>b</li>\n</ul>',
+        '<table><tr><td>a\nb</td></tr></table>',
+        '<table><tr>a\nb</tr></table>',
+        '<dl>a\nb</dl>',
+        '<ul><span>a\nb</span>\nc</ul>',
+        '<ul>[[a\nb|Start]]</ul>',
+        '<ul>a\n\nb</ul>',
+        '<ul>a\r\nb</ul>',
+        '<tr><td>x</td></tr>',
+        '<td>x</td> <td>y</td>',
+        '<ul><tr>x</tr></ul>',
+        '<table><tr><td>a</td><td>b</td></tr></table>',
+        '<li>a</li><li>b</li>',
+        '<math><b>bold</b></math>',
+        '<math>t<mi>x</mi></math>',
+        '<math><mi>x</mi> <mi>y</mi></math>',
+        '<math><table>x</table></math>',
+        '<table><math>q r</math></table>',
+        '<math>  </math>a',
+        '<math><svg><text>x</text></svg></math>',
+        '<html><tr>x</tr></html>',
+        '<html><td></td>bold</html>',
+        '<html>a <tr>x</tr></html>',
+        '<html><td>x</td></html>',
+        '<html><col>a b</html>',
+        '<html><table>\n<ul>&amp;</html></td>',
+        '<html><table>  <mrow>y</html>*/',
+        '<html><math><mi>x</mi>  </html>&',
+        '<math><html><math><mi>y</math></html>',
+        '<math><html></math></html><svg><text>drawn</svg>',
+        '<svg><svg-x><text>drawn</text></svg-x></svg>',
+        '<svg><g> </g></svg>a',
+        'a &nbsp b',
       ];
       const shown = await counts(cases);
       expect(cases.map((text) => countTextWords(text, 'whitespace'))).toEqual(shown);
@@ -173,11 +251,17 @@ describe.runIf(oracle !== undefined || process.env['CI'] !== undefined)(
     it('count the words SugarCube shows for generated passages', async () => {
       const texts = fc.sample(passage, { numRuns: SAMPLES, seed: SEED });
       const shown = await counts(texts);
-      const differ = texts.flatMap((text, i) => {
+      // SugarCube shows an error, or throws, for some of them (an element with no end tag): they have no count.
+      const compared = texts.flatMap((text, i) => {
+        const sugarCube = shown[i];
+        return sugarCube === undefined ? [] : [{ text, sugarCube }];
+      });
+      const differ = compared.flatMap(({ text, sugarCube }) => {
         const words = countTextWords(text, 'whitespace');
-        return words === shown[i] ? [] : [{ text, words, sugarCube: shown[i] }];
+        return words === sugarCube ? [] : [{ text, words, sugarCube }];
       });
       expect(differ).toEqual([]);
+      expect(compared.length).toBeGreaterThan(texts.length / 2);
     }, 600_000);
   },
 );

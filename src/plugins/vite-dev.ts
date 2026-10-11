@@ -739,13 +739,16 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // edits raise none either. Before the story is served, this waits for any
   // compile under way, compares the story's input files and the entry's files
   // with what the last compile and bundle read, and compiles again first if
-  // they differ.
+  // they differ. It also takes the events the watcher already reported and that
+  // still wait out the debounce, so that a response never comes before the
+  // rebuild one of them asks for (#436); an event for a change the bundle
+  // already has asks for none (see rebuild).
   const catchUp = (): Promise<void> => {
     catchingUp ??= (async () => {
       await queue;
       const changed = filesChanged(compiledInputs, storyInputFiles(false));
       for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
-      if (changed.size === 0 && !linkMoved() && !globsChanged() && !foldersChanged()) return;
+      if (changed.size === 0 && pending.size === 0 && !linkMoved() && !globsChanged() && !foldersChanged()) return;
       // Changes the watcher did report, still waiting out the debounce, go into the same compile.
       for (const file of pending) changed.add(file);
       pending = new Set();

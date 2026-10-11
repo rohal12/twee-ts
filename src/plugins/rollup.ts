@@ -11,7 +11,9 @@ import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
 import { createOutputRecord, outputLocations } from './paths.js';
 import type { OutputLocation } from './paths.js';
-import { watchTargets } from './watch-targets.js';
+import { createLinkWatch } from './link-watch.js';
+import type { LinkWatch } from './link-watch.js';
+import { watchPlan } from './watch-targets.js';
 
 export type { PluginCompileOptions } from './options.js';
 
@@ -24,6 +26,10 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   // and the files of each bundle. A source folder may hold any of them, and none
   // may be read back as a source or rebuild under watch.
   const record = createOutputRecord(outputFilename);
+  // Tells the watch that a link the inputs are reached through was pointed elsewhere (see link-watch.ts).
+  let linkWatch: LinkWatch | undefined;
+  // Where each registered path led when Rollup's watcher first followed it.
+  const followed = new Map<string, string>();
 
   return {
     name: 'twee-ts',
@@ -41,7 +47,8 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     // `rollup --watch` rebuilds for the files the build registers. The story's
     // inputs are read in generateBundle, outside the module graph, so they are
     // registered here: the sources, the head file and the modules, without the
-    // files `exclude` leaves out (see watchTargets).
+    // files `exclude` leaves out (see watchTargets). Rollup's watcher follows a link and watches what it leads to, so
+    // it doesn't see a link, or a hop of a chain of links, pointed elsewhere; the plugin watches the links itself.
     buildStart(this: {
       addWatchFile: (id: string) => void;
       warn: (message: string) => void;
@@ -50,10 +57,21 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       if (!this.meta.watchMode) return;
       const outputs = outputPaths(record.outputs());
       // In the platform's own form, as Rollup reports its module ids.
-      const targets = watchTargets(resolved.inputs, resolved.excluded, outputs, 'given').map((target) =>
-        resolve(target),
-      );
+      const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'given');
+      const targets = plan.targets.map((target) => resolve(target));
       for (const target of targets) this.addWatchFile(target);
+      // Rollup's watcher keeps watching what a path led to when it was registered, so a path that leads elsewhere now
+      // (a link was pointed at another file or folder) is watched from its new location as well.
+      for (const [path, real] of plan.reals) {
+        const first = followed.get(path) ?? real;
+        followed.set(path, first);
+        if (first !== real) this.addWatchFile(resolve(real));
+      }
+      if (plan.links.length > 0) {
+        linkWatch ??= createLinkWatch();
+        linkWatch.watch(plan.links);
+        this.addWatchFile(linkWatch.signal);
+      }
       // Rollup's file watcher (chokidar) reads every backslash as a separator, also on POSIX, where it is a
       // filename character: such a file is read by each build, but an edit to it starts none.
       const unwatchable = sep === '/' ? targets.filter((target) => target.includes('\\')) : [];
@@ -63,6 +81,12 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
             'because the name contains a backslash; edits to it will not rebuild the story.',
         );
       }
+    },
+
+    // The watcher is closed: the links are no longer watched.
+    closeWatcher(): void {
+      linkWatch?.close();
+      linkWatch = undefined;
     },
 
     // Runs for every output before any of them generates its bundle, when the

@@ -48,9 +48,9 @@ export class HtmlNestingError extends TweeTsError {
  * contents count as children of their template). The depth of each parent is remembered, so a check costs a lookup;
  * when the parser moves a node (the adoption agency algorithm), what was remembered is dropped and worked out again,
  * by walking up at most `MAX_HTML_DEPTH` or so parents. Either way the checks add work in proportion to the size of
- * the document. `watch` is told what the parser puts into the tree.
+ * the document.
  */
-function depthLimitedTreeAdapter(watch: TreeWatch = {}): typeof defaultTreeAdapter {
+function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
   const templateOfContent = new WeakMap<ParentNode, ParentNode>();
   const parentOf = (node: ParentNode): ParentNode | null | undefined =>
     'parentNode' in node ? node.parentNode : templateOfContent.get(node);
@@ -84,10 +84,7 @@ function depthLimitedTreeAdapter(watch: TreeWatch = {}): typeof defaultTreeAdapt
     }
     known.set(child, { depth, moves });
   };
-  const placed = (parent: ParentNode, child: ChildNode): void => {
-    checkDepth(parent, child);
-    watch.placed?.(parent, child);
-  };
+  const placed = checkDepth;
   return {
     ...defaultTreeAdapter,
     appendChild(parent, child) {
@@ -105,28 +102,9 @@ function depthLimitedTreeAdapter(watch: TreeWatch = {}): typeof defaultTreeAdapt
     },
     setTemplateContent(template, content) {
       templateOfContent.set(content, template);
-      watch.templateContent?.(content);
       defaultTreeAdapter.setTemplateContent(template, content);
     },
-    insertText(parent, text) {
-      watch.text?.(parent, text);
-      defaultTreeAdapter.insertText(parent, text);
-    },
-    insertTextBefore(parent, text, reference) {
-      watch.text?.(parent, text);
-      defaultTreeAdapter.insertTextBefore(parent, text, reference);
-    },
   };
-}
-
-/** What a reading of HTML is told as the parser builds the tree (see `depthLimitedTreeAdapter`). */
-interface TreeWatch {
-  /** A node is put into `parent`, or moved there. */
-  readonly placed?: (parent: ParentNode, child: ChildNode) => void;
-  /** A template's content is made. */
-  readonly templateContent?: (content: ParentNode) => void;
-  /** Text is put into `parent`: each run of character tokens the parser keeps, in the order it reads them. */
-  readonly text?: (parent: ParentNode, text: string) => void;
 }
 
 /**
@@ -934,19 +912,29 @@ const UNSHOWN_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
   'title',
 ]);
 
-/** SVG elements that render nothing of what they hold: definitions, paint servers, metadata. */
-const UNRENDERED_SVG_ELEMENTS: ReadonlySet<string> = new Set([
-  'clipPath',
-  'defs',
-  'desc',
-  'filter',
-  'linearGradient',
-  'marker',
-  'mask',
-  'metadata',
-  'pattern',
-  'radialGradient',
-  'symbol',
+/**
+ * The SVG elements a browser renders, and what they hold: shapes, containers and text. The others render nothing of
+ * what they hold (definitions, paint servers, metadata, animations), and neither does an element that SVG does not
+ * define.
+ */
+const RENDERED_SVG_ELEMENTS: ReadonlySet<string> = new Set([
+  'a',
+  'circle',
+  'ellipse',
+  'foreignObject',
+  'g',
+  'image',
+  'line',
+  'path',
+  'polygon',
+  'polyline',
+  'rect',
+  'svg',
+  'switch',
+  'text',
+  'textPath',
+  'tspan',
+  'use',
 ]);
 
 /** SVG elements whose text is rendered inside a `text` element; `text` itself renders its text anywhere. */
@@ -955,84 +943,351 @@ const SVG_TEXT_CHILDREN: ReadonlySet<string> = new Set(['a', 'textPath', 'tspan'
 /** The MathML token elements, the only MathML elements that render their text. */
 const MATHML_TOKEN_ELEMENTS: ReadonlySet<string> = new Set(['mi', 'mn', 'mo', 'ms', 'mtext']);
 
-/** How `htmlText` reads MathML. */
-export interface HtmlTextOptions {
-  /**
-   * Whether MathML token elements show their text, as they do when a browser parses the HTML whole (the default).
-   * When false, no text inside a `math` element shows, as when each element is made apart (SugarCube's `htmlTag`
-   * parser makes the elements inside `<math>` HTML elements, which a `math` element doesn't render).
-   */
-  readonly mathText?: boolean;
+/**
+ * What a browser does with the elements of a tree, for the text it shows: whether an element and what is in it can be
+ * seen, whether text directly in it is laid out, and what kind of elements it renders.
+ */
+interface Display {
+  /** The element is rendered (not hidden, not inside a hidden element or an element that renders no such child). */
+  readonly visible: boolean;
+  /** Text (other than white space between elements) directly in the element is laid out. */
+  readonly text: boolean;
+  /** The kinds of element it renders as its children (the others, such as an HTML element in MathML, are not). */
+  readonly renders: ReadonlySet<htmlSpec.NS>;
+  /** The element is an SVG text content element: a `text` element, or a `tspan`, `textPath` or `a` in one. */
+  readonly svgText: boolean;
+}
+
+const ALL_NAMESPACES: ReadonlySet<htmlSpec.NS> = new Set([htmlSpec.NS.HTML, htmlSpec.NS.SVG, htmlSpec.NS.MATHML]);
+const SVG_ONLY: ReadonlySet<htmlSpec.NS> = new Set([htmlSpec.NS.SVG]);
+const MATHML_ONLY: ReadonlySet<htmlSpec.NS> = new Set([htmlSpec.NS.MATHML]);
+/** MathML token elements render text, and HTML in it. */
+const MATHML_AND_HTML: ReadonlySet<htmlSpec.NS> = new Set([htmlSpec.NS.MATHML, htmlSpec.NS.HTML]);
+
+const ROOT_DISPLAY: Display = { visible: true, text: true, renders: ALL_NAMESPACES, svgText: false };
+
+/** How a browser renders `element`, which lies in an element that is rendered as `parent`. */
+function displayOf(element: HtmlElement, parent: Display): Display {
+  const { tagName, namespaceURI } = element;
+  const hidden =
+    UNSHOWN_TEXT_ELEMENTS.has(tagName) ||
+    (namespaceURI === HTML_NS && tagName === 'template') ||
+    (namespaceURI === htmlSpec.NS.SVG && !RENDERED_SVG_ELEMENTS.has(tagName));
+  const visible = parent.visible && !hidden && parent.renders.has(namespaceURI);
+  switch (namespaceURI) {
+    case htmlSpec.NS.SVG: {
+      const svgText = tagName === 'text' || (SVG_TEXT_CHILDREN.has(tagName) && parent.svgText);
+      const foreign = tagName === 'foreignObject';
+      return { visible, text: svgText || foreign, renders: foreign ? ALL_NAMESPACES : SVG_ONLY, svgText };
+    }
+    case htmlSpec.NS.MATHML: {
+      const token = MATHML_TOKEN_ELEMENTS.has(tagName);
+      return { visible, text: token, renders: token ? MATHML_AND_HTML : MATHML_ONLY, svgText: false };
+    }
+    default:
+      return { visible, text: true, renders: ALL_NAMESPACES, svgText: false };
+  }
+}
+
+/**
+ * The text a browser shows in the nodes `roots` (their descendants too, in tree order, not those in a `template`'s
+ * content), as the reader of a page sees it: the text nodes whose element is rendered, with a space for each `br`
+ * element. Text that is not white space must be laid out by its element, which an SVG or MathML element does not do for
+ * most of its text; white space between elements always parts the words around it.
+ */
+function shownTextOf(roots: readonly ChildNode[]): string {
+  const text: string[] = [];
+  const stack: { readonly nodes: readonly ChildNode[]; at: number; readonly display: Display }[] = [
+    { nodes: roots, at: 0, display: ROOT_DISPLAY },
+  ];
+  for (let level = stack[0]; level !== undefined; level = stack[stack.length - 1]) {
+    const node = level.nodes[level.at];
+    level.at += 1;
+    if (node === undefined) {
+      stack.pop();
+    } else if (isElement(node)) {
+      const display = displayOf(node, level.display);
+      if (display.visible && node.namespaceURI === HTML_NS && node.tagName === 'br') text.push(' ');
+      if (node.childNodes.length > 0) stack.push({ nodes: node.childNodes, at: 0, display });
+    } else if (node.nodeName === '#text' && 'value' in node) {
+      if (level.display.visible && (level.display.text || node.value.trim() === '')) text.push(node.value);
+    }
+  }
+  return text.join('');
 }
 
 /**
  * The text an HTML parser reads from `html` in the content of a `div` element of a page (see `TEXT_CONTEXT`), as
- * `parseHtml()` reads a document, and a browser shows: the characters it inserts as text, in the order it reads them,
- * with a space for each `br` element. Start and end tags, comments and doctypes give none, whatever their quoted
+ * `parseHtml()` reads a document, and a browser shows (see `shownTextOf`): the text of the tree it builds, in tree
+ * order, with a space for each `br` element. Start and end tags, comments and doctypes give none, whatever their quoted
  * attribute values hold, and neither does a tag left open at the end, which the parser drops; a `<` that starts none
  * of them (`<3`, `a < b`) is text. A character reference gives the character it stands for. Left out:
  * - the text of `script`, `style`, `title`, `noscript` (read with scripting on), `noembed`, `noframes` and `iframe`
  *   elements and the content of a `template`; that of a `textarea` is read;
  * - in SVG, text outside a `text` element (and the `tspan`, `textPath` and `a` elements in one) or a
- *   `foreignObject`, and everything in definitions, paint servers and metadata (`defs`, `symbol`, `mask`, `title`…);
- * - in MathML, text outside a token element (`mi`, `mn`, `mo`, `ms`, `mtext`), or all of it (see `options`).
+ *   `foreignObject`, and everything in an element SVG does not render (definitions, paint servers, metadata, animations:
+ *   `defs`, `symbol`, `mask`, `title`, `set`…);
+ * - in MathML, text outside a token element (`mi`, `mn`, `mo`, `ms`, `mtext`).
  * Styles and attributes such as `hidden` are not considered. The parser drops NUL characters in most places and the
  * line feed just after a `pre`, `listing` or `textarea` start tag. Throws an `HtmlNestingError` when elements nest
  * more than `MAX_HTML_DEPTH` deep, counting the `html`, `body` and `div` elements around the text.
  */
-export function htmlText(html: string, options: HtmlTextOptions = {}): string {
-  const mathText = options.mathText ?? true;
-  const pieces: string[] = [];
-  // Elements and template contents nothing in which shows. An element stays where it was put: the parser moves
-  // elements only between places of the same kind (formatting elements, foster parenting), never out of a template
-  // content or a foreign element.
-  const unshown = new WeakSet<ParentNode>();
-  // SVG elements that render their text: `text`, and the text content elements in one.
-  const svgText = new WeakSet<ParentNode>();
-  const treeAdapter = depthLimitedTreeAdapter({
-    placed(parent, child) {
-      if (!isElement(child)) return;
-      if (unshown.has(parent)) {
-        unshown.add(child);
-        return;
-      }
-      switch (child.namespaceURI) {
-        case htmlSpec.NS.SVG:
-          if (UNRENDERED_SVG_ELEMENTS.has(child.tagName)) {
-            unshown.add(child);
-          } else if (child.tagName === 'text' || (SVG_TEXT_CHILDREN.has(child.tagName) && svgText.has(parent))) {
-            svgText.add(child);
-          }
-          return;
-        case htmlSpec.NS.MATHML:
-          if (!mathText) unshown.add(child);
-          return;
-        default:
-          if (child.tagName === 'br') pieces.push(' ');
-      }
-    },
-    templateContent(content) {
-      unshown.add(content);
-    },
-    text(parent, text) {
-      if (shows(parent)) pieces.push(text);
-    },
-  });
-  const shows = (parent: ParentNode): boolean => {
-    if (unshown.has(parent)) return false;
-    if (!isElement(parent)) return true;
-    if (UNSHOWN_TEXT_ELEMENTS.has(parent.tagName)) return false;
-    switch (parent.namespaceURI) {
-      case htmlSpec.NS.SVG:
-        return svgText.has(parent) || parent.tagName === 'foreignObject';
-      case htmlSpec.NS.MATHML:
-        return MATHML_TOKEN_ELEMENTS.has(parent.tagName);
-      default:
-        return true;
-    }
+export function htmlText(html: string): string {
+  return shownTextOf(afterContext(parseText(html)));
+}
+
+/** The document `html` makes after `TEXT_CONTEXT` (see `afterContext`). */
+function parseText(html: string): HtmlDocument {
+  return parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
+}
+
+/** The body of the page that `TEXT_CONTEXT` starts. */
+function pageBody(document: HtmlDocument): HtmlElement | undefined {
+  const page = childrenOf(document).find((node) => isHtmlElement(node, 'html'));
+  return page === undefined ? undefined : childrenOf(page).find((node) => isHtmlElement(node, 'body'));
+}
+
+/** The `div` that `TEXT_CONTEXT` ends with, after its `hr`, in the document it starts. */
+function contextDiv(document: HtmlDocument): HtmlElement | undefined {
+  const div = childrenOf(pageBody(document) ?? document)[1];
+  return div !== undefined && isHtmlElement(div, 'div') ? div : undefined;
+}
+
+/**
+ * What the parser put in the page after `TEXT_CONTEXT`: the content of its `div`, and what follows the `div` in the
+ * body if the text closed it.
+ */
+function afterContext(document: HtmlDocument): ChildNode[] {
+  const body = pageBody(document);
+  const div = contextDiv(document);
+  return div === undefined || body === undefined ? [] : [...div.childNodes, ...childrenOf(body).slice(2)];
+}
+
+/**
+ * What jQuery puts around HTML that starts with a table part, so that the part is parsed in its table (`wrapMap`):
+ * the number of levels to go down to the elements the HTML makes, and the markup before and after it.
+ */
+const JQUERY_WRAPS: ReadonlyMap<string, readonly [levels: number, before: string, after: string]> = new Map([
+  ['thead', [1, '<table>', '</table>']],
+  ['tbody', [1, '<table>', '</table>']],
+  ['tfoot', [1, '<table>', '</table>']],
+  ['colgroup', [1, '<table>', '</table>']],
+  ['caption', [1, '<table>', '</table>']],
+  ['col', [2, '<table><colgroup>', '</colgroup></table>']],
+  ['tr', [2, '<table><tbody>', '</tbody></table>']],
+  ['td', [3, '<table><tbody><tr>', '</tr></tbody></table>']],
+  ['th', [3, '<table><tbody><tr>', '</tr></tbody></table>']],
+]);
+
+/** A text node that is in no tree yet. */
+function textNode(value: string, parentNode: ParentNode | null = null): DefaultTreeAdapterTypes.TextNode {
+  return { nodeName: '#text', value, parentNode };
+}
+
+/**
+ * The nodes jQuery 3 makes of HTML it appends to an element, as SugarCube's `<html>`, `<style>` and `<svg>` elements
+ * do (`jQuery(fragment).append(html)`): HTML with no `<` and no character reference is one text node, as it is; HTML
+ * that starts with a table part (the first tag in it is a `tr`, a `td`, a `col`…) is parsed inside a `table` (and a
+ * `tbody`, a `tr`), and only the nodes under that wrapper are appended: text that the parser put before the table (a
+ * `<tr>` followed by text) is lost; any other HTML is parsed in a `div`. Throws an `HtmlNestingError` when the elements
+ * nest more than `MAX_HTML_DEPTH` deep.
+ */
+function appendedNodes(html: string): ChildNode[] {
+  if (!/<|&#?\w+;/.test(html)) return [textNode(html)];
+  const tag = /<([a-z][^/\0>\x20\t\r\n\f]*)/i.exec(html)?.[1]?.toLowerCase() ?? '';
+  const [levels, before, after] = JQUERY_WRAPS.get(tag) ?? [0, '', ''];
+  const document = parseText(before + html + after);
+  if (levels === 0) return afterContext(document);
+  // The elements go down `levels` as jQuery's `tmp.lastChild` takes them, from the `div` the text context ends with.
+  let node: HtmlNode | undefined = contextDiv(document);
+  for (let level = 0; level < levels && node !== undefined; level++) node = childrenOf(node).at(-1);
+  return node === undefined ? [] : [...childrenOf(node)];
+}
+
+/**
+ * The line feeds and character references in passage text: SugarCube's `lineBreak` pattern, and its
+ * `htmlCharacterReference` pattern for a reference, `&`, a name or number, and `;`.
+ */
+const LINE_FEED_OR_REFERENCE_RE = /\n|&#?[0-9A-Za-z]{2,8};/g;
+
+const referencedText = new Map<string, string>();
+
+/** The character a character reference (see `LINE_FEED_OR_REFERENCE_RE`) stands for, as a parser reads it in a `div`. */
+function referenceText(reference: string): string {
+  let read = referencedText.get(reference);
+  if (read === undefined) {
+    read = childrenOf(parseFragment(FRAGMENT_CONTEXT, reference, { scriptingEnabled: true }))
+      .map((node) => ('value' in node ? node.value : ''))
+      .join('');
+    referencedText.set(reference, read);
+  }
+  return read;
+}
+
+/** An element SugarCube's `htmlTag` parser makes from a start tag (see `createdElement`). */
+interface CreatedElement {
+  readonly name: string;
+  readonly namespace: htmlSpec.NS;
+}
+
+const createdElements = new Map<string, CreatedElement>();
+
+/**
+ * The element SugarCube 2's `htmlTag` parser makes from a start tag `<name>` shown inside an element named `context`:
+ * it sets the `innerHTML` of a new element of that name to the start tag, then takes the first child, the first child
+ * of that, and so on, so the parser reads the tag in the context of the element around it. A start tag that gives no
+ * node there (`<tr>` in a `div`: the parser ignores it) leaves the new element itself, a copy of the one around. The
+ * same name gives different elements in different contexts (`<tr>` in a `table` gives a `tr`), and a `math` start tag
+ * a MathML element.
+ */
+function createdElement(context: string, name: string): CreatedElement {
+  const key = `${context} ${name}`;
+  let created = createdElements.get(key);
+  if (created === undefined) {
+    const contextElement = defaultTreeAdapter.createElement(context, HTML_NS, []);
+    let node: HtmlNode = parseFragment(contextElement, `<${name}>`, { scriptingEnabled: true });
+    for (let child = childrenOf(node)[0]; child !== undefined; child = childrenOf(node)[0]) node = child;
+    created = isElement(node)
+      ? { name: node.tagName, namespace: node.namespaceURI }
+      : { name: context, namespace: HTML_NS };
+    createdElements.set(key, created);
+  }
+  return created;
+}
+
+/**
+ * A piece of passage markup in the order SugarCube's wikifier reads it, for `wikifiedText`:
+ * - `text`: passage text, in which a line feed is a line break unless the element around it takes none (see
+ *   `NO_LINE_BREAK_ELEMENTS`) and a character reference (with its `;`) gives the character it stands for;
+ * - `link`: link markup, an `a` element with a label;
+ * - `verbatim`: text SugarCube shows as it is, in a `span` element (`<nowiki>`);
+ * - `nodes`: the nodes of HTML that SugarCube appends as it is (see `appendedNodes`; `parseAppended`);
+ * - `start`: a start tag of an HTML element, by its name in lower case, and whether an end tag closes the element;
+ * - `end`: an end tag that closes the innermost element opened.
+ */
+export type WikifiedPiece =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'link'; readonly text: string }
+  | { readonly kind: 'verbatim'; readonly text: string }
+  | { readonly kind: 'nodes'; readonly nodes: readonly ChildNode[] }
+  | { readonly kind: 'start'; readonly name: string; readonly container: boolean }
+  | { readonly kind: 'end' };
+
+/**
+ * Reads HTML that SugarCube appends to an element as it is (an `<html>`, `<style>` or `<svg>` element): the piece to
+ * give `wikifiedText`, and the text it shows on its own. Throws an `HtmlNestingError` when the elements nest more than
+ * `MAX_HTML_DEPTH` deep.
+ */
+export function parseAppended(html: string): { readonly piece: WikifiedPiece; readonly text: string } {
+  const nodes = appendedNodes(html);
+  return { piece: { kind: 'nodes', nodes }, text: shownTextOf(nodes) };
+}
+
+/**
+ * The `htmlTag` parser's `nobrTags`: inside one of these elements, a line feed makes no line break (but one inside an
+ * element of another name does again).
+ */
+const NO_LINE_BREAK_ELEMENTS: ReadonlySet<string> = new Set([
+  'colgroup',
+  'datalist',
+  'dl',
+  'figure',
+  'meter',
+  'ol',
+  'optgroup',
+  'picture',
+  'progress',
+  'ruby',
+  'select',
+  'table',
+  'tbody',
+  'tfoot',
+  'thead',
+  'tr',
+  'ul',
+  'video',
+]);
+
+/** An element that is being filled, as SugarCube's wikifier fills it. */
+interface OpenElement {
+  readonly element: HtmlElement;
+  /** Whether a line feed in it makes no line break. */
+  readonly noLineBreak: boolean;
+}
+
+/**
+ * The text a reader sees when SugarCube shows passage markup that is read as `pieces`: its wikifier makes the elements
+ * one at a time, each from its own start tag (see `createdElement`), puts the text and the elements that follow into
+ * it up to its end tag, and the nodes it makes of HTML it appends as they are, and shows the result (see
+ * `shownTextOf`). A line feed becomes a `br` element, shown as a space, but in a table, list or similar element it
+ * makes none. Nothing shows in an element a browser hides (`script`, `style`, `template`, `noscript`, `iframe`...), and
+ * none of an HTML element in a `math` element shows, since SugarCube makes the elements in it HTML elements, which a
+ * browser does not render there.
+ *
+ * Throws an `HtmlNestingError` when elements nest more than `MAX_HTML_DEPTH` deep, counting the `html`, `body` and
+ * `div` elements a browser puts around them.
+ */
+export function wikifiedText(pieces: Iterable<WikifiedPiece>): string {
+  const passage = defaultTreeAdapter.createElement('div', HTML_NS, []);
+  const open: OpenElement[] = [];
+  let into: HtmlElement = passage;
+  let noLineBreak = false;
+  const append = (node: ChildNode): void => {
+    node.parentNode = into;
+    into.childNodes.push(node);
   };
-  parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter });
-  return pieces.join('');
+  const appendElement = (name: string, namespace: htmlSpec.NS): HtmlElement => {
+    const element = defaultTreeAdapter.createElement(name, namespace, []);
+    append(element);
+    return element;
+  };
+  for (const piece of pieces) {
+    switch (piece.kind) {
+      case 'text': {
+        let from = 0;
+        for (const found of piece.text.matchAll(LINE_FEED_OR_REFERENCE_RE)) {
+          if (found.index > from) append(textNode(piece.text.slice(from, found.index)));
+          if (found[0] === '\n') {
+            if (!noLineBreak) appendElement('br', HTML_NS);
+          } else {
+            append(textNode(referenceText(found[0])));
+          }
+          from = found.index + found[0].length;
+        }
+        if (from < piece.text.length) append(textNode(piece.text.slice(from)));
+        break;
+      }
+      case 'link':
+      case 'verbatim': {
+        const holder = appendElement(piece.kind === 'link' ? 'a' : 'span', HTML_NS);
+        holder.childNodes.push(textNode(piece.text, holder));
+        break;
+      }
+      case 'nodes':
+        for (const node of piece.nodes) append(node);
+        break;
+      case 'start': {
+        const created = createdElement(into.tagName, piece.name);
+        const element = appendElement(created.name, created.namespace);
+        if (!piece.container) break;
+        if (open.length + 3 >= MAX_HTML_DEPTH) throw new HtmlNestingError();
+        noLineBreak = NO_LINE_BREAK_ELEMENTS.has(piece.name);
+        open.push({ element, noLineBreak });
+        into = element;
+        break;
+      }
+      case 'end':
+        open.pop();
+        into = open[open.length - 1]?.element ?? passage;
+        noLineBreak = open[open.length - 1]?.noLineBreak ?? false;
+        break;
+      default: {
+        const _exhaustive: never = piece;
+        throw new Error(`Unhandled piece: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+  return shownTextOf(passage.childNodes);
 }
 
 /**

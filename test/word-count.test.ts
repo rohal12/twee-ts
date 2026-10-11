@@ -357,6 +357,51 @@ describe("countTextWords 'whitespace'", () => {
     expect(countTextWords(text, 'whitespace')).toBe(words);
   });
 
+  // Elements whose reading depends on the context around a tag, and foreign content (#435): SugarCube makes each
+  // element from its own start tag, so a table part outside a table gives no element, a list or table takes no line
+  // break, and nothing in MathML but its own elements shows (counts from SugarCube 2.37.3 in Chromium).
+  it.each([
+    ['a table', '<table>Well\ndone!</table>', 1],
+    ['text after a table', '<table>Well\n</table>done!', 1],
+    ['a list', '<ul>y\n</ul>done!', 1],
+    ['list items, which take line breaks again', '<ul>a\n<li>x\ny</li>\nb</ul>', 2],
+    ['list items on lines of their own', '<ul><li>a</li>\n<li>b</li>\n</ul>', 1],
+    ['table cells, which take line breaks again', '<table><tr><td>a\nb</td></tr></table>', 2],
+    ['a table row', '<table><tr>a\nb</tr></table>', 1],
+    ['a description list', '<dl>a\nb</dl>', 1],
+    ['a span in a list', '<ul><span>a\nb</span>\nc</ul>', 2],
+    ['link text in a list', '<ul>[[a\nb|Start]]</ul>', 1],
+    ['two line feeds in a list', '<ul>a\n\nb</ul>', 1],
+    ['a carriage return and a line feed in a list', '<ul>a\r\nb</ul>', 2],
+    ['a table row outside a table', '<tr><td>x</td></tr>', 1],
+    ['table cells outside a table', '<td>x</td> <td>y</td>', 2],
+    ['a table row in a list', '<ul><tr>x</tr></ul>', 1],
+    ['a table with cells', '<table><tr><td>a</td><td>b</td></tr></table>', 1],
+    ['list items outside a list', '<li>a</li><li>b</li>', 1],
+    ['an HTML element in MathML', '<math><b>bold</b></math>', 0],
+    ['text and a token element in MathML', '<math>t<mi>x</mi></math>', 0],
+    ['white space between MathML elements', '<math><mi>x</mi> <mi>y</mi></math>', 0],
+    ['a table in MathML', '<math><table>x</table></math>', 0],
+    ['MathML in a table', '<table><math>q r</math></table>', 0],
+    ['white space in MathML', '<math>  </math>a', 1],
+    ['an svg element in MathML', '<math><svg><text>x</text></svg></math>', 0],
+    ['a table row in verbatim HTML', '<html><tr>x</tr></html>', 0],
+    ['a table cell and text in verbatim HTML', '<html><td></td>bold</html>', 0],
+    ['text before a table row in verbatim HTML', '<html>a <tr>x</tr></html>', 0],
+    ['a table cell in verbatim HTML', '<html><td>x</td></html>', 1],
+    ['a column in verbatim HTML', '<html><col>a b</html>', 0],
+    ['an element a table moves before itself, in verbatim HTML', '<html><table>\n<ul>&amp;</html></td>', 2],
+    ['text a table moves, in verbatim HTML', '<html><table>  <mrow>y</html>*/', 2],
+    ['white space in MathML in verbatim HTML', '<html><math><mi>x</mi>  </html>&', 2],
+    ['verbatim HTML in MathML', '<math><html><math><mi>y</math></html>', 1],
+    ['an svg element left in MathML by verbatim HTML', '<math><html></math></html><svg><text>drawn</svg>', 0],
+    ['an element SVG does not define in an svg element', '<svg><svg-x><text>drawn</text></svg-x></svg>', 0],
+    ['white space in a group', '<svg><g> </g></svg>a', 1],
+    ['a character reference without a semicolon', 'a &nbsp b', 3],
+  ])('counts %s as SugarCube shows it (#435)', (_label, text, words) => {
+    expect(countTextWords(text, 'whitespace')).toBe(words);
+  });
+
   it.each([
     ['a comment left open', 'Intro <!-- TODO\nThe rest of a long passage that the reader sees.', 12],
     ['a block comment left open', 'a /* b c', 3],
