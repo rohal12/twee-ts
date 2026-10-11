@@ -63,7 +63,7 @@ export const REVIEW_AREAS: readonly ReviewArea[] = [
   {
     id: 'files',
     contract: 'Path identity, output safety, atomic writes, links, watch mode',
-    paths: ['src/filesystem.ts', 'src/atomic-write.ts', 'src/path-identity.ts'],
+    paths: ['src/filesystem.ts', 'src/folder-stream.ts', 'src/atomic-write.ts', 'src/path-identity.ts'],
   },
   {
     id: 'formats',

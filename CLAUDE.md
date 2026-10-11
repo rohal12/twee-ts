@@ -36,6 +36,7 @@ src/
   compile-options.ts   The one check of the compile options (API, plugins), by CONFIG_SPEC where a config key matches
   loader.ts            Loads each input type; media-types.ts maps extensions
   filesystem.ts        Source walk, exclude globs, output overlap checks, watch mode
+  folder-stream.ts     macOS: learns when the shared FSEvents stream runs again after a watch starts or closes
   path-identity.ts     Canonical path identity (real path, case folding per volume, Windows forms)
   input-policy.ts      One table: what each input role does when it can't be used
   atomic-write.ts      Writes output and cache files by what is at the target path
