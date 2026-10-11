@@ -4,27 +4,34 @@
  * white space, as `splitTweeFields` reads it) in the text the reader can see: text nodes whose element is rendered,
  * joined as they come, with a line break (`<br>`, which SugarCube makes of a line feed) as white space.
  *
- * The format is the one at `SUGARCUBE_FORMAT_DIR`, else Tweego's copy next to this repository. Without it, or without
- * a browser, `openSugarCubeOracle` gives undefined.
+ * The format is SugarCube 2.37.3 as released (BSD-2-Clause, its LICENSE beside it), kept in
+ * `test/fixtures/sugarcube-oracle/sugarcube-2`, apart from the format folders the format discovery tests read; it is
+ * checked against its SHA-256 before use. Without a browser, `openSugarCubeOracle` gives undefined.
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { compile } from '../../src/index.js';
 import { launchChromium } from './chromium.js';
 import { splitTweeFields } from '../../src/twee-syntax.js';
 
-/** The folder holding `sugarcube-2/format.js`, if one is there. */
-function sugarCubeFormatsDir(): string | undefined {
-  const candidates = [
-    process.env['SUGARCUBE_FORMAT_DIR'],
-    resolve(import.meta.dirname, '..', '..', '..', 'tweego', 'storyformats'),
-    // A worktree under .claude/worktrees/<name> of the repository.
-    resolve(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'tweego', 'storyformats'),
-  ];
-  return candidates.find(
-    (dir): dir is string => dir !== undefined && dir !== '' && existsSync(join(dir, 'sugarcube-2', 'format.js')),
-  );
+/** The folder holding `sugarcube-2/format.js`. */
+const FORMATS_DIR = join(import.meta.dirname, '..', 'fixtures', 'sugarcube-oracle');
+/** The SHA-256 of SugarCube 2.37.3's `format.js`. */
+const FORMAT_SHA256 = '14bf79a105ab303aea48fc7443f4d937aa1bcca3fb5c68be571369ce591fe041';
+
+/** The format folder, once its `format.js` is the one this oracle is for. */
+function checkedFormatsDir(): string {
+  const digest = createHash('sha256')
+    .update(readFileSync(join(FORMATS_DIR, 'sugarcube-2', 'format.js')))
+    .digest('hex');
+  if (digest !== FORMAT_SHA256) {
+    throw new Error(
+      `test/fixtures/sugarcube-oracle/sugarcube-2/format.js has SHA-256 ${digest}, not ${FORMAT_SHA256}.`,
+    );
+  }
+  return FORMATS_DIR;
 }
 
 export interface SugarCubeOracle {
@@ -48,7 +55,7 @@ const SHOWN_TEXTS = `(sources) => sources.map((source) => {
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       if (node instanceof Element) {
         if (node.localName === 'br') text += ' ';
-      } else if (node.parentElement.checkVisibility()) {
+      } else if (node.parentElement.checkVisibility() && node.parentElement.closest('iframe') === null) {
         text += node.textContent;
       }
     }
@@ -61,8 +68,7 @@ const SHOWN_TEXTS = `(sources) => sources.map((source) => {
 const STORY = `:: StoryTitle\nOracle\n\n:: StoryData\n{"ifid": "D674C58C-DEFA-4F70-B7A2-27742230C0FC", "format": "SugarCube", "format-version": "2.37.3"}\n\n:: Start\nReady\n`;
 
 export async function openSugarCubeOracle(): Promise<SugarCubeOracle | undefined> {
-  const formats = sugarCubeFormatsDir();
-  if (formats === undefined) return undefined;
+  const formats = checkedFormatsDir();
   const browser = await launchChromium();
   if (browser === undefined) return undefined;
   const dir = mkdtempSync(join(tmpdir(), 'twee-ts-sugarcube-oracle-'));

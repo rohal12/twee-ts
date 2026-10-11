@@ -785,7 +785,7 @@ export interface HtmlStartTagRead {
  * The start tag that SugarCube's `htmlTag` pattern matches at `start` in `text`, if it does (see `htmlStartTagAt`).
  * `spend` is told how many characters were read.
  */
-export function readHtmlStartTag(
+function readHtmlStartTag(
   text: string,
   start: number,
   spend: (characters: number) => void,
@@ -925,20 +925,135 @@ type CommentKind = '/*' | '/%' | '<!--';
  * of the same kind that starts before that stop fails too, so it isn't made.
  */
 function commentReader(text: string): (kind: CommentKind, start: number) => number | undefined {
-  const failedUntil = new Map<CommentKind, number>();
-  return (kind, start) => {
-    if (start < (failedUntil.get(kind) ?? -1)) {
+  const findCloser = closerReader(text, COMMENT_CLOSE_RES);
+  return (kind, start) => findCloser(kind, start + kind.length)?.end;
+}
+
+/**
+ * Returns a function that finds the closer of a kind from a position, with that kind's pattern in `res`: the closer
+ * or a line terminator it may not cross (a match of one character), as SugarCube's `(?:.|\n)*?` stops. Calls of one
+ * kind must come in increasing order: a search that fails stops at a line terminator or the end, and a later one of
+ * the same kind that starts before that stop fails too, so it isn't made. So all searches take linear time.
+ */
+function closerReader<K extends string>(
+  text: string,
+  res: Readonly<Record<K, RegExp>>,
+): (kind: K, from: number) => { readonly start: number; readonly end: number } | undefined {
+  const failedUntil = new Map<K, number>();
+  return (kind, from) => {
+    if (from < (failedUntil.get(kind) ?? -1)) {
       return undefined;
     }
-    const re = COMMENT_CLOSE_RES[kind];
-    re.lastIndex = start + kind.length;
+    const re = res[kind];
+    re.lastIndex = from;
     const m = re.exec(text);
     if (m !== null && m[0].length > 1) {
-      return m.index + m[0].length;
+      return { start: m.index, end: m.index + m[0].length };
     }
     failedUntil.set(kind, m === null ? text.length : m.index);
     return undefined;
   };
+}
+
+/** The elements SugarCube reads with parsers of their own: `styleTag`, `svgTag`, `verbatimHtml`, `verbatimText`. */
+type OwnElementKind = 'style' | 'svg' | 'html' | 'nowiki';
+
+/**
+ * An element SugarCube reads with a parser of its own, at a `<` where `startsOwnElement` holds: where its opener ends,
+ * and, when the parser finds its end, where its content lies and where it ends. Without an end, SugarCube drops the
+ * opener and reads on after it.
+ */
+export interface OwnElement {
+  readonly kind: OwnElementKind;
+  readonly openerEnd: number;
+  readonly closed: { readonly contentEnd: number; readonly end: number } | undefined;
+}
+
+// What SugarCube's `(?:.|\n)` doesn't match: the line terminators other than a line feed.
+const BODY_STOPS = `[\\r${String.fromCharCode(0x2028, 0x2029)}]`;
+const OWN_CLOSE_RES: Readonly<Record<'style' | 'html' | 'nowiki', RegExp>> = {
+  style: new RegExp(`<\\/[Ss][Tt][Yy][Ll][Ee]>|${BODY_STOPS}`, 'g'),
+  html: new RegExp(`<\\/[Hh][Tt][Mm][Ll]>|${BODY_STOPS}`, 'g'),
+  nowiki: new RegExp(`<\\/[Nn][Oo][Ww][Ii][Kk][Ii]>|${BODY_STOPS}`, 'g'),
+};
+// The tags `svgTag` counts to find the end of an `<svg>` element, without their `[^>]*>`, which is found apart.
+const SVG_TAG_START_RE = /<\/?[Ss][Vv][Gg]/g;
+
+/**
+ * Returns a function that reads the element SugarCube reads with a parser of its own at `start`, as that parser reads
+ * it, or gives `undefined` where its pattern doesn't match (an `<svg` or `<style` with no `>` after it). Positions
+ * must come in increasing order. All readings take linear time: openers' `>` and closers are searched forward, and
+ * the ends of `<svg>` elements are worked out once, from the depth after each `<svg` or `</svg` tag.
+ */
+export function ownElementReader(text: string): (start: number) => OwnElement | undefined {
+  const findCloser = closerReader(text, OWN_CLOSE_RES);
+  // The first `>` at or after the last `<style` read.
+  let angle = text.indexOf('>');
+  let svgElements: ReadonlyMap<number, OwnElement> | undefined;
+  return (start) => {
+    if (startsWithFolded(text, start, '<svg')) {
+      svgElements ??= svgElementsOf(text);
+      return svgElements.get(start);
+    }
+    const kind = startsWithFolded(text, start, '<style')
+      ? 'style'
+      : startsWithFolded(text, start, '<html>')
+        ? 'html'
+        : 'nowiki';
+    if (kind === 'style' && angle !== -1 && angle < start) angle = text.indexOf('>', start);
+    // `<html>` and `<nowiki>` end at their fixed `>`; `<style` runs to the next.
+    const gt = kind === 'style' ? angle : start + (kind === 'html' ? 5 : 7);
+    if (gt === -1) return undefined;
+    const closer = findCloser(kind, gt + 1);
+    return {
+      kind,
+      openerEnd: gt + 1,
+      closed: closer === undefined ? undefined : { contentEnd: closer.start, end: closer.end },
+    };
+  };
+}
+
+/** Whether `text` has `prefix` at `start`, ignoring the case of ASCII letters. */
+function startsWithFolded(text: string, start: number, prefix: string): boolean {
+  return text.slice(start, start + prefix.length).toLowerCase() === prefix;
+}
+
+/**
+ * The `<svg>` elements SugarCube's `svgTag` parser reads, by where their opener starts: each `<svg` tag its pattern
+ * matches (`<svg[^>]*>`, searched from the start of the text), ending just past the first `</svg…>` tag after which
+ * as many `</svg` tags as `<svg` tags follow the opener, or not closed when there is none.
+ */
+function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
+  const tags: { readonly start: number; readonly end: number; readonly step: number }[] = [];
+  let angle = -1;
+  SVG_TAG_START_RE.lastIndex = 0;
+  for (let m = SVG_TAG_START_RE.exec(text); m !== null; m = SVG_TAG_START_RE.exec(text)) {
+    if (angle < m.index) angle = text.indexOf('>', m.index);
+    if (angle === -1) break;
+    tags.push({ start: m.index, end: angle + 1, step: m[0].length === 4 ? 1 : -1 });
+    // `[^>]*>` runs to the `>`: the next tag starts after it.
+    SVG_TAG_START_RE.lastIndex = angle + 1;
+  }
+  // depth[k]: opening tags minus closing tags among the first k; atOrBelow[k]: the first j > k with depth[j] <= depth[k].
+  const depth = [0];
+  tags.forEach((tag, k) => depth.push((depth[k] ?? 0) + tag.step));
+  const atOrBelow: (number | undefined)[] = [];
+  const candidates: number[] = [];
+  for (let k = depth.length - 1; k >= 0; k--) {
+    const here = depth[k] ?? 0;
+    while (candidates.length > 0 && (depth[candidates[candidates.length - 1] ?? 0] ?? 0) > here) candidates.pop();
+    atOrBelow[k] = candidates[candidates.length - 1];
+    candidates.push(k);
+  }
+  return new Map(
+    tags.flatMap((tag, k): [number, OwnElement][] => {
+      if (tag.step < 0) return [];
+      const j = atOrBelow[k];
+      const closer = j === undefined ? undefined : tags[j - 1];
+      const closed = closer === undefined ? undefined : { contentEnd: closer.start, end: closer.end };
+      return [[tag.start, { kind: 'svg', openerEnd: tag.end, closed }]];
+    }),
+  );
 }
 
 /** Where a `<script>` element's opener ends and its content ends, if it is complete. */

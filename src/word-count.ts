@@ -4,7 +4,7 @@
  */
 import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
-import { htmlEndTagAt, readHtmlStartTag, startsOwnElement, walkPassageMarkup } from './sugarcube-macros.js';
+import { htmlEndTagAt, ownElementReader, startsOwnElement, walkPassageMarkup } from './sugarcube-macros.js';
 import type { HtmlStartTagRead } from './sugarcube-macros.js';
 import { HtmlNestingError, htmlText } from './html-structure.js';
 import { htmlEscape } from './escape.js';
@@ -442,67 +442,122 @@ interface MarkupText {
 }
 
 /**
+ * The elements whose start tags `readMarkup` kept and no end tag has closed yet, innermost last. Each name keeps the
+ * places it has on the stack, so finding the innermost element of a name takes constant time, and closing elements
+ * takes time in proportion to how many were opened: the work of all calls together is linear.
+ */
+class OpenElements {
+  private readonly names: string[] = [];
+  private readonly places = new Map<string, number[]>();
+
+  open(name: string): void {
+    const places = this.places.get(name);
+    if (places === undefined) {
+      this.places.set(name, [this.names.length]);
+    } else {
+      places.push(this.names.length);
+    }
+    this.names.push(name);
+  }
+
+  /** Closes the innermost open element named `name`, and those opened inside it; false when none is open. */
+  close(name: string): boolean {
+    const places = this.places.get(name);
+    const place = places?.[places.length - 1];
+    if (place === undefined) return false;
+    while (this.names.length > place) {
+      const closed = this.names.pop();
+      if (closed !== undefined) this.places.get(closed)?.pop();
+    }
+    return true;
+  }
+}
+
+/**
  * Reads passage markup as SugarCube's wikifier walks it (`walkPassageMarkup`), leftmost first: macro tags,
  * `<<script>>` bodies, comments (and the opener of one that isn't closed) and italics markup are dropped, link
  * markup gives the text it shows, a `<script>` element is kept whole, and an HTML start tag that SugarCube's
  * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. In the text
- * between them, a start tag of the elements SugarCube reads with parsers of their own (`<style>`, `<svg>`, `<html>`,
- * `<nowiki>`) is kept, and so is an end tag of an element whose start tag was kept and that no end tag has closed
- * yet; any other `<` is text. Linear time: the start tags read here may read four times the text plus an allowance,
- * after which a `<` is text.
+ * between them:
+ * - an end tag is kept when it closes an element whose start tag was kept;
+ * - an element SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: a
+ *   `<style>` element shows nothing, an `<svg>` element and the content of `<html>` are kept as HTML, and the
+ *   content of `<nowiki>` is text. Without its end, the parser drops its opener, and so does this. The markup the
+ *   walk read inside such an element is not read again, nor is text the walk read as one part with something in it;
+ * - any other `<` is text.
+ *
+ * Linear time (see `OpenElements` and `ownElementReader`).
  */
 function readMarkup(text: string): MarkupText {
   const html: string[] = [];
   const prose: string[] = [];
-  // The names of the elements whose start tags were kept and are not closed yet.
-  const open: string[] = [];
-  const budget = { left: 4 * text.length + 100_000 };
-  const spend = (characters: number): void => {
-    budget.left -= characters;
-  };
+  const open = new OpenElements();
+  const readOwnElement = ownElementReader(text);
   const keepStartTag = (start: number, tag: HtmlStartTagRead): void => {
     html.push(text.slice(start, tag.end));
-    if (tag.container) open.push(tag.name);
+    if (tag.container) open.open(tag.name);
   };
   const keepText = (start: number, end: number): void => {
     const part = text.slice(start, end);
     html.push(part);
     prose.push(part);
   };
-  let nextAngle = -1;
+  /** Reads the markup at the `<` at `at`, before `end`; returns where the reading goes on, which may be past `end`. */
+  const readAngle = (at: number, end: number): number => {
+    const endTag = htmlEndTagAt(text, at);
+    if (endTag !== undefined && endTag.end <= end && open.close(endTag.name)) {
+      html.push(text.slice(at, endTag.end));
+      return endTag.end;
+    }
+    const own = startsOwnElement(text, at) ? readOwnElement(at) : undefined;
+    if (own === undefined) {
+      html.push('&lt;');
+      prose.push('<');
+      return at + 1;
+    }
+    const { closed } = own;
+    if (closed === undefined) return own.openerEnd;
+    switch (own.kind) {
+      case 'style':
+        break;
+      case 'svg':
+        html.push(text.slice(at, closed.end));
+        break;
+      case 'html':
+        html.push(text.slice(own.openerEnd, closed.contentEnd));
+        break;
+      case 'nowiki': {
+        const content = text.slice(own.openerEnd, closed.contentEnd);
+        html.push(htmlEscape(content));
+        prose.push(content);
+        break;
+      }
+      default: {
+        const _exhaustive: never = own.kind;
+        throw new Error(`Unhandled element: ${String(_exhaustive)}`);
+      }
+    }
+    return closed.end;
+  };
+  let nextAngle = text.indexOf('<');
   let kept = 0;
   /** The text from `kept` to `end`, where the walk read no markup. */
   const between = (end: number): void => {
     let from = kept;
-    for (;;) {
+    while (from < end) {
       if (nextAngle !== -1 && nextAngle < from) nextAngle = text.indexOf('<', from);
       if (nextAngle === -1 || nextAngle >= end) break;
-      const at = nextAngle;
-      keepText(from, at);
-      const endTag = htmlEndTagAt(text, at);
-      const closes = endTag === undefined || endTag.end > end ? -1 : open.lastIndexOf(endTag.name);
-      if (endTag !== undefined && closes !== -1) {
-        html.push(text.slice(at, endTag.end));
-        open.length = closes;
-        from = endTag.end;
-        continue;
-      }
-      const startTag = budget.left < 0 || !startsOwnElement(text, at) ? undefined : readHtmlStartTag(text, at, spend);
-      if (startTag !== undefined && startTag.end <= end) {
-        keepStartTag(at, startTag);
-        from = startTag.end;
-        continue;
-      }
-      html.push('&lt;');
-      prose.push('<');
-      from = at + 1;
+      keepText(from, nextAngle);
+      from = readAngle(nextAngle, end);
     }
-    keepText(from, end);
-    kept = end;
+    if (from < end) keepText(from, end);
+    kept = Math.max(from, end);
   };
-  nextAngle = text.indexOf('<');
   walkPassageMarkup(text, (region) => {
+    // A part the walk read inside an element read whole.
+    if (region.start < kept) return;
     between(region.start);
+    if (region.start < kept) return;
     switch (region.kind) {
       case 'link':
         if (region.label !== undefined) {

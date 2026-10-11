@@ -361,6 +361,30 @@ describe("countTextWords 'whitespace'", () => {
     expect(countTextWords(text, 'whitespace')).toBe(words);
   });
 
+  // SugarCube's styleTag, svgTag, verbatimHtml and verbatimText parsers: an element whose end they don't find loses
+  // only its opener (counts from SugarCube 2.37.3 in Chromium).
+  it.each([
+    ['a style element left open', '<style>p {} done', 3],
+    ['a style end tag left open', '<style>p{}</style', 1],
+    ['an upper-case style element left open', '<STYLE media="x">a b', 2],
+    ['a second style element left open', '<style>a</style><style>b c', 2],
+    ['a style element', '<style>a b</style> c d', 2],
+    ['a style opener ending at its first >', '<style title="a>b">x</style> y', 1],
+    ['a style element across a line separator', '<style>a\u2028b</style> c', 3],
+    ['an svg element left open', '<svg>a b', 2],
+    ['an svg element', '<svg><text>a b</text></svg> c', 3],
+    ['an svg element with one inside left open', '<svg><svg>x</svg> y', 2],
+    ['nested svg elements', '<svg><svg>x</svg></svg> y z', 3],
+    ['an upper-case svg element', '<SVG width="1"><text>q</text></SVG> r', 2],
+    ['verbatim HTML', '<html>a <b>b</b></html> c', 3],
+    ['verbatim HTML left open', '<html>a b', 2],
+    ['verbatim HTML holding markup', '<html>a [[x]] <<set $y to 1>></html>', 3],
+    ['verbatim text', '<nowiki>a <b>b</b> [[c]]</nowiki> d', 4],
+    ['verbatim text left open', '<nowiki>a b', 2],
+  ])('counts %s as SugarCube shows it', (_label, text, words) => {
+    expect(countTextWords(text, 'whitespace')).toBe(words);
+  });
+
   it('reads link text as text, not as HTML', () => {
     expect(countTextWords('[[a <b and c>|Room]] d', 'whitespace')).toBe(5);
     expect(countTextWords('[[I <3 you|Room]]', 'whitespace')).toBe(3);
@@ -417,6 +441,15 @@ describe('word counts take linear time on adversarial text', () => {
     ['stray end tags', '</b > '.repeat(100_000)],
     ['deep nesting', '<b>x '.repeat(100_000)],
     ['end tags far from their start tags', '<b>'.repeat(400) + 'x </i>'.repeat(100_000)],
+    ['end tags no start tag opened, after many', '<b>'.repeat(100_000) + '</i>'.repeat(100_000)],
+    ['end tags no start tag opened, after many spans', '<span>'.repeat(100_000) + 'x</i> '.repeat(100_000)],
+    ['end tags closing many at once', ('<b>'.repeat(1000) + '<i></b>').repeat(200)],
+    ['unclosed own elements', '<style>a '.repeat(50_000) + '<html>b '.repeat(50_000) + '<nowiki>c '.repeat(50_000)],
+    ['unbalanced svg elements', '<svg>a '.repeat(100_000) + '</svg>'.repeat(10)],
+    ['svg openers without a >', '<svg '.repeat(100_000)],
+    ['nested svg elements', '<svg>'.repeat(100_000) + '</svg>'.repeat(100_000)],
+    ['end tags of an element opened among many', '<b><i>'.repeat(100_000) + '</b>'.repeat(100_000)],
+    ['style openers without a >', '<style '.repeat(100_000)],
     ['combining marks', 'a' + '\u0301'.repeat(400_000)],
   ])('%s', (_label, text) => {
     for (const method of ['tweego', 'whitespace'] as const) {
