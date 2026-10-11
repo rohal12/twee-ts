@@ -85,17 +85,14 @@ export function toTwine2HTML(
 
 /** Diagnostics for what the Twine 2 story data cannot carry. */
 function twine2DataDiagnostics(story: ReadonlyStory): Diagnostic[] {
-  return [
-    ...twine2TagColors(story).diagnostics,
-    ...twine2MarkupDiagnostics(story),
-    ...stylesheetImportDiagnostics(codePassages(story).stylesheets),
-  ];
+  return [...twine2TagColors(story).diagnostics, ...twine2MarkupDiagnostics(story)];
 }
 
 /**
  * The diagnostics for what the Twine 2 story data cannot carry as HTML markup (HTML and archive output), beyond
- * those JSON output also gives (tag colors, stylesheet imports): text HTML cannot carry, tags and story options
- * that would not read back, and script and style code the escapers change. Lint reports these too.
+ * those JSON output also gives (tag colors): text HTML cannot carry, tags and story options that would not read back,
+ * script and style code the escapers change, and the `@import` rules the stylesheet as these outputs join it ignores
+ * (JSON output joins it otherwise, and reports its own). Lint reports these too.
  */
 export function twine2MarkupDiagnostics(story: ReadonlyStory): Diagnostic[] {
   const { scripts, stylesheets } = codePassages(story);
@@ -108,6 +105,7 @@ export function twine2MarkupDiagnostics(story: ReadonlyStory): Diagnostic[] {
     ),
     ...codeEscapeDiagnostics('script', joinCode(scripts, 'script')),
     ...codeEscapeDiagnostics('style', joinCode(stylesheets, 'stylesheet')),
+    ...stylesheetImportDiagnostics(stylesheets),
   ];
 }
 
@@ -115,6 +113,7 @@ export function twine2MarkupDiagnostics(story: ReadonlyStory): Diagnostic[] {
 function stylesheetImportDiagnostics(stylesheets: readonly ReadonlyPassage[]): Diagnostic[] {
   return ineffectiveImportDiagnostics(
     stylesheets.map((p) => ({ label: `Stylesheet passage "${p.name}"`, text: p.text })),
+    joinCode(stylesheets, 'stylesheet'),
   );
 }
 
