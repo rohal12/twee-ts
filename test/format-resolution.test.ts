@@ -505,6 +505,13 @@ describe('keeping a stable version next to a newer prerelease (#423, docs/story-
     expect(markerOf(result.output)).toBe('STABLE');
   });
 
+  it('builds with the beta when the derived ID review-1 is requested, which does not pin a folder', async () => {
+    const result = await compile(
+      options({ sources: reviewStory, formatId: 'review-1', formatPaths: [installStableAndBeta()], noRemote: true }),
+    );
+    expect(markerOf(result.output)).toBe('BETA');
+  });
+
   it('builds with the exact stable version once the beta is not in a searched directory', async () => {
     const formats = join(cacheRoot, 'formats');
     writeFormat(formats, 'stable', 'Review', '1.0.0', 'STABLE');

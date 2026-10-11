@@ -132,7 +132,7 @@ becomes
 
 **Before:** each source (local folders, format URLs, indices, the cache) chose by rules of its own, and what an online build chose could depend on what the cache held. **After:** one policy for every source ([How a Format Is Chosen](./story-formats#how-a-format-is-chosen)): the first source (local folders, then each format URL, then each format index) with an answering format wins; within a source, an exact version beats a newer one, and the greater version beats exact letter case. A same-major older version is used, with a warning, only when no source has an answering one. An online build's choice no longer depends on the cache.
 
-**Migrate:** name an exact `format-version` in StoryData when you depend on one that a format URL or index offers. It does not select a local version that a greater one of the same name and major hides (local folders keep only the greatest, as in Tweego, a prerelease included); request that folder by ID (`-f stable`, `formatId`) instead ([Keeping a Stable Version](./story-formats#keeping-a-stable-version)).
+**Migrate:** name an exact `format-version` in StoryData when you depend on one. In a format index with several versions it selects the exact one; a format URL offers a single version, so the exact version there only makes it preferred over later sources, and a newer version of the same major version from the URL is used anyway. It does not select a local version that a greater one of the same name and major hides (local folders keep only the greatest, as in Tweego, a prerelease included); request that folder by ID (`-f stable`, `formatId`) instead ([Keeping a Stable Version](./story-formats#keeping-a-stable-version)).
 
 ### The download cache is keyed by provenance
 
