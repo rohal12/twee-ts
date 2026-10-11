@@ -4,9 +4,10 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { build } from 'vite';
 import type { BuildWatcher } from './helpers/plugins.js';
+import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { cleanUp, COMPILE, makeProject, SETTLED, STORY } from './helpers/plugins.js';
 
@@ -118,4 +119,72 @@ describe('vite build watch: a separate entry that imports through a link (#307)'
       }, SETTLED);
     },
   );
+});
+
+// An absolute import is read from the root only when it is not already a path inside the root, as Vite reads it: the
+// entry's own absolute path is no import of a missing file in a folder below the root, whose nearest existing folder,
+// the root, would be watched whole, so that any file written there started a build (#320 review).
+describe('vite build watch: an entry inside the build given by its absolute path', () => {
+  it('builds nothing for a file written in the root that the story does not read', async () => {
+    const dir = makeProject({
+      'src/story.tw': STORY,
+      'src/app/entry.js': 'import "./dependency.js";',
+      'src/app/dependency.js': 'globalThis.v = 1;',
+    });
+    const root = join(dir, 'src');
+    const started: unknown = await build({
+      configFile: false,
+      root,
+      logLevel: 'silent',
+      plugins: [
+        tweeTsPlugin({
+          sources: [join(root, 'story.tw')],
+          format: 'test-format-1',
+          entry: join(root, 'app/entry.js'),
+          outputFilename: 'story.html',
+          compileOptions: COMPILE,
+        }),
+        // What the watcher reports, to name the file that started a build.
+        {
+          name: 'reported',
+          watchChange(id, change) {
+            events.push(`${change.event} ${toPosix(relative(dir, id))}`);
+          },
+        },
+      ],
+      build: { watch: {}, outDir: join(dir, 'dist'), emptyOutDir: true },
+    });
+    const watcher = started as BuildWatcher;
+    watchers.push(watcher);
+    const events: string[] = [];
+    watcher.on('event', (event) => {
+      events.push(event.code);
+      if (event.code === 'BUNDLE_END') void event.result?.close();
+    });
+    const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+    await vi.waitFor(() => {
+      expect(events).toContain('END');
+    }, SETTLED);
+    // Until the watcher is idle: macOS FSEvents reports the project's own files, written just before the watcher
+    // started, a moment after the first build, and those may start a build of their own (as in #433).
+    for (let seen = -1; seen !== events.length;) {
+      seen = events.length;
+      await pause(1000);
+    }
+    expect(events.at(-1)).toBe('END');
+    const settled = events.length;
+    // Long enough for the watcher to report it, and for a build it started to begin.
+    writeFileSync(join(root, 'notes.txt'), 'unrelated');
+    await pause(1500);
+    const after = events.slice(settled);
+    expect(
+      after.filter((code) => code === 'START'),
+      `after notes.txt: ${JSON.stringify(after)}`,
+    ).toEqual([]);
+    // A file the entry reads still starts one.
+    writeFileSync(join(root, 'app/dependency.js'), 'globalThis.v = "EDITED";');
+    await vi.waitFor(() => {
+      expect(readFileSync(join(dir, 'dist/story.html'), 'utf-8')).toContain('EDITED');
+    }, SETTLED);
+  });
 });

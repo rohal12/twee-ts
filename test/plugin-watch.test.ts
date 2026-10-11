@@ -13,7 +13,7 @@ import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
-import { watchTargets } from '../src/plugins/watch-targets.js';
+import { linksOnTheWay, missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
 import {
   cleanUp,
   COMPILE,
@@ -189,8 +189,8 @@ async function editExcludedThenSource(
   out: string,
   changes: string[],
 ): Promise<readonly string[]> {
+  // vi.waitFor runs its callback at once, which makes the first save.
   const saveUntilBuilt = async (text: string): Promise<void> => {
-    writeFileSync(project.start, storyWith(text));
     await vi.waitFor(() => {
       // A watcher may not be ready right after the first build; the edit is saved again until it is built.
       if (!readFileSync(out, 'utf-8').includes(text)) writeFileSync(project.start, storyWith(text));
@@ -205,15 +205,20 @@ async function editExcludedThenSource(
   // done when the watcher has reported two saves made after the image's: by then it has
   // reported the image too, had it watched it.
   const sourceChanges = (): number => changes.filter((id) => id.endsWith('/start.tw')).length;
-  await saveUntilBuilt('NEW_TEXT');
-  await vi.waitFor(() => {
-    expect(sourceChanges()).toBeGreaterThan(0);
-  }, SETTLED);
-  const seen = sourceChanges();
-  await saveUntilBuilt('LAST_TEXT');
-  await vi.waitFor(() => {
-    expect(sourceChanges()).toBeGreaterThan(seen);
-  }, SETTLED);
+  // The watcher drops a change to a file within 50 ms of the last one it reported for it (chokidar's throttle; on
+  // Linux Rollup also watches a changed file anew), while a build already under way may still read that save. So
+  // the edit is saved again until it is both built and reported after `reported` changes.
+  const saveUntilBuiltAndReported = async (text: string, reported: number): Promise<void> => {
+    await vi.waitFor(() => {
+      if (!readFileSync(out, 'utf-8').includes(text) || sourceChanges() <= reported) {
+        writeFileSync(project.start, storyWith(text));
+      }
+      expect(readFileSync(out, 'utf-8')).toContain(text);
+      expect(sourceChanges()).toBeGreaterThan(reported);
+    }, SETTLED);
+  };
+  await saveUntilBuiltAndReported('NEW_TEXT', 0);
+  await saveUntilBuiltAndReported('LAST_TEXT', sourceChanges());
   return changes;
 }
 
@@ -303,5 +308,66 @@ describe('vite build --watch', { timeout: 30_000 }, () => {
     const seen = await editExcludedThenSource(project, join(project.dir, 'dist', 'index.html'), changes);
     expect(seen.map((id) => id.split('/').pop())).toContain('start.tw');
     expect(seen.filter((id) => id.endsWith('.png'))).toEqual([]);
+  });
+});
+
+describe('missingImportFolders', () => {
+  it('gives the nearest folder that exists for a path that reaches nothing, and none for one that exists', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'app'));
+    writeFileSync(join(dir, 'app', 'here.js'), '');
+    expect(missingImportFolders([join(dir, 'app', 'later', 'deep', 'x.js'), join(dir, 'app', 'here.js')])).toEqual([
+      join(dir, 'app'),
+    ]);
+  });
+
+  it('never gives the root of the file system, which no watcher is asked to watch whole', () => {
+    const missing = join(realpathSync('/'), 'twee-ts-no-such-folder', 'x.js');
+    expect(missingImportFolders([missing])).toEqual([]);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('linksOnTheWay', () => {
+  /** The links on the way to `path` below `dir`, relative to it. */
+  const on = (dir: string, path: string): string[] =>
+    linksOnTheWay(join(dir, path)).map((link) => toPosix(relative(dir, link)));
+
+  it('lists every hop of a chain of file links, and of folder links, in the order they are followed', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'one'));
+    writeFileSync(join(dir, 'one', 'a.js'), '');
+    symlinkSync('a.js', join(dir, 'one', 'mid.js'));
+    symlinkSync('mid.js', join(dir, 'one', 'dependency.js'));
+    symlinkSync('one', join(dir, 'mid'));
+    symlinkSync('mid', join(dir, 'lib'));
+    expect(on(dir, 'one/dependency.js')).toEqual(['one/dependency.js', 'one/mid.js']);
+    expect(on(dir, 'lib/dependency.js')).toEqual(['lib', 'mid', 'one/dependency.js', 'one/mid.js']);
+    expect(on(dir, 'one/a.js')).toEqual([]);
+  });
+
+  it('follows a link with an absolute target, and stops where a name reaches nothing', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'real'));
+    symlinkSync(join(dir, 'real'), join(dir, 'linked'));
+    symlinkSync('nowhere.js', join(dir, 'real', 'dangling.js'));
+    expect(on(dir, 'linked/missing/x.js')).toEqual(['linked']);
+    expect(on(dir, 'linked/dangling.js')).toEqual(['linked', 'real/dangling.js']);
+  });
+
+  it('takes `..` in a link target after the link before it, as the file system does', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'deep', 'inner'), { recursive: true });
+    writeFileSync(join(dir, 'deep', 'f2.js'), '');
+    // `x` leads into deep/inner, so x/.. is deep (where f2.js is), not the folder holding x.
+    symlinkSync('deep/inner', join(dir, 'x'));
+    symlinkSync('x/../f2.js', join(dir, 'y'));
+    expect(on(dir, 'y')).toEqual(['y', 'x']);
+  });
+
+  it('ends a loop of links after as many hops as the file system follows', () => {
+    const dir = tempDir();
+    symlinkSync('b', join(dir, 'a'));
+    symlinkSync('a', join(dir, 'b'));
+    expect(on(dir, 'a/x.js').length).toBeLessThanOrEqual(41);
   });
 });

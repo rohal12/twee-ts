@@ -12,33 +12,14 @@
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { chromium } from 'playwright-core';
-import type { Browser, LaunchOptions } from 'playwright-core';
 import type { InlineConfig } from 'vite';
+import { launchChromium } from './helpers/chromium.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { COMPILE, STORY, buildFiles, cleanUp, makeProject, startServer, storyWith } from './helpers/plugins.js';
 
 afterEach(cleanUp);
-
-/** Launches the first Chromium that starts, or gives undefined. */
-async function launchChromium(): Promise<Browser | undefined> {
-  const path = process.env['CHROME_PATH'];
-  const attempts: LaunchOptions[] = [
-    ...(path === undefined || path === '' ? [] : [{ executablePath: path }]),
-    {},
-    { channel: 'chrome' },
-  ];
-  for (const options of attempts) {
-    try {
-      return await chromium.launch(options);
-    } catch {
-      // Not installed there: try the next.
-    }
-  }
-  return undefined;
-}
 
 const browser = await launchChromium();
 afterAll(async () => {
@@ -99,7 +80,8 @@ async function workerOutcome(pageUrl: string): Promise<string> {
   if (browser === undefined) throw new Error('No Chromium could be launched: set CHROME_PATH.');
   const page = await browser.newPage();
   try {
-    await page.goto(pageUrl);
+    // Well inside the 30 s of the polls that call this, so a load that never ends fails here, naming the step.
+    await page.goto(pageUrl, { timeout: 10_000 });
     // A string, as it is evaluated in the page (the tests are type-checked without the DOM's types).
     await page.waitForFunction('/^(worker|error):/.test(document.title)', undefined, { timeout: 15_000 });
     return await page.title();
@@ -148,6 +130,46 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
     });
   },
 );
+
+const sockets: WebSocket[] = [];
+afterEach(() => {
+  for (const socket of sockets.splice(0)) socket.close();
+});
+
+/** An HMR client of the dev server, as Vite's client in a page is one. */
+interface HmrClient {
+  /** The type of each message the server sent it, in order. */
+  readonly received: readonly string[];
+  /** How many of them were a full-reload. */
+  readonly reloads: () => number;
+  readonly socket: WebSocket;
+}
+
+/**
+ * Connects to the HMR socket of the dev server at `origin` (base `/`) as Vite's client does, and records the
+ * messages it receives from then on. Resolves once the socket is open, so the server counts it as a page; rejects
+ * when it closes or fails first.
+ */
+async function hmrClient(origin: string): Promise<HmrClient> {
+  const socket = new WebSocket(`${origin.replace('http', 'ws')}/`, 'vite-hmr');
+  sockets.push(socket);
+  const received: string[] = [];
+  socket.addEventListener('message', (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    const type = typeof message === 'object' && message !== null && 'type' in message ? message.type : undefined;
+    received.push(String(type));
+  });
+  await new Promise((open, fail) => {
+    socket.addEventListener('open', open);
+    socket.addEventListener('error', () => {
+      fail(new Error('the HMR socket failed before it opened'));
+    });
+    socket.addEventListener('close', () => {
+      fail(new Error('the HMR socket closed before it opened'));
+    });
+  });
+  return { received, reloads: () => received.filter((type) => type === 'full-reload').length, socket };
+}
 
 /** A page function, as source (the tests have no DOM types), that tells whether the first passage reads `text`. */
 const passageIs = (text: string): string =>
@@ -204,6 +226,10 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       });
       const { url } = await startServer({ root: dir, publicDir: false, plugins: [plugin], server: { watch: null } });
       const pageUrl = `${url}/index.html`;
+      // The server's messages to its pages, received by a client of its own that stays connected. Vite holds a
+      // full-reload sent while no page is connected for the next one that connects, which then loads twice; with this
+      // client connected, the reload after the story compiles again is received here, and is the signal to wait on.
+      const client = await hmrClient(url);
       expect(await workerOutcome(pageUrl)).toBe('worker:42');
 
       // The story no longer compiles, then a module of the worker changes: the bundle succeeds, the story does not.
@@ -216,8 +242,100 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:42');
 
       writeFileSync(join(dir, 'story/start.tw'), STORY);
+      const before = client.reloads();
       await fetch(pageUrl);
+      await expect.poll(() => client.reloads(), { timeout: 10_000 }).toBeGreaterThan(before);
       await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:84');
+    });
+
+    // A story compiled while no page is connected sends a full-reload that Vite holds for the next page to connect,
+    // which then loads twice: once as it opens, once as the reload arrives. The story page must come through that.
+    it('loads the new worker on a page reloaded by a reload held while no page was connected', async () => {
+      if (browser === undefined) throw new Error('No Chromium could be launched: set CHROME_PATH.');
+      const dir = makeProject(FILES);
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'runner-1',
+        entry: join(dir, 'entry.js'),
+        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+      });
+      const { server, url } = await startServer({
+        root: dir,
+        publicDir: false,
+        plugins: [plugin],
+        server: { watch: null },
+      });
+      const pageUrl = `${url}/index.html`;
+
+      // The reload is held, and a client connecting afterwards receives it after `connected`.
+      writeFileSync(join(dir, 'answer.js'), 'export const answer = 63;');
+      await fetch(pageUrl);
+      const client = await hmrClient(url);
+      await expect.poll(() => client.received, { timeout: 10_000 }).toEqual(['connected', 'full-reload']);
+      client.socket.close();
+      await expect.poll(() => server.ws.clients.size, { timeout: 10_000 }).toBe(0);
+
+      // Held again, for the story page this time.
+      writeFileSync(join(dir, 'answer.js'), 'export const answer = 84;');
+      await fetch(pageUrl);
+      const page = await browser.newPage();
+      let navigations = 0;
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) navigations++;
+      });
+      try {
+        await page.goto(pageUrl, { timeout: 10_000 });
+        await expect.poll(() => navigations, { timeout: 10_000 }).toBe(2);
+        await page.waitForFunction('/^(worker|error):/.test(document.title)', undefined, { timeout: 15_000 });
+        expect(await page.title()).toBe('worker:84');
+        expect(await page.evaluate('performance.getEntriesByType("navigation")[0].type')).toBe('reload');
+      } finally {
+        await page.close();
+      }
+    });
+  },
+);
+
+// A worker whose glob gains a file in Chromium (#424): reloading the story page runs a worker that has it.
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'a worker glob gaining a file in Chromium (#424)',
+  { timeout: 60_000 },
+  () => {
+    it.each([
+      ['with no watcher', false],
+      ['with a watcher', true],
+    ])('runs the new file after a reload, %s', async (_mode, watcher) => {
+      const dir = makeProject({
+        ...FILES,
+        'worker.js':
+          "postMessage(Object.values(import.meta.glob('./data/*.js', { eager: true, import: 'default' })).sort().join(','));",
+        'data/a.js': "export default 'A';",
+      });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'runner-1',
+        entry: join(dir, 'entry.js'),
+        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+      });
+      const { url } = await startServer({
+        root: dir,
+        publicDir: false,
+        plugins: [plugin],
+        server: watcher ? {} : { watch: null },
+      });
+      const pageUrl = `${url}/index.html`;
+      // The server's messages to its pages, received by a client of its own that stays connected. Vite holds a
+      // full-reload sent while no page is connected for the next one that connects, which then loads twice; with
+      // this client connected, the reload after the new bundle is received here, and is the signal to wait on.
+      const client = await hmrClient(url);
+      expect(await workerOutcome(pageUrl)).toBe('worker:A');
+      const before = client.reloads();
+      mkdirSync(join(dir, 'data'), { recursive: true });
+      writeFileSync(join(dir, 'data/b.js'), "export default 'B';");
+      // With no watcher, a request has the server catch up; with one, it may already have.
+      await fetch(pageUrl);
+      await expect.poll(() => client.reloads(), { timeout: 10_000 }).toBeGreaterThan(before);
+      expect(await workerOutcome(pageUrl)).toBe('worker:A,B');
     });
   },
 );

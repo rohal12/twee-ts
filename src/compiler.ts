@@ -17,7 +17,7 @@ import type {
   InlineSource,
   FileCacheEntry,
 } from './types.js';
-import { ineffectiveImportDiagnostics } from './css-imports.js';
+import { ineffectiveImportDiagnostics, joinWithLineFeeds } from './css-imports.js';
 import type { StylesheetSource } from './css-imports.js';
 import { createStory, getStoryStats, snapshot } from './story.js';
 import {
@@ -133,7 +133,7 @@ export async function compileForLint(
   options: Omit<CompileOptions, 'outputMode'>,
   outputs: string | undefined,
 ): Promise<CompileResult> {
-  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true });
+  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true, omitStyleImports: true });
 }
 
 /**
@@ -709,7 +709,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
       break;
 
     case 'json':
-      output = storyToJSON(story, startName, diagnostics);
+      output = storyToJSON(story, startName, diagnostics, context.omitStyleImports !== true);
       break;
 
     case 'html': {
@@ -743,7 +743,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
 
   // Compute stats
   const stats: CompileStats = {
-    ...getStoryStats(story, options.wordCountMethod),
+    ...getStoryStats(story, options.wordCountMethod, diagnostics),
     files: [...processedFiles],
     ...(externalFiles === undefined ? {} : { externalFiles }),
   };
@@ -805,6 +805,11 @@ interface BuildContext {
   /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
   readonly checkHead?: boolean;
   /**
+   * Leave out the warnings about `@import` rules that JSON output's stylesheet makes ineffective (for lint, which
+   * reports those of the Twine 2 HTML output's stylesheet instead).
+   */
+  readonly omitStyleImports?: boolean;
+  /**
    * Whether the output file named in `outputs` is written after the build: it is then checked to be writable
    * (see checkWritable) once the inputs are checked and before any is read, so a missing folder or a read-only
    * file fails before the work.
@@ -864,9 +869,11 @@ function ensureIFID(story: Story, diagnostics: Diagnostic[]): void {
  * https://github.com/iftechfoundation/twine-specs/blob/master/twine-2-jsonoutput-doc.md
  * `start` is the start passage the other output modes use (`startName`): the one StoryData or the options name,
  * else the default `Start` when the JSON lists a passage of that name. `tag-colors` holds the tag colors Twine 2
- * output writes; `diagnostics` receives a warning for each color left out (see `twine2TagColors()`).
+ * output writes; `diagnostics` receives a warning for each color left out (see `twine2TagColors()`), and for each
+ * `@import` that the `style` joined here makes ineffective unless `reportStyleImports` is false (lint, which reports
+ * those of the Twine 2 HTML output's join instead).
  */
-function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[]): string {
+function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[], reportStyleImports: boolean): string {
   // Gather script and stylesheet content, excluding them from passages.
   const scripts: string[] = [];
   const stylesheets: StylesheetSource[] = [];
@@ -895,7 +902,8 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
 
   const tagColors = twine2TagColors(story);
   pushAll(diagnostics, tagColors.diagnostics);
-  pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets));
+  const style = joinWithLineFeeds(stylesheets);
+  if (reportStyleImports) pushAll(diagnostics, ineffectiveImportDiagnostics(stylesheets, style));
   const start = story.twine2.start !== '' || storyPassages.some((p) => p.name === startName) ? startName : '';
   // Keys in the order the JSON output lists them; optional ones only when set.
   const obj = {
@@ -908,7 +916,7 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[])
     ...(story.twine2.zoom !== 1 ? { zoom: story.twine2.zoom } : {}),
     creator: CREATOR_NAME,
     'creator-version': VERSION,
-    style: stylesheets.map((sheet) => sheet.text).join('\n'),
+    style: style.text,
     script: scripts.map((text, i) => (i < scripts.length - 1 ? terminateScript(text) : text)).join(''),
     passages: storyPassages,
   };

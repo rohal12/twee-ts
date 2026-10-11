@@ -133,6 +133,41 @@ jobs:
           path: coverage
           if-no-files-found: ignore
 
+  # The Vite plugin's entry tracking reads Vite's resolver and worker plugin, which the peer range (>=8) lets differ:
+  # its tests also run against older Vite 8 release lines, besides the locked version every other job uses. 8.0 is
+  # the oldest; 8.2 is the oldest whose `vite build --watch` reports a change inside a watched folder, so its build
+  # watch cases (the resolution correction, letting go of a worker's bundle) run there, where 8.0 skips them.
+  plugin-older-vite:
+    name: plugin tests (Vite ${{ matrix.vite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vite: ['8.0', '8.2']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Vite ${{ matrix.vite }}
+        env:
+          VITE_LINE: ${{ matrix.vite }}
+        run: |
+          pnpm add -D "vite@~$VITE_LINE.0"
+          echo "Vite $(node -p "require('vite/package.json').version")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the entry tracking tests
+        run: pnpm exec vitest run test/vite-plugin-entry-links.test.ts test/vite-plugin-entry-worker.test.ts
+
   # Builds and packs the tarball, then checks it on every platform as users consume it.
   package:
     uses: ./.github/workflows/package.yml
