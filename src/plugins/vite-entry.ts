@@ -372,7 +372,35 @@ function asEntryBuildPlugin(plugin: Plugin, command: ViteCommand): Plugin {
       isRecord(config) ? withOverrides(config, new Map([['command', command]])) : config,
     ]);
   }
-  return withOverrides(plugin, overrides);
+  return pluginWith(plugin, overrides);
+}
+
+/**
+ * A copy of `plugin` with some properties of its own reading differently; the plugin itself is left untouched. The
+ * copy has the plugin's prototype (a class's methods and getters) and each of its own properties as they are
+ * defined (a getter stays a getter), so a frozen plugin, or one whose hooks are getters, is copied as well: a Proxy
+ * may not answer differently for a property a frozen object defines. The copy stands in for the plugin wherever
+ * the plugin list has it.
+ */
+export function pluginWith(plugin: Plugin, overrides: ReadonlyMap<PropertyKey, unknown>): Plugin {
+  const copy: Plugin = { ...plugin };
+  // Between the copy and the plugin's prototype, the overridden properties as plain writable ones: Vite clones a
+  // plugin by assigning its own properties to an object of the same prototype, which fails for a property that
+  // prototype has only a getter for (a class whose hook is a getter).
+  const layer = {};
+  Object.setPrototypeOf(layer, Reflect.getPrototypeOf(plugin));
+  for (const [key, value] of overrides) {
+    Object.defineProperty(layer, key, { value, writable: true, enumerable: false, configurable: true });
+  }
+  Object.setPrototypeOf(copy, layer);
+  for (const key of Reflect.ownKeys(plugin)) {
+    const descriptor = Object.getOwnPropertyDescriptor(plugin, key);
+    if (descriptor !== undefined && !overrides.has(key)) Object.defineProperty(copy, key, descriptor);
+  }
+  for (const [key, value] of overrides) {
+    Object.defineProperty(copy, key, { value, writable: true, enumerable: true, configurable: true });
+  }
+  return copy;
 }
 
 /** `target` with some properties reading differently; the object itself is left untouched. */
@@ -491,7 +519,7 @@ function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin
       }),
     );
   }
-  return overrides.size === 0 ? plugin : withOverrides(plugin, overrides);
+  return overrides.size === 0 ? plugin : pluginWith(plugin, overrides);
 }
 
 const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;

@@ -460,3 +460,101 @@ describe.skipIf(process.platform === 'win32').each([
     60_000,
   );
 });
+
+/** A plugin that serves the module `virtual-dependency`, written in each way a plugin object may be. */
+function virtualPlugin(form: string): Plugin {
+  const resolveId = (source: string): string | undefined =>
+    source === 'virtual-dependency' ? '\0virtual-dependency' : undefined;
+  const load = (id: string): string | undefined => (id === '\0virtual-dependency' ? exported('A') : undefined);
+  switch (form) {
+    case 'frozen':
+      return Object.freeze({ name: 'frozen', resolveId, load });
+    // Hooks the entry build gives the dev command, and `apply`, which it decides itself.
+    case 'frozen, with apply and config hooks':
+      return Object.freeze({
+        name: 'frozen-config',
+        apply: () => true,
+        config: () => undefined,
+        configResolved: () => undefined,
+        resolveId,
+        load,
+      });
+    case 'with a resolveId getter of its own':
+      return {
+        name: 'own-getter',
+        get resolveId() {
+          return resolveId;
+        },
+        load,
+      };
+    case 'a class instance with a resolveId getter on its prototype': {
+      class Served {
+        readonly name = 'class-getter';
+        get resolveId(): typeof resolveId {
+          return resolveId;
+        }
+        load(id: string): string | undefined {
+          return load(id);
+        }
+      }
+      return new Served();
+    }
+    default:
+      throw new Error(`unknown form ${form}`);
+  }
+}
+
+/**
+ * The user's plugins are wrapped (in the entry build, and in `vite build --watch` with the entry inside the build),
+ * whatever the plugin object is: frozen, or with hooks behind getters. Every mode builds the story with the module
+ * the plugin serves (#320 review).
+ */
+describe.each([
+  ['dev, watcher', 'dev'],
+  ['dev, no watcher', 'dev'],
+  ['build watch, inside the build', 'inside'],
+  ['build watch, in a build of its own', 'separate'],
+] as const)('a plugin of the user, %s', (mode, kind) => {
+  it.each([
+    'frozen',
+    'frozen, with apply and config hooks',
+    'with a resolveId getter of its own',
+    'a class instance with a resolveId getter on its prototype',
+  ])(
+    'serves its module when it is %s',
+    async (form) => {
+      const root = makeProject({
+        'story/start.tw': STORY,
+        'outer.js': 'globalThis.outer = 1;',
+        'entry.js': IMPORTING('virtual-dependency'),
+      });
+      const plugins = [
+        virtualPlugin(form),
+        tweeTsPlugin({
+          sources: [join(root, 'story')],
+          format: 'test-format-1',
+          entry: join(root, 'entry.js'),
+          outputFilename: 'story.html',
+          compileOptions: COMPILE,
+        }),
+      ];
+      let html: string;
+      if (kind === 'dev') {
+        const { url } = await startServer({ root, server: mode === 'dev, watcher' ? {} : { watch: null }, plugins });
+        html = await (await fetch(`${url}/story.html`)).text();
+      } else {
+        await startBuildWatch({
+          root,
+          plugins,
+          build: {
+            outDir: join(root, 'out'),
+            ...(kind === 'separate' ? { rolldownOptions: { input: join(root, 'outer.js') } } : {}),
+          },
+        });
+        html = readFileSync(join(root, 'out/story.html'), 'utf-8');
+      }
+      expect(seen(html)).toEqual(['A']);
+    },
+    60_000,
+  );
+});

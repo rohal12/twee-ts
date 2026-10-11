@@ -37,6 +37,7 @@ import {
   forgetKeptResolver,
   importSpellings,
   PLUGIN_NAME,
+  pluginWith,
   removeFromBundle,
   takeEntryFromBundle,
   withWorkerPlugin,
@@ -186,8 +187,8 @@ function isOwnPlugin(plugin: Plugin): boolean {
 }
 
 /**
- * `plugin` with a `resolveId` hook that passes each import it resolves (see importKey) to `claim`; the plugin object
- * itself is left untouched. A plugin without a `resolveId` hook in JavaScript is returned as it is.
+ * A copy of `plugin` (see pluginWith) with a `resolveId` hook that passes each import it resolves (see importKey) to
+ * `claim`. A plugin without a `resolveId` hook in JavaScript is returned as it is.
  */
 function claimingPlugin(plugin: Plugin, claim: (key: string) => void): Plugin {
   const hook = plugin.resolveId;
@@ -201,13 +202,10 @@ function claimingPlugin(plugin: Plugin, claim: (key: string) => void): Plugin {
     }
     return result;
   };
-  const wrapped = typeof hook === 'function' ? claiming : { ...hook, handler: claiming };
-  return new Proxy(plugin, {
-    get(target, key, receiver) {
-      const value: unknown = key === 'resolveId' ? wrapped : Reflect.get(target, key, receiver);
-      return value;
-    },
-  });
+  return pluginWith(
+    plugin,
+    new Map([['resolveId', typeof hook === 'function' ? claiming : { ...hook, handler: claiming }]]),
+  );
 }
 
 /** The part of a build hook's context that registering watch targets uses. */
