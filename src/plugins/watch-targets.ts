@@ -27,10 +27,29 @@ interface Walked {
 
 const NOTHING: Walked = { targets: [], whole: false };
 
+/** What the build watch is to watch for the inputs: the paths to register, and the links the inputs are reached through. */
+export interface WatchPlan {
+  /** The paths to register with the bundler's watcher (forward slashes). */
+  readonly targets: string[];
+  /**
+   * Every link the inputs are reached through, as authored (platform paths): each hop of a chain of links, the links
+   * among the folders above an input and the links below a source folder that source discovery follows. A watcher
+   * that follows links watches the end of a chain, and does not report that a link was pointed elsewhere.
+   */
+  readonly links: string[];
+  /**
+   * With `given` spelling, the real path of each target (platform paths). A watcher that follows links keeps watching
+   * what a target led to when it was registered, also after a link on the way leads elsewhere, so a target whose real
+   * path changed is registered by its new real path as well.
+   */
+  readonly reals: ReadonlyMap<string, string>;
+}
+
 /**
  * The paths to register for the inputs (forward-slash paths): every file under
  * them that source discovery reads, but those `skip` returns true for, and no
- * path the build writes (`outputs`). With `real` spelling, a path that is a link, and each link above an input, is registered as authored too.
+ * path the build writes (`outputs`). With `real` spelling, each link an input is reached through is registered as
+ * authored too, every hop of a chain of links (see linksOnTheWay), but those that lead to a folder holding an output.
  *
  * A folder is registered, with what it holds, only when watching it reports
  * nothing the story leaves out: nothing below it is skipped (an `exclude`
@@ -48,12 +67,36 @@ export function watchTargets(
   outputs: OutputPaths,
   spelling: TargetSpelling,
 ): string[] {
-  // By real path, a path that is a link itself is also registered as authored: replacing the link changes what
-  // the input is, and only its own location sees that.
-  const spell = (path: string, real: string): string[] => {
-    if (spelling === 'given') return [path];
-    const realSpelling = toPosix(real);
-    return toPosix(path) !== realSpelling && isLink(path) ? [realSpelling, toPosix(path)] : [realSpelling];
+  return watchPlan(inputs, skip, outputs, spelling).targets;
+}
+
+/** What watchTargets registers for the inputs, and the links they are reached through. */
+export function watchPlan(
+  inputs: readonly string[],
+  skip: (file: string) => boolean,
+  outputs: OutputPaths,
+  spelling: TargetSpelling,
+): WatchPlan {
+  const links = new Set<string>();
+  /** Every link on the way to `path`, noted; those registered by real path are the ones that lead to no output. */
+  const hopsOf = (path: string): string[] => {
+    const hops = linksOnTheWay(path);
+    for (const hop of hops) links.add(hop);
+    return hops.filter((hop) => !outputs.holds(realPathOf(hop))).map(toPosix);
+  };
+  // By real path, each link a path is reached through is also registered as authored, every hop of a chain: replacing
+  // a link changes what the input is, and only its own location sees that. A path below a folder is reached through
+  // the links of the input above it, so only the links it is itself are looked for.
+  // As given, a path is registered once: Rollup's watcher follows a link, watches what it leads to when the path is
+  // first registered, and reports a change by the name it was given. The real path of each is noted, since a path that
+  // leads elsewhere later is watched from there again (see WatchPlan.reals).
+  const reals = new Map<string, string>();
+  const spell = (path: string, real: string, isRoot: boolean): string[] => {
+    if (spelling === 'real') return [toPosix(real), ...(isRoot || isLink(path) ? hopsOf(path) : [])];
+    // Rollup's watcher fails with an error nobody handles for a path that is a loop of links.
+    if (isLoop(path)) return [];
+    if (!isLoop(real)) reals.set(path, real);
+    return [path];
   };
   const walk = (path: string, real: string, isRoot: boolean): Walked => {
     if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return NOTHING;
@@ -62,21 +105,27 @@ export function watchTargets(
     try {
       entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
       if (entry === undefined || outputs.isFile(entry.real)) return NOTHING;
-      if (!entry.stat.isDirectory()) return skip(path) ? NOTHING : { targets: spell(path, entry.real), whole: true };
+      if (!entry.stat.isDirectory()) {
+        return skip(path) ? NOTHING : { targets: spell(path, entry.real, isRoot), whole: true };
+      }
       names = readdirSync(path);
     } catch {
-      return isRoot && !outputs.isDir(real) ? { targets: spell(path, real), whole: true } : NOTHING;
+      return isRoot && !outputs.isDir(real) ? { targets: spell(path, real, isRoot), whole: true } : NOTHING;
     }
     const folder = entry.real;
     const children = names.map((name) => walk(`${path}/${name}`, join(folder, name), false));
     const held = children.flatMap((child) => child.targets);
     const whole = !outputs.holds(folder) && children.every((child) => child.whole);
-    return whole ? { targets: [...spell(path, folder), ...held], whole } : { targets: held, whole };
+    return whole ? { targets: [...spell(path, folder, isRoot), ...held], whole } : { targets: held, whole };
   };
-  return inputs.flatMap((input) => [
-    ...(spelling === 'real' ? linkedAncestors(input, outputs) : []),
-    ...walk(input, realPathOf(input), true).targets,
-  ]);
+  const targets = inputs.flatMap((input) => {
+    for (const link of linksOnTheWay(input)) links.add(link);
+    return [
+      ...(spelling === 'real' ? ancestorLinks(input, outputs) : []),
+      ...walk(input, realPathOf(input), true).targets,
+    ];
+  });
+  return { targets: [...new Set(targets)], links: [...links], reals };
 }
 
 /**
@@ -123,17 +172,15 @@ export function missingImportFolders(authored: Iterable<string>): string[] {
 }
 
 /**
- * The links among the folders above `path`, as authored (forward slashes), nearest last. Replacing one of them
- * changes what the input is, and only its own location sees that. A link directly in the root of the file system
- * (`/var` on macOS) is the system's own alias and is left out, as is a link to a folder that holds a build output,
- * since watching it whole would rebuild for what the build writes.
+ * The links among the folders above `path`, as authored (forward slashes), every hop of a chain, in the order they are
+ * followed. Replacing one of them changes what the input is, and only its own location sees that. A link directly in
+ * the root of the file system (`/var` on macOS) is the system's own alias and is left out, as is a link to a folder that
+ * holds a build output, since watching it whole would rebuild for what the build writes.
  */
-function linkedAncestors(path: string, outputs: OutputPaths): string[] {
-  const links: string[] = [];
-  for (let folder = dirname(path); dirname(dirname(folder)) !== dirname(folder); folder = dirname(folder)) {
-    if (isLink(folder) && !outputs.holds(realPathOf(folder))) links.unshift(toPosix(folder));
-  }
-  return links;
+function ancestorLinks(path: string, outputs: OutputPaths): string[] {
+  return linksOnTheWay(dirname(path))
+    .filter((link) => !outputs.holds(realPathOf(link)))
+    .map(toPosix);
 }
 
 /** How many links the file system follows for one path before it gives up (ELOOP on Linux). */
@@ -183,6 +230,16 @@ export function linksOnTheWay(path: string): string[] {
     rest = [...names(target, root), ...rest];
   }
   return links;
+}
+
+/** Whether `path` is a loop of links, which the file system gives up following (ELOOP). */
+function isLoop(path: string): boolean {
+  try {
+    statSync(path);
+    return false;
+  } catch (error) {
+    return error instanceof Error && Reflect.get(error, 'code') === 'ELOOP';
+  }
 }
 
 /** Whether `path` is a symbolic link (or a Windows junction); a path that can't be read is none. */
