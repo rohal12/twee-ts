@@ -12,7 +12,7 @@
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import type { InlineConfig } from 'vite';
 import { launchChromium } from './helpers/chromium.js';
@@ -292,6 +292,50 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       } finally {
         await page.close();
       }
+    });
+  },
+);
+
+// A worker whose glob gains a file in Chromium (#424): reloading the story page runs a worker that has it.
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'a worker glob gaining a file in Chromium (#424)',
+  { timeout: 60_000 },
+  () => {
+    it.each([
+      ['with no watcher', false],
+      ['with a watcher', true],
+    ])('runs the new file after a reload, %s', async (_mode, watcher) => {
+      const dir = makeProject({
+        ...FILES,
+        'worker.js':
+          "postMessage(Object.values(import.meta.glob('./data/*.js', { eager: true, import: 'default' })).sort().join(','));",
+        'data/a.js': "export default 'A';",
+      });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'runner-1',
+        entry: join(dir, 'entry.js'),
+        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+      });
+      const { url } = await startServer({
+        root: dir,
+        publicDir: false,
+        plugins: [plugin],
+        server: watcher ? {} : { watch: null },
+      });
+      const pageUrl = `${url}/index.html`;
+      // The server's messages to its pages, received by a client of its own that stays connected. Vite holds a
+      // full-reload sent while no page is connected for the next one that connects, which then loads twice; with
+      // this client connected, the reload after the new bundle is received here, and is the signal to wait on.
+      const client = await hmrClient(url);
+      expect(await workerOutcome(pageUrl)).toBe('worker:A');
+      const before = client.reloads();
+      mkdirSync(join(dir, 'data'), { recursive: true });
+      writeFileSync(join(dir, 'data/b.js'), "export default 'B';");
+      // With no watcher, a request has the server catch up; with one, it may already have.
+      await fetch(pageUrl);
+      await expect.poll(() => client.reloads(), { timeout: 10_000 }).toBeGreaterThan(before);
+      expect(await workerOutcome(pageUrl)).toBe('worker:A,B');
     });
   },
 );
