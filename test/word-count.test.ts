@@ -235,7 +235,10 @@ function htmlTreeText(html: string): string {
   return text.join('');
 }
 
-/** Characters and names that make tags, comments, character references, hidden elements, tables and their text. */
+/**
+ * Characters and names that make tags, comments, character references, hidden elements, tables and their text. SVG
+ * and MathML, whose text shows by rules of their own, are compared with a browser (word-count-sugarcube.test.ts).
+ */
 const HTML_ALPHABET = fc.constantFrom(
   '<',
   '>',
@@ -264,7 +267,7 @@ const HTML_ALPHABET = fc.constantFrom(
   'br',
   'table',
   'td',
-  'svg',
+  'i',
 );
 
 describe('htmlText', () => {
@@ -373,14 +376,34 @@ describe("countTextWords 'whitespace'", () => {
     ['a style element across a line separator', '<style>a\u2028b</style> c', 3],
     ['an svg element left open', '<svg>a b', 2],
     ['an svg element', '<svg><text>a b</text></svg> c', 3],
-    ['an svg element with one inside left open', '<svg><svg>x</svg> y', 2],
-    ['nested svg elements', '<svg><svg>x</svg></svg> y z', 3],
+    ['an svg element with one inside left open', '<svg><svg>x</svg> y', 1],
+    ['nested svg elements', '<svg><svg>x</svg></svg> y z', 2],
     ['an upper-case svg element', '<SVG width="1"><text>q</text></SVG> r', 2],
     ['verbatim HTML', '<html>a <b>b</b></html> c', 3],
     ['verbatim HTML left open', '<html>a b', 2],
     ['verbatim HTML holding markup', '<html>a [[x]] <<set $y to 1>></html>', 3],
     ['verbatim text', '<nowiki>a <b>b</b> [[c]]</nowiki> d', 4],
     ['verbatim text left open', '<nowiki>a b', 2],
+    ['text an svg element does not render', '<svg>left open  Well  <<set $x to "A > B">>  </svg>', 0],
+    ['text directly in an svg element', '<svg>a b</svg> c', 1],
+    ['a tspan outside a text element', '<svg><tspan>a</tspan></svg> b', 1],
+    ['links and groups in a text element', '<svg><text><a>a</a> <g>g</g></text></svg> b', 2],
+    ['a foreignObject', '<svg><foreignObject>a <b>b</b></foreignObject></svg> c', 3],
+    ['HTML that leaves an svg element', '<svg>a<b>b</b> c</svg> d', 3],
+    ['an animation element in a text element', '<svg><text>a<set>b</set></text></svg>', 1],
+    ['text paths', '<svg><textPath>a</textPath><text><textPath>b</textPath></text></svg>', 1],
+    ['definitions', '<svg><defs><text>a</text></defs></svg> b', 1],
+    ['MathML in passage markup', '<math><mi>x</mi><mrow>y</mrow> z</math> w', 1],
+    ['MathML in verbatim HTML', '<html><math><mi>x</mi><mrow>y</mrow></math></html> w', 2],
+    ['verbatim HTML with a style element left open', '<html><style></html> a b c d', 4],
+    ['verbatim HTML with a comment left open', '<html><!-- x</html> a b c d', 4],
+    ['verbatim HTML with a title element left open', '<html><title></html> a b c d', 4],
+    ['an svg element with a comment left open', '<svg><!-- x</svg> a b c d', 4],
+    ['a tag name that only starts with style', '<styles>a</style> b', 2],
+    ['a custom element named after style', '<style-x>a</style> b', 2],
+    ['a tag name that only starts with svg', '<svgx>a</svgx> b', 2],
+    ['a tag name that only starts with html', '<htmlx>a</htmlx> b', 2],
+    ['a tag name that only starts with nowiki', '<nowikix>a</nowikix> b', 2],
   ])('counts %s as SugarCube shows it', (_label, text, words) => {
     expect(countTextWords(text, 'whitespace')).toBe(words);
   });
@@ -399,6 +422,11 @@ describe("countTextWords 'whitespace'", () => {
       htmlTooDeep: true,
     });
     expect(countTextWordsChecked('<div>'.repeat(10) + 'a b', 'whitespace')).toEqual({ words: 2, htmlTooDeep: false });
+    // An <svg> element is read on its own, and gives no words when it nests too deeply.
+    expect(countTextWordsChecked(`<svg>${'<g>'.repeat(MAX_HTML_DEPTH)}</svg> a b`, 'whitespace')).toEqual({
+      words: 2,
+      htmlTooDeep: true,
+    });
   });
 
   it.each([

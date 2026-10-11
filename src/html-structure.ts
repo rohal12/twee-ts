@@ -934,40 +934,103 @@ const UNSHOWN_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
   'title',
 ]);
 
+/** SVG elements that render nothing of what they hold: definitions, paint servers, metadata. */
+const UNRENDERED_SVG_ELEMENTS: ReadonlySet<string> = new Set([
+  'clipPath',
+  'defs',
+  'desc',
+  'filter',
+  'linearGradient',
+  'marker',
+  'mask',
+  'metadata',
+  'pattern',
+  'radialGradient',
+  'symbol',
+]);
+
+/** SVG elements whose text is rendered inside a `text` element; `text` itself renders its text anywhere. */
+const SVG_TEXT_CHILDREN: ReadonlySet<string> = new Set(['a', 'textPath', 'tspan']);
+
+/** The MathML token elements, the only MathML elements that render their text. */
+const MATHML_TOKEN_ELEMENTS: ReadonlySet<string> = new Set(['mi', 'mn', 'mo', 'ms', 'mtext']);
+
+/** How `htmlText` reads MathML. */
+export interface HtmlTextOptions {
+  /**
+   * Whether MathML token elements show their text, as they do when a browser parses the HTML whole (the default).
+   * When false, no text inside a `math` element shows, as when each element is made apart (SugarCube's `htmlTag`
+   * parser makes the elements inside `<math>` HTML elements, which a `math` element doesn't render).
+   */
+  readonly mathText?: boolean;
+}
+
 /**
  * The text an HTML parser reads from `html` in the content of a `div` element of a page (see `TEXT_CONTEXT`), as
  * `parseHtml()` reads a document, and a browser shows: the characters it inserts as text, in the order it reads them,
  * with a space for each `br` element. Start and end tags, comments and doctypes give none, whatever their quoted
  * attribute values hold, and neither does a tag left open at the end, which the parser drops; a `<` that starts none
- * of them (`<3`, `a < b`) is text. A character reference gives the character it stands for. The text of `script`,
- * `style`, `title`, `noscript` (read with scripting on), `noembed`, `noframes` and `iframe` elements and the content
- * of a `template` is left out; that of a `textarea` is read. Styles and attributes such as `hidden` are not
- * considered. The parser drops NUL characters in most places and the line feed just after a `pre`, `listing` or
- * `textarea` start tag. Throws an `HtmlNestingError` when elements nest more than `MAX_HTML_DEPTH` deep, counting the
- * `html`, `body` and `div` elements around the text.
+ * of them (`<3`, `a < b`) is text. A character reference gives the character it stands for. Left out:
+ * - the text of `script`, `style`, `title`, `noscript` (read with scripting on), `noembed`, `noframes` and `iframe`
+ *   elements and the content of a `template`; that of a `textarea` is read;
+ * - in SVG, text outside a `text` element (and the `tspan`, `textPath` and `a` elements in one) or a
+ *   `foreignObject`, and everything in definitions, paint servers and metadata (`defs`, `symbol`, `mask`, `title`…);
+ * - in MathML, text outside a token element (`mi`, `mn`, `mo`, `ms`, `mtext`), or all of it (see `options`).
+ * Styles and attributes such as `hidden` are not considered. The parser drops NUL characters in most places and the
+ * line feed just after a `pre`, `listing` or `textarea` start tag. Throws an `HtmlNestingError` when elements nest
+ * more than `MAX_HTML_DEPTH` deep, counting the `html`, `body` and `div` elements around the text.
  */
-export function htmlText(html: string): string {
+export function htmlText(html: string, options: HtmlTextOptions = {}): string {
+  const mathText = options.mathText ?? true;
   const pieces: string[] = [];
-  // Template contents, and the elements in them: an element stays inside the template whose content it was put in.
+  // Elements and template contents nothing in which shows. An element stays where it was put: the parser moves
+  // elements only between places of the same kind (formatting elements, foster parenting), never out of a template
+  // content or a foreign element.
   const unshown = new WeakSet<ParentNode>();
+  // SVG elements that render their text: `text`, and the text content elements in one.
+  const svgText = new WeakSet<ParentNode>();
   const treeAdapter = depthLimitedTreeAdapter({
     placed(parent, child) {
       if (!isElement(child)) return;
       if (unshown.has(parent)) {
         unshown.add(child);
-      } else if (child.tagName === 'br') {
-        pieces.push(' ');
+        return;
+      }
+      switch (child.namespaceURI) {
+        case htmlSpec.NS.SVG:
+          if (UNRENDERED_SVG_ELEMENTS.has(child.tagName)) {
+            unshown.add(child);
+          } else if (child.tagName === 'text' || (SVG_TEXT_CHILDREN.has(child.tagName) && svgText.has(parent))) {
+            svgText.add(child);
+          }
+          return;
+        case htmlSpec.NS.MATHML:
+          if (!mathText) unshown.add(child);
+          return;
+        default:
+          if (child.tagName === 'br') pieces.push(' ');
       }
     },
     templateContent(content) {
       unshown.add(content);
     },
     text(parent, text) {
-      if (!unshown.has(parent) && !(isElement(parent) && UNSHOWN_TEXT_ELEMENTS.has(parent.tagName))) {
-        pieces.push(text);
-      }
+      if (shows(parent)) pieces.push(text);
     },
   });
+  const shows = (parent: ParentNode): boolean => {
+    if (unshown.has(parent)) return false;
+    if (!isElement(parent)) return true;
+    if (UNSHOWN_TEXT_ELEMENTS.has(parent.tagName)) return false;
+    switch (parent.namespaceURI) {
+      case htmlSpec.NS.SVG:
+        return svgText.has(parent) || parent.tagName === 'foreignObject';
+      case htmlSpec.NS.MATHML:
+        return MATHML_TOKEN_ELEMENTS.has(parent.tagName);
+      default:
+        return true;
+    }
+  };
   parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter });
   return pieces.join('');
 }

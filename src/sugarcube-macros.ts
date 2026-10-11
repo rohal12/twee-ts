@@ -739,7 +739,7 @@ const OTHER_TAG_OPENER_RE = /<(?:[Hh][Tt][Mm][Ll]>|[Nn][Oo][Ww][Ii][Kk][Ii]>|[Ss
  * Whether the start tag of an element that SugarCube reads with a parser of its own, rather than `htmlTag`, may start
  * at `start`: `<html>`, `<nowiki>`, `<style` or `<svg`.
  */
-export function startsOwnElement(text: string, start: number): boolean {
+function startsOwnElement(text: string, start: number): boolean {
   OTHER_TAG_OPENER_RE.lastIndex = start;
   return OTHER_TAG_OPENER_RE.test(text);
 }
@@ -775,7 +775,7 @@ interface HtmlStartTag {
  * An HTML start tag as SugarCube's `htmlTag` parser reads it: its name in lower case, where it ends, and whether it
  * opens an element that an end tag closes (one not void and not written with `/>`).
  */
-export interface HtmlStartTagRead {
+interface HtmlStartTagRead {
   readonly name: string;
   readonly end: number;
   readonly container: boolean;
@@ -978,6 +978,8 @@ const OWN_CLOSE_RES: Readonly<Record<'style' | 'html' | 'nowiki', RegExp>> = {
 };
 // The tags `svgTag` counts to find the end of an `<svg>` element, without their `[^>]*>`, which is found apart.
 const SVG_TAG_START_RE = /<\/?[Ss][Vv][Gg]/g;
+// What may follow a tag name: white space, `/` or `>`.
+const TAG_NAME_END_RE = /^[\s/>]$/;
 
 /**
  * Returns a function that reads the element SugarCube reads with a parser of its own at `start`, as that parser reads
@@ -985,16 +987,20 @@ const SVG_TAG_START_RE = /<\/?[Ss][Vv][Gg]/g;
  * must come in increasing order. All readings take linear time: openers' `>` and closers are searched forward, and
  * the ends of `<svg>` elements are worked out once, from the depth after each `<svg` or `</svg` tag.
  */
-export function ownElementReader(text: string): (start: number) => OwnElement | undefined {
+function ownElementReader(text: string): (start: number) => OwnElement | undefined {
   const findCloser = closerReader(text, OWN_CLOSE_RES);
   // The first `>` at or after the last `<style` read.
   let angle = text.indexOf('>');
   let svgElements: ReadonlyMap<number, OwnElement> | undefined;
   return (start) => {
-    if (startsWithFolded(text, start, '<svg')) {
+    // SugarCube reads `<svg` and `<style` only when the tag name ends there (`<styles>` is markup of another kind).
+    const ends = (name: string): boolean =>
+      startsWithFolded(text, start, name) && TAG_NAME_END_RE.test(text.charAt(start + name.length));
+    if (ends('<svg')) {
       svgElements ??= svgElementsOf(text);
       return svgElements.get(start);
     }
+    if (startsWithFolded(text, start, '<s') && !ends('<style')) return undefined;
     const kind = startsWithFolded(text, start, '<style')
       ? 'style'
       : startsWithFolded(text, start, '<html>')
@@ -1299,17 +1305,34 @@ export type MarkupRegion =
       readonly end: number;
       readonly link: PassageLink | undefined;
       readonly tag: HtmlStartTagRead;
-    };
+    }
+  /**
+   * An element SugarCube reads with a parser of its own (`<style>`, `<svg>`, `<html>`, `<nowiki>`), up to its end, or
+   * only its opener when the parser finds no end; told apart only when the walk is asked to (see `walkPassageMarkup`).
+   */
+  | { readonly kind: 'own-element'; readonly start: number; readonly end: number; readonly element: OwnElement };
 
 /**
  * Walks passage markup in order, as SugarCube's wikifier walks it (see `findPassageLinks`), telling `visit` about
- * each part it reads apart from text, in order and without overlaps.
+ * each part it reads apart from text, in order and without overlaps. With `ownElements`, the elements SugarCube reads
+ * with parsers of their own are read as those parsers read them (see `ownElementReader`), and the walk goes on after
+ * them; without, as the link check reads them, their tags are markup and what they hold is walked.
  */
-export function walkPassageMarkup(text: string, visit: (region: MarkupRegion) => void): void {
-  walkMarkup(text, readContext(text), visit);
+export function walkPassageMarkup(
+  text: string,
+  visit: (region: MarkupRegion) => void,
+  options: { readonly ownElements?: boolean } = {},
+): void {
+  walkMarkup(text, readContext(text), visit, options.ownElements ?? false);
 }
 
-function walkMarkup(text: string, context: ReadContext, visit: (region: MarkupRegion) => void): void {
+function walkMarkup(
+  text: string,
+  context: ReadContext,
+  visit: (region: MarkupRegion) => void,
+  ownElements = false,
+): void {
+  const readOwnElement = ownElements ? ownElementReader(text) : undefined;
   const matchTagAt = tagMatcher(text);
   const readComment = commentReader(text);
   const readScriptElement = scriptElementReader(text);
@@ -1355,6 +1378,12 @@ function walkMarkup(text: string, context: ReadContext, visit: (region: MarkupRe
         return end;
       }
       case 'tag': {
+        const own = readOwnElement !== undefined && startsOwnElement(text, start) ? readOwnElement(start) : undefined;
+        if (own !== undefined) {
+          const end = own.closed?.end ?? own.openerEnd;
+          visit({ kind: 'own-element', start, end, element: own });
+          return end;
+        }
         const read = readHtmlTag(start);
         if (read.tag !== undefined) {
           visit({ kind: 'html-tag', start, end: read.end, link: read.link, tag: read.tag });
@@ -1449,6 +1478,7 @@ function markupPassageLinks(text: string, context: ReadContext): PassageLink[] {
         }
         return;
       case 'comment':
+      case 'own-element':
         return;
       default: {
         const _exhaustive: never = region;

@@ -4,8 +4,8 @@
  */
 import type { WordCountMethod } from './types.js';
 import { splitTweeFields } from './twee-syntax.js';
-import { htmlEndTagAt, ownElementReader, startsOwnElement, walkPassageMarkup } from './sugarcube-macros.js';
-import type { HtmlStartTagRead } from './sugarcube-macros.js';
+import { htmlEndTagAt, walkPassageMarkup } from './sugarcube-macros.js';
+import type { OwnElement } from './sugarcube-macros.js';
 import { HtmlNestingError, htmlText } from './html-structure.js';
 import { htmlEscape } from './escape.js';
 
@@ -439,6 +439,8 @@ interface MarkupText {
   readonly html: string;
   /** The text alone, with no tag: what is counted when the HTML can't be read. */
   readonly prose: string;
+  /** An `<svg>` element or `<html>` content nests elements more than `MAX_HTML_DEPTH` deep. */
+  readonly htmlTooDeep: boolean;
 }
 
 /**
@@ -477,115 +479,112 @@ class OpenElements {
  * Reads passage markup as SugarCube's wikifier walks it (`walkPassageMarkup`), leftmost first: macro tags,
  * `<<script>>` bodies, comments (and the opener of one that isn't closed) and italics markup are dropped, link
  * markup gives the text it shows, a `<script>` element is kept whole, and an HTML start tag that SugarCube's
- * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. In the text
- * between them:
- * - an end tag is kept when it closes an element whose start tag was kept;
- * - an element SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: a
- *   `<style>` element shows nothing, an `<svg>` element and the content of `<html>` are kept as HTML, and the
- *   content of `<nowiki>` is text. Without its end, the parser drops its opener, and so does this. The markup the
- *   walk read inside such an element is not read again, nor is text the walk read as one part with something in it;
- * - any other `<` is text.
+ * `htmlTag` parser reads is kept, so that a `<<` or `[[` inside its attribute values is not markup. An element
+ * SugarCube reads with a parser of its own (`ownElementReader`) is read as that parser reads it: a `<style>` element
+ * shows nothing, the text an `<svg>` element or the content of `<html>` shows, read as HTML of its own, is kept as
+ * text, and so is the content of `<nowiki>`; without its end, the parser drops its opener, and so does this. In the
+ * text between them, an end tag is kept when it closes an element whose start tag was kept, and any other `<` is text.
  *
  * Linear time (see `OpenElements` and `ownElementReader`).
  */
 function readMarkup(text: string): MarkupText {
   const html: string[] = [];
   const prose: string[] = [];
+  let htmlTooDeep = false;
   const open = new OpenElements();
-  const readOwnElement = ownElementReader(text);
-  const keepStartTag = (start: number, tag: HtmlStartTagRead): void => {
-    html.push(text.slice(start, tag.end));
-    if (tag.container) open.open(tag.name);
-  };
-  const keepText = (start: number, end: number): void => {
-    const part = text.slice(start, end);
-    html.push(part);
+  const keepText = (part: string): void => {
+    html.push(htmlEscape(part));
     prose.push(part);
   };
-  /** Reads the markup at the `<` at `at`, before `end`; returns where the reading goes on, which may be past `end`. */
-  const readAngle = (at: number, end: number): number => {
-    const endTag = htmlEndTagAt(text, at);
-    if (endTag !== undefined && endTag.end <= end && open.close(endTag.name)) {
-      html.push(text.slice(at, endTag.end));
-      return endTag.end;
-    }
-    const own = startsOwnElement(text, at) ? readOwnElement(at) : undefined;
-    if (own === undefined) {
-      html.push('&lt;');
-      prose.push('<');
-      return at + 1;
-    }
+  /** Reads an element SugarCube reads with a parser of its own, at `start`. */
+  const readOwnElement = (start: number, own: OwnElement): void => {
     const { closed } = own;
-    if (closed === undefined) return own.openerEnd;
+    if (closed === undefined) return;
     switch (own.kind) {
       case 'style':
-        break;
+        return;
       case 'svg':
-        html.push(text.slice(at, closed.end));
-        break;
       case 'html':
-        html.push(text.slice(own.openerEnd, closed.contentEnd));
-        break;
-      case 'nowiki': {
-        const content = text.slice(own.openerEnd, closed.contentEnd);
-        html.push(htmlEscape(content));
-        prose.push(content);
-        break;
-      }
+        // SugarCube parses the element (or the content) as HTML of its own, so nothing left open in it reaches
+        // what follows. HTML nested too deeply to read gives no text.
+        try {
+          keepText(
+            htmlText(own.kind === 'svg' ? text.slice(start, closed.end) : text.slice(own.openerEnd, closed.contentEnd)),
+          );
+        } catch (e) {
+          if (!(e instanceof HtmlNestingError)) throw e;
+          htmlTooDeep = true;
+        }
+        return;
+      case 'nowiki':
+        keepText(text.slice(own.openerEnd, closed.contentEnd));
+        return;
       default: {
         const _exhaustive: never = own.kind;
         throw new Error(`Unhandled element: ${String(_exhaustive)}`);
       }
     }
-    return closed.end;
   };
   let nextAngle = text.indexOf('<');
-  let kept = 0;
-  /** The text from `kept` to `end`, where the walk read no markup. */
-  const between = (end: number): void => {
-    let from = kept;
-    while (from < end) {
-      if (nextAngle !== -1 && nextAngle < from) nextAngle = text.indexOf('<', from);
+  /** The text from `from` to `end`, where the walk read no markup. */
+  const between = (from: number, end: number): void => {
+    let at = from;
+    for (;;) {
+      if (nextAngle !== -1 && nextAngle < at) nextAngle = text.indexOf('<', at);
       if (nextAngle === -1 || nextAngle >= end) break;
-      keepText(from, nextAngle);
-      from = readAngle(nextAngle, end);
-    }
-    if (from < end) keepText(from, end);
-    kept = Math.max(from, end);
-  };
-  walkPassageMarkup(text, (region) => {
-    // A part the walk read inside an element read whole.
-    if (region.start < kept) return;
-    between(region.start);
-    if (region.start < kept) return;
-    switch (region.kind) {
-      case 'link':
-        if (region.label !== undefined) {
-          html.push(htmlEscape(region.label));
-          prose.push(region.label);
-        }
-        break;
-      case 'html-tag':
-        keepStartTag(region.start, region.tag);
-        break;
-      case 'script-element':
-        // A complete element is kept for the HTML parser, which leaves its text out; SugarCube reads an opener
-        // without a `</script>` and shows nothing for it.
-        if (region.complete) html.push(text.slice(region.start, region.end));
-        break;
-      case 'macro':
-      case 'script-body':
-      case 'comment':
-        break;
-      default: {
-        const _exhaustive: never = region;
-        throw new Error(`Unhandled markup region: ${JSON.stringify(_exhaustive)}`);
+      const part = text.slice(at, nextAngle);
+      html.push(part);
+      prose.push(part);
+      const endTag = htmlEndTagAt(text, nextAngle);
+      if (endTag !== undefined && endTag.end <= end && open.close(endTag.name)) {
+        html.push(text.slice(nextAngle, endTag.end));
+        at = endTag.end;
+      } else {
+        html.push('&lt;');
+        prose.push('<');
+        at = nextAngle + 1;
       }
     }
-    kept = region.end;
-  });
-  between(text.length);
-  return { html: html.join(''), prose: prose.join('') };
+    const part = text.slice(at, end);
+    html.push(part);
+    prose.push(part);
+  };
+  let kept = 0;
+  walkPassageMarkup(
+    text,
+    (region) => {
+      between(kept, region.start);
+      switch (region.kind) {
+        case 'link':
+          if (region.label !== undefined) keepText(region.label);
+          break;
+        case 'html-tag':
+          html.push(text.slice(region.start, region.end));
+          if (region.tag.container) open.open(region.tag.name);
+          break;
+        case 'script-element':
+          // A complete element is kept for the HTML parser, which leaves its text out; SugarCube reads an opener
+          // without a `</script>` and shows nothing for it.
+          if (region.complete) html.push(text.slice(region.start, region.end));
+          break;
+        case 'own-element':
+          readOwnElement(region.start, region.element);
+          break;
+        case 'macro':
+        case 'script-body':
+        case 'comment':
+          break;
+        default: {
+          const _exhaustive: never = region;
+          throw new Error(`Unhandled markup region: ${JSON.stringify(_exhaustive)}`);
+        }
+      }
+      kept = region.end;
+    },
+    { ownElements: true },
+  );
+  between(kept, text.length);
+  return { html: html.join(''), prose: prose.join(''), htmlTooDeep };
 }
 
 const NUL = String.fromCharCode(0);
@@ -604,13 +603,15 @@ export interface WordCount {
  * without tags are counted instead.
  */
 function countWhitespaceWords(text: string): WordCount {
-  const { html, prose } = readMarkup(text);
+  const { html, prose, htmlTooDeep } = readMarkup(text);
+  if (htmlTooDeep) return { words: splitTweeFields(prose).length, htmlTooDeep };
   // Text that holds no tag, character reference or NUL reads as itself.
   if (!html.includes('<') && !html.includes('&') && !html.includes(NUL)) {
     return { words: splitTweeFields(html).length, htmlTooDeep: false };
   }
   try {
-    return { words: splitTweeFields(htmlText(html)).length, htmlTooDeep: false };
+    // SugarCube makes the elements of passage markup one by one, so those inside `<math>` are HTML elements.
+    return { words: splitTweeFields(htmlText(html, { mathText: false })).length, htmlTooDeep: false };
   } catch (e) {
     if (!(e instanceof HtmlNestingError)) throw e;
     return { words: splitTweeFields(prose).length, htmlTooDeep: true };

@@ -62,10 +62,26 @@ const markup = (word: fc.Arbitrary<string>): fc.Arbitrary<string> =>
       '<nowiki>as <b>written</b></nowiki>',
       '<nowiki>left open',
       '<iframe>fallback</iframe>',
+      '<svg><g>ungrouped text</g><text>drawn <tspan>span</tspan></text></svg>',
+      '<svg><foreignObject>foreign <b>text</b></foreignObject></svg>',
+      '<html><svg>raw text</svg> after</html>',
+      '<html><math><mi>x</mi><mrow>y</mrow></math></html>',
+      '<math><mi>x</mi> z</math>',
+      '<html><style></html>',
+      '<html><!-- open</html>',
+      '<svg><!-- open</svg>',
+      '<styles>not a style</style>',
     ),
   );
 
 const SEPARATOR = fc.constantFrom(' ', '\n', '  ');
+
+/**
+ * How many passages the sampled comparison takes, and from which seed: fixed, so a run can be repeated. A run with
+ * `WORD_COUNT_ORACLE_RUNS` and `WORD_COUNT_ORACLE_SEED` set compares more, or other, passages.
+ */
+const SAMPLES = Number(process.env['WORD_COUNT_ORACLE_RUNS'] ?? 500);
+const SEED = Number(process.env['WORD_COUNT_ORACLE_SEED'] ?? 421_422);
 
 /** A passage of words and markup, set apart by white space. */
 const passage = fc
@@ -121,19 +137,37 @@ describe.runIf(oracle !== undefined || process.env['CI'] !== undefined)(
         '<html>a [[x]] <<set $y to 1>></html>',
         '<nowiki>a <b>b</b> [[c]]</nowiki> d',
         '<nowiki>a b',
+        // The third review: SVG and MathML text, own elements' content read on its own, tag name boundaries.
+        '<svg>left open  Well  <<set $x to "A > B">>  </svg>',
+        '<svg>a b</svg> c',
+        '<svg><tspan>a</tspan></svg> b',
+        '<svg><text><a>a</a> <g>g</g></text></svg> b',
+        '<svg><foreignObject>a <b>b</b></foreignObject></svg> c',
+        '<svg>a<b>b</b> c</svg> d',
+        '<svg><text>a<set>b</set></text></svg>',
+        '<svg><textPath>a</textPath><text><textPath>b</textPath></text></svg>',
+        '<math><mi>x</mi><mrow>y</mrow> z</math> w',
+        '<html><math><mi>x</mi><mrow>y</mrow></math></html> w',
+        '<html><style></html> a b c d',
+        '<html><!-- x</html> a b c d',
+        '<html><title></html> a b c d',
+        '<svg><!-- x</svg> a b c d',
+        '<styles>a</style> b',
+        '<style-x>a</style> b',
+        '<svgx>a</svgx> b',
       ];
       const shown = await counts(cases);
       expect(cases.map((text) => countTextWords(text, 'whitespace'))).toEqual(shown);
     });
 
     it('count the words SugarCube shows for generated passages', async () => {
-      const texts = fc.sample(passage, 500);
+      const texts = fc.sample(passage, { numRuns: SAMPLES, seed: SEED });
       const shown = await counts(texts);
       const differ = texts.flatMap((text, i) => {
         const words = countTextWords(text, 'whitespace');
         return words === shown[i] ? [] : [{ text, words, sugarCube: shown[i] }];
       });
       expect(differ).toEqual([]);
-    }, 60_000);
+    }, 600_000);
   },
 );
