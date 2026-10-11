@@ -66,6 +66,14 @@ const TAKEN = NAMES.filter(([, name]) => {
   }
 });
 
+// Names every file system twee-ts supports takes (ext4, tmpfs, APFS and HFS+ at 255 bytes or code units, NTFS at
+// 255 UTF-16 units): dropped from TAKEN, their cases would pass by not running, so this fails instead.
+describe('the names every supported file system takes', () => {
+  it.each(['255 ASCII bytes', '255 bytes of CJK', '243 bytes of CJK'])('include %s', (label) => {
+    expect(TAKEN.map(([taken]) => taken)).toContain(label);
+  });
+});
+
 describe.each(TAKEN)('a target of %s', (_label, name) => {
   it('is written by writeFileAtomic, new and replaced, leaving no temporary file', () => {
     const path = join(dir, name);
@@ -191,6 +199,7 @@ describe('temporaryName', () => {
         expect(Buffer.byteLength(a)).toBeLessThanOrEqual(LIMIT);
         expect(a.length).toBeLessThanOrEqual(LIMIT);
         expect(a).not.toBe(b);
+        // The part of the temporary name between the leading dot and the pid is a prefix of the target's name.
         expect(name.startsWith(a.slice(1, a.lastIndexOf(`.${pid}-`)))).toBe(true);
       }),
     );
