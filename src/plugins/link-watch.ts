@@ -59,6 +59,11 @@ export function createLinkWatch(): LinkWatch {
     known = new Map([...known.keys()].map((link) => [link, destination(link)]));
     touch();
   };
+  /** Reads the links again once the events that come together have come. */
+  const schedule = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(check, SETTLE_MS);
+  };
   const stopWatching = (): void => {
     for (const watcher of watchers.splice(0)) watcher.close();
     clearTimeout(timer);
@@ -76,12 +81,9 @@ export function createLinkWatch(): LinkWatch {
       known = new Map(links.map((link) => [link, destination(link)]));
       for (const parent of new Set(links.map((link) => dirname(link)))) {
         try {
-          const watcher = watch(parent, () => {
-            clearTimeout(timer);
-            timer = setTimeout(check, SETTLE_MS);
-          });
-          // A folder that goes away, or a limit of the system: the links in it are read again with the next build.
-          watcher.on('error', () => undefined);
+          const watcher = watch(parent, schedule);
+          // A folder that goes away, or a limit of the system: the links in it are read again.
+          watcher.on('error', schedule);
           watchers.push(watcher);
         } catch {
           // The folder can't be watched; the links in it are read again with the next build.

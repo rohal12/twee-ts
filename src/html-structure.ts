@@ -1041,11 +1041,15 @@ function parseText(html: string): HtmlDocument {
   return parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
 }
 
-/** The `div` that `TEXT_CONTEXT` ends with, in the document it starts. */
-function contextDiv(document: HtmlDocument): HtmlElement | undefined {
+/** The body of the page that `TEXT_CONTEXT` starts. */
+function pageBody(document: HtmlDocument): HtmlElement | undefined {
   const page = childrenOf(document).find((node) => isHtmlElement(node, 'html'));
-  const body = page === undefined ? undefined : childrenOf(page).find((node) => isHtmlElement(node, 'body'));
-  const div = body === undefined ? undefined : childrenOf(body)[1];
+  return page === undefined ? undefined : childrenOf(page).find((node) => isHtmlElement(node, 'body'));
+}
+
+/** The `div` that `TEXT_CONTEXT` ends with, after its `hr`, in the document it starts. */
+function contextDiv(document: HtmlDocument): HtmlElement | undefined {
+  const div = childrenOf(pageBody(document) ?? document)[1];
   return div !== undefined && isHtmlElement(div, 'div') ? div : undefined;
 }
 
@@ -1054,9 +1058,8 @@ function contextDiv(document: HtmlDocument): HtmlElement | undefined {
  * body if the text closed it.
  */
 function afterContext(document: HtmlDocument): ChildNode[] {
+  const body = pageBody(document);
   const div = contextDiv(document);
-  const page = childrenOf(document).find((node) => isHtmlElement(node, 'html'));
-  const body = page === undefined ? undefined : childrenOf(page).find((node) => isHtmlElement(node, 'body'));
   return div === undefined || body === undefined ? [] : [...div.childNodes, ...childrenOf(body).slice(2)];
 }
 

@@ -338,6 +338,11 @@ describe.skipIf(noRelinkWatch)('createLinkWatch (#434)', () => {
       await vi.waitFor(() => {
         expect(text(watch.signal)).toBe('2');
       }, settled);
+      // A link that is gone leads nowhere.
+      rmSync(link);
+      await vi.waitFor(() => {
+        expect(text(watch.signal)).toBe('3');
+      }, settled);
       watch.close();
       expect(() => readFileSync(watch.signal)).toThrow();
     } finally {
