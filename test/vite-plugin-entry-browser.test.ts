@@ -12,7 +12,7 @@
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 import type { Browser, LaunchOptions } from 'playwright-core';
@@ -218,6 +218,42 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
       writeFileSync(join(dir, 'story/start.tw'), STORY);
       await fetch(pageUrl);
       await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:84');
+    });
+  },
+);
+
+// A worker whose glob gains a file in Chromium (#424): reloading the story page runs a worker that has it.
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'a worker glob gaining a file in Chromium (#424)',
+  { timeout: 60_000 },
+  () => {
+    it.each([
+      ['with no watcher', false],
+      ['with a watcher', true],
+    ])('runs the new file after a reload, %s', async (_mode, watcher) => {
+      const dir = makeProject({
+        ...FILES,
+        'worker.js':
+          "postMessage(Object.values(import.meta.glob('./data/*.js', { eager: true, import: 'default' })).sort().join(','));",
+        'data/a.js': "export default 'A';",
+      });
+      const plugin = tweeTsPlugin({
+        sources: [join(dir, 'story')],
+        format: 'runner-1',
+        entry: join(dir, 'entry.js'),
+        compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+      });
+      const { url } = await startServer({
+        root: dir,
+        publicDir: false,
+        plugins: [plugin],
+        server: watcher ? {} : { watch: null },
+      });
+      const pageUrl = `${url}/index.html`;
+      expect(await workerOutcome(pageUrl)).toBe('worker:A');
+      mkdirSync(join(dir, 'data'), { recursive: true });
+      writeFileSync(join(dir, 'data/b.js'), "export default 'B';");
+      await expect.poll(() => workerOutcome(pageUrl), { timeout: 30_000 }).toBe('worker:A,B');
     });
   },
 );

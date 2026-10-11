@@ -3,7 +3,18 @@
  * which output options it gets, and how loud its own build may be.
  */
 import { describe, it, expect } from 'vitest';
-import { entryBuildLogLevel, entryOutput, takeEntryFromBundle, type BundleItem } from '../src/plugins/vite-entry.js';
+import { resolve } from 'node:path';
+import type { Plugin } from 'vite';
+import { toPosix } from '../src/plugins/paths.js';
+import type { ImportHookContext } from '../src/plugins/vite-entry.js';
+import {
+  entryBuildLogLevel,
+  entryOutput,
+  importSpellings,
+  takeEntryFromBundle,
+  withWorkerPlugin,
+  type BundleItem,
+} from '../src/plugins/vite-entry.js';
 
 const chunk = (name: string, isEntry: boolean, code: string): BundleItem => ({
   type: 'chunk',
@@ -81,5 +92,59 @@ describe('entryBuildLogLevel', () => {
     ['silent', 'silent'],
   ] as const)('%s → %s: never the progress lines, never louder than the outer level', (outer, inner) => {
     expect(entryBuildLogLevel(outer)).toBe(inner);
+  });
+});
+
+describe('withWorkerPlugin', () => {
+  const own: Plugin = { name: 'own' };
+  const added: Plugin = { name: 'added' };
+
+  it.each([
+    ['a function', { plugins: () => [own] }, [[own], added]],
+    ['nothing', {}, [undefined, added]],
+    ['no worker options', undefined, [undefined, added]],
+  ])('puts the plugin after the user’s worker plugins given as %s', (_form, worker, expected) => {
+    const result = withWorkerPlugin(worker, () => added);
+    expect(result.plugins?.()).toEqual(expected);
+  });
+
+  it('keeps a list of worker plugins, which older Vite versions took and Vite still reads (and flattens)', () => {
+    const listed: unknown = { plugins: [own] };
+    const result = withWorkerPlugin(listed as Parameters<typeof withWorkerPlugin>[0], () => added);
+    expect(result.plugins?.()).toEqual([[own], added]);
+  });
+
+  it('keeps the other worker options', () => {
+    expect(withWorkerPlugin({ format: 'es' }, () => added).format).toBe('es');
+  });
+});
+
+describe('importSpellings', () => {
+  // An environment Vite's resolver cannot run in: it fails, and only the written paths are known.
+  const failing = { environment: { config: {} } } as unknown as ImportHookContext;
+  const root = resolve('/project');
+  const importer = toPosix(resolve('/project/app/entry.js'));
+  const at = (path: string): string => toPosix(resolve(path));
+
+  it.each([
+    ['a relative path', './dependency.js', [at('/project/app/dependency.js')]],
+    ['a path up', '../shared/dependency.js', [at('/project/shared/dependency.js')]],
+    ['the importer’s own folder', '.', [at('/project/app')]],
+    [
+      'a path from the root, then from the file system’s',
+      '/dependency.js',
+      [at('/project/dependency.js'), '/dependency.js'],
+    ],
+    ['a bare name', 'dependency', []],
+    ['an alias', '@/dependency', []],
+  ])('takes %s as written, with no resolver', async (_form, source, expected) => {
+    expect(await importSpellings(failing, source, importer, root)).toEqual({ spellings: expected, kept: undefined });
+  });
+
+  it.each([
+    ['a virtual module', '\0virtual:x', importer],
+    ['an import from a virtual module', './dependency.js', '\0virtual:x'],
+  ])('has none for %s', async (_form, source, from) => {
+    expect(await importSpellings(failing, source, from, root)).toEqual({ spellings: [], kept: undefined });
   });
 });

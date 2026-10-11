@@ -153,6 +153,12 @@ export const MATRIX = {
       'build watch glob gains a file',
       'dev recursive glob gains a file in a linked folder',
       'dev watcher recursive glob gains a file in a linked folder',
+      'dev bare package link retargeted',
+      'dev watcher bare package link retargeted',
+      'build watch bare package link retargeted',
+      'dev worker glob gains a file',
+      'dev watcher worker glob gains a file',
+      'build watch worker glob gains a file',
     ],
   },
 } as const satisfies Record<string, CaseGroup>;

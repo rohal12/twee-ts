@@ -107,7 +107,9 @@ export function importWatchTargets(authored: Iterable<string>, outputs: OutputPa
 
 /**
  * The nearest folder that exists, for each of the paths in `authored` that reaches nothing: where creating that
- * file (or the folders above it) shows. Of a path that exists there is none.
+ * file (or the folders above it) shows. Of a path that exists there is none, and neither is the root of a file
+ * system (an absolute import such as `/missing.js`, which Vite reads from the project root first), which no watcher
+ * is asked to watch whole.
  */
 export function missingImportFolders(authored: Iterable<string>): string[] {
   const folders = new Set<string>();
@@ -115,7 +117,7 @@ export function missingImportFolders(authored: Iterable<string>): string[] {
     if (existsSync(spelling)) continue;
     let folder = dirname(spelling);
     while (!existsSync(folder) && dirname(folder) !== folder) folder = dirname(folder);
-    if (existsSync(folder)) folders.add(folder);
+    if (existsSync(folder) && dirname(folder) !== folder) folders.add(folder);
   }
   return [...folders];
 }

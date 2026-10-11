@@ -4,9 +4,8 @@
  * it can (see entryInputSettings), and otherwise, and always in dev, with a
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
-import { readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
-import { build, loadConfigFromFile, mergeConfig } from 'vite';
+import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { build, createIdResolver, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
   BuildEnvironmentOptions,
   ConfigEnv,
@@ -193,7 +192,7 @@ function dropFileSourceMapComment(code: string): string {
 }
 
 /** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
-function fileOfId(id: string): string {
+export function fileOfId(id: string): string {
   return toPosix(id.replace(/[?#].*$/s, ''));
 }
 
@@ -494,32 +493,85 @@ function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin
   return overrides.size === 0 ? plugin : withOverrides(plugin, overrides);
 }
 
-const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+/** A resolver Vite makes for plugins (see keptPath). */
+type IdResolver = ReturnType<typeof createIdResolver>;
+
+/** The part of a plugin hook's context the import spellings use: the environment the hook runs in. */
+export interface ImportHookContext {
+  readonly environment: Parameters<IdResolver>[0];
+}
+
+/** How an import is resolved with its links kept (see keptPath), one resolver per configuration. */
+const keptResolvers = new WeakMap<ResolvedConfig, IdResolver>();
 
 /**
- * The file beside `spelled` whose name continues it with an extension (`dependency` → `dependency.ts`)
- * and which is, or links to, `resolved`: the path the resolver took for an import written without one.
+ * Makes keptPath resolve with a new resolver for `config`: Vite's resolver remembers what it found, which a build of
+ * `vite build --watch` must not take from the one before.
  */
-function spelledAs(spelled: string, resolved: string): string | undefined {
-  let target: string;
-  let names: string[];
+export function forgetKeptResolver(config: ResolvedConfig): void {
+  keptResolvers.delete(config);
+}
+
+/**
+ * The file `source`, imported by `importer`, reaches as Vite's resolver finds it, with the links on the way kept
+ * (`resolve.preserveSymlinks`): the path through a linked file, folder or package folder, which the module's own
+ * (real) path never shows. It follows every spelling Vite's resolver reads: relative and absolute paths, the root's
+ * `/`, missing extensions, a folder's index, `resolve.alias`, bare package names, a package's subpaths and exports,
+ * `#` subpath imports and `resolve.tsconfigPaths`. Undefined for an import it resolves to no file (a virtual module,
+ * an external one, one it cannot resolve), or when resolving fails, which the bundle itself then reports.
+ */
+async function keptPath(
+  context: ImportHookContext,
+  source: string,
+  importer: string | undefined,
+): Promise<string | undefined> {
+  const { environment } = context;
+  let resolver = keptResolvers.get(environment.config);
+  if (resolver === undefined) {
+    resolver = createIdResolver(environment.config, { preserveSymlinks: true });
+    keptResolvers.set(environment.config, resolver);
+  }
   try {
-    target = realpathSync(resolved);
-    names = readdirSync(dirname(spelled));
+    const id = await resolver(environment, source, importer);
+    return id === undefined || id.startsWith('\0') ? undefined : fileOfId(id);
   } catch {
     return undefined;
   }
-  const prefix = `${basename(spelled)}.`;
-  return names
-    .filter((name) => name.startsWith(prefix))
-    .map((name) => join(dirname(spelled), name))
-    .find((candidate) => {
-      try {
-        return realpathSync(candidate) === target;
-      } catch {
-        return false;
-      }
-    });
+}
+
+/**
+ * The paths an import of `source` by `importer` is written as, absolute and with forward slashes, when it is written
+ * as a path: relative to the importer, absolute, or from the root with `/` (which Vite tries first); also when that
+ * reaches nothing yet, so creating it shows. None for a bare name or an alias.
+ */
+function writtenPaths(source: string, importer: string | undefined, root: string): string[] {
+  const from = importer === undefined ? undefined : fileOfId(importer);
+  const written = isAbsolute(source)
+    ? [...(/^[/\\]/.test(source) ? [join(root, source)] : []), source]
+    : from !== undefined && isAbsolute(from) && /^\.\.?(?:[/\\]|$)/.test(source)
+      ? [resolve(dirname(from), source)]
+      : [];
+  return written.map(fileOfId);
+}
+
+/**
+ * Every path an import of `source` by `importer` is spelled as (see writtenPaths), and the path Vite's resolver
+ * reaches the file by, links kept (`kept`, see keptPath). A caller then sees a link on the way that is retargeted,
+ * which the file's own path never shows. Nothing for an import from a virtual module, or of one.
+ */
+export async function importSpellings(
+  context: ImportHookContext,
+  source: string,
+  importer: string | undefined,
+  root: string,
+): Promise<{ readonly spellings: readonly string[]; readonly kept: string | undefined }> {
+  if (source.startsWith('\0') || (importer?.startsWith('\0') ?? false)) return { spellings: [], kept: undefined };
+  const resolved = await keptPath(context, source, importer);
+  const kept = resolved !== undefined && isAbsolute(resolved) ? resolved : undefined;
+  return {
+    spellings: [...new Set([...writtenPaths(source, importer, root), ...(kept === undefined ? [] : [kept])])],
+    kept,
+  };
 }
 
 /**
@@ -563,33 +615,22 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
       order: 'pre',
       handler(id) {
         const file = fileOfId(id);
-        if (onLoad !== undefined && isAbsolute(file) && !id.startsWith('\0')) onLoad(file);
+        if (!isAbsolute(file) || id.startsWith('\0')) return null;
+        onLoad?.(file);
+        // A plugin may resolve a module to a path through a link (or `resolve.preserveSymlinks` keep it), which
+        // is then the module's own spelling.
+        onResolve?.(file);
         return null;
       },
     },
-    // Where each relative or absolute import is spelled, before the bundler follows a link to its target:
-    // a caller then sees a link that is retargeted, which the target's own path never shows. It resolves
-    // nothing itself. An import without its extension is noted at the file the resolver chose for it (the
-    // entry of its folder that is, or links to, that file). (An import by an alias or a bare name is not seen.)
+    // Where each import is spelled, before the bundler follows a link to its target (see importSpellings): a
+    // caller then sees a link that is retargeted, which the target's own path never shows. It resolves nothing
+    // for the bundle: the import is resolved as usual.
     resolveId: {
       order: 'pre',
-      async handler(source, importer, options) {
-        if (onResolve === undefined || source.startsWith('\0') || (importer?.startsWith('\0') ?? false)) return null;
-        const authored = isAbsolute(source)
-          ? source
-          : importer !== undefined && isAbsolute(importer) && /^\.\.?[/\\]/.test(source)
-            ? resolve(dirname(fileOfId(importer)), source)
-            : undefined;
-        if (authored === undefined) return null;
-        const spelled = fileOfId(authored);
-        onResolve(spelled);
-        if (!isFile(spelled)) {
-          const chosen = await this.resolve(source, importer, { ...options, skipSelf: true });
-          if (chosen !== null && !chosen.external) {
-            const found = spelledAs(spelled, fileOfId(chosen.id));
-            if (found !== undefined) onResolve(found);
-          }
-        }
+      async handler(source, importer) {
+        if (onResolve === undefined) return null;
+        for (const spelled of (await importSpellings(this, source, importer, root)).spellings) onResolve(spelled);
         return null;
       },
     },
@@ -623,6 +664,21 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
       },
     },
   };
+}
+
+/** The `worker` options of a configuration. */
+type WorkerOptions = NonNullable<UserConfig['worker']>;
+
+/**
+ * `worker` with `plugin()` after its own `worker.plugins`, which Vite calls for each worker build (nested ones
+ * too); the user's plugins come first, in their order, whether given as a function or as the list older Vite
+ * versions took.
+ */
+export function withWorkerPlugin(worker: UserConfig['worker'], plugin: () => Plugin): WorkerOptions {
+  const own = worker?.plugins;
+  // Typed as a function only, but Vite still reads a list (with a warning), which is kept as one item: Vite flattens
+  // the list a function returns.
+  return { ...worker, plugins: () => [typeof own === 'function' ? own() : own, plugin()] };
 }
 
 /**
@@ -682,6 +738,9 @@ export async function bundleEntry(
       entryBuildEnforcer(entryPath, command, outputFilename),
       recordWatchFiles(watchFiles, config.root, observer),
     ],
+    // A worker the entry starts is bundled by a build nested in this one, with the plugins of `worker.plugins`:
+    // its modules, globs and import spellings are the entry's too (#424).
+    worker: withWorkerPlugin(user.worker, () => recordWatchFiles(watchFiles, config.root, observer)),
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).
   const [result] = [await build(inline)].flat();

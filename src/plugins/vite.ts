@@ -33,12 +33,16 @@ import {
   entryRenderBuiltUrl,
   entryCollisionMessage,
   entrySources,
+  fileOfId,
+  forgetKeptResolver,
+  importSpellings,
   PLUGIN_NAME,
   removeFromBundle,
   takeEntryFromBundle,
+  withWorkerPlugin,
 } from './vite-entry.js';
-import type { BundleItem, EntryBundle } from './vite-entry.js';
-import { moduleGlobScopes, scopeWatchTargets } from './vite-glob.js';
+import type { BundleItem, EntryBundle, ImportHookContext } from './vite-entry.js';
+import { moduleGlobScopes, readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
 import { importWatchTargets, watchTargets } from './watch-targets.js';
 import { isRecord } from '../util.js';
@@ -64,6 +68,9 @@ const RESOLVED_EMPTY_INPUT = '\0' + EMPTY_INPUT;
 
 /** The environment the story belongs to: the browser's. */
 const CLIENT = 'client';
+
+/** Vite's plugin that bundles workers, and keeps their bundles between the builds of `vite build --watch`. */
+const VITE_WORKER_PLUGIN = 'vite:worker';
 
 /** The plugin instances created so far, which numbers each instance's entry input. */
 let instances = 0;
@@ -162,6 +169,12 @@ function isStoryBuild(config: ResolvedConfig): boolean {
   return config.command === 'build' && !config.build.ssr;
 }
 
+/** The part of a build hook's context that registering watch targets uses. */
+type WatchHookContext = ImportHookContext & {
+  readonly environment: { readonly config: ResolvedConfig };
+  addWatchFile(id: string): void;
+};
+
 export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   checkViteVersion(viteVersion);
   const resolved = resolvePluginOptions('vite', options);
@@ -208,6 +221,103 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const configOf = (context: { readonly environment: { readonly config: ResolvedConfig } }): ResolvedConfig =>
     context.environment.config;
 
+  // What builds with each config write, as `vite build --watch` leaves them out of its watch targets; taken once per
+  // build (see buildStart), and once per nested worker build, whose config is its own.
+  let watchOutputs = new WeakMap<ResolvedConfig, OutputPaths>();
+  // Each file a link-kept spelling of an import (see keptPath) has led to in the builds of `vite build --watch`.
+  const keptTargets = new Map<string, Set<string>>();
+  const outputsOf = (config: ResolvedConfig): OutputPaths => {
+    const known = watchOutputs.get(config);
+    if (known !== undefined) return known;
+    const outputs = outputPaths(allOutputs(config));
+    watchOutputs.set(config, outputs);
+    return outputs;
+  };
+
+  /**
+   * `vite build --watch` with the entry bundled inside the build: the bundler watches each module by its real path,
+   * so the links an import of the entry's graph goes through (or the folder where an import that reaches nothing
+   * would be created) are registered here, as the import is resolved (see importWatchTargets).
+   */
+  const registerImport = async (context: WatchHookContext, source: string, importer: string | undefined) => {
+    const config = configOf(context);
+    const { spellings, kept } = await importSpellings(context, source, importer, config.root);
+    for (const target of importWatchTargets(spellings, outputsOf(config))) context.addWatchFile(target);
+    return kept;
+  };
+
+  /** Likewise, each glob's folder: Vite's import-glob reads the files a glob matches, and registers no folder. */
+  const registerGlobs = async (
+    context: WatchHookContext & Parameters<typeof moduleGlobScopes>[0],
+    code: string,
+    id: string,
+  ) => {
+    const config = configOf(context);
+    const scopes = await moduleGlobScopes(context, code, id, config.root);
+    for (const target of globWatchTargets(scopes, outputsOf(config))) context.addWatchFile(target);
+    return scopes;
+  };
+
+  // The globs of the entry's workers in `vite build --watch`, by scopeId: each with the folders it reaches through
+  // links (see readScope) and the modules that call it.
+  const workerGlobs = new Map<
+    string,
+    { readonly scope: GlobScope; readonly linked: readonly string[]; readonly importers: Set<string> }
+  >();
+  let warnedWorkerCache = false;
+
+  /**
+   * `vite build --watch` keeps each worker's bundle until a file it read changes, and a file added to the folder of
+   * one of its globs is none of those. When `file` is added to (or removed from) the scope of a worker's glob, the
+   * bundles of the workers whose modules call the glob are let go, through Vite's own worker plugin, as an edit of
+   * those modules would; the build that follows bundles them again (#424).
+   */
+  const releaseWorkerGlobs = async (context: WatchHookContext, file: string): Promise<void> => {
+    const importers = [...workerGlobs.values()]
+      .filter(({ scope, linked }) => scopeAdmits(scope, file, false, linked) || scopeAdmits(scope, file, true, linked))
+      .flatMap(({ importers: modules }) => [...modules]);
+    if (importers.length === 0) return;
+    const hook = configOf(context).plugins.find((plugin) => plugin.name === VITE_WORKER_PLUGIN)?.watchChange;
+    const handler: unknown = typeof hook === 'function' ? hook : hook?.handler;
+    if (typeof handler !== 'function') {
+      if (!warnedWorkerCache) {
+        warnedWorkerCache = true;
+        configOf(context).logger.warn(
+          `[twee-ts] This Vite version has no ${VITE_WORKER_PLUGIN} plugin to bundle a worker again: a file added to ` +
+            "the folder of a worker's import.meta.glob() is bundled when one of the worker's modules changes.",
+        );
+      }
+      return;
+    }
+    for (const module of importers) await Reflect.apply(handler, context, [module, { event: 'update' }]);
+  };
+
+  /**
+   * The same registrations in each build of a worker the entry starts, which Vite bundles nested in the entry's
+   * build with the plugins of `worker.plugins` (#424). What a worker build registers is watched by the outer build.
+   */
+  const workerWatcher = (): Plugin => ({
+    name: `${PLUGIN_NAME}:worker-watch`,
+    resolveId: {
+      order: 'pre',
+      async handler(source, importer) {
+        await registerImport(this, source, importer);
+        return undefined;
+      },
+    },
+    transform: {
+      filter: { code: 'import.meta.glob' },
+      async handler(code, id) {
+        for (const scope of await registerGlobs(this, code, id)) {
+          const key = scopeId(scope);
+          const known = workerGlobs.get(key) ?? { scope, linked: readScope(scope).linked, importers: new Set() };
+          known.importers.add(fileOfId(id));
+          workerGlobs.set(key, known);
+        }
+      },
+    },
+  });
+
   return {
     name: PLUGIN_NAME,
 
@@ -225,6 +335,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         if (env.command !== 'build' || entryPath === undefined || namesInput(config) || namesInput(client)) return;
         const renderBuiltUrl = entryRenderBuiltUrl(config.base, outputFilename, config.experimental?.renderBuiltUrl);
         if (renderBuiltUrl !== undefined) config.experimental = { ...config.experimental, renderBuiltUrl };
+        // `vite build --watch`: the entry's workers register what they read too.
+        if (config.build?.watch) config.worker = withWorkerPlugin(config.worker, workerWatcher);
       },
     },
 
@@ -253,6 +365,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     async buildStart() {
       const config = configOf(this);
       if (!isStoryBuild(config)) return;
+      watchOutputs = new WeakMap();
+      forgetKeptResolver(config);
       if (this.meta.watchMode) {
         const outputs = outputPaths(allOutputs(config));
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
@@ -294,9 +408,10 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     // The compile cache trusts modification times, which a quick save may leave
     // unchanged (coarse file-system timestamps); forget a file that changed.
-    watchChange(id) {
+    async watchChange(id, change) {
       const changed = fileKey(id);
       for (const key of [...cache.keys()]) if (fileKey(key) === changed) cache.delete(key);
+      if (change.event !== 'update') await releaseWorkerGlobs(this, id);
     },
 
     // `vite build --watch` with the entry bundled inside the build: Vite's import-glob reads the files a glob
@@ -307,13 +422,33 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       async handler(code, id) {
         const config = configOf(this);
         if (!this.meta.watchMode || !isStoryBuild(config) || !bundlesEntryInside(config)) return;
-        const scopes = await moduleGlobScopes(this, code, id, config.root);
-        for (const target of globWatchTargets(scopes, outputPaths(allOutputs(config)))) this.addWatchFile(target);
+        await registerGlobs(this, code, id);
       },
     },
 
-    resolveId(id) {
-      return id === EMPTY_INPUT ? RESOLVED_EMPTY_INPUT : undefined;
+    // Before the other plugins, which would resolve the import first: see registerImport.
+    resolveId: {
+      order: 'pre',
+      async handler(id, importer, options) {
+        if (id === EMPTY_INPUT) return RESOLVED_EMPTY_INPUT;
+        const config = configOf(this);
+        if (!this.meta.watchMode || !isStoryBuild(config) || !bundlesEntryInside(config)) return undefined;
+        const kept = await registerImport(this, id, importer);
+        // Vite's resolver keeps what an import resolved to for the builds that follow, also after a link on the
+        // way is retargeted: the module it gives is then the link's old target. Each file a link kept spelling
+        // led to is known; when Vite's answer is one that it no longer leads to, the module is the one it leads
+        // to now, as a new build would find (#320).
+        if (kept === undefined) return undefined;
+        const now = canonicalPath(kept);
+        const targets = keptTargets.get(kept) ?? new Set<string>();
+        keptTargets.set(kept, targets.add(now));
+        if (targets.size < 2) return undefined;
+        const resolved = await this.resolve(id, importer, { ...options, skipSelf: true });
+        if (resolved === null || resolved.external === true || resolved.external === 'absolute') return undefined;
+        const file = canonicalPath(fileOfId(resolved.id));
+        if (file === now || !targets.has(file)) return undefined;
+        return { ...resolved, id: `${now}${/[?#].*$/s.exec(resolved.id)?.[0] ?? ''}` };
+      },
     },
 
     load(id) {

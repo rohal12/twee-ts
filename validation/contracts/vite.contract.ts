@@ -2,7 +2,7 @@
  * What the compiler and the Vite plugin put into a story format's page, and the plugin's entry
  * builds, as the build in dist/ does them. Matrix groups HEAD, VITE and DEPS (see cases.ts).
  */
-import { mkdirSync, readFileSync, renameSync, symlinkSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { build, createServer, version } from 'vite';
@@ -196,6 +196,7 @@ async function expectDevFollows(
   before: unknown,
   after: unknown,
   watcher = false,
+  readStory: (html: string) => unknown = foundIn,
 ): Promise<void> {
   const server = await createServer({
     configFile: false,
@@ -207,7 +208,7 @@ async function expectDevFollows(
   try {
     await server.listen();
     const [url] = server.resolvedUrls?.local ?? [];
-    const read = async (): Promise<unknown> => foundIn(await (await fetch(String(url))).text());
+    const read = async (): Promise<unknown> => readStory(await (await fetch(String(url))).text());
     expect(await read()).toEqual(before);
     change();
     if (watcher) await expect.poll(read, { timeout: 20_000, interval: 100 }).toEqual(after);
@@ -218,8 +219,30 @@ async function expectDevFollows(
 }
 
 /** Expects `vite build --watch` to build the story again with the file a glob gains. */
-async function expectBuildWatchFollows(root: string): Promise<void> {
+function expectBuildWatchFollows(root: string): Promise<void> {
   const pluginOptions = globProject(root, "Object.keys(import.meta.glob('./widgets/*.js'))", ['a.js']);
+  return expectBuildWatchSees(
+    root,
+    pluginOptions,
+    () => write(join(root, 'app', 'widgets', 'b.js'), 'export default "b";'),
+    foundIn,
+    ['./widgets/a.js'],
+    ['./widgets/a.js', './widgets/b.js'],
+  );
+}
+
+/**
+ * Starts `vite build --watch` for `root` (the entry bundled inside the build), reads the story with `read`, makes
+ * `change`, and expects `before`, then `after`.
+ */
+async function expectBuildWatchSees(
+  root: string,
+  pluginOptions: TweeTsVitePluginOptions,
+  change: () => void,
+  read: (html: string) => unknown,
+  before: unknown,
+  after: unknown,
+): Promise<void> {
   const started: unknown = await build({
     configFile: false,
     root,
@@ -236,11 +259,11 @@ async function expectBuildWatchFollows(root: string): Promise<void> {
     if (event.code === 'END' || event.code === 'ERROR') ended.push(event.code);
   });
   try {
-    const found = (): unknown => foundIn(readFileSync(join(root, 'out', 'story.html'), 'utf-8'));
+    const found = (): unknown => read(readFileSync(join(root, 'out', 'story.html'), 'utf-8'));
     await expect.poll(() => ended.length, { timeout: 20_000 }).toBeGreaterThan(0);
-    expect(found()).toEqual(['./widgets/a.js']);
-    write(join(root, 'app', 'widgets', 'b.js'), 'export default "b";');
-    await expect.poll(found, { timeout: 20_000, interval: 100 }).toEqual(['./widgets/a.js', './widgets/b.js']);
+    expect(found()).toEqual(before);
+    change();
+    await expect.poll(found, { timeout: 20_000, interval: 100 }).toEqual(after);
   } finally {
     await watcher.close();
   }
@@ -266,6 +289,71 @@ function expectDevFollowsLink(root: string, watcher = false): Promise<void> {
     ['./widgets/a.js', './widgets/shared/one.js', './widgets/shared/two.js'],
     watcher,
   );
+}
+
+/** A link to a folder: a junction on Windows, which needs no privilege. */
+function linkFolder(target: string, path: string): void {
+  mkdirSync(join(path, '..'), { recursive: true });
+  symlinkSync(target, path, 'junction');
+}
+
+/**
+ * A project whose entry, `app/entry.js`, imports the bare package `dependency`, whose folder in `node_modules` is a
+ * link to `packages/v1`; `retarget` points it at `packages/v2` (#320).
+ */
+function packageLinkProject(root: string): { pluginOptions: TweeTsVitePluginOptions; retarget: () => void } {
+  const { formatId, options } = localFormat(root);
+  const storyFile = write(join(root, 'story', 'story.tw'), story());
+  for (const version of ['v1', 'v2']) {
+    write(
+      join(root, 'packages', version, 'package.json'),
+      JSON.stringify({ name: 'dependency', type: 'module', exports: './index.js' }),
+    );
+    write(join(root, 'packages', version, 'index.js'), `export default ${JSON.stringify(version)};`);
+  }
+  const link = join(root, 'node_modules', 'dependency');
+  linkFolder(join(root, 'packages', 'v1'), link);
+  const entry = write(join(root, 'app', 'entry.js'), 'import found from "dependency"; globalThis.found = found;');
+  return {
+    pluginOptions: { sources: [storyFile], format: formatId, entry, compileOptions: options },
+    retarget: () => {
+      rmSync(link);
+      linkFolder(join(root, 'packages', 'v2'), link);
+    },
+  };
+}
+
+/** Expects the dev server to bundle the new target of a package folder link the entry imports through. */
+function expectDevFollowsPackageLink(root: string, watcher = false): Promise<void> {
+  const { pluginOptions, retarget } = packageLinkProject(root);
+  return expectDevFollows(root, pluginOptions, retarget, 'v1', 'v2', watcher);
+}
+
+/** The data files of `app/data` the worker's glob selected, as the story names them (#424). */
+const workerFound = (html: string): string[] => ['a', 'b'].filter((name) => html.includes(`data/${name}.js`));
+
+/**
+ * A project whose entry, `app/entry.js`, starts an inline worker, `app/worker.js`, whose glob selects `app/data`
+ * (holding `a.js`); `add` adds `b.js` there.
+ */
+function workerProject(root: string): { pluginOptions: TweeTsVitePluginOptions; add: () => void } {
+  const { formatId, options } = localFormat(root);
+  const storyFile = write(join(root, 'story', 'story.tw'), story());
+  write(join(root, 'app', 'data', 'a.js'), 'export default "a";');
+  write(join(root, 'app', 'worker.js'), "self.found = Object.keys(import.meta.glob('./data/*.js'));");
+  const entry = write(
+    join(root, 'app', 'entry.js'),
+    "import Started from './worker.js?worker&inline'; globalThis.start = () => new Started();",
+  );
+  return {
+    pluginOptions: { sources: [storyFile], format: formatId, entry, compileOptions: options },
+    add: () => write(join(root, 'app', 'data', 'b.js'), 'export default "b";'),
+  };
+}
+
+function expectDevFollowsWorkerGlob(root: string, watcher = false): Promise<void> {
+  const { pluginOptions, add } = workerProject(root);
+  return expectDevFollows(root, pluginOptions, add, ['a'], ['a', 'b'], watcher, workerFound);
 }
 
 defineContracts(
@@ -321,10 +409,28 @@ defineContracts(
     'build watch glob gains a file': expectBuildWatchFollows,
     'dev recursive glob gains a file in a linked folder': (root) => expectDevFollowsLink(root),
     'dev watcher recursive glob gains a file in a linked folder': (root) => expectDevFollowsLink(root, true),
+    'dev bare package link retargeted': (root) => expectDevFollowsPackageLink(root),
+    'dev watcher bare package link retargeted': (root) => expectDevFollowsPackageLink(root, true),
+    'build watch bare package link retargeted': (root) => {
+      const { pluginOptions, retarget } = packageLinkProject(root);
+      return expectBuildWatchSees(root, pluginOptions, retarget, foundIn, 'v1', 'v2');
+    },
+    'dev worker glob gains a file': (root) => expectDevFollowsWorkerGlob(root),
+    'dev watcher worker glob gains a file': (root) => expectDevFollowsWorkerGlob(root, true),
+    'build watch worker glob gains a file': (root) => {
+      const { pluginOptions, add } = workerProject(root);
+      return expectBuildWatchSees(root, pluginOptions, add, workerFound, ['a'], ['a', 'b']);
+    },
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {
-    skip: (variant) =>
-      variant === 'build watch glob gains a file' && /^8\.[01]\./.test(version) ? 'Vite 8.0/8.1' : undefined,
+    skip: (variant) => {
+      if (variant === 'build watch bare package link retargeted' && process.platform !== 'linux') {
+        // The bundler's watcher on macOS reports no replacement of a link (docs/plugins.md, Build watch).
+        return 'Linux only';
+      }
+      // A folder registered with it (a glob's, a linked package folder) reports nothing under Vite 8.0 and 8.1.
+      return variant.startsWith('build watch') && /^8\.[01]\./.test(version) ? 'Vite 8.0/8.1' : undefined;
+    },
   },
 );

@@ -13,7 +13,7 @@ import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
-import { watchTargets } from '../src/plugins/watch-targets.js';
+import { missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
 import {
   cleanUp,
   COMPILE,
@@ -303,5 +303,21 @@ describe('vite build --watch', { timeout: 30_000 }, () => {
     const seen = await editExcludedThenSource(project, join(project.dir, 'dist', 'index.html'), changes);
     expect(seen.map((id) => id.split('/').pop())).toContain('start.tw');
     expect(seen.filter((id) => id.endsWith('.png'))).toEqual([]);
+  });
+});
+
+describe('missingImportFolders', () => {
+  it('gives the nearest folder that exists for a path that reaches nothing, and none for one that exists', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'app'));
+    writeFileSync(join(dir, 'app', 'here.js'), '');
+    expect(missingImportFolders([join(dir, 'app', 'later', 'deep', 'x.js'), join(dir, 'app', 'here.js')])).toEqual([
+      join(dir, 'app'),
+    ]);
+  });
+
+  it('never gives the root of the file system, which no watcher is asked to watch whole', () => {
+    const missing = join(realpathSync('/'), 'twee-ts-no-such-folder', 'x.js');
+    expect(missingImportFolders([missing])).toEqual([]);
   });
 });
