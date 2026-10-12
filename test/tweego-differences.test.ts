@@ -462,7 +462,7 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
   });
 
   it('starts every difference of docs/tweego-differences.md as a paragraph of its own (#450)', () => {
-    const lines = readFileSync(DOC, 'utf8').split('\n');
+    const lines = readFileSync(DOC, 'utf8').split(/\r?\n/);
     const merged = lines.flatMap((line, i) => (line.startsWith('**D-') && (lines[i - 1] ?? '') !== '' ? [line] : []));
     expect(merged.map((line) => line.slice(0, 12))).toEqual([]);
   });
