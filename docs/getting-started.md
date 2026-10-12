@@ -94,7 +94,7 @@ Extensions match without regard to letter case. A file of another type in a sour
 
 ### Text encoding
 
-Text files (Twee, CSS, JavaScript, HTML, modules, the head file, story formats and the config file) are read as UTF-8, or as UTF-16 when they start with a UTF-16 byte order mark (as Windows PowerShell 5's `>` writes them). A leading byte order mark is removed and CRLF and CR line endings become LF. Invalid UTF-16, and UTF-32, are errors naming the file. As in Tweego, a file that is not valid UTF-8 is read as Windows-1252 instead, the encoding of many older Windows files and Twine 1 exports, so its accented letters and curly quotes survive. (The five bytes Windows-1252 leaves undefined become the control characters U+0081, U+008D, U+008F, U+0090 and U+009D here, and U+FFFD in Tweego; see [Differences from Tweego](./tweego-differences).) twee-ts also prints a warning naming the file:
+Text files (Twee, CSS, JavaScript, HTML, modules, the head file, story formats and the config file) are read as UTF-8, or as UTF-16 when they start with a UTF-16 byte order mark (as Windows PowerShell 5's `>` writes them). A leading byte order mark is removed and CRLF and CR line endings become LF. Invalid UTF-16, and UTF-32, are errors naming the file. As in Tweego, a file that is not valid UTF-8 is read as Windows-1252 instead, the encoding of many older Windows files and Twine 1 exports, so its accented letters and curly quotes survive. (The five bytes Windows-1252 leaves undefined become the control characters U+0081, U+008D, U+008F, U+0090 and U+009D here, and U+FFFD in Tweego; see [Differences from Tweego](./tweego-differences).) A UTF-16 file is read as such here, while Tweego reads it as Windows-1252 and finds nothing in it (D-34). twee-ts also prints a warning naming the file:
 
 ```
 warning: read src/old.tw: Invalid UTF-8; assuming charset is windows-1252.
@@ -118,7 +118,7 @@ twee-ts is a drop-in replacement for Tweego in most projects. It:
 
 - Reads the same file types and Twee notation
 - Respects the `TWEEGO_PATH` environment variable
-- Searches the `storyformats` (and Tweego's other) folders of the home and working directories for story formats, but not Tweego's own program folder
+- Searches the `storyformats` (and Tweego's other) folders of the home and working directories for story formats, but not Tweego's own program folder (D-33 in [Differences from Tweego](./tweego-differences))
 - Produces equivalent HTML output
 
 On the command line, `-c` means `--config` (Tweego's `-c` is `--charset`, which twee-ts doesn't have).

@@ -2,13 +2,14 @@
  * One test for each intended difference from Tweego listed in docs/tweego-differences.md, named after its
  * number. A difference that is not listed there is a bug.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:buffer';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compile } from '../src/compiler.js';
+import { getFormatSearchDirs } from '../src/formats.js';
 import { parseTwee } from '../src/parser.js';
 import { StoryBuilder, createStory, decodeStoryData, marshalStoryData } from '../src/story.js';
 import { toTwee } from '../src/output-twee.js';
@@ -412,10 +413,41 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(() => decompileHTML('<div>'.repeat(510))).not.toThrow();
   });
 
-  it('starts every difference of docs/tweego-differences.md as a paragraph of its own (#450)', () => {
-    const lines = readFileSync(DOC, 'utf8').split('\n');
-    const merged = lines.flatMap((line, i) => (line.startsWith('**D-') && (lines[i - 1] ?? '') !== '' ? [line] : []));
-    expect(merged.map((line) => line.slice(0, 12))).toEqual([]);
+  it('D-33: searches no program folder for story formats', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'twee-ts-d33-'));
+    const spy = vi.spyOn(process, 'cwd').mockReturnValue(cwd);
+    try {
+      mkdirSync(join(cwd, 'storyformats'));
+      const dirs = getFormatSearchDirs([], false);
+      expect(dirs).toContain(join(cwd, 'storyformats'));
+      // Tweego also searches the folders next to its executable (`programDir`); twee-ts has only these two bases.
+      expect(dirs.every((dir) => [homedir(), cwd].includes(dirname(dir)))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('D-34: reads a source with a UTF-16 byte order mark as UTF-16', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-ts-d34-'));
+    try {
+      const text = `:: StoryData\n{"ifid":"${IFID}"}\n:: Wide\nçà et là\n`;
+      writeFileSync(join(dir, 'a.tw'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]));
+      const result = await compile({ sources: [join(dir, 'a.tw')], outputMode: 'json', noRemote: true });
+      // Tweego 2.1.1 reads the same bytes as Windows-1252 (0xFF is not UTF-8) and finds no passage.
+      expect(result.diagnostics).toEqual([]);
+      expect(result.story.passages.find((p) => p.name === 'Wide')?.text).toBe('çà et là');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('D-35: encodes the Twine 1 tiddlers under obfuscate:rot13', async () => {
+    const result = await build({ 'a.tw': `:: StorySettings\nobfuscate:rot13\n\n:: Start\nHello\n` }, 'twine1-archive');
+    // ROT13 of "Start" and "Hello"; Tweego writes both as they are.
+    expect(result.output).toContain('tiddler="Fgneg"');
+    expect(result.output).toContain('Uryyb');
+    expect(result.output).not.toContain('tiddler="Start"');
   });
 
   it('lists every difference of docs/tweego-differences.md with a test named after it', () => {
@@ -425,5 +457,13 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     );
     expect(listed.length).toBeGreaterThan(0);
     expect(listed.filter((id) => !tested.has(id))).toEqual([]);
+    // And the other way: a test of a difference the page does not list is a difference nobody can find.
+    expect([...tested].filter((id) => !listed.includes(id))).toEqual([]);
+  });
+
+  it('starts every difference of docs/tweego-differences.md as a paragraph of its own (#450)', () => {
+    const lines = readFileSync(DOC, 'utf8').split('\n');
+    const merged = lines.flatMap((line, i) => (line.startsWith('**D-') && (lines[i - 1] ?? '') !== '' ? [line] : []));
+    expect(merged.map((line) => line.slice(0, 12))).toEqual([]);
   });
 });

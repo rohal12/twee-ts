@@ -21,7 +21,7 @@ Local formats are read from these directories, lowest rank first:
 3. Each directory in the **`TWEEGO_PATH`** environment variable (unless `useTweegoPath: false`)
 4. Each directory in **`formatPaths`**, from the config or the API
 
-When two directories hold a format folder with the same name, the later one in this list wins: `formatPaths` override `TWEEGO_PATH`, which overrides the home and working directories, as in Tweego. Within `TWEEGO_PATH` or `formatPaths`, a later entry wins over an earlier one.
+When two directories hold a format folder with the same name, the later one in this list wins: `formatPaths` override `TWEEGO_PATH`, which overrides the home and working directories, as in Tweego. Within `TWEEGO_PATH` or `formatPaths`, a later entry wins over an earlier one. Unlike Tweego, twee-ts does not search the folders next to its own executable ([D-33](./tweego-differences)).
 
 A `format.js` that cannot be read or parsed, or whose `version` is not a version, is skipped with a warning that names the folder and the reason:
 
