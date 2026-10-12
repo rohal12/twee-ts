@@ -391,19 +391,6 @@ describe.each(BUNDLERS)(
   },
 );
 
-// Rollup only: the Rolldown watcher of Vite does not watch a registered link that leads nowhere.
-describe('rollup build watch: a link in a source folder whose chain dangles (#443)', { timeout: 60_000 }, () => {
-  it.skipIf(noRelinkWatch)('follows the hop that is pointed at a file, and edits to it', async () => {
-    const dir = makeProject({ 'story/keep.tw': storyWith('FIRST'), 't/two.tw': storyWith('SECOND') });
-    symlinkSync('../t/hop.tw', join(dir, 'story/link.tw'));
-    symlinkSync('missing.tw', join(dir, 't/hop.tw'));
-    const out = await watchStory('rollup', dir, { sources: ['story'] });
-    await relinked(out, join(dir, 't/hop.tw'), join(dir, 't/two.tw'), 'SECOND');
-    await edited(out, join(dir, 't/two.tw'), 'SECOND_EDITED');
-    expect(text(out)).toContain('SECOND_EDITED');
-  });
-});
-
 describe.skipIf(noLinks)('watchPlan: links found while walking a source folder (#443)', () => {
   const none = outputPaths({ files: [], dirs: [] });
 
@@ -417,12 +404,12 @@ describe.skipIf(noLinks)('watchPlan: links found while walking a source folder (
     expect(real.links.sort()).toEqual(given.links.sort());
   });
 
-  it('lists the hops of a link that dangles', () => {
-    const dir = realpathSync(makeProject({ 'story/a.tw': storyWith('x') }));
-    symlinkSync('../t/hop.tw', join(dir, 'story/link.tw'));
-    mkdirSync(join(dir, 't'));
-    symlinkSync('missing.tw', join(dir, 't/hop.tw'));
-    const given = watchPlan([join(dir, 'story')], () => false, none, 'given');
-    expect(given.links.sort()).toEqual([join(dir, 'story/link.tw'), join(dir, 't/hop.tw')].sort());
+  it('lists no link that source discovery leaves out: to a folder, to a file the build writes, to nothing (#160)', () => {
+    const dir = realpathSync(makeProject({ 'story/a.tw': storyWith('x'), 'dist/index.html': 'last build' }));
+    symlinkSync('.', join(dir, 'story/self'));
+    symlinkSync('../dist/index.html', join(dir, 'story/last.html'));
+    symlinkSync('missing', join(dir, 'story/dangling'));
+    const outputs = outputPaths({ files: [join(dir, 'dist/index.html')], dirs: [] });
+    expect(watchPlan([join(dir, 'story')], () => false, outputs, 'given').links).toEqual([]);
   });
 });
