@@ -217,11 +217,14 @@ function startWatch(
       ...options,
       outFile,
       onBuild(result) {
-        log(`Built: ${result.stats.passages} passages, ${result.stats.words} words`);
+        const counts = `${result.stats.passages} passages, ${result.stats.words} words`;
+        const errors = countErrors(result.diagnostics);
+        // A build is reported as built only when it is written (#451): the same test as the write filter below.
+        if (errors === 0) log(`Built: ${counts}`);
         logDiagnostics(result.diagnostics);
         // A failed build must not stop the watcher: report it and wait for the next change.
-        const errors = countErrors(result.diagnostics);
         if (errors > 0) {
+          log(`Build failed: ${counts}`);
           log(`Build has ${pluralize(errors, 'error')}; output not written. Still watching for changes.`);
         }
         logBuild(result, logOptions);

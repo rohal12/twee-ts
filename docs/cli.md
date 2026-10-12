@@ -228,12 +228,12 @@ In watch mode (`-w`), a build with errors is reported but not written: the outpu
 ```sh
 $ twee-ts -w -o story.html src/
 Watch mode started. Press CTRL+C to stop.
-Built: 3 passages, 3 words
 error: src/Start.tw:4: Malformed twee source; unterminated tag block.
+Build failed: 3 passages, 3 words
 Build has 1 error; output not written. Still watching for changes.
 ```
 
-Every build reports its `Built:` line first, then its warnings and errors.
+A build without errors reports its `Built:` line first, then its warnings. A build with errors reports its warnings and errors, then a `Build failed:` line with the counts of the story it could not write: a build that is not written is never reported as built.
 
 A fatal error, such as a story format that is not available, is printed with the diagnostics that explain it, in one-shot and watch mode:
 
