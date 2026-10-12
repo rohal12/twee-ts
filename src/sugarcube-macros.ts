@@ -989,12 +989,12 @@ function ownElementReader(text: string): (start: number) => OwnElement | undefin
   const findCloser = closerReader(text, OWN_CLOSE_RES);
   // The first `>` at or after the last `<style` read.
   let angle = text.indexOf('>');
-  let svgElements: ReadonlyMap<number, OwnElement> | undefined;
+  let readSvgElement: ((start: number) => OwnElement | undefined) | undefined;
   return (start) => {
     // As SugarCube's patterns, with no end to the tag name: `<svg-icon>` and `<styles>` are read by these parsers too.
     if (startsWithFolded(text, start, '<svg')) {
-      svgElements ??= svgElementsOf(text);
-      return svgElements.get(start);
+      readSvgElement ??= svgElementsOf(text);
+      return readSvgElement(start);
     }
     const kind = startsWithFolded(text, start, '<style')
       ? 'style'
@@ -1020,19 +1020,20 @@ function startsWithFolded(text: string, start: number, prefix: string): boolean 
 }
 
 /**
- * The `<svg>` elements SugarCube's `svgTag` parser could read, by where their opener starts. For an opener the
- * wikifier matched (`<svg[^>]*>`), the parser searches the tags `<(\/?)svg[^>]*>` from the opener on, each after the
- * end of the one before, and the element ends just past the first `</svg…>` tag after which as many `</svg` tags as
- * `<svg` tags have been found, counting the opener; it is not closed when there is none. The tags found from an
- * opener are those found from any other tag of that search, but not those found from the start of the text: a
- * `<svg` in a comment the wikifier skips has a `>` of its own only far on, and the search from the start of the text
- * runs over the opener after it.
+ * The `<svg>` elements SugarCube's `svgTag` parser could read, given as a function of where their opener starts (the
+ * starts come in increasing order). For an opener the wikifier matched (`<svg[^>]*>`), the parser searches the tags
+ * `<(\/?)svg[^>]*>` from the opener on, each after the end of the one before, and the element ends just past the first
+ * `</svg…>` tag after which as many `</svg` tags as `<svg` tags have been found, counting the opener; it is not
+ * closed when there is none. The tags found from an opener are those found from any other tag of that search, but not
+ * those found from the start of the text: a `<svg` in a comment the wikifier skips has a `>` of its own only far on,
+ * and the search from the start of the text runs over the opener after it.
  *
  * So the element of each `<svg` tag is worked out as if the search started there. Every tag points to the tag a search
  * goes on with after its end, which makes a forest, and the element of a tag ends at the nearest tag on the way to a
- * root after which the tags closed equal the tags opened. One walk of the forest finds all of them: linear time.
+ * root after which the tags closed equal the tags opened. One walk of the forest finds all of them: linear time, in
+ * arrays of numbers, which keep the time per tag the same however many tags there are.
  */
-function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
+function svgElementsOf(text: string): (start: number) => OwnElement | undefined {
   // Every `<svg` and `</svg` in the text with a `>` after it: where it starts, where its `[^>]*>` ends, and +1 or -1.
   const starts: number[] = [];
   const ends: number[] = [];
@@ -1071,40 +1072,41 @@ function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
       firstChild[parent] = k;
     }
   }
-  const elements = new Map<number, OwnElement>();
-  // The way from a root to the tag being visited; for each balance, the place on it of the nearest tag with that balance
-  // (-1: before the root, where the balance is 0); and what a tag's balance pointed to before it.
-  const path: number[] = [];
-  const placeOf = new Map<number, number>([[0, -1]]);
-  const hidden = new Int32Array(count);
+  // closer[k]: for an opener, the tag that ends its element (-1: none). Arrays of numbers, indexed by tag or by balance,
+  // take the place of maps and of an object per element: at hundreds of thousands of nested tags those cost more in
+  // memory and collection than the walk itself, and the time grew faster than the size.
+  const closer = new Int32Array(count).fill(-1);
+  // The way from a root to the tag being visited, and how long it is.
+  const path = new Int32Array(count);
+  let depth = 0;
+  // For each balance (offset by `count`, which no balance goes below), the place on the way of the nearest tag with that
+  // balance (-1: before the root, where the balance is 0; ABSENT: none); and what a tag's balance pointed to before it.
   const ABSENT = -2;
+  const placeOf = new Int32Array(2 * count + 1).fill(ABSENT);
+  placeOf[count] = -1;
+  const hidden = new Int32Array(count);
   const enter = (k: number): void => {
-    path.push(k);
-    const balanced = balance[k] ?? 0;
-    const above = placeOf.get(balanced);
-    if ((steps[k] ?? 0) > 0) {
+    path[depth++] = k;
+    const slot = (balance[k] ?? 0) + count;
+    const above = placeOf[slot] ?? ABSENT;
+    if ((steps[k] ?? 0) > 0 && above !== ABSENT) {
       // The balance changes by one at each tag, so the first tag on the way where it is the same again closes the
       // element: the tag on the way before it is the closer.
-      const closer = above === undefined ? undefined : path[above + 1];
-      const closed = closer === undefined ? undefined : { contentEnd: starts[closer] ?? 0, end: ends[closer] ?? 0 };
-      elements.set(starts[k] ?? 0, { kind: 'svg', openerEnd: ends[k] ?? 0, closed });
+      closer[k] = path[above + 1] ?? -1;
     }
-    hidden[k] = above ?? ABSENT;
-    placeOf.set(balanced, path.length - 1);
+    hidden[k] = above;
+    placeOf[slot] = depth - 1;
   };
   const leave = (k: number): void => {
-    const balanced = balance[k] ?? 0;
-    const before = hidden[k] ?? ABSENT;
-    if (before === ABSENT) placeOf.delete(balanced);
-    else placeOf.set(balanced, before);
-    path.pop();
+    placeOf[(balance[k] ?? 0) + count] = hidden[k] ?? ABSENT;
+    depth--;
   };
   const cursor = Int32Array.from(firstChild);
   for (let root = 0; root < count; root++) {
     if (follower[root] !== -1) continue;
     enter(root);
-    while (path.length > 0) {
-      const k = path[path.length - 1] ?? 0;
+    while (depth > 0) {
+      const k = path[depth - 1] ?? 0;
       const child = cursor[k] ?? -1;
       if (child === -1) {
         leave(k);
@@ -1114,7 +1116,18 @@ function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
       }
     }
   }
-  return elements;
+  // Positions come in increasing order, so one pass over the tags answers all of them.
+  let next = 0;
+  return (start) => {
+    while (next < count && (starts[next] ?? 0) < start) next++;
+    if (next === count || starts[next] !== start) return undefined;
+    const end = closer[next] ?? -1;
+    return {
+      kind: 'svg',
+      openerEnd: ends[next] ?? 0,
+      closed: end === -1 ? undefined : { contentEnd: starts[end] ?? 0, end: ends[end] ?? 0 },
+    };
+  };
 }
 
 /** Where a `<script>` element's opener ends and its content ends, if it is complete. */
