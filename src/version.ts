@@ -28,9 +28,9 @@ export function findPackageVersion(startDir: string): string | undefined {
   }
 }
 
-/** This module's directory: `__dirname` in the CJS build, `import.meta.url` in ESM and in source. */
-function moduleDir(): string {
-  return typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url));
-}
-
-export const VERSION: string = findPackageVersion(moduleDir()) ?? '0.0.0';
+/**
+ * The version of the package this module belongs to. The folder is found from `import.meta.url` in every format
+ * (the CJS build turns it into the module's own `__filename`): a bare `__dirname` would be a global in the ESM build,
+ * which `node -e`, the REPL and shims for CommonJS code define (#447).
+ */
+export const VERSION: string = findPackageVersion(dirname(fileURLToPath(import.meta.url))) ?? '0.0.0';
