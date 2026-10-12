@@ -47,6 +47,10 @@ interface Observed {
   held(): number;
   /** Hands the held events on, and stops holding. */
   release(): void;
+  /** Hands the held events on in the middleware, when the next request arrives, before the plugin sees it. */
+  releaseOnRequest(): void;
+  /** The next entry bundle waits, once it has read its modules, until open() is called. */
+  block(): { reached(): Promise<void>; open(): void };
 }
 
 function observe(): Observed {
@@ -55,14 +59,34 @@ function observe(): Observed {
   const holding = new Set<string>();
   const held: unknown[][] = [];
   let watcher: ViteDevServer['watcher'] | undefined;
+  let releaseAtRequest = false;
+  let blocked: { arrived: () => void; promise: Promise<void> } | undefined;
+  const release = (): void => {
+    holding.clear();
+    for (const args of held.splice(0)) watcher?.emit('all', ...args);
+  };
   return {
     plugin: {
       name: 'observe-dev-server',
       buildStart() {
         bundles += 1;
       },
+      async buildEnd() {
+        const gate = blocked;
+        blocked = undefined;
+        if (gate === undefined) return;
+        gate.arrived();
+        await gate.promise;
+      },
       configureServer(server) {
         watcher = server.watcher;
+        server.middlewares.use((_req, _res, next) => {
+          if (releaseAtRequest) {
+            releaseAtRequest = false;
+            release();
+          }
+          next();
+        });
         const emit = server.watcher.emit.bind(server.watcher);
         server.watcher.emit = (event: string | symbol, ...args: unknown[]): boolean => {
           if (event === 'all' && holding.has(resolve(String(args[1])))) {
@@ -84,9 +108,17 @@ function observe(): Observed {
     reloads: () => reloads,
     hold: (file) => holding.add(resolve(file)),
     held: () => held.length,
-    release: () => {
-      holding.clear();
-      for (const args of held.splice(0)) watcher?.emit('all', ...args);
+    release,
+    releaseOnRequest: () => {
+      releaseAtRequest = true;
+    },
+    block: () => {
+      let arrived = (): void => undefined;
+      let open = (): void => undefined;
+      const reached = new Promise<void>((done) => (arrived = done));
+      const promise = new Promise<void>((done) => (open = done));
+      blocked = { arrived, promise };
+      return { reached: () => reached, open };
     },
   };
 }
@@ -204,5 +236,32 @@ describe('vite plugin dev: a watcher event for a change a request already caught
     writeFileSync(dep, "export const value = 'DEP_TWO';\n");
     await expect.poll(() => page(url), { timeout: 10_000, interval: 100 }).toContain('DEP_TWO');
     expect(observed.bundles()).toBeGreaterThan(before);
+  }, 30_000);
+
+  // The request arrives while rebuild A runs, with an event E reported just before it that still waits out the
+  // debounce. The debounce fires while A runs and chains the rebuild B that E asks for after A; the request, which
+  // awaited A, must wait for B too (#442). E is an edit of the entry's module made after A's bundle read it, with the
+  // same length, in place and with the times pinned, so the file state does not show it: only B tells the page from
+  // A's. Nothing depends on the timestamps of the file system.
+  it('answers a request after the rebuild a debounced event asked for while a build ran (#442)', async () => {
+    const { root, url, observed } = await start();
+    const dep = join(root, 'app/dep.js');
+    pinned.times.set(resolve(dep), { mtimeMs: 1_000_000, ctimeMs: 1_000_000 });
+    expect(await page(url)).toContain('DEP_ONE');
+    const build = observed.block();
+    // Rebuild A: the module changed, and the bundle that read it waits.
+    writeFileSync(dep, "export const value = 'DEP_TWO';\n");
+    await build.reached();
+    observed.hold(dep);
+    writeFileSync(dep, "export const value = 'DEP_SIX';\n");
+    await vi.waitFor(() => {
+      expect(observed.held()).toBeGreaterThan(0);
+    }, 10_000);
+    // The watcher reports E as the request arrives; the debounce then fires with A still running.
+    observed.releaseOnRequest();
+    const response = page(url);
+    await new Promise((done) => setTimeout(done, 400));
+    build.open();
+    expect(await response).toContain('DEP_SIX');
   }, 30_000);
 });

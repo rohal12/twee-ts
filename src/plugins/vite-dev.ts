@@ -745,7 +745,12 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // already has asks for none (see rebuild).
   const catchUp = (): Promise<void> => {
     catchingUp ??= (async () => {
-      await queue;
+      // The debounce can fire while a rebuild runs and chain the rebuild an earlier event asked for after it: wait for
+      // the queue as it is when the last one settles, not as it was when the request came (#442).
+      for (let waited = queue; ; waited = queue) {
+        await waited;
+        if (queue === waited) break;
+      }
       const changed = filesChanged(compiledInputs, storyInputFiles(false));
       for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
       if (changed.size === 0 && pending.size === 0 && !linkMoved() && !globsChanged() && !foldersChanged()) return;
