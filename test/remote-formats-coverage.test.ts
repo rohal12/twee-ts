@@ -395,9 +395,21 @@ describe('format indices', () => {
         twine: 'twine2',
         position: 1,
         name: 'B',
-        reason: '$.twine2[1].version repeats the field "version"; the last one is used',
+        reason: '$.twine2[1].version repeats the field "version", so the entry is skipped',
       },
     ]);
+  });
+
+  it('says what a repeated member does to the entry and to the index, not that the last one is used', () => {
+    const text = `{"twine2": [{"name": "Dup", "version": "1.0.0", "name": "Other", "files": [], "files": []}]}`;
+    const index = parseFormatIndex(text, 'https://example.test/index.json', 'https://example.test/index.json');
+    expect(index.skipped.map((entry) => entry.reason)).toEqual([
+      '$.twine2[0].name repeats the field "name", so the entry is skipped; $.twine2[0].files repeats the field "files", so the entry is skipped',
+    ]);
+    const url = 'https://example.test/index.json';
+    expect(() => parseFormatIndex('{"twine1": [], "twine2": [], "twine2": []}', url, url)).toThrow(
+      '$.twine2 repeats the field "twine2", so the index is not used',
+    );
   });
 
   it('ignores members it does not use, as the Story Formats Archive lists them', () => {
