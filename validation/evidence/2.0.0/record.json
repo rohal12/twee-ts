@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "release": "2.0.0",
+  "commit": "5ed23d7ca541f416ca8241467dd1570ab801ef68",
+  "fingerprint": "be22a07a3b165fb43956530724138bb5c29706a7eab17d5a2f8b3d64a220fd95",
+  "checks": [
+    "contracts",
+    "coverage",
+    "duplication (cpd)",
+    "duplication (fallow)",
+    "duplication (jscpd)",
+    "lint",
+    "package / consumers (macos-latest)",
+    "package / consumers (ubuntu-latest)",
+    "package / consumers (windows-latest)",
+    "package / pack",
+    "plugin peers (Vite 8, Rollup 4)",
+    "test (macos-latest)",
+    "test (ubuntu-latest)",
+    "test (windows-latest)"
+  ],
+  "reviews": [
+    {
+      "reviewer": "sweep-implementation-r3",
+      "method": "implementation",
+      "fingerprint": "be22a07a3b165fb43956530724138bb5c29706a7eab17d5a2f8b3d64a220fd95",
+      "completedAt": "2026-10-11T15:47:39Z",
+      "areas": [
+        "api",
+        "syntax",
+        "story",
+        "inputs",
+        "files",
+        "formats",
+        "output",
+        "cli",
+        "plugins",
+        "distribution",
+        "documentation"
+      ],
+      "report": "sweep-1.md",
+      "reportSha256": "61b0b7dcc22e4c9ccb024a26caf0302d256263cf857729f756e7df03b2315513",
+      "findings": [
+        {
+          "id": "S1-1",
+          "severity": "P4",
+          "title": "Whitespace word count reads a rendered <svg> element as text after a comment holding <svg without a >",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/441"
+        },
+        {
+          "id": "S1-2",
+          "severity": "P4",
+          "title": "Vite dev server: a request that waits for a running build can be answered before the rebuild a debounced event asked for",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/442"
+        }
+      ]
+    },
+    {
+      "reviewer": "sweep-adversarial-r3",
+      "method": "adversarial-integration",
+      "fingerprint": "be22a07a3b165fb43956530724138bb5c29706a7eab17d5a2f8b3d64a220fd95",
+      "completedAt": "2026-10-11T15:52:27Z",
+      "areas": [
+        "api",
+        "syntax",
+        "story",
+        "inputs",
+        "files",
+        "formats",
+        "output",
+        "cli",
+        "plugins",
+        "distribution",
+        "documentation"
+      ],
+      "report": "sweep-2.md",
+      "reportSha256": "185850d3707217386717b0000b7dd3304378f6876aa3fa8f36f461c137d03aae",
+      "findings": [
+        {
+          "id": "S2-1",
+          "severity": "P3",
+          "title": "rollup --watch misses a retargeted middle hop of a link chain whose first link sits in a source folder",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/443"
+        },
+        {
+          "id": "S2-2",
+          "severity": "P3",
+          "title": "rollup --watch fails every build when the temporary folder can't be written and a source is reached through a link",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/444"
+        },
+        {
+          "id": "S2-3",
+          "severity": "P4",
+          "title": "A repeated field in a format index is reported as 'the last one is used' while the entry, or the whole index, is rejected",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/445"
+        },
+        {
+          "id": "S2-4",
+          "severity": "P3",
+          "title": "A link in a source folder whose target can't be reached fails the build whatever its name, even when exclude leaves it out",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/446"
+        }
+      ]
+    },
+    {
+      "reviewer": "sweep-compat-r3",
+      "method": "compatibility-distribution",
+      "fingerprint": "be22a07a3b165fb43956530724138bb5c29706a7eab17d5a2f8b3d64a220fd95",
+      "completedAt": "2026-10-11T16:01:42Z",
+      "areas": [
+        "api",
+        "syntax",
+        "story",
+        "inputs",
+        "files",
+        "formats",
+        "output",
+        "cli",
+        "plugins",
+        "distribution",
+        "documentation"
+      ],
+      "report": "sweep-3.md",
+      "reportSha256": "9491cb530c8dc1ac99818540abd1ab44b81238367756a3896a538e1c479887dd",
+      "findings": [
+        {
+          "id": "S3-1",
+          "severity": "P3",
+          "title": "The ESM build reports version 0.0.0 when the process has a global __dirname",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/447"
+        },
+        {
+          "id": "S3-2",
+          "severity": "P4",
+          "title": "docs/api.md's Error Handling section misstates two cases",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/448"
+        },
+        {
+          "id": "S3-3",
+          "severity": "P4",
+          "title": "docs/tweego-differences.md, which says it lists every intended difference, omits three",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/449"
+        },
+        {
+          "id": "S3-4",
+          "severity": "P4",
+          "title": "Markdown slips in the differences page and the changelog (D-28 and D-32 in one paragraph)",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/450"
+        },
+        {
+          "id": "S3-5",
+          "severity": "P4",
+          "title": "CLI watch mode prints 'Built: N passages' for a build it does not write",
+          "status": "open",
+          "issue": "https://github.com/rohal12/twee-ts/issues/451"
+        }
+      ]
+    }
+  ]
+}
