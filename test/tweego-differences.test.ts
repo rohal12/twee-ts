@@ -412,6 +412,12 @@ describe('intended differences from Tweego (docs/tweego-differences.md)', () => 
     expect(() => decompileHTML('<div>'.repeat(510))).not.toThrow();
   });
 
+  it('starts every difference of docs/tweego-differences.md as a paragraph of its own (#450)', () => {
+    const lines = readFileSync(DOC, 'utf8').split('\n');
+    const merged = lines.flatMap((line, i) => (line.startsWith('**D-') && (lines[i - 1] ?? '') !== '' ? [line] : []));
+    expect(merged.map((line) => line.slice(0, 12))).toEqual([]);
+  });
+
   it('lists every difference of docs/tweego-differences.md with a test named after it', () => {
     const listed = [...readFileSync(DOC, 'utf8').matchAll(/^\*\*(D-\d+)\./gm)].map((m) => m[1] ?? '');
     const tested = new Set(
