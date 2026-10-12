@@ -28,6 +28,8 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   const record = createOutputRecord(outputFilename);
   // Tells the watch that a link the inputs are reached through was pointed elsewhere (see link-watch.ts).
   let linkWatch: LinkWatch | undefined;
+  // The link watch could not be set up (no temporary folder); said once, and not tried again.
+  let linkWatchUnavailable = false;
   // Where each registered path led when Rollup's watcher first followed it.
   const followed = new Map<string, string>();
 
@@ -67,10 +69,19 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
         followed.set(path, first);
         if (first !== real) this.addWatchFile(resolve(real));
       }
-      if (plan.links.length > 0) {
+      if (plan.links.length > 0 && !linkWatchUnavailable) {
         linkWatch ??= createLinkWatch();
-        linkWatch.watch(plan.links);
-        this.addWatchFile(linkWatch.signal);
+        if (linkWatch === undefined) {
+          // The links are a refinement: the build goes on, and says once what the watch cannot do.
+          linkWatchUnavailable = true;
+          this.warn(
+            '[twee-ts] The link watch is unavailable because no temporary folder can be written (check TMPDIR); ' +
+              'a link pointed at another target is read with the next build something else starts.',
+          );
+        } else {
+          linkWatch.watch(plan.links);
+          this.addWatchFile(linkWatch.signal);
+        }
       }
       // Rollup's file watcher (chokidar) reads every backslash as a separator, also on POSIX, where it is a
       // filename character: such a file is read by each build, but an edit to it starts none.

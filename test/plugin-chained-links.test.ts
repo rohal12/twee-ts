@@ -321,6 +321,7 @@ describe.skipIf(noRelinkWatch)('createLinkWatch (#434)', () => {
     const link = join(dir, 'story.tw');
     symlinkSync(join(dir, 'one.tw'), link);
     const watch = createLinkWatch();
+    if (watch === undefined) throw new Error('the link watch could not be created');
     try {
       watch.watch([link]);
       // Events for other names in the folder come first, and the signal still holds the count of none.
