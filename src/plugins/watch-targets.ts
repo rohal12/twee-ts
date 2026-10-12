@@ -93,6 +93,10 @@ export function watchPlan(
   const reals = new Map<string, string>();
   const spell = (path: string, real: string, isRoot: boolean): string[] => {
     if (spelling === 'real') return [toPosix(real), ...(isRoot || isLink(path) ? hopsOf(path) : [])];
+    // A link found while walking a folder, to a file the build reads, is among the links the inputs are reached
+    // through, each hop of its chain: pointing one elsewhere changes the story (#443). Links source discovery leaves
+    // out (to a folder, to a file the build writes, to nothing) never get here, and are not watched (#160).
+    if (!isRoot && isLink(path)) for (const hop of linksOnTheWay(path)) links.add(hop);
     // Rollup's watcher fails with an error nobody handles for a path that is a loop of links.
     if (isLoop(path)) return [];
     if (!isLoop(real)) reals.set(path, real);

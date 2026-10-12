@@ -321,6 +321,7 @@ describe.skipIf(noRelinkWatch)('createLinkWatch (#434)', () => {
     const link = join(dir, 'story.tw');
     symlinkSync(join(dir, 'one.tw'), link);
     const watch = createLinkWatch();
+    if (watch === undefined) throw new Error('the link watch could not be created');
     try {
       watch.watch([link]);
       // Events for other names in the folder come first, and the signal still holds the count of none.
@@ -348,5 +349,67 @@ describe.skipIf(noRelinkWatch)('createLinkWatch (#434)', () => {
     } finally {
       watch.close();
     }
+  });
+});
+
+/** Where a file link of the chain sits in the source folder walk, and how the sources name it. */
+const FOLDER_LAYOUTS = [
+  { name: 'a named file', link: 'story/link.tw', sources: ['story/link.tw'] },
+  { name: 'a file found in a source folder', link: 'story/link.tw', sources: ['story'] },
+  { name: 'a file found in a nested folder', link: 'story/deeper/link.tw', sources: ['story'] },
+] as const;
+
+/** Which link of the chain `link -> t/mid.tw -> t/last.tw -> t/one.tw` is pointed at `t/two.tw`. */
+const HOPS = ['first', 'middle', 'last'] as const;
+
+describe.each(BUNDLERS)(
+  '%s build watch: a link found while walking a source folder (#443)',
+  { timeout: 60_000 },
+  (bundler) => {
+    const cases = FOLDER_LAYOUTS.flatMap((layout) => HOPS.map((hop) => [layout.name, hop, layout] as const));
+
+    it.skipIf(noRelinkWatch).each(cases)(
+      'follows a retarget of the %s: the %s link of a chain',
+      async (_name, hop, layout) => {
+        const dir = makeProject({
+          'story/keep.tw': ':: Keep\nKept.\n',
+          't/one.tw': storyWith('FIRST'),
+          't/two.tw': storyWith('SECOND'),
+        });
+        mkdirSync(join(dir, 'story/deeper'), { recursive: true });
+        const up = layout.link.split('/').length - 1;
+        symlinkSync(`${'../'.repeat(up)}t/mid.tw`, join(dir, layout.link));
+        symlinkSync('last.tw', join(dir, 't/mid.tw'));
+        symlinkSync('one.tw', join(dir, 't/last.tw'));
+        const out = await watchStory(bundler, dir, { sources: layout.sources });
+        const at = { first: layout.link, middle: 't/mid.tw', last: 't/last.tw' }[hop];
+        await relinked(out, join(dir, at), join(dir, 't/two.tw'), 'SECOND');
+        await edited(out, join(dir, 't/two.tw'), 'SECOND_EDITED');
+        expect(text(out)).toContain('SECOND_EDITED');
+      },
+    );
+  },
+);
+
+describe.skipIf(noLinks)('watchPlan: links found while walking a source folder (#443)', () => {
+  const none = outputPaths({ files: [], dirs: [] });
+
+  it('lists every hop of a chain that starts in a source folder, with the given spelling as with the real one', () => {
+    const dir = realpathSync(makeProject({ 'story/a.tw': storyWith('x'), 't/one.tw': storyWith('y') }));
+    symlinkSync('../t/hop.tw', join(dir, 'story/link.tw'));
+    symlinkSync('one.tw', join(dir, 't/hop.tw'));
+    const given = watchPlan([join(dir, 'story')], () => false, none, 'given');
+    const real = watchPlan([join(dir, 'story')], () => false, none, 'real');
+    expect(given.links.sort()).toEqual([join(dir, 'story/link.tw'), join(dir, 't/hop.tw')].sort());
+    expect(real.links.sort()).toEqual(given.links.sort());
+  });
+
+  it('lists no link that source discovery leaves out: to a folder, to a file the build writes, to nothing (#160)', () => {
+    const dir = realpathSync(makeProject({ 'story/a.tw': storyWith('x'), 'dist/index.html': 'last build' }));
+    symlinkSync('.', join(dir, 'story/self'));
+    symlinkSync('../dist/index.html', join(dir, 'story/last.html'));
+    symlinkSync('missing', join(dir, 'story/dangling'));
+    const outputs = outputPaths({ files: [join(dir, 'dist/index.html')], dirs: [] });
+    expect(watchPlan([join(dir, 'story')], () => false, outputs, 'given').links).toEqual([]);
   });
 });

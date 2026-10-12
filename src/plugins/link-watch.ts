@@ -31,11 +31,23 @@ function destination(link: string): string | undefined {
   }
 }
 
-/** A watch of links that touches its signal file when one of them leads elsewhere, or appears or disappears. */
-export function createLinkWatch(): LinkWatch {
-  const folder = mkdtempSync(join(tmpdir(), 'twee-ts-links-'));
-  const signal = join(folder, 'changed');
-  writeFileSync(signal, '');
+/**
+ * A watch of links that touches its signal file when one of them leads elsewhere, or appears or disappears. The watch
+ * is a refinement of the build watch: without a temporary folder to write the signal file in (a missing or read-only
+ * TMPDIR), there is none, and a retargeted link is read with the next build something else starts.
+ */
+export function createLinkWatch(): LinkWatch | undefined {
+  let folder: string | undefined;
+  let signal: string;
+  try {
+    folder = mkdtempSync(join(tmpdir(), 'twee-ts-links-'));
+    signal = join(folder, 'changed');
+    writeFileSync(signal, '');
+  } catch {
+    if (folder !== undefined) rmSync(folder, { recursive: true, force: true });
+    return undefined;
+  }
+  const signalFolder = folder;
   let touches = 0;
   const watchers: FSWatcher[] = [];
   let timer: NodeJS.Timeout | undefined;
@@ -70,7 +82,7 @@ export function createLinkWatch(): LinkWatch {
     timer = undefined;
   };
   const onExit = (): void => {
-    rmSync(folder, { recursive: true, force: true });
+    rmSync(signalFolder, { recursive: true, force: true });
   };
   process.once('exit', onExit);
 

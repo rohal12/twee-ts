@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI watch mode no longer reports a build it does not write as built: a build with errors prints `Build failed: N passages, W words` after its errors, and `Built:` is printed only for a written build (#451)
+- `rollup --watch` now starts a build when a hop of a link chain is retargeted and the first link of the chain is found while walking a source folder; the Rollup plugin's link watch covers every link found in a source folder with the hops of its chain (#443)
+- The Rollup plugin's build watch no longer fails every build when its temporary folder cannot be created (a missing or read-only `TMPDIR`): the build succeeds and the plugin warns once that a retargeted link is read with the next build something else starts (#444)
+- The Vite dev server answers a request after the rebuild that a debounced watcher event asked for, also when that rebuild was chained while another rebuild ran (#442)
+- A link loop or an unreachable link target in a source or module folder no longer fails the build when the link's name has a file type the folder's role does not load or `exclude` leaves it out; a link is judged by its own name before its target is read, and a link loop is skipped like a dangling link (#446)
+- The `whitespace` word count no longer reads a rendered `<svg>` element as text after a comment that holds a `<svg` without a `>`: the end of each svg element is found from its own opener, as SugarCube's svg parser does, in linear time (#441)
+- Format index diagnostics state what a repeated field does: the entry is skipped or the index is not used, instead of saying the last value is used; the index-level case is documented in the story formats page (#445)
+- The ESM build reports the installed package's version (for `creator-version` and the `$schema` URL `--init` writes) when the process has a global `__dirname`, as `node -e` and the REPL do, instead of `0.0.0` (#447)
+- The API documentation's Error Handling table gives an unknown `outputMode` as `INVALID_OPTIONS` and a missing Twine 1 format component as `FORMAT_UNAVAILABLE`; a test throws each documented case and compares its code with the table (#448)
+- The differences from Tweego list the missing program folder search (D-33), UTF-16 sources (D-34) and ROT13 obfuscation (D-35), each with a test, and every D-entry renders as its own paragraph (#449, #450)
+
 ## [2.0.0] - 2026-10-12
 
 [Migrating to 2.0](docs/migrating-to-2.md) explains each breaking change and what to do about it.

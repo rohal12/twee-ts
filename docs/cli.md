@@ -228,12 +228,12 @@ In watch mode (`-w`), a build with errors is reported but not written: the outpu
 ```sh
 $ twee-ts -w -o story.html src/
 Watch mode started. Press CTRL+C to stop.
-Built: 3 passages, 3 words
 error: src/Start.tw:4: Malformed twee source; unterminated tag block.
+Build failed: 3 passages, 3 words
 Build has 1 error; output not written. Still watching for changes.
 ```
 
-Every build reports its `Built:` line first, then its warnings and errors.
+A build without errors reports its `Built:` line first, then its warnings. A build with errors reports its warnings and errors, then a `Build failed:` line with the counts of the story it could not write: a build that is not written is never reported as built.
 
 A fatal error, such as a story format that is not available, is printed with the diagnostics that explain it, in one-shot and watch mode:
 
@@ -265,10 +265,12 @@ What happens to an input that can't be used depends on its role and on how it wa
 | unreadable                                          | error                                                                     | error                                          | fatal                      | fatal                                                   |
 | a folder that can't be listed                       | warning                                                                   | warning                                        | —                          | —                                                       |
 | a folder where a file is needed                     | error                                                                     | error                                          | fatal                      | fatal                                                   |
-| a dangling symbolic link                            | warning                                                                   | skipped without a word (an editor's lock file) | fatal                      | fatal                                                   |
+| a dangling symbolic link, or a link loop            | warning                                                                   | skipped without a word (an editor's lock file) | fatal                      | fatal                                                   |
 | a file type the role doesn't load                   | warning (`… Not a supported source file type (extension .twe); skipped.`) | skipped without a word                         | read whatever its type     | read whatever its type                                  |
 | a FIFO, device or socket                            | warning                                                                   | skipped without a word                         | read (`--head <(…)` works) | read                                                    |
 | text that can't be decoded (invalid UTF-16, UTF-32) | error                                                                     | error                                          | fatal                      | fatal                                                   |
+
+A symbolic link found in a folder is judged by its own name before its target is read: a link whose name has a file type the role doesn't load, or that `exclude` leaves out, is skipped without a word, whatever its target is (a loop of links, a missing file, a file in a folder that can't be searched). Only a link that would be loaded is followed, and a link loop leads to nothing, as a dangling link does.
 
 A warning is printed and the build goes on. An error is reported with the other diagnostics, and the CLI writes nothing and exits with 1. A fatal problem stops the build before anything is written. Tweego decides the same where it decides: its walk skips links and unknown types in folders and warns about a path it can't walk, and it stops on a head file it can't read. Messages name the role, the path and the cause: `load head file h.html: ENOENT: no such file or directory, open 'h.html'`, `load module secret.js: EACCES: …`.
 

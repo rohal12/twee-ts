@@ -340,18 +340,23 @@ describe('CLI exit status', () => {
     try {
       // stdout and stderr arrive separately: wait for the build line and its report.
       await waitFor(
-        () => (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
+        () =>
+          (cli.stderr().includes('Build failed:') && /still watching/i.test(cli.stderr())) ||
+          cli.child.exitCode !== null,
         'the first build',
       );
-      expect(cli.stderr()).toContain('Built:');
-      expect(cli.stderr()).toMatch(/error: broken\.tw:\d+: Malformed twee source/);
+      // A build that is not written is never reported as built (#451); its counts follow its errors.
+      expect(cli.stderr()).not.toContain('Built:');
+      expect(cli.stderr()).toMatch(
+        /error: broken\.tw:\d+: Malformed twee source[^\n]*\nBuild failed: \d+ passages?, \d+ words/,
+      );
       expect(cli.stderr()).toContain('output not written');
       expect(existsSync(join(dir, 'out.html'))).toBe(false);
       // A process that exited after the failed build cannot build a good save.
       write('broken.tw', VALID_STORY);
       await waitFor(
         () =>
-          (existsSync(join(dir, 'out.html')) && countOf(cli.stderr(), 'Built:') >= 2) || cli.child.exitCode !== null,
+          (existsSync(join(dir, 'out.html')) && countOf(cli.stderr(), 'Built:') >= 1) || cli.child.exitCode !== null,
         'the rebuild of the corrected save',
       );
       expect(cli.child.exitCode).toBeNull();
@@ -365,10 +370,7 @@ describe('CLI exit status', () => {
     const out = join(dir, 'out.html');
     const cli = startCli(dir, [...baseArgs, '-w', 'later', '-o', 'out.html']);
     try {
-      await waitFor(
-        () => (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
-        'the first build',
-      );
+      await waitFor(() => /still watching/i.test(cli.stderr()) || cli.child.exitCode !== null, 'the first build');
       expect(cli.stderr()).toMatch(/warning: path later: ENOENT/);
 
       mkdirSync(join(dir, 'later'));
@@ -393,11 +395,7 @@ describe('CLI exit status', () => {
       chmodSync(join(dir, 'locked'), 0o000);
       const cli = startCli(dir, [...baseArgs, '-w', 'locked', '-o', 'out.html']);
       try {
-        await waitFor(
-          () =>
-            (cli.stderr().includes('Built:') && /still watching/i.test(cli.stderr())) || cli.child.exitCode !== null,
-          'the first build',
-        );
+        await waitFor(() => /still watching/i.test(cli.stderr()) || cli.child.exitCode !== null, 'the first build');
         expect(cli.stderr()).toMatch(/error: Cannot watch locked: EACCES/);
 
         chmodSync(join(dir, 'locked'), 0o755);
@@ -424,14 +422,18 @@ describe('CLI exit status', () => {
 
       write('story.tw', VALID_STORY.replace(':: Start\nHello.', ':: Start [unterminated\nBROKEN_CONTENT'));
       // stdout and stderr arrive separately: wait for the build line and its report.
-      await waitFor(() => builds() >= 2 && /still watching/i.test(cli.stderr()), 'the rebuild of the malformed save');
+      await waitFor(
+        () => countOf(cli.stderr(), 'Build failed:') >= 1 && /still watching/i.test(cli.stderr()),
+        'the rebuild of the malformed save',
+      );
+      expect(builds()).toBe(1);
       expect(readFileSync(out).equals(good)).toBe(true);
       expect(cli.stderr()).toMatch(/error: story\.tw:\d+: Malformed twee source/);
       expect(cli.stderr()).toContain('output not written');
       expect(cli.child.exitCode).toBeNull();
 
       write('story.tw', VALID_STORY.replace('Hello.', 'RECOVERED_CONTENT'));
-      await waitFor(() => builds() >= 3, 'the rebuild of the corrected save');
+      await waitFor(() => builds() >= 2, 'the rebuild of the corrected save');
       const recovered = readFileSync(out, 'utf-8');
       expect(recovered).toContain('RECOVERED_CONTENT');
       expect(recovered).not.toContain('KNOWN_GOOD');
@@ -958,3 +960,25 @@ describe.skipIf(process.platform !== 'linux' || !existsSync('/dev/full'))(
     });
   },
 );
+
+// A link found in a source folder is judged by its own name before its target is read (#446).
+describe.skipIf(process.platform === 'win32')('CLI with a link loop in a source folder (#446)', () => {
+  const loop = (name: string): void => {
+    mkdirSync(join(dir, 'lq'), { recursive: true });
+    writeFileSync(join(dir, 'lq', 'a.tw'), VALID_STORY);
+    symlinkSync(name, join(dir, 'lq', name));
+  };
+
+  it.each([
+    ['of a type the sources do not load', 'loop', []],
+    ['that --exclude leaves out', 'loop.tw', ['--exclude', 'lq/loop.tw']],
+    ['that --exclude leaves out, by a pattern', 'loop.tw', ['--exclude', '**/loop.tw']],
+    ['with a source type, as it skips a dangling link', 'loop.tw', []],
+  ])('builds the story with a link loop %s', (_what, name, flags) => {
+    loop(name);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', ...flags, 'lq', '-o', 'out.html']);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('<tw-storydata');
+  });
+});
