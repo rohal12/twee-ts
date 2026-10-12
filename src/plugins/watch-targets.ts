@@ -99,6 +99,9 @@ export function watchPlan(
     return [path];
   };
   const walk = (path: string, real: string, isRoot: boolean): Walked => {
+    // A link found while walking a folder is among the links the inputs are reached through, each hop of its chain,
+    // whatever the spelling and whether or not it leads anywhere now: pointing it elsewhere changes the story (#443).
+    if (!isRoot && isLink(path)) for (const hop of linksOnTheWay(path)) links.add(hop);
     if (outputs.isFile(real) || (!isRoot && outputs.isDir(real))) return NOTHING;
     let entry;
     let names;
