@@ -243,6 +243,17 @@ describe.runIf(oracle !== undefined || process.env['CI'] !== undefined)(
         '<svg><svg-x><text>drawn</text></svg-x></svg>',
         '<svg><g> </g></svg>a',
         'a &nbsp b',
+        // #441: the openers of own elements after a comment that holds a tag of the same name without a `>`.
+        '/* <svg */ <svg>hi there</svg>',
+        '/% <svg %/ <svg>hi there</svg>',
+        '/* </svg */ <svg>hi there</svg>',
+        '/* <svg */ /* </svg */ <svg>a b</svg> c',
+        '/* <svg */ <svg>a b',
+        '<svg>a /* <svg */ <svg>b',
+        '<svg>a /* <svg */ <svg>b</svg></svg> c',
+        '/* <style */ <style>a b</style> c',
+        '/* <html */ <html>a b</html> c',
+        '/* <nowiki */ <nowiki>a b</nowiki> c',
       ];
       const shown = await counts(cases);
       expect(cases.map((text) => countTextWords(text, 'whitespace'))).toEqual(shown);

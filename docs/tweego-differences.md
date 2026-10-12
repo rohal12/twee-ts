@@ -37,7 +37,12 @@ The first comparisons come from reading Tweego's source (`tweego/*.go`, `interna
 **D-27. Links and unsupported files.** A symbolic link to a file is read as the file it points to, whether it is found in a source folder or named as a source; Tweego skips it either way, without a word. (A link to a directory found in a source folder is not followed by either.) A source that is named on the command line (or in `sources`) and has a type twee-ts does not load is a warning; Tweego ignores it silently.
 
 **D-28. Windows-1252 bytes without a letter.** A file that is not valid UTF-8 is read as Windows-1252 in both, but the five bytes the encoding leaves undefined (0x81, 0x8D, 0x8F, 0x90 and 0x9D) become U+0081, U+008D, U+008F, U+0090 and U+009D in twee-ts (the WHATWG decoder, as browsers read the encoding), and U+FFFD in Tweego (Go's `charmap`).
+
 **D-32. Size limits.** A JavaScript string holds at most 2^29 − 24 characters (about 512 MiB), so a text file (source, module, head file, story format) larger than that many bytes is a load error naming its size, and so is a media or font file whose base64 text would be longer (more than about 384 MiB); both are checked before the file is read. HTML nested more than 512 elements deep is a load error too (see [`decompileHTML()`](./api#html-decompiler)). Tweego reads files of any size its memory allows, and HTML of any depth.
+
+**D-33. No program folder.** Tweego searches the story format folders (`storyformats` and its other names) next to its own executable first. twee-ts has no such folder to search and reads only those of the home and working directories, `TWEEGO_PATH` and `formatPaths`; to keep formats beside a program, name their folder in `formatPaths` or `TWEEGO_PATH` (see [Search Order](./story-formats#search-order)).
+
+**D-34. UTF-16 sources.** A text file that starts with a UTF-16 byte order mark is read as UTF-16 (the form Windows PowerShell 5's `>` writes), and an invalid UTF-16 file is an error naming it. Tweego reads such a file as Windows-1252, since the byte 0xFF is not valid UTF-8, finds no passage in it and writes nothing (see [Text encoding](./getting-started#text-encoding)).
 
 ## Twee output
 
@@ -67,6 +72,8 @@ The first comparisons come from reading Tweego's source (`tweego/*.go`, `interna
 **D-24. Twine 1 HTML and archives.** Every tiddler has `created="YYYYMMDDHHMM"` and `modifier="twee"` attributes, as the Twine 1 HTML output specification has them; Tweego writes neither. The store area of an archive (`--archive-twine1`) has no `hidden` attribute, where Tweego's has. In HTML output, the `"TIME"` placeholder becomes `Built on ` and the UTC time (`Sat, 10 Oct 2026 16:16:11 GMT`), so that `SOURCE_DATE_EPOCH` gives the same bytes everywhere; Tweego writes its local time in the RFC 1123Z form (`Sun, 11 Oct 2026 00:16:11 +0800`). Tweego also replaces the Twine byline of the format's header (`<a href="http://twinery.org/">Twine</a>`) with a link to Tweego; twee-ts leaves the header's byline as it is.
 
 **D-25. End tags in code.** Script, stylesheet and module content has `</script>` and `</style>` written as `<\/script>` and `<\/style>`, which a script and a stylesheet read as the same text. Tweego writes them as they are, so a script that holds the string `"</script>"` ends its element there and breaks the page.
+
+**D-35. ROT13 obfuscation.** With `obfuscate:rot13` in `StorySettings`, twee-ts encodes the names, tags and content of the Twine 1 tiddlers, as Twine 1.4 writes them and as its story formats (Sugarcane, Jonah, Responsive) decode them. Tweego writes them unencoded, so those formats read the wrong names and text and the story does not start (see [Twine 1 Archive](./output-modes#twine-1-archive)).
 
 ## Diagnostics
 

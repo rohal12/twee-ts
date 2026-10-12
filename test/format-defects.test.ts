@@ -268,7 +268,11 @@ describe('F07: diagnostics carry the URL, the cause and every failure', () => {
     ['an HTML page', '<!doctype html><p>hi', /Failed to read format index http:\S+: .*JSON/],
     ['a JSON value that is not an index', '[1, 2]', /Failed to read format index http:\S+: it is not a format index/],
     ['a twine2 field that is not a list', '{"twine2": {}}', /\$\.twine2 must be an array, not an object/],
-    ['a repeated list', '{"twine2": [], "twine2": []}', /\$\.twine2 repeats the field "twine2"/],
+    [
+      'a repeated list',
+      '{"twine2": [], "twine2": []}',
+      /\$\.twine2 repeats the field "twine2", so the index is not used/,
+    ],
   ])('names the index and the reason for %s', async (_label, body, message) => {
     const server = await startFormatServer({ '/index.json': body });
     const result = await build({ ...story('Review', '1.0.0'), formatIndices: [`${server.origin}/index.json`] });

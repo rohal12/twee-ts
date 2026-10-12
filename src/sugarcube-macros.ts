@@ -1020,41 +1020,101 @@ function startsWithFolded(text: string, start: number, prefix: string): boolean 
 }
 
 /**
- * The `<svg>` elements SugarCube's `svgTag` parser reads, by where their opener starts: each `<svg` tag its pattern
- * matches (`<svg[^>]*>`, searched from the start of the text), ending just past the first `</svg…>` tag after which
- * as many `</svg` tags as `<svg` tags follow the opener, or not closed when there is none.
+ * The `<svg>` elements SugarCube's `svgTag` parser could read, by where their opener starts. For an opener the
+ * wikifier matched (`<svg[^>]*>`), the parser searches the tags `<(\/?)svg[^>]*>` from the opener on, each after the
+ * end of the one before, and the element ends just past the first `</svg…>` tag after which as many `</svg` tags as
+ * `<svg` tags have been found, counting the opener; it is not closed when there is none. The tags found from an
+ * opener are those found from any other tag of that search, but not those found from the start of the text: a
+ * `<svg` in a comment the wikifier skips has a `>` of its own only far on, and the search from the start of the text
+ * runs over the opener after it.
+ *
+ * So the element of each `<svg` tag is worked out as if the search started there. Every tag points to the tag a search
+ * goes on with after its end, which makes a forest, and the element of a tag ends at the nearest tag on the way to a
+ * root after which the tags closed equal the tags opened. One walk of the forest finds all of them: linear time.
  */
 function svgElementsOf(text: string): ReadonlyMap<number, OwnElement> {
-  const tags: { readonly start: number; readonly end: number; readonly step: number }[] = [];
+  // Every `<svg` and `</svg` in the text with a `>` after it: where it starts, where its `[^>]*>` ends, and +1 or -1.
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const steps: number[] = [];
   let angle = -1;
   SVG_TAG_START_RE.lastIndex = 0;
   for (let m = SVG_TAG_START_RE.exec(text); m !== null; m = SVG_TAG_START_RE.exec(text)) {
     if (angle < m.index) angle = text.indexOf('>', m.index);
+    // No `>` after this one: no tag from here on matches.
     if (angle === -1) break;
-    tags.push({ start: m.index, end: angle + 1, step: m[0].length === 4 ? 1 : -1 });
-    // `[^>]*>` runs to the `>`: the next tag starts after it.
-    SVG_TAG_START_RE.lastIndex = angle + 1;
+    starts.push(m.index);
+    ends.push(angle + 1);
+    steps.push(m[0].length === 4 ? 1 : -1);
   }
-  // depth[k]: opening tags minus closing tags among the first k; atOrBelow[k]: the first j > k with depth[j] <= depth[k].
-  const depth = [0];
-  tags.forEach((tag, k) => depth.push((depth[k] ?? 0) + tag.step));
-  const atOrBelow: (number | undefined)[] = [];
-  const candidates: number[] = [];
-  for (let k = depth.length - 1; k >= 0; k--) {
-    const here = depth[k] ?? 0;
-    while (candidates.length > 0 && (depth[candidates[candidates.length - 1] ?? 0] ?? 0) > here) candidates.pop();
-    atOrBelow[k] = candidates[candidates.length - 1];
-    candidates.push(k);
+  const count = starts.length;
+  // follower[k]: the tag a search goes on with after tag k (-1: none). Tags end in order, so one pass finds them all.
+  const follower = new Int32Array(count).fill(-1);
+  for (let k = 0, j = 0; k < count; k++) {
+    j = Math.max(j, k + 1);
+    while (j < count && (starts[j] ?? 0) < (ends[k] ?? 0)) j++;
+    if (j < count) follower[k] = j;
   }
-  return new Map(
-    tags.flatMap((tag, k): [number, OwnElement][] => {
-      if (tag.step < 0) return [];
-      const j = atOrBelow[k];
-      const closer = j === undefined ? undefined : tags[j - 1];
-      const closed = closer === undefined ? undefined : { contentEnd: closer.start, end: closer.end };
-      return [[tag.start, { kind: 'svg', openerEnd: tag.end, closed }]];
-    }),
-  );
+  // balance[k]: opening minus closing tags from tag k on its way to a root, tag k included.
+  const balance = new Int32Array(count);
+  for (let k = count - 1; k >= 0; k--) {
+    const next = follower[k] ?? -1;
+    balance[k] = (steps[k] ?? 0) + (next === -1 ? 0 : (balance[next] ?? 0));
+  }
+  // The tags that go on with a tag, as a linked list.
+  const firstChild = new Int32Array(count).fill(-1);
+  const nextSibling = new Int32Array(count).fill(-1);
+  for (let k = count - 1; k >= 0; k--) {
+    const parent = follower[k] ?? -1;
+    if (parent !== -1) {
+      nextSibling[k] = firstChild[parent] ?? -1;
+      firstChild[parent] = k;
+    }
+  }
+  const elements = new Map<number, OwnElement>();
+  // The way from a root to the tag being visited; for each balance, the place on it of the nearest tag with that balance
+  // (-1: before the root, where the balance is 0); and what a tag's balance pointed to before it.
+  const path: number[] = [];
+  const placeOf = new Map<number, number>([[0, -1]]);
+  const hidden = new Int32Array(count);
+  const ABSENT = -2;
+  const enter = (k: number): void => {
+    path.push(k);
+    const balanced = balance[k] ?? 0;
+    const above = placeOf.get(balanced);
+    if ((steps[k] ?? 0) > 0) {
+      // The balance changes by one at each tag, so the first tag on the way where it is the same again closes the
+      // element: the tag on the way before it is the closer.
+      const closer = above === undefined ? undefined : path[above + 1];
+      const closed = closer === undefined ? undefined : { contentEnd: starts[closer] ?? 0, end: ends[closer] ?? 0 };
+      elements.set(starts[k] ?? 0, { kind: 'svg', openerEnd: ends[k] ?? 0, closed });
+    }
+    hidden[k] = above ?? ABSENT;
+    placeOf.set(balanced, path.length - 1);
+  };
+  const leave = (k: number): void => {
+    const balanced = balance[k] ?? 0;
+    const before = hidden[k] ?? ABSENT;
+    if (before === ABSENT) placeOf.delete(balanced);
+    else placeOf.set(balanced, before);
+    path.pop();
+  };
+  const cursor = Int32Array.from(firstChild);
+  for (let root = 0; root < count; root++) {
+    if (follower[root] !== -1) continue;
+    enter(root);
+    while (path.length > 0) {
+      const k = path[path.length - 1] ?? 0;
+      const child = cursor[k] ?? -1;
+      if (child === -1) {
+        leave(k);
+      } else {
+        cursor[k] = nextSibling[child] ?? -1;
+        enter(child);
+      }
+    }
+  }
+  return elements;
 }
 
 /** Where a `<script>` element's opener ends and its content ends, if it is complete. */

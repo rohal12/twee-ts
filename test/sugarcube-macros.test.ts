@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import {
   findJavaScriptPassageLinks,
   findPassageLinks,
@@ -6,6 +7,7 @@ import {
   parseMacroArgs,
   scriptBodyCloser,
   tagMatcher,
+  walkPassageMarkup,
 } from '../src/sugarcube-macros.js';
 import type { MacroTag } from '../src/sugarcube-macros.js';
 
@@ -402,5 +404,65 @@ describe('findJavaScriptPassageLinks', () => {
     // The outer string's \x5c is a backslash, so the element's own string reads \x3c<goto S>>.
     const source = String.raw`jQuery(document.body).wiki('<script>$.wiki("\x5cx3c<goto S>>")</script>');`;
     expect(findJavaScriptPassageLinks(source)).toEqual([{ via: 'goto', passage: 'S' }]);
+  });
+});
+
+describe('the <svg> elements of the markup walk (#441)', () => {
+  interface Read {
+    readonly start: number;
+    readonly openerEnd: number;
+    readonly closed: { readonly contentEnd: number; readonly end: number } | undefined;
+  }
+
+  /**
+   * SugarCube's `svgTag` parser, run as it is written: at each `<svg[^>]*>` the wikifier reaches, the tags
+   * `<(\/?)svg[^>]*>` are searched from that opener on, until as many have closed as opened.
+   */
+  function svgElementsAsSugarCubeReadsThem(text: string): Read[] {
+    const elements: Read[] = [];
+    const opener = /<svg[^>]*>/iy;
+    for (let pos = 0; pos < text.length;) {
+      const start = text.indexOf('<', pos);
+      if (start === -1) break;
+      opener.lastIndex = start;
+      const matched = opener.exec(text);
+      if (matched === null) {
+        pos = start + 1;
+        continue;
+      }
+      const openerEnd = start + matched[0].length;
+      const tags = /<(\/?)svg[^>]*>/gi;
+      tags.lastIndex = start;
+      let depth = 0;
+      let closed: Read['closed'];
+      for (let tag = tags.exec(text); tag !== null && closed === undefined; tag = tags.exec(text)) {
+        depth += tag[1] === '/' ? -1 : 1;
+        if (depth === 0) closed = { contentEnd: tag.index, end: tags.lastIndex };
+      }
+      elements.push({ start, openerEnd, closed });
+      pos = closed?.end ?? openerEnd;
+    }
+    return elements;
+  }
+
+  it('reads the element of each opener the walk reaches from that opener, whatever comes before it', () => {
+    const piece = fc.constantFrom('<svg', '</svg', '<SVG', '</SVG', '>', ' ', 'x', '<svg>', '</svg>', '<svg a="b">');
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 24 }), (pieces) => {
+        const text = pieces.join('');
+        const read: Read[] = [];
+        walkPassageMarkup(
+          text,
+          (region) => {
+            if (region.kind === 'own-element' && region.element.kind === 'svg') {
+              read.push({ start: region.start, openerEnd: region.element.openerEnd, closed: region.element.closed });
+            }
+          },
+          { ownElements: true },
+        );
+        expect(read).toEqual(svgElementsAsSugarCubeReadsThem(text));
+      }),
+      { numRuns: 3000 },
+    );
   });
 });

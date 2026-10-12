@@ -521,6 +521,16 @@ interface EntryFields {
 }
 
 /**
+ * Why an issue found in an index makes the entry or the index unusable. A repeated field is worded by what it
+ * does here (`consequence`): the decoder's own wording, that the last one is used, holds for the readers that
+ * accept it, not for an index, which states what a download must be.
+ */
+function indexIssueReason(issue: DecodeIssue, consequence: string): string {
+  if (issue.kind !== 'duplicate-key') return issue.message;
+  return `${formatJsonPath(issue.path)} repeats the field "${String(issue.path.at(-1))}", ${consequence}`;
+}
+
+/**
  * Check one index entry at `path`; a string is the reason it cannot be used. Members other than
  * these fields (`author`, `description`, …) are not used. A member of the wrong type, or a repeated
  * one, makes the entry unusable: an index states what a download must be, so nothing in it is guessed.
@@ -540,7 +550,7 @@ function parseIndexEntry(twine: TwineKind, raw: JsonValue, path: JsonPath): Inde
     },
     unknown: () => undefined,
   });
-  if (issues.length > 0) return issues.map((issue) => issue.message).join('; ');
+  if (issues.length > 0) return issues.map((issue) => indexIssueReason(issue, 'so the entry is skipped')).join('; ');
   const at = formatJsonPath(path);
   const { name, version } = read;
   if (name === undefined) return `${at} has no "name"`;
@@ -577,7 +587,9 @@ export function parseFormatIndex(text: string, url: string, responseUrl: string)
     unknown: () => undefined,
   });
   if (!isObject) throw new Error('it is not a format index (an object with "twine1" and "twine2" lists)');
-  if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join('; '));
+  if (issues.length > 0) {
+    throw new Error(issues.map((issue) => indexIssueReason(issue, 'so the index is not used')).join('; '));
+  }
   const entries: IndexEntry[] = [];
   const skipped: SkippedIndexEntry[] = [];
   // Twine 2 entries first, so they come first among equals.
