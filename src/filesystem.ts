@@ -254,7 +254,10 @@ export function getFilenames(
       stat = lstatSync(pathname);
       if (stat.isSymbolicLink()) {
         link = true;
-        const target = statSync(pathname, { throwIfNoEntry: false });
+        // A link is judged by its own name first (#446), as a file is: a file type the role doesn't load and a file
+        // `exclude` leaves out are skipped before the target is read, so no failure of the target can fail the build.
+        if (!isLoadableType(pathname, role) || matchesExclude(identify(pathname), exclude)) return;
+        const target = statLinkTarget(pathname);
         if (target === undefined) {
           problem('found', 'dangling-link', pathname, readLinkText(pathname));
           return;
@@ -326,6 +329,19 @@ function isSymbolicLink(path: string): boolean {
     return lstatSync(path).isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+/**
+ * What a link leads to, or undefined when it leads to nothing: a missing target (ENOENT) or a loop of links (ELOOP,
+ * which has no target either). Other failures (a folder on the way that can't be searched) are thrown.
+ */
+function statLinkTarget(link: string): Stats | undefined {
+  try {
+    return statSync(link, { throwIfNoEntry: false });
+  } catch (e) {
+    if (e instanceof Error && 'code' in e && e.code === 'ELOOP') return undefined;
+    throw e;
   }
 }
 

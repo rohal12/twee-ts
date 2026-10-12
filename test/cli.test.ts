@@ -960,3 +960,25 @@ describe.skipIf(process.platform !== 'linux' || !existsSync('/dev/full'))(
     });
   },
 );
+
+// A link found in a source folder is judged by its own name before its target is read (#446).
+describe.skipIf(process.platform === 'win32')('CLI with a link loop in a source folder (#446)', () => {
+  const loop = (name: string): void => {
+    mkdirSync(join(dir, 'lq'), { recursive: true });
+    writeFileSync(join(dir, 'lq', 'a.tw'), VALID_STORY);
+    symlinkSync(name, join(dir, 'lq', name));
+  };
+
+  it.each([
+    ['of a type the sources do not load', 'loop', []],
+    ['that --exclude leaves out', 'loop.tw', ['--exclude', 'lq/loop.tw']],
+    ['that --exclude leaves out, by a pattern', 'loop.tw', ['--exclude', '**/loop.tw']],
+    ['with a source type, as it skips a dangling link', 'loop.tw', []],
+  ])('builds the story with a link loop %s', (_what, name, flags) => {
+    loop(name);
+    const r = runCli(dir, ['--no-config', '--no-remote', '-a', ...flags, 'lq', '-o', 'out.html']);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(dir, 'out.html'), 'utf-8')).toContain('<tw-storydata');
+  });
+});
