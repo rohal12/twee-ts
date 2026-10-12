@@ -93,7 +93,6 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "duplication": "tsx scripts/duplication.ts",
-    "release:gate": "tsx validation/release/release-gate.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",

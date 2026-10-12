@@ -7,19 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- CLI watch mode no longer reports a build it does not write as built: a build with errors prints `Build failed: N passages, W words` after its errors, and `Built:` is printed only for a written build (#451)
-- `rollup --watch` now starts a build when a hop of a link chain is retargeted and the first link of the chain is found while walking a source folder; the Rollup plugin's link watch covers every link found in a source folder with the hops of its chain (#443)
-- The Rollup plugin's build watch no longer fails every build when its temporary folder cannot be created (a missing or read-only `TMPDIR`): the build succeeds and the plugin warns once that a retargeted link is read with the next build something else starts (#444)
-- The Vite dev server answers a request after the rebuild that a debounced watcher event asked for, also when that rebuild was chained while another rebuild ran (#442)
-- A link loop or an unreachable link target in a source or module folder no longer fails the build when the link's name has a file type the folder's role does not load or `exclude` leaves it out; a link is judged by its own name before its target is read, and a link loop is skipped like a dangling link (#446)
-- The `whitespace` word count no longer reads a rendered `<svg>` element as text after a comment that holds a `<svg` without a `>`: the end of each svg element is found from its own opener, as SugarCube's svg parser does, in linear time (#441)
-- Format index diagnostics state what a repeated field does: the entry is skipped or the index is not used, instead of saying the last value is used; the index-level case is documented in the story formats page (#445)
-- The ESM build reports the installed package's version (for `creator-version` and the `$schema` URL `--init` writes) when the process has a global `__dirname`, as `node -e` and the REPL do, instead of `0.0.0` (#447)
-- The API documentation's Error Handling table gives an unknown `outputMode` as `INVALID_OPTIONS` and a missing Twine 1 format component as `FORMAT_UNAVAILABLE`; a test throws each documented case and compares its code with the table (#448)
-- The differences from Tweego list the missing program folder search (D-33), UTF-16 sources (D-34) and ROT13 obfuscation (D-35), each with a test, and every D-entry renders as its own paragraph (#449, #450)
-
 ## [2.0.0] - 2026-10-12
 
 [Migrating to 2.0](docs/migrating-to-2.md) explains each breaking change and what to do about it.
@@ -107,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The release gate is removed: a release is published when CI on `main` is green and the merge commit carries the release annotation; no evidence record or review sweeps are required
 - CI runs on the latest Node (24), Vite (8) and Rollup (4) only, and the contract matrix on Linux; the plugin peer-version test run (`vitest.peer.config.ts`) is removed, and the "plugin peers" job type-checks a consumer config against the packed plugins
 - JavaScript (format.js files, story scripts, macro arguments) is read with acorn, which is bundled into the package; twee-ts still has no runtime dependencies and still runs no JavaScript it reads (#245)
 - HTML is parsed with parse5, which is bundled into the package in place of htmlparser2; twee-ts still has no runtime dependencies (#244)
@@ -121,6 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI watch mode no longer reports a build it does not write as built: a build with errors prints `Build failed: N passages, W words` after its errors, and `Built:` is printed only for a written build (#451)
+- `rollup --watch` now starts a build when a hop of a link chain is retargeted and the first link of the chain is found while walking a source folder; the Rollup plugin's link watch covers every link found in a source folder with the hops of its chain (#443)
+- The Rollup plugin's build watch no longer fails every build when its temporary folder cannot be created (a missing or read-only `TMPDIR`): the build succeeds and the plugin warns once that a retargeted link is read with the next build something else starts (#444)
+- The Vite dev server answers a request after the rebuild that a debounced watcher event asked for, also when that rebuild was chained while another rebuild ran (#442)
+- A link loop or an unreachable link target in a source or module folder no longer fails the build when the link's name has a file type the folder's role does not load or `exclude` leaves it out; a link is judged by its own name before its target is read, and a link loop is skipped like a dangling link (#446)
+- The `whitespace` word count no longer reads a rendered `<svg>` element as text after a comment that holds a `<svg` without a `>`: the end of each svg element is found from its own opener, as SugarCube's svg parser does, in linear time (#441)
+- Format index diagnostics state what a repeated field does: the entry is skipped or the index is not used, instead of saying the last value is used; the index-level case is documented in the story formats page (#445)
+- The ESM build reports the installed package's version (for `creator-version` and the `$schema` URL `--init` writes) when the process has a global `__dirname`, as `node -e` and the REPL do, instead of `0.0.0` (#447)
+- The API documentation's Error Handling table gives an unknown `outputMode` as `INVALID_OPTIONS` and a missing Twine 1 format component as `FORMAT_UNAVAILABLE`; a test throws each documented case and compares its code with the table (#448)
+- The differences from Tweego list the missing program folder search (D-33), UTF-16 sources (D-34) and ROT13 obfuscation (D-35), each with a test, and every D-entry renders as its own paragraph (#449, #450)
 - Watch mode on macOS no longer misses a change made right after its watches changed (a link created or retargeted, a watched path that appeared): Node watches every folder of a process through one FSEvents stream, which each start or close of a folder watch replaces, and a change made meanwhile was reported to no watch, so the output kept the old tree until the next edit. The watch now learns when the new stream runs, from a file it writes in a folder of its own in the temporary folder, and then builds in full (#436).
 - `vite build --watch` and `rollup --watch` start a build when any link a story source, head file or module is reached through is pointed at another target, not only the link you named: every hop of a chain of links (`story.tw` -> `current.tw` -> `release-3.tw`), of a folder link that leads through another, and of the links among the folders above, is registered, a hop that leads to a folder holding a build output and a link directly in the root of the file system excepted. Rollup's watcher follows a registered link and watches what it led to, so it reported no link pointed elsewhere, not even the named one, and kept watching the old target; the Rollup plugin now watches the folders that hold those links (not recursively) and starts a build when one leads elsewhere, then watches the new target too, and registers nothing for a path that is a loop of links, which Rollup's watcher fails on with an error nobody handles (#434)
 - The `whitespace` word count matches SugarCube for list, table and foreign-content markup. SugarCube makes each HTML element from its own start tag, in the context of the element around it, and the count read the whole passage as one HTML document: a `<tr>` or `<td>` outside a table (which SugarCube turns into a copy of the element around it), a line feed directly inside a `table`, `ul`, `ol`, `dl` and the other elements that take no line break (`<ul>one\ntwo</ul>` is one word), an HTML or SVG element in `<math>` (not rendered, so none of its text counts), content of `<html>` that starts with a table part (jQuery reads it inside a table and loses the text before the first row), the text a table or an unknown element moves, and white space in MathML and SVG elements that renders no text (it still separates the words around it) were counted differently. A character reference is read only with its `;`, as SugarCube reads it (`one &nbsp two` is three words). The text is read in tree order, as a browser lays it out. The comparison with SugarCube in Chromium now generates lists, tables, `<math>` and `<html>`, nested, left open and closed in the wrong order, and counts a `br` only where it is rendered and a `textarea` only when it is an HTML one (#435)

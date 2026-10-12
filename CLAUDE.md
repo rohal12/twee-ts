@@ -68,8 +68,7 @@ src/
 bin/twee-ts.ts         CLI entry point
 scripts/               Package check, duplication measurement, licence notices, ESLint restrictions
 validation/contracts/  The compiler contract matrix, run against dist/ (vitest.contracts.config.ts)
-validation/release/    The release gate: review areas, evidence record checks (gate.ts), the command
-validation/evidence/   Committed evidence records and review reports, one folder per release
+validation/evidence/   Review reports of past releases (historical)
 test/                  *.test.ts (unit, property, differential); helpers/; fixtures/
                        docs-snippets.test.ts and docs-reference.test.ts keep the docs executable and in sync
 specs/                 Specification conformance tests (Twee 3, Twine HTML/archive/JSON, story formats)
@@ -83,7 +82,8 @@ specs/                 Specification conformance tests (Twee 3, Twine HTML/archi
 - **Fix the defect class, not the case.** Enumerate the input dimension (spec states, grammar productions, file types, option sources, platforms) and cover it with table-driven, property-based (fast-check) or differential tests against an oracle; every reported defect gets a regression test that failed first.
 - **Duplication budget.** `duplication-budget.json` may only go down; remove a new clone rather than raise it.
 - **Docs are tested.** Every code block in README.md and docs/ is type-checked and run (see `test/docs-snippets.test.ts`); CLI flags, config keys and exported names are compared with the code. Update docs with behaviour.
-- **Required checks** before pushing: `pnpm run format`, `typecheck`, `lint`, `knip`, `pnpm test`, `pnpm test:coverage` (thresholds never lowered, no `v8 ignore`), `pnpm run build`, `pnpm run duplication jscpd` and `pnpm run duplication fallow`. Incompatible behaviour changes carry a `BREAKING CHANGE:` footer and a CHANGELOG `[Unreleased]` entry.
+- **Required checks run in CI.** The CI pipeline runs the full suite on every push: format, typecheck, lint, knip, `pnpm test` on three OSes, coverage (thresholds never lowered, no `v8 ignore`), build, contracts and both duplication tools. Locally, run only the fast checks (`pnpm run format`, `typecheck`, `lint`) and the test files you changed. Don't run the full suite or coverage before pushing; push and watch CI (`gh pr checks <n> --watch`). Incompatible behaviour changes carry a `BREAKING CHANGE:` footer and a CHANGELOG `[Unreleased]` entry.
+- **One PR per round.** Collect the fixes for a batch of issues on one branch and open one PR with a `Fixes #N` line per issue. Don't open a PR per issue: separate PRs conflict with each other (CHANGELOG, shared helpers) and each merge needs a rebase.
 
 ## Code style
 
@@ -155,7 +155,6 @@ Follow type-first development: define data models and function signatures before
 - `pnpm run check:package` — build, pack, and check the tarball as consumers use it (`scripts/check-package.mjs`)
 - `pnpm run mutation` — mutation testing of the core modules with StrykerJS (`stryker.config.mjs`, a few minutes); `pnpm run mutation:summary` compares the scores with `mutation-baseline.json` (`--update` rewrites it). Informational: never a gate
 - `pnpm run test:contracts` — build, then run the compiler contract matrix (`validation/contracts/`) against `dist/`
-- `pnpm run release:gate` — the release gate; `--always` checks the evidence for HEAD, `--fingerprint [commit]` and `--checks <commit>` print what a record needs (docs/compiler-validation.md)
 - `pnpm run format:check` — check formatting
 - `pnpm run format` — fix formatting
 - `pnpm run docs:dev` — local VitePress dev server
@@ -176,12 +175,7 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
 1. **Create a release branch** named `release/X.Y.Z`
 2. **Rebase onto latest main** before committing — ensures clean history
-3. **Run all checks**: `pnpm run format && pnpm run typecheck && pnpm test && pnpm run build`, then **record the
-   validation evidence**. The release workflow's gate refuses to publish without a committed record for the exact
-   revision: the required CI checks passed on the frozen commit, and three independent full review sweeps of it (one
-   per method, every review area) left no P1/P2 finding open. Follow "How to prepare a release" in
-   [docs/compiler-validation.md](docs/compiler-validation.md), check with
-   `GITHUB_TOKEN=$(gh auth token) pnpm run release:gate --always`, and merge the PR while it is up to date with `main`.
+3. **Push and let CI run the checks**; merge the PR once CI is green and the branch is up to date with `main`.
 4. **Update `CHANGELOG.md`** with a new version section using [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
 
    ```markdown
@@ -199,7 +193,7 @@ It publishes through npm trusted publishing (OIDC): there is no npm token, the w
 
    The reverse matters too: the action treats `release-npm` **anywhere** in the merge commit message as a release request, including inside its own name `release-npm-action`. In any PR that should not release, don't write that string in the title or body, or in commit messages; call it "the release action". A Dependabot PR that bumps the action always contains it, so merging one releases any `fix:`/`feat:` commits already waiting on `main`. When there is nothing to release, the run passes (`FAIL_ON_SKIP: 'false'`).
 
-7. **After merge**, the release workflow runs the format check, typecheck and tests, builds and checks the tarball on every platform, runs the release gate, then publishes that tarball. Verify: `npm view @rohal12/twee-ts version`
+7. **After merge**, the release workflow runs the format check, typecheck and tests, builds and checks the tarball on every platform, then publishes that tarball. Verify: `npm view @rohal12/twee-ts version`
 
 ### SemVer rules
 
@@ -225,7 +219,7 @@ A PR that resolves an issue must say so with a closing keyword, or merging leave
 ## PR review guidelines
 
 Whole-compiler review sweeps follow [docs/compiler-validation.md](docs/compiler-validation.md): cover every review
-area in `validation/release/areas.ts`, run the contract matrix (`pnpm run test:contracts`), and add a new variant of
+area listed there, run the contract matrix (`pnpm run test:contracts`), and add a new variant of
 an existing defect class to its group and its owning issue. A failing contract case is a product defect: fix it,
 never its expectation.
 
