@@ -158,4 +158,35 @@ describe('story routes of one dev server (#346)', () => {
     const [a, b] = await Promise.all([request(`${url}/a.html`, 'GET'), request(`${url}/b.html`, 'GET')]);
     expect([a.status, b.status]).toEqual([200, 200]);
   });
+
+  it.each([
+    ['a', 'b'],
+    ['b', 'a'],
+  ] as const)('refreshes competing entry assets before serving a story (%s, %s)', async (first, second) => {
+    const dir = project();
+    const entry = join(dir, 'app/main.js');
+    const collision = readFileSync(entry, 'utf8');
+    writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+    const plugins = {
+      a: story(dir, 'a', 'a.html', 'app/main.js'),
+      b: story(dir, 'b', 'b.html'),
+    };
+    const { url } = await startServer({
+      root: dir,
+      base: '/game/',
+      publicDir: false,
+      server: { watch: null },
+      plugins: [plugins[first], plugins[second]],
+    });
+    const route = `${url}/game/b.html`;
+    expect((await request(route, 'GET')).status).toBe(200);
+    writeFileSync(entry, collision);
+    expect((await request(route, 'HEAD')).status).toBe(500);
+    const response = await request(route, 'GET');
+    expect(response.status).toBe(500);
+    expect(response.body).toContain('distinct outputFilename');
+    writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+    expect((await request(route, 'GET')).status).toBe(200);
+    expect((await request(route, 'HEAD')).status).toBe(200);
+  });
 });

@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Escape terminal control characters in CLI and plugin diagnostic text and lint reports, preserving structured diagnostics and compiled story data (#458).
 - Keep explicitly imported `.map` resources in Vite entry bundles in production and development (#457).
-- Reject collisions between a story and its own emitted entry assets in development and separate production entry builds (#346).
+- Reject collisions between a story and its own emitted entry assets in development and separate production entry builds; refresh competing development instances before checking collisions after entry edits (#346).
 - Track static glob option templates, computed keys and repeated members with JavaScript precedence; warn about option expressions that cannot be tracked without execution (#341).
 
 ## [2.0.0] - 2026-10-12
