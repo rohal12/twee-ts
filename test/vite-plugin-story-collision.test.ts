@@ -162,6 +162,36 @@ describe('story routes of one dev server (#346)', () => {
   it.each([
     ['a', 'b'],
     ['b', 'a'],
+  ] as const)('rejects competing assets through a story folder alias (%s, %s)', async (first, second) => {
+    const dir = project();
+    const plugins = {
+      a: story(dir, 'a', 'a.html', 'app/main.js'),
+      b: story(dir, 'b', 'nested/index.html'),
+    };
+    const { url } = await startServer({
+      root: dir,
+      base: '/game/',
+      publicDir: false,
+      server: { watch: null },
+      plugins: [
+        {
+          name: 'nested-download',
+          generateBundle() {
+            this.emitFile({ type: 'asset', fileName: 'nested/index.html', source: 'download-page' });
+          },
+        },
+        plugins[first],
+        plugins[second],
+      ],
+    });
+    expect((await request(`${url}/game/nested/index.html`, 'GET')).status).toBe(500);
+    expect((await request(`${url}/game/nested/`, 'GET')).status).toBe(500);
+    expect((await request(`${url}/game/nested/`, 'HEAD')).status).toBe(500);
+  });
+
+  it.each([
+    ['a', 'b'],
+    ['b', 'a'],
   ] as const)('refreshes competing entry assets before serving a story (%s, %s)', async (first, second) => {
     const dir = project();
     const entry = join(dir, 'app/main.js');

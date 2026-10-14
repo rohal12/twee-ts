@@ -819,7 +819,10 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       const others = [...instances].filter((other) => other !== self);
       if (
         (mine || servedAssets?.has(path) === true) &&
-        others.some((other) => other.paths.includes(path) || (mine && other.assets()?.has(path) === true))
+        others.some(
+          (other) =>
+            other.paths.includes(path) || (mine && paths.some((storyPath) => other.assets()?.has(storyPath) === true)),
+        )
       ) {
         fail(res, storyCollisionMessage(path));
         return;
