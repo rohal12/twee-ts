@@ -9,7 +9,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { compileForOutputFile, resourceLimitError, TweeTsError, watchWithWriteFilter } from '../src/compiler.js';
 import type { ExtraInput } from '../src/compiler.js';
-import { formatDiagnostic } from '../src/diagnostic-text.js';
+import { escapeTerminalControls, formatDiagnostic } from '../src/diagnostic-text.js';
 import { WatchPathError } from '../src/filesystem.js';
 import { writeFileAtomic } from '../src/atomic-write.js';
 import { lintForOutputFile, formatLintReport } from '../src/lint.js';
@@ -53,7 +53,7 @@ function out(text: string): void {
 
 /** Writes a line to standard error: everything else. */
 function log(text: string): void {
-  process.stderr.write(`${text}\n`);
+  process.stderr.write(`${escapeTerminalControls(text, true)}\n`);
 }
 
 /**
@@ -70,7 +70,7 @@ function reportWriteErrors(stream: NodeJS.WriteStream, name?: string): void {
     process.exitCode = EXIT_FAILED;
     if (reported || name === undefined) return;
     reported = true;
-    log(`error: Cannot write ${name}: ${e.message}`);
+    log(`error: Cannot write ${name}: ${escapeTerminalControls(e.message)}`);
   });
 }
 
@@ -113,9 +113,20 @@ async function main(argv: readonly string[]): Promise<number> {
 }
 
 function usageError(error: CliUsageError): number {
-  log(`error: ${error.message}`);
+  log(`error: ${escapeTerminalControls(error.message)}`);
   log('Run "twee-ts --help" for usage.');
   return EXIT_USAGE;
+}
+
+/** A CLI-authored hint: only its separator is a live newline; the compiler's message is escaped first. */
+class CharsetConfigError extends TweeTsError {
+  constructor(error: TweeTsError) {
+    const note = `-c is --config in twee-ts, not Tweego's --charset; twee-ts reads UTF-8 (or UTF-16 after a byte order mark) and falls back to Windows-1252.`;
+    super(`${escapeTerminalControls(error.message)}\nnote: ${note}`, error.diagnostics, {
+      code: 'INPUT_UNAVAILABLE',
+      cause: error,
+    });
+  }
 }
 
 /** The config the request asks for, and its path (an input the output must not overwrite). */
@@ -132,8 +143,7 @@ function readConfig(choice: ConfigChoice): { readonly config: TweeTsConfig | nul
       } catch (e) {
         // Tweego's -c is --charset: say so when the "config file" is a charset name.
         if (e instanceof TweeTsError && e.code === 'INPUT_UNAVAILABLE' && looksLikeCharset(choice.path)) {
-          const note = `-c is --config in twee-ts, not Tweego's --charset; twee-ts reads UTF-8 (or UTF-16 after a byte order mark) and falls back to Windows-1252.`;
-          throw new TweeTsError(`${e.message}\nnote: ${note}`, e.diagnostics, { code: e.code, cause: e });
+          throw new CharsetConfigError(e);
         }
         throw e;
       }
@@ -233,10 +243,10 @@ function startWatch(
         process.exitCode = EXIT_FAILED;
         if (error instanceof WatchPathError) {
           // The other paths are still watched; with nothing left to watch, the process exits with status 1.
-          log(`error: ${error.message}`);
+          log(`error: ${escapeTerminalControls(error.message)}`);
         } else {
           logErrorDiagnostics(error);
-          log(`Build error: ${error.message}`);
+          log(`Build error: ${escapeTerminalControls(error.message)}`);
         }
       },
     },
@@ -251,9 +261,9 @@ function startWatch(
 
 function logBuild(result: CompileResult, logOptions: BuildRequest['log']): void {
   if (logOptions.files) {
-    log(`\nFiles: ${result.stats.files.join(', ')}`);
+    log(`\nFiles: ${result.stats.files.map((file) => escapeTerminalControls(file)).join(', ')}`);
     const external = result.stats.externalFiles ?? [];
-    if (external.length > 0) log(`External files: ${external.join(', ')}`);
+    if (external.length > 0) log(`External files: ${external.map((file) => escapeTerminalControls(file)).join(', ')}`);
   }
   if (logOptions.stats) logStats(result);
 }
@@ -492,7 +502,11 @@ main(process.argv.slice(2)).then(
     // An engine limit reached outside a build (in lint, say) is named as a build's is.
     const err = resourceLimitError(thrown) ?? thrown;
     logErrorDiagnostics(err);
-    log(`error: ${err instanceof Error ? err.message : String(err)}`);
+    const message =
+      err instanceof CharsetConfigError
+        ? err.message
+        : escapeTerminalControls(err instanceof Error ? err.message : String(err));
+    log(`error: ${message}`);
     process.exitCode = EXIT_FAILED;
   },
 );

@@ -817,6 +817,11 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     }
     if (paths.includes(path)) {
       catchUp().then(() => {
+        // Catch-up can introduce or remove a collision; decide using the bundle the page now refers to.
+        if (paths.some((storyPath) => servedAssets?.has(storyPath) === true)) {
+          fail(res, storyCollisionMessage(path));
+          return;
+        }
         if (html) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
         else send(req, res, 'text/html; charset=utf-8', waitingPage(base));
       }, next);

@@ -5,7 +5,7 @@
 import type { CompileOptions, CompileStats, Diagnostic } from './types.js';
 import type { BrokenLink } from './inspect.js';
 import { compileForLint } from './compiler.js';
-import { formatDiagnostic } from './diagnostic-text.js';
+import { escapeTerminalControls, formatDiagnostic } from './diagnostic-text.js';
 import { storyInspect } from './inspect.js';
 import { describeOmission } from './passage-omission.js';
 import { twine2MarkupDiagnostics } from './output-twine2.js';
@@ -167,5 +167,5 @@ export function formatLintReport(result: LintResult): string {
     lines.push('Lint passed.');
   }
 
-  return lines.join('\n');
+  return lines.map((line) => escapeTerminalControls(line)).join('\n');
 }

@@ -393,6 +393,16 @@ function expectDevFollowsWorkerGlob(root: string, watcher = false): Promise<void
   return expectDevFollows(root, pluginOptions, add, ['a'], ['a', 'b'], watcher, workerFound);
 }
 
+function expectDevFollowsStaticOptions(root: string, options: string): Promise<void> {
+  return expectDevFollows(
+    root,
+    globProject(root, `Object.keys(import.meta.glob('./*.js', ${options}))`, ['a.js']),
+    () => write(widget(root, 'b.js'), 'export default "b.js";'),
+    ['./a.js'],
+    ['./a.js', './b.js'],
+  );
+}
+
 defineContracts(
   'DEPS',
   {
@@ -467,6 +477,13 @@ defineContracts(
       const { pluginOptions, retarget } = packageLinkProject(root);
       return expectBuildWatchSees(root, pluginOptions, retarget, foundIn, 'v1', 'v2', true);
     },
+    'dev glob with template base gains a file': (root) => expectDevFollowsStaticOptions(root, '{ base: `./widgets` }'),
+    'dev glob with computed base gains a file': (root) =>
+      expectDevFollowsStaticOptions(root, "{ ['base']: './widgets' }"),
+    'dev glob with repeated base gains a file': (root) =>
+      expectDevFollowsStaticOptions(root, "{ base: './wrong', base: './widgets' }"),
+    'dev glob with quoted template base gains a file': (root) =>
+      expectDevFollowsStaticOptions(root, "{ 'base': `./widgets` }"),
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {

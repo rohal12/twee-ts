@@ -4,8 +4,9 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { COMPILE, STORY, cleanUp, makeProject, startServer } from './helpers/plugins.js';
+import { COMPILE, STORY, buildFiles, cleanUp, makeProject, startServer } from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
@@ -34,6 +35,66 @@ async function request(url: string, method: string): Promise<{ status: number; b
 }
 
 describe('story routes of one dev server (#346)', () => {
+  it.each([true, false])('rejects its own imported HTML resource (watcher: %s)', async (watcher) => {
+    const dir = project();
+    const { url } = await startServer({
+      root: dir,
+      publicDir: false,
+      server: watcher ? {} : { watch: null },
+      plugins: [story(dir, 'a', 'b.html', 'app/main.js')],
+    });
+    const response = await request(`${url}/b.html`, 'GET');
+    expect(response.status).toBe(500);
+    expect(response.body).toContain('distinct outputFilename');
+    expect((await request(`${url}/b.html`, 'HEAD')).status).toBe(500);
+  });
+  it.each(['index.html', 'nested/index.html'])(
+    'rejects its own entry asset at %s and recovers after edits',
+    async (outputFilename) => {
+      const dir = project();
+      const entry = join(dir, 'app/main.js');
+      const collision = `globalThis.assetUrl = '/game/${outputFilename}'; // downloadable-original`;
+      writeFileSync(entry, collision);
+      const { url } = await startServer({
+        root: dir,
+        base: '/game/',
+        publicDir: false,
+        server: { watch: null },
+        plugins: [
+          {
+            name: 'download-resource',
+            generateBundle() {
+              if (readFileSync(entry, 'utf8').includes('downloadable-original')) {
+                this.emitFile({ type: 'asset', fileName: outputFilename, source: 'downloadable-original' });
+              }
+            },
+          },
+          story(dir, 'a', outputFilename, 'app/main.js'),
+        ],
+      });
+      const route = `${url}/game/${outputFilename}`;
+      expect((await request(route, 'GET')).status).toBe(500);
+      expect((await request(route, 'HEAD')).status).toBe(500);
+      const alias = route.replace(/index\.html$/, '');
+      expect((await request(alias, 'GET')).status).toBe(500);
+      writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+      expect((await request(route, 'GET')).status).toBe(200);
+      writeFileSync(entry, collision);
+      expect((await request(route, 'GET')).status).toBe(500);
+    },
+  );
+
+  it.each([false, true])('rejects its own entry asset in production (separate build: %s)', async (separate) => {
+    const dir = project();
+    await expect(
+      buildFiles({
+        root: dir,
+        publicDir: false,
+        build: separate ? { rolldownOptions: { input: join(dir, 'app/b.html') } } : {},
+        plugins: [story(dir, 'a', 'b.html', 'app/main.js')],
+      }),
+    ).rejects.toThrow(/already writes|entry asset/);
+  });
   it.each([
     ['a then b', ['a', 'b']],
     ['b then a', ['b', 'a']],

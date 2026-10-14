@@ -41,6 +41,7 @@ const WORKERS = {
 
 /** The worker's code for each form of glob call. */
 const GLOBS = {
+  staticOptions: "self.found = import.meta.glob('./data/*.js', { base: './wrong', ['base']: `./` });\n",
   eager: "self.found = import.meta.glob('./data/*.js', { eager: true, import: 'default' });\n",
   lazy: "self.found = import.meta.glob('./data/*.js');\n",
   keys: "self.found = Object.keys(import.meta.glob('./data/*.js'));\n",

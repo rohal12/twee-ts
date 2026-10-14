@@ -237,7 +237,8 @@ export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputNam
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
       styles.push(dropFileSourceMapComment(css));
       removeFromBundle(bundle, fileName);
-    } else if (fileName.endsWith('.map')) {
+    } else if (fileName.endsWith('.map') && (item.originalFileNames?.length ?? 0) === 0) {
+      // Generated source maps have no originating resource; an imported .map has one, relative or absolute.
       removeFromBundle(bundle, fileName);
     } else {
       assets.set(fileName, item.source);
