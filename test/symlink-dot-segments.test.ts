@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,7 +19,7 @@ import type { FileCacheEntry } from '../src/types.js';
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'twee-dot-segments-'));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'twee-dot-segments-')));
   mkdirSync(join(dir, 'real/deep'), { recursive: true });
   symlinkSync('real/deep', join(dir, 'pivot'), 'dir');
 });
