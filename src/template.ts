@@ -276,6 +276,7 @@ function replacementFor(
   after: string,
 ): string | undefined {
   const { context, delimiters } = site;
+  if (context.kind === 'nested-attribute') return undefined;
   if (value.kind === 'text') {
     return delimiters === 'inside' ? escapeAtBoundary(value.text, context, before, after) : undefined;
   }
@@ -367,7 +368,8 @@ function endGlues(context: InsertionContext, text: string, after: string): conte
 /** Whether `next`, written after the template text `before` in `context`, would be read together with it. */
 function startGlues(context: InsertionContext, before: string, next: string): boolean {
   // Raw text and markup take no value (see `escapeForContext()`).
-  if (next === '' || context.kind === 'raw-text' || context.kind === 'markup') return false;
+  if (next === '' || context.kind === 'raw-text' || context.kind === 'markup' || context.kind === 'nested-attribute')
+    return false;
   // The input stream reads a carriage return and a line feed after it as one line break.
   if (before.endsWith('\r') && next.startsWith('\n')) return true;
   switch (context.kind) {
@@ -446,6 +448,7 @@ function describeContext(site: PlaceholderSite): string {
   if (context.kind === 'text') return 'in text';
   if (context.kind === 'attribute')
     return context.quote === '' ? 'in an unquoted attribute value' : 'in an attribute value';
+  if (context.kind === 'nested-attribute') return `in the nested language of the "${context.name}" attribute`;
   if (context.kind === 'comment') return 'in a comment';
   if (context.kind === 'script') {
     const { js } = context;

@@ -93,6 +93,15 @@ const FORMS = {
   },
 } as const;
 
+/** Alias patterns containing glob syntax that must survive resolution (#341). */
+const ALIASED_PATTERNS = ['?.js', '[a?bc].js', '{a,b,c,#absent}.js'] as const;
+
+/** Supplies the same alias to the dev server and its entry build, or to build watch. */
+const widgetAlias = (root: string): Plugin => ({
+  name: 'widget-alias',
+  config: () => ({ resolve: { alias: { '@widgets': join(root, 'app/widgets') } } }),
+});
+
 /** A project whose entry, `app/entry.js`, globs `app/widgets`. */
 function globProject(call: string, widgets: Record<string, string> = { 'a.js': "export default 'A';" }): string {
   return makeProject({
@@ -156,6 +165,22 @@ describe.each([
       } else {
         await expectFound(read, added);
       }
+    },
+    30_000,
+  );
+
+  it.each(ALIASED_PATTERNS)(
+    'follows additions, removals and renames for an aliased glob %s',
+    async (pattern) => {
+      const root = globProject(`Object.keys(import.meta.glob('@widgets/${pattern}'))`);
+      const read = await serve(root, watcher, [widgetAlias(root)]);
+      expect(await read()).toEqual(['/app/widgets/a.js']);
+      write(join(root, 'app/widgets/b.js'), "export default 'B';");
+      await expectFound(read, ['/app/widgets/a.js', '/app/widgets/b.js']);
+      unlinkSync(join(root, 'app/widgets/b.js'));
+      await expectFound(read, ['/app/widgets/a.js']);
+      renameSync(join(root, 'app/widgets/a.js'), join(root, 'app/widgets/c.js'));
+      await expectFound(read, ['/app/widgets/c.js']);
     },
     30_000,
   );
@@ -411,6 +436,31 @@ describe.each([
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
         expect(found()).toEqual(added);
+      }, SETTLED);
+    },
+    30_000,
+  );
+
+  it.runIf(buildWatchSeesFolders).each(ALIASED_PATTERNS)(
+    'builds again with additions, removals and renames for an aliased glob %s',
+    async (pattern) => {
+      const dir = globProject(`Object.keys(import.meta.glob('@widgets/${pattern}'))`);
+      write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
+      const found = await watchBuild(dir, separate, [widgetAlias(dir)]);
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['/app/widgets/a.js']);
+      }, SETTLED);
+      write(join(dir, 'app/widgets/b.js'), "export default 'B';");
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['/app/widgets/a.js', '/app/widgets/b.js']);
+      }, SETTLED);
+      unlinkSync(join(dir, 'app/widgets/b.js'));
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['/app/widgets/a.js']);
+      }, SETTLED);
+      renameSync(join(dir, 'app/widgets/a.js'), join(dir, 'app/widgets/c.js'));
+      await vi.waitFor(() => {
+        expect(found()).toEqual(['/app/widgets/c.js']);
       }, SETTLED);
     },
     30_000,

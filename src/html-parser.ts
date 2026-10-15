@@ -13,7 +13,8 @@
  * HTML cannot carry (see `html-output-check.ts`), which compiling reports.
  */
 import type { Passage, PassageMetadata, Diagnostic, DecompileOptions, Story } from './types.js';
-import { createStory, storyAdd, storyPrepend, marshalStoryData, freeName } from './story.js';
+import { createStory, storyAdd, storyPrepend, marshalStoryData } from './story.js';
+import { FreeNames } from './free-names.js';
 import { rot13, tiddlerUnescape } from './escape.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
 import { isObfuscatable, withGeneratedName } from './passage.js';
@@ -153,6 +154,7 @@ function decompileTwine2(
   // names too, so reserve every real passage name first and give the code passages names left free.
   const children = childElements(storyData);
   const takenNames = new Set(children.filter((node) => node.tagName === 'tw-passagedata').map(passageDataName));
+  const names = new FreeNames((name) => !takenNames.has(name));
 
   for (const node of children) {
     switch (node.tagName) {
@@ -163,7 +165,7 @@ function decompileTwine2(
         if (trimTweeSpace(content).length === 0) continue;
         const text = passageText(content);
         const base = node.tagName === 'style' ? 'Story Stylesheet' : 'Story JavaScript';
-        const name = freeName(base, (n) => !takenNames.has(n));
+        const name = names.take(base);
         takenNames.add(name);
         const tags = node.tagName === 'style' ? ['stylesheet'] : ['script'];
         // Marked as generated, so that it also yields to passages of other files (see storyAdd()).
@@ -203,7 +205,7 @@ function decompileTwine2(
         if (size) metadata.size = size;
 
         const text = passageText(textContent(node));
-        const own = ownName(name, text, story, takenNames, diagnostics);
+        const own = ownName(name, text, story, names, takenNames, diagnostics);
         if (pid === startnode && pid !== 0) {
           story.twine2.start = own;
           startFound = true;
@@ -259,10 +261,17 @@ const ATTRIBUTE_PASSAGES: Readonly<Record<string, string>> = {
  * names are the special passages that hold them. So such a passage, unless it is a StoryTitle that holds the
  * story name, takes the first free name (`StoryData 2`, …), with a warning, and the attributes keep deciding.
  */
-function ownName(name: string, text: string, story: Story, taken: Set<string>, diagnostics: Diagnostic[]): string {
+function ownName(
+  name: string,
+  text: string,
+  story: Story,
+  names: FreeNames,
+  taken: Set<string>,
+  diagnostics: Diagnostic[],
+): string {
   const holds = Object.hasOwn(ATTRIBUTE_PASSAGES, name) ? ATTRIBUTE_PASSAGES[name] : undefined;
   if (holds === undefined || (name === 'StoryTitle' && trimTweeSpace(text) === story.name)) return name;
-  const free = freeName(name, (n) => !taken.has(n));
+  const free = names.take(name);
   taken.add(free);
   diagnostics.push({
     level: 'warning',

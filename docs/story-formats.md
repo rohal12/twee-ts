@@ -2,6 +2,8 @@
 
 A story format provides the HTML template that turns your Twee source into a playable story. twee-ts is compatible with all Twine 2 and Twine 1 story formats.
 
+Template placeholders are escaped for their insertion context. Placeholders inside event handlers (such as `onclick`), `style` attributes or `srcdoc` require another language to be parsed after HTML attribute decoding. These nested attribute contexts are unsupported: twee-ts reports a warning and uses Tweego-compatible replacement, which may change the value or break the page. Format authors should place values in ordinary text or data attributes and read them from their code instead.
+
 ## Format Discovery
 
 A build asks for one story format (see [Format Selection](#format-selection)) and looks for it in these sources, in this order:

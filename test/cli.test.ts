@@ -237,6 +237,71 @@ describe('CLI --list-formats (#174)', () => {
   });
 });
 
+describe('CLI query output escapes terminal controls (#458)', () => {
+  const controls = [
+    ['C0 and DEL', '\u0001\t\n\r\u001f\u007f', '\\u0001\\u0009\\u000a\\u000d\\u001f\\u007f'],
+    ['C1', '\u0080\u0085\u009b\u009d\u009f', '\\u0080\\u0085\\u009b\\u009d\\u009f'],
+    ['OSC', '\u001b]52;c;cHJvYmU=\u0007', '\\u001b]52;c;cHJvYmU=\\u0007'],
+    ['CSI', '\u001b[2J', '\\u001b[2J'],
+  ] as const;
+  const env = (cache = join(dir, 'cache')): NodeJS.ProcessEnv => ({
+    ...process.env,
+    HOME: join(dir, 'home'),
+    USERPROFILE: join(dir, 'home'),
+    XDG_CACHE_HOME: cache,
+    TWEEGO_PATH: '',
+  });
+
+  it.each(controls)('escapes %s in local and cached format metadata', (_label, control, escaped) => {
+    const name = `É😀${control}`;
+    const version = `1.0.0${control}`;
+    const text = `window.storyFormat(${JSON.stringify({ name, version: '1.0.0', source: 'x' })});`;
+    mkdirSync(join(dir, 'storyformats', 'local-1'), { recursive: true });
+    writeFileSync(join(dir, 'storyformats', 'local-1', 'format.js'), text);
+    withCacheHome(join(dir, 'cache'), () => {
+      seedIndexDownload(name, version, text);
+    });
+
+    const formats = runCli(dir, ['--no-config', '--list-formats'], env());
+    expect(formats.status).toBe(0);
+    expect(formats.stdout).toContain(`Local story formats:\n  local-1: É😀${escaped} 1.0.0 (Twine 2)\n`);
+    expect(formats.stdout).toContain('\nCached remote formats:\n');
+    expect(formats.stdout).toContain(`: É😀${escaped} 1.0.0${escaped}\n`);
+    expect(formats.stdout).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(formats.stdout.split('\n')).toHaveLength(6);
+
+    const cached = runCli(dir, ['cache', 'list'], env());
+    expect(cached.status).toBe(0);
+    expect(cached.stdout).toContain(`${`É😀${escaped}`.padEnd(16)} ${`1.0.0${escaped}`.padEnd(10)} `);
+    expect(cached.stdout).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(cached.stdout.split('\n')).toHaveLength(2);
+  });
+
+  it.skipIf(process.platform === 'win32').each(controls)(
+    'escapes %s in local format IDs',
+    (_label, control, escaped) => {
+      const id = `É😀${control}`;
+      mkdirSync(join(dir, 'storyformats', id), { recursive: true });
+      writeFileSync(join(dir, 'storyformats', id, 'header.html'), 'x');
+      const result = runCli(dir, ['--no-config', '--list-formats'], env());
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`Local story formats:\n  É😀${escaped}: É😀${escaped}  (Twine 1)\n`);
+    },
+  );
+
+  it.each(controls)('escapes %s in unmatched cache-clear names', (_label, control, escaped) => {
+    const result = runCli(dir, ['cache', 'clear', `É😀${control}`], env());
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`No cached formats matching "É😀${escaped}".\n`);
+  });
+
+  it.skipIf(process.platform === 'win32').each(controls)('escapes %s in the cache path', (_label, control, escaped) => {
+    const result = runCli(dir, ['cache', 'path'], env(join(dir, `É😀${control}`)));
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`${join(dir, `É😀${escaped}`, 'twee-ts', 'storyformats')}\n`);
+  });
+});
+
 describe('CLI exit status', () => {
   const write = (name: string, content: string): string => {
     writeFileSync(join(dir, name), content);

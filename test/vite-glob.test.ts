@@ -399,17 +399,29 @@ describe('moduleGlobScopes', () => {
     expect(scopes.map((s) => s.dir)).toEqual([dir]);
   });
 
-  it.skipIf(process.platform === 'win32')(
-    'resolves a pattern as Vite’s import-glob asks, without its query',
-    async () => {
-      const context = hookContext(() => Promise.resolve({ id: '/p/w/*.js?x' }));
-      const code = "import.meta.glob('#w/*.js');";
-      expect((await moduleGlobScopes(context, code, '/p/a.js', '/p')).map((s) => s.dir)).toEqual(['/p/w']);
-      expect(context.resolve).toHaveBeenCalledWith('#w/*.js', '/p/a.js', {
-        custom: { 'vite:import-glob': { isSubImportsPattern: true } },
-      });
-    },
-  );
+  it.skipIf(process.platform === 'win32')('resolves a sub-import pattern as Vite’s import-glob asks', async () => {
+    const context = hookContext(() => Promise.resolve({ id: '/p/w/*.js' }));
+    const code = "import.meta.glob('#w/*.js');";
+    expect((await moduleGlobScopes(context, code, '/p/a.js', '/p')).map((s) => s.dir)).toEqual(['/p/w']);
+    expect(context.resolve).toHaveBeenCalledWith('#w/*.js', '/p/a.js', {
+      custom: { 'vite:import-glob': { isSubImportsPattern: true } },
+    });
+  });
+
+  it.each([
+    ['@w/?.js', '?.js', '.js'],
+    ['@w/[a?b].js', '[a?b].js', '.js'],
+    ['@w/{a,b,#absent}.js', '{a,b,#absent}.js', '.js'],
+    ['@w/dir#name/*.js', 'dir#name/*.js', '.js'],
+  ])('keeps glob syntax in the resolved pattern %s', async (pattern, rest, suffix) => {
+    const root = makeProject({});
+    const context = hookContext(() => Promise.resolve({ id: toPosix(join(root, 'w', rest)) }));
+    const code = `import.meta.glob(${JSON.stringify(pattern)});`;
+    const dir = pattern.includes('dir#name') ? join(root, 'w/dir#name') : join(root, 'w');
+    expect(await moduleGlobScopes(context, code, join(root, 'entry.js'), root)).toEqual([
+      scope(toPosix(dir), { suffix }),
+    ]);
+  });
 
   it.each([
     ['resolves it to nothing', () => Promise.resolve(null)],
@@ -458,6 +470,9 @@ const CALLS = [
   "'/shared/**/*.js'",
   "'../shared/*'",
   "'@shared/**/*.js'",
+  "'@shared/?.js'",
+  "'@shared/[x?y].js'",
+  "'@shared/{x,#absent}.js'",
   "['./widgets/sub/*.js', '/shared/*.json']",
   "'./widgets/linked/*.js'",
 ];

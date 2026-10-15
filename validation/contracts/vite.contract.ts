@@ -197,11 +197,13 @@ async function expectDevFollows(
   after: unknown,
   watcher = false,
   readStory: (html: string) => unknown = foundIn,
+  aliases: Record<string, string> = {},
 ): Promise<void> {
   const server = await createServer({
     configFile: false,
     root,
     logLevel: 'silent',
+    resolve: { alias: aliases },
     plugins: [tweeTsPlugin(pluginOptions)],
     server: { host: '127.0.0.1', port: 0, ...(watcher ? {} : { watch: null }) },
   });
@@ -243,6 +245,7 @@ async function expectBuildWatchSees(
   before: unknown,
   after: unknown,
   separate = false,
+  aliases: Record<string, string> = {},
 ): Promise<void> {
   // A separate entry: the build has an input of its own, and bundles the entry in a build of its own.
   const input = separate ? { rolldownOptions: { input: write(join(root, 'outer.js'), 'globalThis.outer = 1;') } } : {};
@@ -250,6 +253,7 @@ async function expectBuildWatchSees(
     configFile: false,
     root,
     logLevel: 'silent',
+    resolve: { alias: aliases },
     plugins: [tweeTsPlugin({ ...pluginOptions, outputFilename: 'story.html' })],
     build: { watch: {}, outDir: join(root, 'out'), ...input },
   });
@@ -403,6 +407,44 @@ function expectDevFollowsStaticOptions(root: string, options: string): Promise<v
   );
 }
 
+/** Alias resolution must preserve the pattern's ?, character classes and literal # (#341). */
+function expectDevFollowsAliasedGlob(
+  root: string,
+  pattern: string,
+  change: 'add' | 'remove' | 'rename',
+  watcher = false,
+): Promise<void> {
+  const pluginOptions = globProject(root, `Object.keys(import.meta.glob('@widgets/${pattern}'))`, ['a.js', 'b.js']);
+  const after = change === 'add' ? ['a.js', 'b.js', 'c.js'] : change === 'remove' ? ['a.js'] : ['b.js', 'c.js'];
+  return expectDevFollows(
+    root,
+    pluginOptions,
+    () => {
+      if (change === 'add') write(widget(root, 'c.js'), 'export default 1;');
+      else if (change === 'remove') unlinkSync(widget(root, 'b.js'));
+      else renameSync(widget(root, 'a.js'), widget(root, 'c.js'));
+    },
+    ['/app/widgets/a.js', '/app/widgets/b.js'],
+    after.map((name) => `/app/widgets/${name}`),
+    watcher,
+    foundIn,
+    { '@widgets': join(root, 'app/widgets') },
+  );
+}
+
+function expectBuildWatchFollowsAliasedGlob(root: string, separate = false): Promise<void> {
+  return expectBuildWatchSees(
+    root,
+    globProject(root, "Object.keys(import.meta.glob('@widgets/?.js'))", ['a.js']),
+    () => write(widget(root, 'b.js'), 'export default 1;'),
+    foundIn,
+    ['/app/widgets/a.js'],
+    ['/app/widgets/a.js', '/app/widgets/b.js'],
+    separate,
+    { '@widgets': join(root, 'app/widgets') },
+  );
+}
+
 defineContracts(
   'DEPS',
   {
@@ -484,6 +526,16 @@ defineContracts(
       expectDevFollowsStaticOptions(root, "{ base: './wrong', base: './widgets' }"),
     'dev glob with quoted template base gains a file': (root) =>
       expectDevFollowsStaticOptions(root, "{ 'base': `./widgets` }"),
+    'dev aliased question-mark glob gains a file': (root) => expectDevFollowsAliasedGlob(root, '?.js', 'add'),
+    'dev aliased question-mark class glob loses a file': (root) =>
+      expectDevFollowsAliasedGlob(root, '[a?bc].js', 'remove'),
+    'dev aliased literal-hash glob renames a file': (root) =>
+      expectDevFollowsAliasedGlob(root, '{a,b,c,#absent}.js', 'rename'),
+    'dev watcher aliased question-mark glob gains a file': (root) =>
+      expectDevFollowsAliasedGlob(root, '?.js', 'add', true),
+    'build watch aliased question-mark glob gains a file': expectBuildWatchFollowsAliasedGlob,
+    'build watch separate entry aliased question-mark glob gains a file': (root) =>
+      expectBuildWatchFollowsAliasedGlob(root, true),
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {
