@@ -15,7 +15,7 @@ import {
 import type { FSWatcher, Stats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isKnownFileType, normalizedFileExt } from './media-types.js';
-import { identify, isKeyInside, matchesExclude } from './path-identity.js';
+import { absolutePathSpelling, identify, isKeyInside, matchesExclude } from './path-identity.js';
 import type { PathIdentity } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
@@ -301,7 +301,8 @@ export function getFilenames(
       if (output.isFile(pathname)) outputSources.push(pathname);
       else addFile(identify(pathname), 'named', lstatSync(pathname).isSymbolicLink());
     } else if (stat.isDirectory()) {
-      walkDir(pathname, 'named', pathname);
+      const located = identify(pathname).absolute;
+      walkDir(located, 'named', located);
     } else {
       problem('named', 'not-a-file', pathname, undefined);
     }
@@ -593,7 +594,7 @@ function foldersUnder(dir: string): Set<string> {
       visit(child);
     }
   };
-  visit(dir);
+  visit(identify(dir).absolute);
   return found;
 }
 
@@ -680,7 +681,7 @@ export function watchFilesystem(
   }
 
   const makeRoot = (path: string, tracked: boolean): Root => {
-    const abs = resolve(path);
+    const abs = absolutePathSpelling(path);
     const state = rootState(abs);
     return {
       path,
@@ -807,7 +808,7 @@ export function watchFilesystem(
         if (filename === '') recheck(root, true);
         else {
           root.dirty = true;
-          changedBelow(root, resolve(root.abs, filename));
+          changedBelow(root, resolve(identify(root.abs).absolute, filename));
         }
       });
     if (anchorsStarted.every(Boolean) && selfStarted) root.lastReport = undefined;

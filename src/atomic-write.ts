@@ -24,6 +24,7 @@ import {
   lstatSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -31,7 +32,7 @@ import {
   writeSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { basename, dirname, join, posix, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, sep } from 'node:path';
 import { getSystemErrorMessage } from 'node:util';
 import { identify } from './path-identity.js';
 
@@ -327,8 +328,13 @@ function resolveWriteTarget(path: string): string {
   let current = path;
   for (let depth = 0; depth <= MAX_LINK_DEPTH; depth++) {
     const stat = lstatSync(current, { throwIfNoEntry: false });
-    if (!stat?.isSymbolicLink()) return current;
-    current = resolve(identify(dirname(current)).canonical, readlinkSync(current));
+    // Resolve the parent with filesystem semantics, including links before `..`. Requiring the parent to exist
+    // also keeps a missing intermediate directory from being normalized away into a writable destination.
+    if (stat === undefined) checkFolder(current);
+    const parent = realpathSync.native(dirname(current));
+    if (!stat?.isSymbolicLink()) return join(parent, basename(current));
+    const target = readlinkSync(current);
+    current = isAbsolute(target) ? target : `${parent}${sep}${target}`;
   }
   throw codeError('ELOOP', `too many levels of symbolic links, ${path}`);
 }

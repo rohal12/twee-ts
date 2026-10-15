@@ -6,7 +6,9 @@
  * A path is identified by {@link identify}, which gives a {@link PathIdentity}:
  *
  * - `authored`: the path exactly as the caller wrote it.
- * - `absolute`: `authored` resolved lexically against the working directory. Links are not followed.
+ * - `absolute`: `authored` made absolute against the working directory. When it contains `..`, preceding folder
+ *   links are followed first so normalizing the spelling cannot change which file it opens. A final file link keeps
+ *   its own name.
  * - `canonical`: the real path. The deepest ancestor that exists is resolved with every symbolic
  *   link in it followed (`realpath`), and the components below it that don't exist yet are
  *   appended as written. A dangling link is followed to where its target would be, link by link,
@@ -225,6 +227,15 @@ interface Resolved {
   readonly existing: string;
 }
 
+/** An absolute spelling that preserves dot segments until the file system has followed preceding links. */
+export function absolutePathSpelling(path: string, base = process.cwd(), flavour: PathFlavour = nodePath): string {
+  const written = flavour.sep === '\\' ? normalizeWindowsPath(path) : path;
+  const root = flavour.parse(written).root;
+  // Resolve only the root (including Windows drive-relative and root-relative forms), never the components.
+  const anchor = flavour.resolve(base, root || '.');
+  return `${anchor.endsWith(flavour.sep) ? anchor : anchor + flavour.sep}${written.slice(root.length)}`;
+}
+
 /** Creates path identity for one file system, path flavour and working directory. */
 export function createPathIdentifier(options: PathIdentifierOptions = {}): PathIdentifier {
   const flavour = options.path ?? nodePath;
@@ -237,6 +248,8 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
   const byVolume = new Map<bigint, boolean>();
 
   const tidy = (path: string): string => (windows ? normalizeWindowsPath(path) : path);
+
+  const absoluteSpelling = (path: string, base = tidy(cwd())): string => absolutePathSpelling(path, base, flavour);
 
   function realpathOrUndefined(path: string): string | undefined {
     try {
@@ -269,7 +282,7 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
       // relative to the folder that really holds the link, not to the path written.
       const target = readlinkOrUndefined(here);
       if (target !== undefined) {
-        const next = resolvePath(tidy(flavour.resolve(above.canonical, target)), depth + 1);
+        const next = resolvePath(absoluteSpelling(target, above.canonical), depth + 1);
         return { canonical: next.canonical, existing: next.existing === '' ? above.existing : next.existing };
       }
     }
@@ -336,8 +349,13 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
   }
 
   function identify(authored: string): PathIdentity {
-    const absolute = tidy(flavour.resolve(tidy(cwd()), authored));
-    const resolved = resolvePath(absolute, 0);
+    const spelling = absoluteSpelling(authored);
+    const resolved = resolvePath(spelling, 0);
+    // relative() and join() normalize dot segments. Resolve those in the parent first so display remains an
+    // openable spelling, keeping a final file link's own name (and thus its loader extension).
+    const absolute = spelling.split(flavour.sep).includes('..')
+      ? flavour.join(resolvePath(flavour.dirname(spelling), 0).canonical, flavour.basename(spelling))
+      : tidy(flavour.resolve(spelling));
     const caseInsensitive = caseInsensitiveAt(resolved.existing);
     let realCwd: string | undefined;
     const canonicalCwd = (): string => (realCwd ??= resolvePath(tidy(cwd()), 0).canonical);
@@ -360,10 +378,10 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
     const fold = (text: string): string => (identity.caseInsensitive ? foldCase(text) : text);
     /** The file's paths below a literal folder: its spelling and its real path, each against the folder. */
     const below = (base: string): string[] => {
-      const baseAbsolute = tidy(flavour.resolve(tidy(cwd()), base));
+      const baseIdentity = identify(base);
       const pairs: [string, string][] = [
-        [baseAbsolute, identity.absolute],
-        [resolvePath(baseAbsolute, 0).canonical, identity.canonical],
+        [baseIdentity.absolute, identity.absolute],
+        [baseIdentity.canonical, identity.canonical],
       ];
       return pairs
         .map(([from, to]) => flavour.relative(fold(from), fold(to)))

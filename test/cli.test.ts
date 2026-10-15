@@ -106,6 +106,26 @@ const BROKEN_STORY = `${VALID_STORY}\n:: Broken [unterminated\nText.\n`;
 // A duplicate passage is a warning, not an error.
 const WARNING_STORY = `${VALID_STORY}\n:: Start\nHello again.\n`;
 
+it.skipIf(process.platform === 'win32')(
+  'loads source dot segments and preserves inputs behind output link targets (#219, #462)',
+  () => {
+    mkdirSync(join(dir, 'real/deep'), { recursive: true });
+    symlinkSync('real/deep', join(dir, 'pivot'));
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY.replace('Hello.', 'WRONG'));
+    writeFileSync(join(dir, 'real/story.tw'), VALID_STORY.replace('Hello.', 'RIGHT'));
+    const loaded = runCli(dir, ['--no-config', '--json', 'pivot/../story.tw']);
+    expect(loaded.status).toBe(0);
+    expect(loaded.stdout).toContain('RIGHT');
+    expect(loaded.stdout).not.toContain('WRONG');
+    symlinkSync('pivot/../story.tw', join(dir, 'out.html'));
+    const original = readFileSync(join(dir, 'story.tw'), 'utf8');
+    const written = runCli(dir, ['--no-config', '--json', '-o', 'out.html', 'story.tw']);
+    expect(written.status).toBe(0);
+    expect(readFileSync(join(dir, 'story.tw'), 'utf8')).toBe(original);
+    expect(readFileSync(join(dir, 'real/story.tw'), 'utf8')).toContain('WRONG');
+  },
+);
+
 let dir: string;
 
 beforeEach(() => {

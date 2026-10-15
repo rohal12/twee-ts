@@ -29,6 +29,7 @@ export const MATRIX = {
       'relative dangling symlink',
       'dangling symlink chain',
       'symlink cycle',
+      'symlink target with an intermediate link followed by dot-dot',
     ],
   },
   TYPE: {

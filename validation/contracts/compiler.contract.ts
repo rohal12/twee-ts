@@ -2,7 +2,7 @@
  * The compiler's public API, CLI and type declarations, as the build in dist/ provides them.
  * Matrix groups WRITE, TYPE, FORMAT, RESOLVE, INPUT, OUTPUT, CLI and ABORT (see cases.ts).
  */
-import { existsSync, lstatSync, readFileSync, statSync, symlinkSync, utimesSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect } from 'vitest';
 import {
@@ -67,6 +67,22 @@ defineContracts(
       symlinkSync('output.json', join(root, 'other.json'));
       await expect(compileToFile(jsonToFile(output))).rejects.toThrow(/ELOOP|symbolic link|symlink/i);
       expect(lstatSync(output).isSymbolicLink(), 'a failed write must keep the cyclic link').toBe(true);
+    },
+    'symlink target with an intermediate link followed by dot-dot': async (root) => {
+      mkdirSync(join(root, 'real/deep'), { recursive: true });
+      const source = join(root, 'story.tw');
+      const original = story();
+      write(source, original);
+      const target = join(root, 'real/story.tw');
+      write(target, 'previous output');
+      symlinkSync('real/deep', join(root, 'pivot'));
+      const output = join(root, 'output.json');
+      symlinkSync('pivot/../story.tw', output);
+      const result = await compileToFile({ sources: [source], outputMode: 'json', outFile: output });
+      expectNoErrors(result);
+      expect(readFileSync(source, 'utf8')).toBe(original);
+      expect(readFileSync(target, 'utf8')).toBe(result.output);
+      expect(lstatSync(output).isSymbolicLink()).toBe(true);
     },
   },
   { skip: (variant) => (variant.includes('symlink') ? noSymlinks : undefined) },
