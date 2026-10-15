@@ -168,6 +168,13 @@ export const MATRIX = {
       'dev glob with computed base gains a file',
       'dev glob with repeated base gains a file',
       'dev glob with quoted template base gains a file',
+      // Revision 6: alias resolution preserves glob metacharacters and literal # characters (#341).
+      'dev aliased question-mark glob gains a file',
+      'dev aliased question-mark class glob loses a file',
+      'dev aliased literal-hash glob renames a file',
+      'dev watcher aliased question-mark glob gains a file',
+      'build watch aliased question-mark glob gains a file',
+      'build watch separate entry aliased question-mark glob gains a file',
     ],
   },
 } as const satisfies Record<string, CaseGroup>;

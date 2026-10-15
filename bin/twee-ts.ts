@@ -338,7 +338,9 @@ function listFormats(config: TweeTsConfig | null): void {
   } else {
     for (const [id, f] of formats) {
       const type = f.isTwine2 ? 'Twine 2' : 'Twine 1';
-      out(`  ${id}: ${f.name || id} ${f.version} (${type})`);
+      out(
+        `  ${escapeTerminalControls(id)}: ${escapeTerminalControls(f.name || id)} ${escapeTerminalControls(f.version)} (${type})`,
+      );
     }
   }
 
@@ -353,8 +355,11 @@ function listFormats(config: TweeTsConfig | null): void {
     for (const [id, versions] of [...cachedById].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
       const [newest, ...older] = [...versions].sort((a, b) => byVersionDescending(a.version, b.version));
       if (!newest) continue;
-      const also = older.length > 0 ? ` (also cached: ${older.map((f) => f.version).join(', ')})` : '';
-      out(`  ${id}: ${newest.name} ${newest.version}${also}`);
+      const also =
+        older.length > 0 ? ` (also cached: ${older.map((f) => escapeTerminalControls(f.version)).join(', ')})` : '';
+      out(
+        `  ${escapeTerminalControls(id)}: ${escapeTerminalControls(newest.name)} ${escapeTerminalControls(newest.version)}${also}`,
+      );
     }
   }
 }
@@ -458,7 +463,9 @@ function runCache(action: CacheAction): void {
       }
       for (const e of entries) {
         const date = e.modifiedAt.toISOString().slice(0, 10);
-        out(`${e.name.padEnd(16)} ${e.version.padEnd(10)} ${formatBytes(e.sizeBytes).padStart(6)}   ${date}`);
+        out(
+          `${escapeTerminalControls(e.name).padEnd(16)} ${escapeTerminalControls(e.version).padEnd(10)} ${formatBytes(e.sizeBytes).padStart(6)}   ${date}`,
+        );
       }
       return;
     }
@@ -472,7 +479,7 @@ function runCache(action: CacheAction): void {
       return;
     }
     case 'path':
-      out(getCacheDir());
+      out(escapeTerminalControls(getCacheDir()));
       return;
     default: {
       const _exhaustive: never = action;
@@ -484,7 +491,7 @@ function runCache(action: CacheAction): void {
 function runCacheClear(name: string | undefined): void {
   const count = clearCachedFormats(name);
   if (count === 0) {
-    out(name ? `No cached formats matching "${name}".` : 'Cache is already empty.');
+    out(name ? `No cached formats matching "${escapeTerminalControls(name)}".` : 'Cache is already empty.');
   } else {
     out(`Cleared ${count} cached format${count === 1 ? '' : 's'}.`);
   }

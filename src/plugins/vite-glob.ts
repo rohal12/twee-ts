@@ -447,7 +447,9 @@ async function resolveGlob(context: GlobHookContext, pattern: string, importer: 
     const resolved = await context.resolve(pattern, importer, {
       custom: { 'vite:import-glob': { isSubImportsPattern } },
     });
-    return resolved?.id.replace(/[?#].*$/s, '');
+    // This is a glob pattern, not a module URL: ? is a wildcard and # is a literal path character.
+    // Vite passes the resolved pattern intact to globSafeResolvedPath too.
+    return resolved?.id;
   } catch {
     return undefined;
   }

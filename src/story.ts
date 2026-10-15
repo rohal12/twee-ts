@@ -20,6 +20,7 @@ import type {
   Twine2Metadata,
 } from './types.js';
 import { normalizeIFID, validateIFID } from './ifid.js';
+import { FreeNames } from './free-names.js';
 import {
   isStoryPassage,
   countWords,
@@ -60,13 +61,20 @@ interface NameIndex {
   length: number;
   /** Position by name; with duplicate names in the array, the last position. */
   readonly positions: Map<string, number>;
+  /** Generated-name cursors, valid until names are freed and the index is rebuilt. */
+  readonly generatedNames: FreeNames;
 }
 
 const passageIndex = new WeakMap<Story, NameIndex>();
 
 function buildIndex(story: Story): NameIndex {
   const positions = new Map(story.passages.map((p, i) => [p.name, i]));
-  const index: NameIndex = { passages: story.passages, length: story.passages.length, positions };
+  const index: NameIndex = {
+    passages: story.passages,
+    length: story.passages.length,
+    positions,
+    generatedNames: new FreeNames((name) => isFreeForGenerated(story, name)),
+  };
   passageIndex.set(story, index);
   return index;
 }
@@ -94,10 +102,21 @@ function push(story: Story, p: Passage): void {
 }
 
 /** Put a passage at position `i`, in place of the passage there. */
-function replaceAt(story: Story, i: number, p: Passage): void {
-  const renamed = story.passages[i]?.name !== p.name;
+function replaceAt(story: Story, i: number, p: Passage, nameIsClaimed = false): void {
+  const index = currentIndex(story);
+  const previousName = story.passages[i]?.name;
   story.passages[i] = p;
-  if (renamed) buildIndex(story);
+  if (previousName === p.name) return;
+  if (nameIsClaimed && previousName !== undefined && index.positions.size === index.length) {
+    // An authored passage immediately claims the old name. No name becomes available, so keep the
+    // allocation cursors and update only these positions instead of rescanning every passage.
+    index.positions.delete(previousName);
+    index.positions.set(p.name, i);
+  } else {
+    // Rebuilding also resets allocation cursors when a name becomes available. Arrays supplied by a
+    // caller can contain duplicates, in which case the old name may still have an earlier position.
+    buildIndex(story);
+  }
 }
 
 /** Take the passage at position `i` out. */
@@ -115,15 +134,6 @@ const SPECIAL_PASSAGE_NAMES: ReadonlySet<string> = new Set([
   'StorySettings',
   'StoryTitle',
 ]);
-
-/** The first of `base`, `base 2`, `base 3`, … that `isFree` accepts. */
-export function freeName(base: string, isFree: (name: string) => boolean): string {
-  if (isFree(base)) return base;
-  for (let n = 2; ; n++) {
-    const candidate = `${base} ${n}`;
-    if (isFree(candidate)) return candidate;
-  }
-}
 
 /** Whether a generated name may take `name`: no passage has it and it is no special name. */
 function isFreeForGenerated(story: Story, name: string): boolean {
@@ -157,7 +167,7 @@ function addGenerated(story: Story, p: Passage, origin: GeneratedName, diagnosti
     push(story, p);
     return;
   }
-  const name = freeName(origin.base, (n) => isFreeForGenerated(story, n));
+  const name = currentIndex(story).generatedNames.take(origin.base);
   reportRename(origin, p.name, name, diagnostics);
   push(story, withGeneratedName(derivePassage(p, { name }), origin));
 }
@@ -171,9 +181,9 @@ function moveGeneratedAside(story: Story, name: string, diagnostics: Diagnostic[
   const existing = i === -1 ? undefined : story.passages[i];
   const origin = existing === undefined ? undefined : generatedNameOf(existing);
   if (existing === undefined || origin === undefined) return;
-  const free = freeName(origin.base, (n) => isFreeForGenerated(story, n));
+  const free = currentIndex(story).generatedNames.take(origin.base);
   reportRename(origin, name, free, diagnostics);
-  replaceAt(story, i, withGeneratedName(derivePassage(existing, { name: free }), origin));
+  replaceAt(story, i, withGeneratedName(derivePassage(existing, { name: free }), origin), true);
 }
 
 // --- Story ---

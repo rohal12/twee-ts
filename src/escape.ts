@@ -58,6 +58,8 @@ export type InsertionContext =
   | { readonly kind: 'text'; readonly dropsLeadingNewline: boolean }
   /** An attribute value. `url` for an attribute whose value is a URL (`href`, `src`, …). */
   | { readonly kind: 'attribute'; readonly quote: '"' | "'" | ''; readonly url: boolean }
+  /** An attribute interpreted as another language, requiring escaping beyond its HTML attribute value. */
+  | { readonly kind: 'nested-attribute'; readonly name: string }
   | { readonly kind: 'comment' }
   /**
    * The text of a JavaScript `script` element (`module` for a module script). `escapable` when the script text
@@ -90,6 +92,8 @@ export type InsertionContext =
  *   escaped so that no `</script` or `</style` can end the element.
  */
 export function escapeForContext(value: string, context: InsertionContext): string | undefined {
+  // Attribute languages need another decoding/escaping layer, which this escaper does not implement.
+  if (context.kind === 'nested-attribute') return undefined;
   switch (context.kind) {
     case 'text':
       return htmlEscape(value);

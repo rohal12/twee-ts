@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Revalidate plugin output destinations after asynchronous format resolution, preserving sources, modules and head files when output links change (#301).
+- Escape terminal controls in human-readable format and cache listings, cache paths and cache-name messages (#458).
+- Warn about template placeholders in event handlers, style attributes and `srcdoc`, where HTML attribute escaping cannot preserve nested-language values (#244).
+- Preserve aliased glob wildcards, character classes and literal hash characters when tracking Vite entry dependencies (#341).
+- Allocate colliding generated passage names and module IDs without repeatedly scanning occupied suffixes; keep authored name takeovers efficient (#460).
+
 - Escape terminal control characters in CLI and plugin diagnostic text and lint reports, preserving structured diagnostics and compiled story data (#458).
 - Keep explicitly imported `.map` resources in Vite entry bundles in production and development (#457).
 - Reject collisions between a story and its own emitted entry assets in development and separate production entry builds; refresh competing development instances before checking collisions after entry edits, including story folder aliases (#346).

@@ -756,20 +756,18 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
   options.signal?.throwIfAborted();
   // The output may have been moved (a link retargeted) while the build awaited a format: the file it will be
   // written to is checked again, against every input, as the last step before the caller writes it.
-  if (namedOutput) {
-    checkNamedInputs(
-      [
-        ...namedInputs(options, extraInputs),
-        ...(format ? formatInputs(format) : []),
-        ...walked
-          .flatMap((group) => (group.kind === 'files' ? group.files : []))
-          .map((file) => ({ role: 'source' as const, path: file.path })),
-        ...modules.files.map((file) => ({ role: 'module' as const, path: file.path })),
-      ],
-      outputPaths(written),
-      diagnostics,
-    );
-  }
+  checkNamedInputs(
+    [
+      ...namedInputs(options, extraInputs),
+      ...(format ? formatInputs(format) : []),
+      ...walked
+        .flatMap((group) => (group.kind === 'files' ? group.files : []))
+        .map((file) => ({ role: 'source' as const, path: file.path })),
+      ...modules.files.map((file) => ({ role: 'module' as const, path: file.path })),
+    ],
+    outputPaths(written),
+    diagnostics,
+  );
   // The same holds for an output that became an authored file of a source or module folder while the build awaited
   // a format (edited, or created at a path nothing was at): the folders are walked again for what they now skip.
   if (guardsFolders && outputMode === 'html') {

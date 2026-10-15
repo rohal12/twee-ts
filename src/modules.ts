@@ -11,6 +11,7 @@ import { cssStringEscape, scriptContentEscape, styleContentEscape } from './esca
 import { checkInsertedText, codeEscapeDiagnostics } from './html-output-check.js';
 import { fillFormatTemplate } from './template.js';
 import { duplicateInput } from './input-policy.js';
+import { FreeNames } from './free-names.js';
 
 /**
  * Load modules and return HTML tags to inject at the end of the head. `diagnostics` receives a warning for each
@@ -73,9 +74,9 @@ export type ModuleIdFor = (base: string, filename: string) => string;
  */
 export function moduleIds(diagnostics?: Diagnostic[]): ModuleIdFor {
   const owners = new Map<string, string>();
+  const names = new FreeNames((id) => !owners.has(id), '-');
   return (base, filename) => {
-    let id = base;
-    for (let n = 2; owners.has(id); n++) id = `${base}-${String(n)}`;
+    const id = names.take(base);
     const first = owners.get(base);
     if (first !== undefined) {
       diagnostics?.push({

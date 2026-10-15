@@ -718,6 +718,11 @@ function siteOf(html: string, place: MarkerPlace, occurrence: PlaceholderOccurre
   if (place.kind === 'comment') return { context: { kind: 'comment' }, delimiters: 'inside' };
   if (place.kind === 'text') return { context: textContext(html, place, occurrence), delimiters: 'inside' };
   const { element, name, prefix, value } = place;
+  // The browser decodes references before interpreting event code, CSS or srcdoc HTML. A single HTML
+  // escape cannot preserve a value in those languages; report the unsupported context instead.
+  if (prefix === undefined && (name.startsWith('on') || name === 'style' || name === 'srcdoc')) {
+    return { context: { kind: 'nested-attribute', name }, delimiters: 'inside' };
+  }
   const quote = attributeQuote(html, element, prefix === undefined || prefix === '' ? name : `${prefix}:${name}`);
   const url = element.namespaceURI === HTML_NS ? URL_ATTRIBUTES.has(name) : name === 'href';
   const context: InsertionContext = { kind: 'attribute', quote, url };
