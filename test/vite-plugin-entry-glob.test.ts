@@ -66,6 +66,26 @@ const FORMS = {
     initial: ['./a.js', './skip.js'],
     added: ['./a.js', './b.js', './skip.js'],
   },
+  templateBase: {
+    call: "import.meta.glob('./*.js', { base: `./widgets` })",
+    initial: ['./a.js', './skip.js'],
+    added: ['./a.js', './b.js', './skip.js'],
+  },
+  computedBase: {
+    call: "import.meta.glob('./*.js', { ['base']: './widgets' })",
+    initial: ['./a.js', './skip.js'],
+    added: ['./a.js', './b.js', './skip.js'],
+  },
+  repeatedBase: {
+    call: "import.meta.glob('./*.js', { base: './wrong', base: './widgets' })",
+    initial: ['./a.js', './skip.js'],
+    added: ['./a.js', './b.js', './skip.js'],
+  },
+  quotedTemplateBase: {
+    call: "import.meta.glob('./*.js', { 'base': `./widgets` })",
+    initial: ['./a.js', './skip.js'],
+    added: ['./a.js', './b.js', './skip.js'],
+  },
   absolute: {
     call: "import.meta.glob('/app/widgets/*.js')",
     initial: ['/app/widgets/a.js', '/app/widgets/skip.js'],
@@ -147,6 +167,18 @@ describe.each([
     write(join(root, 'app/later/first.js'), 'export default 1;');
     await expectFound(read, ['./later/first.js', './widgets/skip.js']);
   }, 30_000);
+
+  it.each(['exhaustive: true', "['exhaustive']: true", 'exhaustive: false, exhaustive: true'])(
+    'follows hidden files for static options %s',
+    async (options) => {
+      const root = globProject(`Object.keys(import.meta.glob('./*.js', { base: './widgets', ${options} }))`, {});
+      const read = await serve(root, watcher);
+      expect(await read()).toEqual(['./skip.js']);
+      write(join(root, 'app/widgets/.hidden.js'), 'export default 1;');
+      await expectFound(read, ['./.hidden.js', './skip.js']);
+    },
+    30_000,
+  );
 
   it('follows a matching file deleted and renamed', async () => {
     const root = globProject(FORMS.lazy.call, { 'a.js': "export default 'A';", 'b.js': "export default 'B';" });
@@ -367,18 +399,18 @@ describe.each([
   ['inside the build', false],
   ['in a build of its own', true],
 ])('vite build watch: an entry glob gains a matching file, the entry bundled %s (#341)', (_name, separate) => {
-  it.runIf(buildWatchSeesFolders)(
-    'builds again with the new file',
-    async () => {
-      const dir = globProject(FORMS.lazy.call);
+  it.runIf(buildWatchSeesFolders).each([FORMS.lazy, FORMS.quotedTemplateBase])(
+    'builds again with the new file (%o)',
+    async ({ call, initial, added }) => {
+      const dir = globProject(call);
       write(join(dir, 'outer.js'), 'globalThis.outer = 1;');
       const found = await watchBuild(dir, separate);
       await vi.waitFor(() => {
-        expect(found()).toEqual(['./widgets/a.js', './widgets/skip.js']);
+        expect(found()).toEqual(initial);
       }, SETTLED);
       write(join(dir, 'app/widgets/b.js'), "export default 'B';");
       await vi.waitFor(() => {
-        expect(found()).toEqual(['./widgets/a.js', './widgets/b.js', './widgets/skip.js']);
+        expect(found()).toEqual(added);
       }, SETTLED);
     },
     30_000,

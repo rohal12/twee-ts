@@ -786,6 +786,37 @@ describe.skipIf(process.platform === 'win32')('config in a folder named with glo
 });
 
 describe('CLI diagnostics name their file and line (#394)', () => {
+  it('keeps the CLI-authored charset hint on its own line (#458)', () => {
+    const result = runCli(dir, ['-c', 'utf8']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('\nnote: -c is --config');
+  });
+  it('escapes terminal controls in duplicate warnings and lint, preserving story data (#458)', () => {
+    const name = 'É😀\u001b]52;c;cHJvYmU=\u0007';
+    const header = name.replaceAll(']', '\\]');
+    writeFileSync(join(dir, 'story.tw'), `${VALID_STORY}\n:: ${header}\nOne\n:: ${header}\nTwo\n`);
+    const compiled = runCli(dir, ['--no-config', '--json', 'story.tw']);
+    expect(compiled.status).toBe(0);
+    expect(compiled.stderr).toContain('É😀\\u001b]52;c;cHJvYmU=\\u0007');
+    expect(JSON.parse(compiled.stdout)).toMatchObject({
+      passages: expect.arrayContaining([expect.objectContaining({ name })]),
+    });
+    const lint = runCli(dir, ['--no-config', '--no-remote', '--lint', 'story.tw']);
+    expect(lint.stdout).toContain('É😀\\u001b]52;c;cHJvYmU=\\u0007');
+    expect(`${compiled.stderr}${lint.stdout}`).not.toMatch(/[\u001b\u0007]/);
+  }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('escapes a hostile filename in fatal errors (#458)', () => {
+    writeFileSync(join(dir, 'story.tw'), VALID_STORY);
+    const result = runCli(
+      dir,
+      ['--no-config', '--no-remote', '-f', 'test-format-1', '--head', 'missing\u001b[2J\u0007.html', 'story.tw'],
+      { ...process.env, TWEEGO_PATH: join(__dirname, 'fixtures', 'storyformats') },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('missing\\u001b[2J\\u0007.html');
+    expect(result.stderr).not.toMatch(/[\u001b\u0007]/);
+  });
   // The metadata block of the first passage never closes.
   const UNTERMINATED = ':: A {"position":"1,1"\nx\n';
   // The name ends in a backslash that escapes nothing.

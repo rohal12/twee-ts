@@ -164,6 +164,10 @@ export const MATRIX = {
       'dev URL worker glob gains a file',
       'build watch separate entry worker glob gains a file',
       'build watch separate entry bare package link retargeted',
+      'dev glob with template base gains a file',
+      'dev glob with computed base gains a file',
+      'dev glob with repeated base gains a file',
+      'dev glob with quoted template base gains a file',
     ],
   },
 } as const satisfies Record<string, CaseGroup>;

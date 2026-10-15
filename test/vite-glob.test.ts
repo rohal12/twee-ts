@@ -32,6 +32,14 @@ const MODULE_CALLS: readonly (readonly [string, GlobCall[]])[] = [
   ['import.meta.glob(`./a/*.js`)', [call(['./a/*.js'])]],
   ["import.meta.glob(['./a/*.js', '!./a/b.js'])", [call(['./a/*.js', '!./a/b.js'])]],
   ["import.meta.glob('./*.js', { base: './a', eager: true })", [call(['./*.js'], './a')]],
+  ['import.meta.glob("./*.js", { base: `./a` })', [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { ['base']: './a' })", [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { base: './wrong', base: './a' })", [call(['./*.js'], './a')]],
+  ['import.meta.glob("./*.js", { base: `./\\u0061`, query: { x: [-1, +1, null] } })', [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { ['__proto__']: null, base: './a' })", [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { base: './wrong', base: './a', query: { negate: !true } })", [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', { base: './a', query: { exhaustive: !true } })", [call(['./*.js'], './a')]],
+  ["import.meta.glob('./*.js', null)", [call(['./*.js'])]],
   ["import.meta.glob('./*.js', { 'base': '/a', exhaustive: true })", [call(['./*.js'], '/a', true)]],
   ["import.meta.glob('./a/*.js', { exhaustive: false })", [call(['./a/*.js'])]],
   ["import.meta.glob('./a/*.js',)", [call(['./a/*.js'])]],
@@ -42,9 +50,8 @@ const MODULE_CALLS: readonly (readonly [string, GlobCall[]])[] = [
   ],
   // Not a pattern Vite takes (no argument, an expression): no scope comes of it, and Vite fails the bundle.
   ['import.meta.glob()', [call([])]],
-  ['import.meta.glob(`./${x}/*.js`, { base: dir })', [call([])]],
+  ['import.meta.glob(`./${x}/*.js`)', [call([])]],
   ["import.meta.glob(['./a/*.js', 1, ...more])", [call(['./a/*.js'])]],
-  ["import.meta.glob('./a/*.js', { ['base']: './b', [key]: 1, ...rest })", [call(['./a/*.js'])]],
   // Not a glob call.
   ["import.meta.globEager('./a/*.js'); import.meta['glob']('./b/*.js'); x.glob('./c/*')", []],
 ];
@@ -53,6 +60,36 @@ const MODULE_CALLS: readonly (readonly [string, GlobCall[]])[] = [
 const NOT_A_MODULE = '\n<template><div v-if="a < b">@@</div></template>\n';
 
 describe('globCalls', () => {
+  it.each([
+    '{ query: /x/ }',
+    '{ query: 1n }',
+    '{ query: [,] }',
+    '{ query: [...[]] }',
+    '{ base: `./${x}` }',
+    '{ exhaustive: ~1 }',
+    '{ base() {} }',
+    '{ base }',
+    '{ [{}]: true }',
+    '{ [`base`]: `./widgets` }',
+    '{ exhaustive: !0 }',
+  ])('diagnoses an option expression it cannot decode: %s', (options) => {
+    expect(globCalls(`import.meta.glob('./*.js', ${options})`)).toEqual({ calls: [], unreadable: [0] });
+  });
+  it('diagnoses options nested beyond the static reader limit', () => {
+    const options = `{ query: ${'['.repeat(102)}0${']'.repeat(102)} }`;
+    expect(globCalls(`import.meta.glob('./*.js', ${options})`)).toEqual({ calls: [], unreadable: [0] });
+  });
+  it.each([
+    '{ base: dir }',
+    "{ ['base']: './b', [key]: 1 }",
+    '{ ...rest }',
+    "{ ...{ base: './widgets' } }",
+    '{ get base() { return "./b"; } }',
+    '{ base: (() => "./b")() }',
+    '{ __proto__: { base: "./b" } }',
+  ])('reports options outside the static subset: %s', (options) => {
+    expect(globCalls(`import.meta.glob('./*.js', ${options})`)).toEqual({ calls: [], unreadable: [0] });
+  });
   it.each(MODULE_CALLS)('reads the module %s whole', (code, expected) => {
     expect(globCalls(`export function f() {}\n${code}`)).toEqual({ calls: expected, unreadable: [] });
   });

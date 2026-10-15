@@ -4,8 +4,9 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
-import { COMPILE, STORY, cleanUp, makeProject, startServer } from './helpers/plugins.js';
+import { COMPILE, STORY, buildFiles, cleanUp, makeProject, startServer } from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
@@ -34,6 +35,66 @@ async function request(url: string, method: string): Promise<{ status: number; b
 }
 
 describe('story routes of one dev server (#346)', () => {
+  it.each([true, false])('rejects its own imported HTML resource (watcher: %s)', async (watcher) => {
+    const dir = project();
+    const { url } = await startServer({
+      root: dir,
+      publicDir: false,
+      server: watcher ? {} : { watch: null },
+      plugins: [story(dir, 'a', 'b.html', 'app/main.js')],
+    });
+    const response = await request(`${url}/b.html`, 'GET');
+    expect(response.status).toBe(500);
+    expect(response.body).toContain('distinct outputFilename');
+    expect((await request(`${url}/b.html`, 'HEAD')).status).toBe(500);
+  });
+  it.each(['index.html', 'nested/index.html'])(
+    'rejects its own entry asset at %s and recovers after edits',
+    async (outputFilename) => {
+      const dir = project();
+      const entry = join(dir, 'app/main.js');
+      const collision = `globalThis.assetUrl = '/game/${outputFilename}'; // downloadable-original`;
+      writeFileSync(entry, collision);
+      const { url } = await startServer({
+        root: dir,
+        base: '/game/',
+        publicDir: false,
+        server: { watch: null },
+        plugins: [
+          {
+            name: 'download-resource',
+            generateBundle() {
+              if (readFileSync(entry, 'utf8').includes('downloadable-original')) {
+                this.emitFile({ type: 'asset', fileName: outputFilename, source: 'downloadable-original' });
+              }
+            },
+          },
+          story(dir, 'a', outputFilename, 'app/main.js'),
+        ],
+      });
+      const route = `${url}/game/${outputFilename}`;
+      expect((await request(route, 'GET')).status).toBe(500);
+      expect((await request(route, 'HEAD')).status).toBe(500);
+      const alias = route.replace(/index\.html$/, '');
+      expect((await request(alias, 'GET')).status).toBe(500);
+      writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+      expect((await request(route, 'GET')).status).toBe(200);
+      writeFileSync(entry, collision);
+      expect((await request(route, 'GET')).status).toBe(500);
+    },
+  );
+
+  it.each([false, true])('rejects its own entry asset in production (separate build: %s)', async (separate) => {
+    const dir = project();
+    await expect(
+      buildFiles({
+        root: dir,
+        publicDir: false,
+        build: separate ? { rolldownOptions: { input: join(dir, 'app/b.html') } } : {},
+        plugins: [story(dir, 'a', 'b.html', 'app/main.js')],
+      }),
+    ).rejects.toThrow(/already writes|entry asset/);
+  });
   it.each([
     ['a then b', ['a', 'b']],
     ['b then a', ['b', 'a']],
@@ -96,5 +157,66 @@ describe('story routes of one dev server (#346)', () => {
     });
     const [a, b] = await Promise.all([request(`${url}/a.html`, 'GET'), request(`${url}/b.html`, 'GET')]);
     expect([a.status, b.status]).toEqual([200, 200]);
+  });
+
+  it.each([
+    ['a', 'b'],
+    ['b', 'a'],
+  ] as const)('rejects competing assets through a story folder alias (%s, %s)', async (first, second) => {
+    const dir = project();
+    const plugins = {
+      a: story(dir, 'a', 'a.html', 'app/main.js'),
+      b: story(dir, 'b', 'nested/index.html'),
+    };
+    const { url } = await startServer({
+      root: dir,
+      base: '/game/',
+      publicDir: false,
+      server: { watch: null },
+      plugins: [
+        {
+          name: 'nested-download',
+          generateBundle() {
+            this.emitFile({ type: 'asset', fileName: 'nested/index.html', source: 'download-page' });
+          },
+        },
+        plugins[first],
+        plugins[second],
+      ],
+    });
+    expect((await request(`${url}/game/nested/index.html`, 'GET')).status).toBe(500);
+    expect((await request(`${url}/game/nested/`, 'GET')).status).toBe(500);
+    expect((await request(`${url}/game/nested/`, 'HEAD')).status).toBe(500);
+  });
+
+  it.each([
+    ['a', 'b'],
+    ['b', 'a'],
+  ] as const)('refreshes competing entry assets before serving a story (%s, %s)', async (first, second) => {
+    const dir = project();
+    const entry = join(dir, 'app/main.js');
+    const collision = readFileSync(entry, 'utf8');
+    writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+    const plugins = {
+      a: story(dir, 'a', 'a.html', 'app/main.js'),
+      b: story(dir, 'b', 'b.html'),
+    };
+    const { url } = await startServer({
+      root: dir,
+      base: '/game/',
+      publicDir: false,
+      server: { watch: null },
+      plugins: [plugins[first], plugins[second]],
+    });
+    const route = `${url}/game/b.html`;
+    expect((await request(route, 'GET')).status).toBe(200);
+    writeFileSync(entry, collision);
+    expect((await request(route, 'HEAD')).status).toBe(500);
+    const response = await request(route, 'GET');
+    expect(response.status).toBe(500);
+    expect(response.body).toContain('distinct outputFilename');
+    writeFileSync(entry, 'globalThis.assetUrl = "distinct";');
+    expect((await request(route, 'GET')).status).toBe(200);
+    expect((await request(route, 'HEAD')).status).toBe(200);
   });
 });

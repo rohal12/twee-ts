@@ -312,6 +312,7 @@ interface DevInstance {
   /** The URL paths (below the base) of the instance's story page. */
   readonly paths: readonly string[];
   readonly assets: () => ReadonlyMap<string, string | Uint8Array> | undefined;
+  readonly catchUp: () => Promise<void>;
 }
 
 /** The story and assets each story instance of a dev server serves, so instances can see each other's names. */
@@ -362,7 +363,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let servedAssets: EntryBundle['assets'] | undefined;
   const instances = devInstances.get(server) ?? new Set<DevInstance>();
   devInstances.set(server, instances);
-  const self: DevInstance = { paths, assets: () => servedAssets };
+  const self: DevInstance = { paths, assets: () => servedAssets, catchUp: () => catchUp() };
   instances.add(self);
   const fail = (res: ServerResponse, message: string): void => {
     config.logger.error(`[twee-ts] ${message}`);
@@ -804,39 +805,53 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       next();
       return;
     }
-    const others = [...instances].filter((other) => other !== self);
-    // A path another instance claims for its story, or (for a story) emits as an asset, is not served by plugin
-    // order: the production build rejects both.
     const mine = paths.includes(path);
-    if (
-      (mine || servedAssets?.has(path) === true) &&
-      others.some((other) => other.paths.includes(path) || (mine && other.assets()?.has(path) === true))
-    ) {
-      fail(res, storyCollisionMessage(path));
-      return;
-    }
-    if (paths.includes(path)) {
-      catchUp().then(() => {
-        if (html) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
-        else send(req, res, 'text/html; charset=utf-8', waitingPage(base));
-      }, next);
-      return;
-    }
-    // Files the entry's bundle still emits separately, where the build writes them.
-    const asset = servedAssets?.get(path);
-    if (asset === undefined) {
+    if (!mine && servedAssets?.has(path) !== true) {
       next();
       return;
     }
-    // Another instance emitting the same name with other bytes: the production build rejects that, and the dev
-    // server must not pick one by plugin order.
-    for (const other of others) {
-      const theirs = other.assets()?.get(path);
-      if (theirs !== undefined && !sameBytes(theirs, asset)) {
-        fail(res, entryCollisionMessage(path));
+    // Any entry edit can introduce or remove a competing resource. Refresh every instance for a story request
+    // before deciding ownership. Asset-only requests keep the assets of the last served story (#360).
+    const refresh = [...instances].some((instance) => instance.paths.includes(path))
+      ? Promise.all([...instances].map((instance) => instance.catchUp()))
+      : Promise.resolve();
+    refresh.then(() => {
+      const others = [...instances].filter((other) => other !== self);
+      if (
+        (mine || servedAssets?.has(path) === true) &&
+        others.some(
+          (other) =>
+            other.paths.includes(path) || (mine && paths.some((storyPath) => other.assets()?.has(storyPath) === true)),
+        )
+      ) {
+        fail(res, storyCollisionMessage(path));
         return;
       }
-    }
-    send(req, res, assetMediaType(path), asset);
+      if (mine) {
+        if (paths.some((storyPath) => servedAssets?.has(storyPath) === true)) {
+          fail(res, storyCollisionMessage(path));
+          return;
+        }
+        if (html) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
+        else send(req, res, 'text/html; charset=utf-8', waitingPage(base));
+        return;
+      }
+      // Files the entry's bundle still emits separately, where the build writes them.
+      const asset = servedAssets?.get(path);
+      if (asset === undefined) {
+        next();
+        return;
+      }
+      // Another instance emitting the same name with other bytes: the production build rejects that, and the dev
+      // server must not pick one by plugin order.
+      for (const other of others) {
+        const theirs = other.assets()?.get(path);
+        if (theirs !== undefined && !sameBytes(theirs, asset)) {
+          fail(res, entryCollisionMessage(path));
+          return;
+        }
+      }
+      send(req, res, assetMediaType(path), asset);
+    }, next);
   };
 }

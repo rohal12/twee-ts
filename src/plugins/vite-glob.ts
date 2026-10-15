@@ -6,8 +6,8 @@
  *
  * A scope is a superset of what the glob matches: a file added to it or removed from it may not match (a negated
  * pattern, a name the wildcards leave out), which only bundles again for nothing. The calls are read with acorn as Vite reads them: patterns are
- * string literals, template literals without expressions, or arrays of those; `base` and `exhaustive` are literal
- * options. A call written otherwise is one Vite rejects, and the bundle fails before its scope matters.
+ * string literals, template literals without expressions, or arrays of those. Options are static literal data,
+ * including computed keys and repeated members; expressions outside that subset are diagnosed, never evaluated.
  *
  * Code that is a module is read whole, so only real calls count. Code that is not (yet) one, as a plugin may hand
  * on a component file or TypeScript it transforms later, is read the way Vite's import-glob reads every module:
@@ -16,7 +16,7 @@
  */
 import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
-import type { AnyNode, Expression, ObjectExpression, Options, SpreadElement } from 'acorn';
+import type { AnyNode, Expression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
 import { AcornParser, trySyntax } from '../js-syntax.js';
 import { isRecord, pushAll } from '../util.js';
@@ -91,29 +91,79 @@ function stringOf(node: Expression | SpreadElement | null): string | undefined {
   return undefined;
 }
 
-/** The literal value of the option `name` of a call's options object. */
-function optionOf(options: ObjectExpression | undefined, name: string): unknown {
-  for (const property of options?.properties ?? []) {
-    if (property.type !== 'Property' || property.computed || property.value.type !== 'Literal') continue;
-    const { key } = property;
-    const keyName = key.type === 'Identifier' ? key.name : key.type === 'Literal' ? key.value : undefined;
-    if (keyName === name) return property.value.value;
+/** An expression outside the static data subset: never run it or guess the folder it selects. */
+const UNREADABLE = Symbol('unreadable');
+
+/** Static option data, with JavaScript's cooked strings, computed keys and last-member precedence. */
+function staticValue(node: Expression, depth = 0): unknown {
+  if (depth > 100) return UNREADABLE;
+  switch (node.type) {
+    case 'Literal':
+      return node.regex === undefined && node.bigint === undefined ? node.value : UNREADABLE;
+    case 'TemplateLiteral':
+      return node.expressions.length === 0 ? (node.quasis[0]?.value.cooked ?? UNREADABLE) : UNREADABLE;
+    case 'UnaryExpression': {
+      const value = staticValue(node.argument, depth + 1);
+      if (value === UNREADABLE) return UNREADABLE;
+      if (node.operator === '!') return !value;
+      if (typeof value === 'number') {
+        if (node.operator === '-') return -value;
+        if (node.operator === '+') return value;
+      }
+      return UNREADABLE;
+    }
+    case 'ArrayExpression': {
+      const values: unknown[] = [];
+      for (const element of node.elements) {
+        if (element === null || element.type === 'SpreadElement') return UNREADABLE;
+        const value = staticValue(element, depth + 1);
+        if (value === UNREADABLE) return UNREADABLE;
+        values.push(value);
+      }
+      return values;
+    }
+    case 'ObjectExpression': {
+      const entries = new Map<string, unknown>();
+      for (const property of node.properties) {
+        if (property.type === 'SpreadElement') return UNREADABLE;
+        if (property.kind !== 'init' || property.method || property.shorthand) return UNREADABLE;
+        // Vite's native build reader does not resolve computed template keys as its JS reader does.
+        if (property.computed && property.key.type !== 'Literal') return UNREADABLE;
+        const key =
+          !property.computed && property.key.type === 'Identifier'
+            ? property.key.name
+            : staticValue(property.key, depth + 1);
+        const value = staticValue(property.value, depth + 1);
+        if (depth === 0 && key === 'exhaustive' && property.value.type !== 'Literal') return UNREADABLE;
+        // A non-computed __proto__ changes inheritance in JavaScript; do not treat it as ordinary data.
+        if (
+          (key !== null && typeof key !== 'string' && typeof key !== 'number' && typeof key !== 'boolean') ||
+          value === UNREADABLE ||
+          (!property.computed && key === '__proto__')
+        )
+          return UNREADABLE;
+        entries.set(String(key), value);
+      }
+      return Object.fromEntries(entries);
+    }
+    default:
+      return UNREADABLE;
   }
-  return undefined;
 }
 
 /** The call a glob call's arguments make. */
-function callOf(args: readonly (Expression | SpreadElement)[]): GlobCall {
+function callOf(args: readonly (Expression | SpreadElement)[]): GlobCall | undefined {
   const [first, second] = args;
   const patterns = (first === undefined ? [] : first.type === 'ArrayExpression' ? first.elements : [first])
     .map(stringOf)
     .filter((pattern) => pattern !== undefined);
-  const options = second?.type === 'ObjectExpression' ? second : undefined;
-  const base = optionOf(options, 'base');
+  const options = second === undefined ? {} : second.type === 'SpreadElement' ? UNREADABLE : staticValue(second);
+  if (options === UNREADABLE) return undefined;
+  const base = isRecord(options) ? options['base'] : undefined;
   return {
     patterns,
     base: typeof base === 'string' ? base : undefined,
-    exhaustive: optionOf(options, 'exhaustive') === true,
+    exhaustive: isRecord(options) && options['exhaustive'] === true,
   };
 }
 
@@ -170,10 +220,15 @@ export interface GlobReading {
 export function globCalls(code: string): GlobReading {
   const parsed = trySyntax(() => AcornParser.parse(code, MODULE_OPTIONS));
   if (parsed.ok) {
-    const calls = [...nodesOf(parsed.value)].flatMap((node) =>
-      node.type === 'CallExpression' && isGlobCallee(node.callee) ? [callOf(node.arguments)] : [],
-    );
-    return { calls, unreadable: [] };
+    const calls: GlobCall[] = [];
+    const unreadable: number[] = [];
+    for (const node of nodesOf(parsed.value)) {
+      if (node.type !== 'CallExpression' || !isGlobCallee(node.callee)) continue;
+      const call = callOf(node.arguments);
+      if (call === undefined) unreadable.push(node.start);
+      else calls.push(call);
+    }
+    return { calls, unreadable };
   }
   const calls: GlobCall[] = [];
   const unreadable: number[] = [];

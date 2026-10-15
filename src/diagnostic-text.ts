@@ -4,6 +4,13 @@
  */
 import type { Diagnostic } from './types.js';
 
+/** Printable notation for C0/C1 terminal controls; callers may keep their own line separators. */
+export function escapeTerminalControls(text: string, keepNewlines = false): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) =>
+    keepNewlines && character === '\n' ? character : `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 /**
  * The message with where it happened in front: `file:line: message`, or `file: message` when no line is known.
  * The parser starts its messages with "line N: "; the location already says it. A message that already
@@ -11,7 +18,9 @@ import type { Diagnostic } from './types.js';
  * is one without a file. A file named in passing ("It replaces the one from a.tw (line 7)") is not a location.
  */
 export function formatDiagnostic(d: Readonly<Diagnostic>): string {
-  if (!d.file || d.message.includes(`${d.file}:`)) return d.message;
-  if (!d.line) return `${d.file}: ${d.message}`;
-  return `${d.file}:${d.line}: ${d.message.replace(/^line \d+: /, '')}`;
+  const message = escapeTerminalControls(d.message);
+  if (!d.file || d.message.includes(`${d.file}:`)) return message;
+  const file = escapeTerminalControls(d.file);
+  if (!d.line) return `${file}: ${message}`;
+  return `${file}:${d.line}: ${message.replace(/^line \d+: /, '')}`;
 }

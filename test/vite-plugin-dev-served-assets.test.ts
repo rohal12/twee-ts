@@ -109,6 +109,16 @@ describe.each([
       'app/note.txt': 'old-version\n',
     });
 
+  it.runIf(!watcher)('keeps asset requests tied to the served page until a story request catches up', async () => {
+    const root = project();
+    const dev = await start(root, watcher);
+    const note = assetIn(await page(dev), NOTE);
+    writeFileSync(join(root, 'app/note.txt'), 'new-version\n');
+    expect(await served(dev, note, 'old-version')).toEqual({ status: 200, body: 'old-version' });
+    await page(dev);
+    expect(await served(dev, note, 'new-version')).toEqual({ status: 200, body: 'new-version' });
+  });
+
   it('serves the worker and the asset of the page it still serves while the story fails to compile', async () => {
     const root = project();
     const dev = await start(root, watcher);

@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { formatDiagnostic } from '../src/diagnostic-text.js';
 
 describe('formatDiagnostic', () => {
+  it.each(Array.from({ length: 160 }, (_, code) => code).filter((code) => code < 32 || code >= 127))(
+    'escapes terminal control U+%i in messages and locations',
+    (code) => {
+      const control = String.fromCharCode(code);
+      const escaped = `\\u${code.toString(16).padStart(4, '0')}`;
+      expect(formatDiagnostic({ level: 'warning', message: `é😀${control}`, file: `a${control}.tw`, line: 2 })).toBe(
+        `a${escaped}.tw:2: é😀${escaped}`,
+      );
+    },
+  );
   it('names the file and line, and drops the parser\'s own "line N:" prefix', () => {
     expect(formatDiagnostic({ level: 'error', message: 'line 4: bad header', file: 'a.tw', line: 4 })).toBe(
       'a.tw:4: bad header',

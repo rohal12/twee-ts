@@ -26,6 +26,16 @@ const chunk = (name: string, isEntry: boolean, code: string): BundleItem => ({
 });
 
 describe('takeEntryFromBundle', () => {
+  it('keeps imported map resources while removing generated source maps', () => {
+    const bundle: Record<string, BundleItem> = {
+      'world.map': { type: 'asset', source: 'map data', originalFileNames: ['/p/world.map'] },
+      'relative.map': { type: 'asset', source: 'relative data', originalFileNames: ['../shared/world.map'] },
+      'windows.map': { type: 'asset', source: 'windows data', originalFileNames: ['C:\\p\\windows.map'] },
+      'entry.js.map': { type: 'asset', source: '{}' },
+    };
+    expect([...takeEntryFromBundle(bundle).assets.keys()]).toEqual(['world.map', 'relative.map', 'windows.map']);
+    expect(Object.keys(bundle)).toEqual(['world.map', 'relative.map', 'windows.map']);
+  });
   it('takes the entry chunk named for the instance, every stylesheet and the maps, and leaves the rest', () => {
     const bundle: Record<string, BundleItem> = {
       'mine.js': chunk('twee-ts-entry-1', true, 'MINE\n//# sourceMappingURL=mine.js.map'),

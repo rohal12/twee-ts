@@ -538,7 +538,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
           entry = bundlesEntryInside(config) ? takeEntryFromBundle(items, entryInput) : ownBuilds.get(this.environment);
           if (!bundlesEntryInside(config)) {
             for (const [fileName, source] of entry?.assets ?? []) {
-              if (Object.hasOwn(bundle, fileName)) {
+              if (fileName === outputFilename || Object.hasOwn(bundle, fileName)) {
                 return this.error(entryCollisionMessage(fileName));
               }
               this.emitFile({ type: 'asset', fileName, source });
