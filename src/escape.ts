@@ -92,6 +92,8 @@ export type InsertionContext =
  *   escaped so that no `</script` or `</style` can end the element.
  */
 export function escapeForContext(value: string, context: InsertionContext): string | undefined {
+  // Attribute languages need another decoding/escaping layer, which this escaper does not implement.
+  if (context.kind === 'nested-attribute') return undefined;
   switch (context.kind) {
     case 'text':
       return htmlEscape(value);
@@ -112,7 +114,6 @@ export function escapeForContext(value: string, context: InsertionContext): stri
         return cssStringEscape(value).replace(/['<]/g, (ch) => (ch === '<' ? '\\3c ' : "\\'"));
       return context.css.kind === 'comment' ? htmlEscape(value).replace(/\*\//g, '* /') : undefined;
     case 'raw-text':
-    case 'nested-attribute':
     case 'markup':
       return undefined;
     default: {
