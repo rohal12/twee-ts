@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { parse, serialize } from 'parse5';
+import { describe, expect, it, vi } from 'vitest';
+import { defaultTreeAdapter, parse, serialize } from 'parse5';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,8 +24,35 @@ describe('flat HTML foster parenting (#381)', () => {
     },
   );
 
-  it('decompiles shallow table siblings in linear time', { timeout: 120_000 }, () => {
-    expect(growth((n) => STORY + '<table>x</table>'.repeat(n), decompileHTML, 8000)).toBeLessThan(LINEAR_GROWTH);
+  it('decompiles shallow table siblings with linear sibling-array work', () => {
+    let reads = 0;
+    const createElement = defaultTreeAdapter.createElement.bind(defaultTreeAdapter);
+    // Count actual indexed reads, including searches and splice shifts, while preserving the tree semantics.
+    // A forward scan of the growing body on every table makes this count quadratic (#381).
+    const wrapped = vi.spyOn(defaultTreeAdapter, 'createElement').mockImplementation((...args) => {
+      const element = createElement(...args);
+      element.childNodes = new Proxy(element.childNodes, {
+        get(target, property, receiver): unknown {
+          if (typeof property === 'string' && /^(?:0|[1-9]\d*)$/.test(property)) reads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return element;
+    });
+    const work = (n: number): number => {
+      reads = 0;
+      const result = decompileHTML(STORY + '<table>x</table>'.repeat(n));
+      expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('hi');
+      return reads;
+    };
+    try {
+      const small = work(250);
+      const large = work(1000);
+      expect(small).toBeGreaterThan(0);
+      expect(large).toBeLessThan(small * LINEAR_GROWTH);
+    } finally {
+      wrapped.mockRestore();
+    }
   });
 
   it('imports a source with many shallow tables without changing its passages', async () => {
