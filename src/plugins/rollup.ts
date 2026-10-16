@@ -14,6 +14,7 @@ import type { OutputLocation } from './paths.js';
 import { createLinkWatch } from './link-watch.js';
 import type { LinkWatch } from './link-watch.js';
 import { watchPlan } from './watch-targets.js';
+import { identify } from '../path-identity.js';
 
 export type { PluginCompileOptions } from './options.js';
 
@@ -60,7 +61,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       const outputs = outputPaths(record.outputs());
       // In the platform's own form, as Rollup reports its module ids.
       const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'given');
-      const targets = plan.targets.map((target) => resolve(target));
+      const targets = plan.targets.map((target) => identify(target).absolute);
       for (const target of targets) this.addWatchFile(target);
       // Rollup's watcher keeps watching what a path led to when it was registered, so a path that leads elsewhere now
       // (a link was pointed at another file or folder) is watched from its new location as well.

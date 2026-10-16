@@ -5,11 +5,11 @@
  * `compileOptions.exclude` leaves out. The Vite and the Rollup plugin share this,
  * so the same options mean the same thing in both.
  */
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
 import { TweeTsError } from '../errors.js';
 import { isExcluded } from '../filesystem.js';
-import { identify, isSameOrInside } from '../path-identity.js';
+import { absolutePathSpelling, identify, isSameOrInside } from '../path-identity.js';
 import { toPosix } from './paths.js';
 import { parseVersion } from '../semver.js';
 import { isRecord } from '../util.js';
@@ -181,7 +181,7 @@ function checkOptions(kind: PluginKind, options: unknown): void {
 
 /** Absolute forward-slash path of a path given relative to the working directory. */
 function absolute(path: string): string {
-  return toPosix(resolve(path));
+  return toPosix(absolutePathSpelling(path));
 }
 
 /**
@@ -194,7 +194,7 @@ function spellingsUnderSources(file: string, sources: readonly string[]): string
   return sources.flatMap((source) => {
     const below = relative(identify(source).canonical, real);
     const outside = below === '..' || below.startsWith(`..${sep}`) || isAbsolute(below);
-    return outside ? [] : [join(resolve(source), below)];
+    return outside ? [] : [`${absolute(source)}/${toPosix(below)}`];
   });
 }
 
@@ -219,7 +219,7 @@ export function resolvePluginOptions(
     format,
     outputFilename: options.outputFilename ?? 'index.html',
     compileOptions,
-    entry: entry === undefined ? undefined : resolve(entry),
+    entry: entry === undefined ? undefined : absolutePathSpelling(entry),
     inputs: [...sources.map(absolute), ...notExcludable],
     // `exclude` never applies to the head file and the modules.
     excluded: (file) =>

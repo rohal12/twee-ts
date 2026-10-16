@@ -11,7 +11,7 @@
  * (never text, a comment, an attribute value, template content or CDATA); where no such point exists, nothing is
  * inserted and the caller reports it.
  */
-import { defaultTreeAdapter, parse, parseFragment, html as htmlSpec } from 'parse5';
+import { defaultTreeAdapter, parse, parseFragment, Parser, html as htmlSpec } from 'parse5';
 import type { DefaultTreeAdapterTypes } from 'parse5';
 import { cssContexts, javaScriptContexts } from './code-context.js';
 import type { InContext, SourceRange } from './code-context.js';
@@ -137,7 +137,21 @@ export function parseHtml(html: string, locations = true): HtmlDocument {
 
 /** Parse `html` as the content of a `div` element, as `parseHtml()` reads a document. */
 function parseHtmlFragment(html: string): DefaultTreeAdapterTypes.DocumentFragment {
-  return parseFragment(FRAGMENT_CONTEXT, html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
+  const parser = Parser.getFragmentParser(FRAGMENT_CONTEXT, {
+    scriptingEnabled: true,
+    treeAdapter: depthLimitedTreeAdapter(),
+  });
+  parser.tokenizer.write(html, true);
+  const fragment = defaultTreeAdapter.createDocumentFragment();
+  const root = defaultTreeAdapter.getFirstChild(parser.document);
+  if (root !== null && 'childNodes' in root) {
+    // parse5's getFragment() detaches each first child with splice, shifting all remaining siblings each time.
+    // Transfer the completed child list once, preserving the same fragment tree and parent pointers in linear work.
+    fragment.childNodes = root.childNodes;
+    root.childNodes = [];
+    for (const child of fragment.childNodes) child.parentNode = fragment;
+  }
+  return fragment;
 }
 
 function isElement(node: HtmlNode): node is HtmlElement {

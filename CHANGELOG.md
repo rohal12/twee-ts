@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve filesystem path order when rebasing config paths, resolving plugin entries and watched inputs, and discovering local story formats (#465, #466, #467).
+- Extract HTML fragment children in linear time during inspection and lint, preserving script classification and nesting limits (#381).
+
 - Follow symlinks before resolving `..` in output link targets and source paths, preserving named inputs and loading the same file across cold, cached and watched builds (#219, #462).
 - Join script and stylesheet passages in linear time while preserving source comments and statement boundaries (#463).
 - Avoid scanning preceding siblings when foster-parenting shallow table content during HTML parsing (#381).

@@ -479,7 +479,12 @@ export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): Twe
   const folder = identify(dirname(configPath));
   if (folder.key === identify('.').key) return config;
   const dir = folder.display;
-  const rebase = (path: string): string => (path === '-' || isAbsolute(path) ? path : join(dir, path));
+  const rebase = (path: string): string => {
+    if (path === '-' || isAbsolute(path)) return path;
+    // A parent step must reach the filesystem after any preceding link (or missing folder), not be erased by join.
+    const parts = path.split(sep === '\\' ? /[/\\]/ : '/');
+    return parts.includes('..') ? `${dir}${sep}${path}` : join(dir, path);
+  };
   const { sources, exclude, output, modules, headFile, formatPaths } = config;
   return {
     ...config,
