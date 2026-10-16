@@ -201,16 +201,24 @@ function joinCode(passages: readonly ReadonlyPassage[], kind: 'script' | 'styles
   if (rest.length === 0) return { text: first.text, parts: [{ label: label(first), start: 0 }] };
   const header = (p: ReadonlyPassage, n: number): string =>
     `/* twine-user-${kind} #${n}: "${commentSanitize(p.name)}" */\n`;
-  let text = header(first, 1);
-  const parts: [CodePart, ...CodePart[]] = [{ label: label(first), start: text.length }];
-  text += first.text;
+  const firstHeader = header(first, 1);
+  const chunks = [firstHeader, first.text];
+  let length = firstHeader.length;
+  const parts: [CodePart, ...CodePart[]] = [{ label: label(first), start: length }];
+  length += first.text.length;
+  let previous = first.text;
   rest.forEach((p, i) => {
-    text = kind === 'script' ? terminateScript(text) : text.endsWith('\n') ? text : `${text}\n`;
-    text += header(p, i + 2);
-    parts.push({ label: label(p), start: text.length });
-    text += p.text;
+    // An empty passage follows a header that already ends in LF. Inspect only the last source, never the growing
+    // concatenation: V8 would flatten that rope on every endsWith(), copying every earlier passage again.
+    const boundary = `${previous === '' || previous.endsWith('\n') ? '' : '\n'}${kind === 'script' ? ';\n' : ''}`;
+    const nextHeader = header(p, i + 2);
+    chunks.push(boundary, nextHeader, p.text);
+    length += boundary.length + nextHeader.length;
+    parts.push({ label: label(p), start: length });
+    length += p.text.length;
+    previous = p.text;
   });
-  return { text, parts };
+  return { text: chunks.join(''), parts };
 }
 
 /** The IFID comment that precedes the story data, as Tweego writes it (the Treaty of Babel's HTML IFID). */

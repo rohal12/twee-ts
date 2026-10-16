@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Follow symlinks before resolving `..` in output link targets and source paths, preserving named inputs and loading the same file across cold, cached and watched builds (#219, #462).
+- Join script and stylesheet passages in linear time while preserving source comments and statement boundaries (#463).
+- Avoid scanning preceding siblings when foster-parenting shallow table content during HTML parsing (#381).
+
 - Revalidate plugin output destinations after asynchronous format resolution, preserving sources, modules and head files when output links change (#301).
 - Escape terminal controls in human-readable format and cache listings, cache paths and cache-name messages (#458).
 - Warn about template placeholders in event handlers, style attributes and `srcdoc`, where HTML attribute escaping cannot preserve nested-language values (#244).

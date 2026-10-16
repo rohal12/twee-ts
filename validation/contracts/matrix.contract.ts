@@ -73,7 +73,10 @@ const REVISION_1 = [
 describe('the contract matrix', () => {
   it('keeps every revision 1 case, in order, with its meaning', () => {
     expect(REVISION_1).toHaveLength(59);
-    expect(allCases().slice(0, REVISION_1.length)).toEqual(REVISION_1);
+    // New variants may be appended to any group, including WRITE, before later revision 1 groups. Select the
+    // frozen IDs rather than the first 59 entries; removing, renaming or reordering any original still fails.
+    const originalIds = new Set(REVISION_1.map((c) => c.slice(0, c.indexOf(':'))));
+    expect(allCases().filter((c) => originalIds.has(c.slice(0, c.indexOf(':'))))).toEqual(REVISION_1);
   });
 
   it('gives every case its own ID', () => {

@@ -93,7 +93,21 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
     },
     insertBefore(parent, child, reference) {
       placed(parent, child);
-      defaultTreeAdapter.insertBefore(parent, child, reference);
+      // Foster parenting normally inserts just before the last child (the open table). Searching from the end
+      // avoids scanning all preceding sibling tables for every insertion.
+      parent.childNodes.splice(parent.childNodes.lastIndexOf(reference), 0, child);
+      child.parentNode = parent;
+    },
+    insertTextBefore(parent, text, reference) {
+      const index = parent.childNodes.lastIndexOf(reference);
+      const previous = parent.childNodes[index - 1];
+      if (previous !== undefined && defaultTreeAdapter.isTextNode(previous)) {
+        previous.value += text;
+      } else {
+        const child = defaultTreeAdapter.createTextNode(text);
+        parent.childNodes.splice(index, 0, child);
+        child.parentNode = parent;
+      }
     },
     detachNode(node) {
       // A node moves: the depths below it change.
