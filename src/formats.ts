@@ -15,6 +15,7 @@ import { compareVersions, parseVersion } from './semver.js';
 import { normalizeSourceText } from './source-text.js';
 import { decodeText, pushAll, readUTF8 } from './util.js';
 import { TweeTsError } from './errors.js';
+import { identify } from './path-identity.js';
 
 /** The message of a caught error, or the text of a thrown value that is not an Error. */
 export function errorText(e: unknown): string {
@@ -143,8 +144,12 @@ export function discoverAllFormats(
 ): Map<string, StoryFormatInfo> {
   const formats = new Map<string, StoryFormatInfo>();
   for (const searchDir of searchDirs) {
-    for (const entry of listDirectory(searchDir)) {
-      const format = loadFormatDir(searchDir, entry, diagnostics);
+    // List as authored first: missing/.. must not become an existing lexical directory. Once listed, its identity
+    // follows links before parent steps, and is safe to join with the discovered child names.
+    const entries = listDirectory(searchDir);
+    const directory = identify(searchDir).absolute;
+    for (const entry of entries) {
+      const format = loadFormatDir(directory, entry, diagnostics);
       if (!format) continue;
       // Re-insert, so the map's order follows the directories' rank.
       formats.delete(entry);

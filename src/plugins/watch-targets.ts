@@ -6,7 +6,8 @@
  * entries. So every path is registered on its own as well.
  */
 import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse } from 'node:path';
+import { absolutePathSpelling } from '../path-identity.js';
 import { realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
@@ -204,7 +205,7 @@ export function linksOnTheWay(path: string): string[] {
       .slice(root.length)
       .split(/[/\\]/)
       .filter((name) => name !== '' && name !== '.');
-  const start = resolve(path);
+  const start = absolutePathSpelling(path);
   let reached = parse(start).root;
   let rest = names(start, reached);
   for (let hops = 0; rest.length > 0 && hops <= MAX_LINK_HOPS;) {

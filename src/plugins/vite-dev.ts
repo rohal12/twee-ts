@@ -11,6 +11,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry, OutputMode } from '../types.js';
 import { getFilenames, outputPaths } from '../filesystem.js';
+import { identify } from '../path-identity.js';
 import { sha256Hex } from '../format-cache.js';
 import type { BuildOutputs } from '../filesystem.js';
 import { mediaTypeFromFilename, normalizedFileExt } from '../media-types.js';
@@ -441,7 +442,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     const found = getFilenames(inputs, outputs, [], 'source', (folder) => folders.set(folder, fileState(folder)));
     const files = found.files
       .filter((file) => !excludedGlob(file.path))
-      .map((file) => ({ key: file.key, path: resolve(file.path), link: file.link === true }));
+      .map((file) => ({ key: file.key, path: identify(file.path).absolute, link: file.link === true }));
     return { outputs, named, folders, files };
   };
 
