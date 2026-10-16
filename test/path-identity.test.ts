@@ -82,6 +82,21 @@ describe('canonical identity on the real file system', () => {
     expect(ids.isSameOrInside('real', 'alias/a.tw')).toBe(false);
   });
 
+  it('keeps a folder alias after relative parent segments for display and excludes', () => {
+    mkdirSync(join(dir, 'cwd'));
+    mkdirSync(join(dir, 'real'));
+    mkdirSync(join(dir, 'real', 'sub'));
+    writeFileSync(join(dir, 'real', 'a.tw'), '');
+    linkDir(join(dir, 'real'), join(dir, 'alias'));
+    const ids = realAt(join(dir, 'cwd'));
+    for (const authored of ['../alias/a.tw', '../alias/sub/../a.tw']) {
+      const id = ids.identify(authored);
+      expect(id.display).toBe(join('..', 'alias', 'a.tw'));
+      expect(ids.matchesExclude(id, [join('..', 'alias', '*.tw')])).toBe(true);
+      expect(id.key).toBe(ids.identify('../real/a.tw').key);
+    }
+  });
+
   it('follows a dangling link to where its target would be created', () => {
     symlinkSync(join(dir, 'build', 'out.html'), join(dir, 'abs-link.html'));
     symlinkSync(join('build', 'rel.html'), join(dir, 'rel-link.html'));

@@ -351,11 +351,19 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
   function identify(authored: string): PathIdentity {
     const spelling = absoluteSpelling(authored);
     const resolved = resolvePath(spelling, 0);
-    // relative() and join() normalize dot segments. Resolve those in the parent first so display remains an
-    // openable spelling, keeping a final file link's own name (and thus its loader extension).
-    const absolute = spelling.split(flavour.sep).includes('..')
-      ? flavour.join(resolvePath(flavour.dirname(spelling), 0).canonical, flavour.basename(spelling))
-      : tidy(flavour.resolve(spelling));
+    let absolute = tidy(flavour.resolve(spelling));
+    if (spelling.split(flavour.sep).includes('..')) {
+      // Only resolve a link when `..` removes it. Resolving the whole parent would also discard later aliases
+      // (macOS's /var, for example), so a displayed relative path would stop matching its original exclude glob.
+      const { root } = flavour.parse(spelling);
+      absolute = root;
+      for (const component of spelling.slice(root.length).split(flavour.sep)) {
+        absolute =
+          component === '..' && fs.lstat(absolute)?.isSymbolicLink() === true
+            ? resolvePath(`${absolute}${flavour.sep}..`, 0).canonical
+            : flavour.join(absolute, component);
+      }
+    }
     const caseInsensitive = caseInsensitiveAt(resolved.existing);
     let realCwd: string | undefined;
     const canonicalCwd = (): string => (realCwd ??= resolvePath(tidy(cwd()), 0).canonical);
