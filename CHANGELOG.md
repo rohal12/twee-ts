@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Preserve the supplied config directory's filesystem meaning through symlinks and parent steps (#476).
-- Recover Vite development entry builds when a missing package or export target becomes available (#269).
+- Recover Vite development entry builds when a missing package or export target becomes available, including a package's own exports (#269).
 - Preserve equals signs in attached short CLI option values (#385).
 - Track symlink retargets through POSIX directory names and relative link targets containing backslashes (#308).
 - Assemble template placeholder markers in linear time while preserving their offsets and contexts (#477).

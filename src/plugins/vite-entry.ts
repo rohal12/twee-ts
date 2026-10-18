@@ -5,7 +5,9 @@
  * build of its own: bundleEntry() below, which replays the user's configuration.
  */
 import { existsSync, statSync } from 'node:fs';
+import { findPackageJSON } from 'node:module';
 import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { build, createIdResolver, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
   BuildEnvironmentOptions,
@@ -617,6 +619,29 @@ function missingPackagePaths(source: string, importer: string | undefined): stri
 }
 
 /**
+ * A package can import itself through its exports without living in node_modules. Node can locate its manifest
+ * even when the export target is missing. Track the package's own file listing as a recovery scope, excluding
+ * node_modules; recording the whole folder as a watch file would scan all of its installed dependencies too.
+ * The node_modules candidates above remain necessary for packages that have no manifest yet.
+ */
+function missingPackageScope(
+  source: string,
+  importer: string | undefined,
+  candidates: readonly string[],
+): GlobScope | undefined {
+  if (importer === undefined || candidates.length === 0) return undefined;
+  let manifest: string | undefined;
+  try {
+    manifest = findPackageJSON(source, pathToFileURL(fileOfId(importer)));
+  } catch {
+    return undefined; // No package metadata yet, or unreadable metadata: Vite diagnoses the import itself.
+  }
+  if (manifest === undefined) return undefined;
+  const dir = toPosix(dirname(manifest));
+  return candidates.includes(dir) ? undefined : { dir, deep: true, dot: true, exhaustive: false, suffix: '' };
+}
+
+/**
  * Every path an import of `source` by `importer` is spelled as (see writtenPaths), and the path Vite's resolver
  * reaches the file by, links kept (`kept`, see keptPath). A caller then sees a link on the way that is retargeted,
  * which the file's own path never shows. Nothing for an import from a virtual module, or of one.
@@ -698,7 +723,13 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
         // Missing packages have no resolved spelling yet. Keep their search locations as recovery inputs,
         // without treating a whole ancestor of node_modules as a missing relative import's watch folder.
         if (kept === undefined && spellings.length === 0) {
-          for (const path of missingPackagePaths(source, importer)) record(path);
+          const candidates = missingPackagePaths(source, importer);
+          for (const path of candidates) record(path);
+          const scope = missingPackageScope(source, importer, candidates);
+          if (scope !== undefined) {
+            record(join(scope.dir, 'package.json'));
+            onGlob?.(scope);
+          }
         }
         return null;
       },
