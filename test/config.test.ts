@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { identify } from '../src/path-identity.js';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync, existsSync } from 'node:fs';
 import type { Diagnostic } from '../src/types.js';
 import {
   validateConfig,
@@ -168,16 +168,21 @@ describe('loadConfig', () => {
       if (competitor) writeFileSync(join(dir, 'written', CONFIG_FILENAME), JSON.stringify({ sources: ['wrong.tw'] }));
       for (const base of [dir, relative(process.cwd(), dir)]) {
         const supplied = `${base}/written/link/..`;
-        const expected = { sources: [join(identify(join(dir, 'real')).display, 'right.tw')] };
-        expect(loadConfig(supplied)).toEqual(expected);
-        expect(loadConfigFile(`${supplied}/${CONFIG_FILENAME}`)).toEqual(expected);
+        const config = loadConfig(supplied);
+        // System aliases such as macOS /var and /private/var can spell the same file differently.
+        expect(config?.sources?.map((source) => identify(source).key)).toEqual([
+          identify(join(dir, 'real/right.tw')).key,
+        ]);
+        expect(loadConfigFile(`${supplied}/${CONFIG_FILENAME}`)).toEqual(config);
       }
     },
   );
 
-  it('does not erase a missing intermediate directory (#476)', () => {
+  it('keeps platform filesystem semantics for a missing intermediate directory (#476)', () => {
     writeFileSync(join(dir, CONFIG_FILENAME), '{}');
-    expect(loadConfig(`${dir}${sep}missing${sep}..`)).toBeNull();
+    const supplied = `${dir}${sep}missing${sep}..`;
+    // POSIX requires the intermediate folder; Win32 normalizes the parent step before opening the file.
+    expect(loadConfig(supplied)).toEqual(existsSync(`${supplied}${sep}${CONFIG_FILENAME}`) ? {} : null);
   });
 
   it('treats an empty directory argument as the working directory (#476)', () => {
