@@ -656,6 +656,7 @@ export function analyzeTemplate(html: string, occurrences: readonly PlaceholderO
   const doc = parseHtml(marked);
   const found = findMarkers(doc, markers);
   const dropped: PlaceholderSite = { context: { kind: 'markup' }, delimiters: 'split' };
+  const cdataBefore = cdataLocator(html);
   const quotes = new WeakMap<HtmlElement, Map<string, '"' | "'" | ''>>();
   const quoteOf = (element: HtmlElement, name: string): '"' | "'" | '' => {
     let cached = quotes.get(element);
@@ -672,7 +673,7 @@ export function analyzeTemplate(html: string, occurrences: readonly PlaceholderO
   };
   const sites = occurrences.map((occurrence, i) => {
     const place = found.get(i);
-    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '', quoteOf);
+    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '', quoteOf, cdataBefore);
   });
   return { marked, doc, sites: resolveCodeContexts(html, occurrences, sites, found) };
 }
@@ -770,6 +771,7 @@ function siteOf(
   occurrence: PlaceholderOccurrence,
   marker: string,
   quoteOf: (element: HtmlElement, name: string) => '"' | "'" | '',
+  cdataBefore: (node: ChildNode, offset: number) => boolean,
 ): PlaceholderSite {
   const delimited =
     html.slice(occurrence.start, occurrence.innerStart) + marker + html.slice(occurrence.innerEnd, occurrence.end);
@@ -777,7 +779,7 @@ function siteOf(
   // or text it is read with it.
   if (place.kind === 'markup') return { context: { kind: 'markup' }, delimiters: 'split' };
   if (place.kind === 'comment') return { context: { kind: 'comment' }, delimiters: 'inside' };
-  if (place.kind === 'text') return { context: textContext(html, place, occurrence), delimiters: 'inside' };
+  if (place.kind === 'text') return { context: textContext(place, occurrence, cdataBefore), delimiters: 'inside' };
   const { element, name, prefix, value } = place;
   // The browser decodes references before interpreting event code, CSS or srcdoc HTML. A single HTML
   // escape cannot preserve a value in those languages; report the unsupported context instead.
@@ -806,9 +808,9 @@ function attributeQuote(html: string, element: HtmlElement, rawName: string): '"
 
 /** The context of text: that of its parent element (script and style contexts are filled in later). */
 function textContext(
-  html: string,
   place: Extract<MarkerPlace, { kind: 'text' }>,
   occurrence: PlaceholderOccurrence,
+  cdataBefore: (node: ChildNode, offset: number) => boolean,
 ): InsertionContext {
   const { parent, node } = place;
   // After a plaintext start tag the tokenizer reads the rest of the document as text, also where the tree builder
@@ -816,8 +818,7 @@ function textContext(
   if (insidePlaintext(parent)) return { kind: 'raw-text', element: 'plaintext' };
   if (!isElement(parent)) return { kind: 'text', dropsLeadingNewline: false };
   if (parent.namespaceURI !== HTML_NS) {
-    const start = node.sourceCodeLocation?.startOffset ?? occurrence.start;
-    return inCdata(html.slice(start, occurrence.start))
+    return cdataBefore(node, occurrence.start)
       ? { kind: 'raw-text', element: parent.tagName }
       : { kind: 'text', dropsLeadingNewline: false };
   }
@@ -843,12 +844,22 @@ function insidePlaintext(node: ParentNode): boolean {
 const LEADING_NEWLINE_ELEMENTS: ReadonlySet<string> = new Set(['pre', 'listing', 'textarea']);
 
 /**
- * Whether the end of `source`, the text of foreign content (SVG or MathML) before a placeholder, is inside a CDATA
- * section. In that text, `<![CDATA[` always starts a section and `]]>` ends it.
+ * Locate CDATA in each foreign text node, advancing only across text since its previous placeholder. parse5 can
+ * merge ordinary text and CDATA into one node, so its source must distinguish them. Occurrences are in source order
+ * and start with placeholder delimiters, so no CDATA delimiter straddles the chunks.
  */
-function inCdata(source: string): boolean {
-  const open = source.lastIndexOf('<![CDATA[');
-  return open !== -1 && !source.includes(']]>', open + 9);
+function cdataLocator(html: string): (node: ChildNode, offset: number) => boolean {
+  const states = new WeakMap<ChildNode, { readonly cursor: number; readonly open: boolean }>();
+  return (node, offset) => {
+    const previous = states.get(node);
+    const start = previous?.cursor ?? node.sourceCodeLocation?.startOffset ?? offset;
+    const source = html.slice(start, offset);
+    const opening = source.lastIndexOf('<![CDATA[');
+    const open =
+      opening === -1 ? previous?.open === true && !source.includes(']]>') : !source.includes(']]>', opening + 9);
+    states.set(node, { cursor: offset, open });
+    return open;
+  };
 }
 
 /** The JavaScript MIME type essences (WHATWG MIME Sniffing), for which a script element holds a classic script. */

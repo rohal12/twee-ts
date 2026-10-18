@@ -356,6 +356,8 @@ describe('whole filler boundary work (#477)', () => {
     ['attribute', (n: number) => '<p title="' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '">'],
     ['script', (n: number) => '<script>let x="' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '";</script>'],
     ['style', (n: number) => '<style>a{content:"' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '"}</style>'],
+    ['SVG text', (n: number) => '<svg><text>' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '</text></svg>'],
+    ['MathML text', (n: number) => '<math><mi>' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '</mi></math>'],
   ] as const)('bounds copied and regex-scanned text for %s', (_kind, build) => {
     const work = (n: number): number => {
       const template = build(n);

@@ -77,6 +77,18 @@ describe('placeholder sites', () => {
     expect(sites(template)[0]?.context).toEqual(context);
   });
 
+  it.each([
+    ['svg', 'text', { kind: 'raw-text', element: 'text' }],
+    ['math', 'mrow', { kind: 'raw-text', element: 'mrow' }],
+    // MathML text integration points read CDATA syntax as an HTML bogus comment.
+    ['math', 'mi', { kind: 'comment' }],
+  ])('keeps CDATA state across placeholders and separate %s/%s text nodes', (root, element, raw) => {
+    const content = '{{X}}<![CDATA[{{X}}{{X}}]]>{{X}}<![CDATA[{{X}}]]><![CDATA[{{X}}]]>{{X}}';
+    const template = `<${root}><${element}>${content}</${element}><${element}>{{X}}</${element}></${root}>`;
+    const text = { kind: 'text', dropsLeadingNewline: false };
+    expect(sites(template).map((site) => site.context)).toEqual([text, raw, raw, text, raw, raw, text, text]);
+  });
+
   it('tells how the delimiters of a quoted placeholder are read', () => {
     expect(sites('<script>a = "X";</script>')[0]?.delimiters).toBe('string');
     expect(sites('<div data-size="X">')[0]?.delimiters).toBe('attribute');
