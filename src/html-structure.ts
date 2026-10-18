@@ -656,9 +656,23 @@ export function analyzeTemplate(html: string, occurrences: readonly PlaceholderO
   const doc = parseHtml(marked);
   const found = findMarkers(doc, markers);
   const dropped: PlaceholderSite = { context: { kind: 'markup' }, delimiters: 'split' };
+  const quotes = new WeakMap<HtmlElement, Map<string, '"' | "'" | ''>>();
+  const quoteOf = (element: HtmlElement, name: string): '"' | "'" | '' => {
+    let cached = quotes.get(element);
+    if (cached === undefined) {
+      cached = new Map();
+      quotes.set(element, cached);
+    }
+    let quote = cached.get(name);
+    if (quote === undefined) {
+      quote = attributeQuote(html, element, name);
+      cached.set(name, quote);
+    }
+    return quote;
+  };
   const sites = occurrences.map((occurrence, i) => {
     const place = found.get(i);
-    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '');
+    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '', quoteOf);
   });
   return { marked, doc, sites: resolveCodeContexts(html, occurrences, sites, found) };
 }
@@ -688,6 +702,7 @@ type MarkerPlace =
       readonly name: string;
       readonly prefix: string | undefined;
       readonly value: string;
+      readonly markerStart: number;
     }
   | { readonly kind: 'markup' };
 
@@ -697,7 +712,8 @@ function findMarkers(doc: HtmlDocument, markers: readonly string[]): Map<number,
   const scan = (text: string, place: MarkerPlace): void => {
     for (const match of text.matchAll(/[\uE000-\uF8FF]/g)) {
       const i = index.get(match[0]);
-      if (i !== undefined && text.startsWith(markers[i] ?? '', match.index) && !found.has(i)) found.set(i, place);
+      if (i !== undefined && text.startsWith(markers[i] ?? '', match.index) && !found.has(i))
+        found.set(i, place.kind === 'attribute' ? { ...place, markerStart: match.index } : place);
     }
   };
   for (const { node, inTemplate } of descendants(doc, true)) {
@@ -705,7 +721,14 @@ function findMarkers(doc: HtmlDocument, markers: readonly string[]): Map<number,
       scan(node.tagName, { kind: 'markup' });
       for (const attr of node.attrs) {
         scan(attr.name, { kind: 'markup' });
-        scan(attr.value, { kind: 'attribute', element: node, name: attr.name, prefix: attr.prefix, value: attr.value });
+        scan(attr.value, {
+          kind: 'attribute',
+          element: node,
+          name: attr.name,
+          prefix: attr.prefix,
+          value: attr.value,
+          markerStart: 0,
+        });
       }
     } else if ('value' in node) {
       const parent = node.parentNode;
@@ -741,7 +764,13 @@ const URL_ATTRIBUTES: ReadonlySet<string> = new Set([
 const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['xmp', 'plaintext']);
 
 /** The site of an occurrence whose marker is at `place`; script and style contexts are filled in later. */
-function siteOf(html: string, place: MarkerPlace, occurrence: PlaceholderOccurrence, marker: string): PlaceholderSite {
+function siteOf(
+  html: string,
+  place: MarkerPlace,
+  occurrence: PlaceholderOccurrence,
+  marker: string,
+  quoteOf: (element: HtmlElement, name: string) => '"' | "'" | '',
+): PlaceholderSite {
   const delimited =
     html.slice(occurrence.start, occurrence.innerStart) + marker + html.slice(occurrence.innerEnd, occurrence.end);
   // A delimiter right before or after a placeholder's name can only be read apart from it in a tag, so in a comment
@@ -755,10 +784,11 @@ function siteOf(html: string, place: MarkerPlace, occurrence: PlaceholderOccurre
   if (prefix === undefined && (name.startsWith('on') || name === 'style' || name === 'srcdoc')) {
     return { context: { kind: 'nested-attribute', name }, delimiters: 'inside' };
   }
-  const quote = attributeQuote(html, element, prefix === undefined || prefix === '' ? name : `${prefix}:${name}`);
+  const quote = quoteOf(element, prefix === undefined || prefix === '' ? name : `${prefix}:${name}`);
   const url = element.namespaceURI === HTML_NS ? URL_ATTRIBUTES.has(name) : name === 'href';
   const context: InsertionContext = { kind: 'attribute', quote, url };
-  if (value.includes(delimited)) return { context, delimiters: 'inside' };
+  if (value.startsWith(delimited, place.markerStart - (occurrence.innerStart - occurrence.start)))
+    return { context, delimiters: 'inside' };
   return {
     context,
     delimiters: value === marker && quote === '"' && delimited.startsWith('"') ? 'attribute' : 'split',
@@ -1394,8 +1424,9 @@ function codeContexts(
   const language = scriptLanguage(element);
   if (language === 'data') return ranges.map((range) => ({ range, context: { kind: 'raw-text', element: 'script' } }));
   const module = language === 'module';
+  const firstEscape = source.indexOf('<!--');
   return javaScriptContexts(source, ranges, module).map(({ range, context: js }) => {
-    const escapable = source.slice(0, range.start).includes('<!--');
+    const escapable = firstEscape !== -1 && firstEscape + 4 <= range.start;
     const context: InsertionContext =
       language === 'json' ? { kind: 'json', js, escapable } : { kind: 'script', module, js, escapable };
     return { range, context };

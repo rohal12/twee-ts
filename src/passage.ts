@@ -347,18 +347,60 @@ export function freezePassage(p: Passage): Passage {
 export function applyTagAliases(passages: readonly Passage[], aliases: Readonly<Record<string, string>>): Passage[] {
   const entries = Object.entries(aliases);
   if (entries.length === 0) return [...passages];
+  const indices = new Map(entries.map(([alias], index) => [alias, index]));
   return passages.map((p) => {
     const tags = new Set(p.tags);
-    const authored = tags.size;
-    for (let grew = true; grew;) {
-      const before = tags.size;
-      for (const [alias, canonical] of entries) {
-        if (tags.has(alias)) tags.add(canonical);
+    const added: string[] = [];
+    // A priority is (mapping pass * map size + mapping index). Only reachable edges enter the heap,
+    // once each. This preserves the old repeated-pass ordering without rescanning unrelated mappings.
+    const pending = [...tags].flatMap((tag) => indices.get(tag) ?? []).sort((a, b) => a - b);
+    while (pending.length > 0) {
+      const priority = takeAlias(pending);
+      const index = priority % entries.length;
+      const canonical = entries[index]?.[1];
+      if (canonical === undefined || tags.has(canonical)) continue;
+      tags.add(canonical);
+      added.push(canonical);
+      const next = indices.get(canonical);
+      if (next !== undefined) {
+        queueAlias(pending, priority - index + next + (next <= index ? entries.length : 0));
       }
-      grew = tags.size > before;
     }
-    return tags.size > authored ? derivePassage(p, { tags: [...p.tags, ...[...tags].slice(authored)] }) : p;
+    return added.length > 0 ? derivePassage(p, { tags: [...p.tags, ...added] }) : p;
   });
+}
+
+/** Insert one reachable edge in the mapping-pass priority heap. */
+function queueAlias(heap: number[], priority: number): void {
+  let at = heap.length;
+  heap.push(priority);
+  while (at > 0) {
+    const parent = (at - 1) >>> 1;
+    const previous = heap[parent];
+    if (previous === undefined || previous <= priority) break;
+    heap[at] = previous;
+    at = parent;
+  }
+  heap[at] = priority;
+}
+
+/** Remove the earliest edge. The caller has checked the heap is nonempty. */
+function takeAlias(heap: number[]): number {
+  const first = heap[0] ?? 0;
+  const last = heap.pop();
+  if (heap.length === 0 || last === undefined) return first;
+  let at = 0;
+  while (at * 2 + 1 < heap.length) {
+    const left = at * 2 + 1;
+    const right = left + 1;
+    const child = right < heap.length && (heap[right] ?? 0) < (heap[left] ?? 0) ? right : left;
+    const value = heap[child];
+    if (value === undefined || value >= last) break;
+    heap[at] = value;
+    at = child;
+  }
+  heap[at] = last;
+  return first;
 }
 
 function quote(s: string): string {

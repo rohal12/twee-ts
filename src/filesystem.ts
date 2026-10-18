@@ -105,17 +105,27 @@ export interface OutputPaths {
   isOutput(path: string, roots: readonly string[]): boolean;
 }
 
-export function outputPaths(outputs: BuildOutputs): OutputPaths {
+/** `snapshot` is only for a synchronous checking phase; watchers keep reading live identities. */
+export function outputPaths(outputs: BuildOutputs, mode: 'live' | 'snapshot' = 'live'): OutputPaths {
   const files = new Set(outputs.files.map((f) => identify(f).key));
-  // Read when asked: an output that is written, or replaced, after these paths are made is a new file.
-  const outputInodes = (): ReadonlySet<string> => new Set(outputs.files.map(inodeOf).filter((id) => id !== undefined));
+  let snapshot: ReadonlySet<string> | undefined;
+  const outputInodes = (): ReadonlySet<string> => {
+    if (snapshot !== undefined) return snapshot;
+    const inodes = new Set(outputs.files.map(inodeOf).filter((id) => id !== undefined));
+    if (mode === 'snapshot') snapshot = inodes;
+    return inodes;
+  };
   const dirs = new Set(outputs.dirs.map((d) => identify(d).key));
   const all = [...files, ...dirs];
   const keyOf = (path: string): string => identify(path).key;
   const isFile = (path: string): boolean => {
     if (files.has(keyOf(path))) return true;
-    const inode = inodeOf(path);
-    return inode !== undefined && outputInodes().has(inode);
+    try {
+      const stats = statSync(path, { bigint: true });
+      return stats.isFile() && stats.nlink > 1n && outputInodes().has(`${stats.dev}:${stats.ino}`);
+    } catch {
+      return false;
+    }
   };
   return {
     isFile,
@@ -223,7 +233,7 @@ export function getFilenames(
   const diagnostics: Diagnostic[] = [];
   const outputSources: string[] = [];
   const skippedOutputs: SkippedOutput[] = [];
-  const output = outputPaths(toBuildOutputs(outputs));
+  const output = outputPaths(toBuildOutputs(outputs), 'snapshot');
 
   function problem(discovery: InputDiscovery, failure: InputFailure, path: string, cause: unknown): void {
     const diagnostic = problemDiagnostic(inputProblem(role, discovery, failure, path, cause));

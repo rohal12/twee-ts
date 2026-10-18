@@ -3,6 +3,7 @@
  * character reference, tag, end tag, comment end, `</script`, `<!--`, `-->`, escape sequence or line break pair.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { Script } from 'node:vm';
 import { compile } from '../src/compiler.js';
 import { fillFormatTemplate } from '../src/template.js';
 import { analyzeTemplate, locateHeadStart } from '../src/html-structure.js';
@@ -58,6 +59,17 @@ describe('escaping at the boundary with the template text', () => {
     expect(output).toBe(expected);
     expect(diagnostics).toEqual([]);
     expect(judgeStoryName(`<!doctype html><html><head></head><body>${template}</body></html>`, value)).toBeUndefined();
+  });
+
+  it.each([
+    ['<p>&' + 'a'.repeat(1000) + '{{STORY_NAME}}</p>', 'p;', '&#112;;'],
+    ['<title></' + 'a'.repeat(1000) + '{{STORY_NAME}}</title>', 'tle x', '&#116;le x'],
+    ['<script>let x="' + '\\'.repeat(1000) + '{{STORY_NAME}}";</script>', 'x', 'x'],
+  ])('keeps boundary state across long suffixes in %j', (template, text, replacement) => {
+    expect(fillName(template, text)).toEqual({
+      output: template.replace('{{STORY_NAME}}', replacement),
+      diagnostics: [],
+    });
   });
 
   it.each([
@@ -269,5 +281,107 @@ describe('code escape diagnostics', () => {
     expect(style('a { b: </style> }').map((d) => d.message)).toEqual([
       expect.stringContaining('The module "m.css" has "</style" at line 1 outside a string'),
     ]);
+  });
+});
+
+describe('neighboring replacements (#479)', () => {
+  it.each(['script', 'style'])('keeps adjacent substitutions inside a %s comment', (element) => {
+    const { output, diagnostics } = fillName(`<${element}>/*{{STORY_NAME}}{{STORY_NAME}}*/</${element}>`, '/*');
+    expect(output).toBe(`<${element}>/* /* /**/</${element}>`);
+    expect(diagnostics).toEqual([]);
+    expect(() => new Script(output.slice(element.length + 2, -element.length - 3))).not.toThrow();
+  });
+
+  it.each(['all', 'first'] as const)('checks different tokens in source order with %s occurrences', (occurrences) => {
+    const { output, diagnostics } = fillFormatTemplate({
+      template: '<script>/*{{A}}{{EMPTY}}{{B}}*/</script>',
+      // Deliberately different from source order.
+      placeholders: [
+        { token: '{{B}}', occurrences, value: { kind: 'text', text: '/' } },
+        { token: '{{EMPTY}}', occurrences, value: { kind: 'text', text: '' } },
+        { token: '{{A}}', occurrences, value: { kind: 'text', text: '*' } },
+      ],
+      owner: 'B',
+    });
+    expect(output).toBe('<script>/** /*/</script>');
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('preserves a leading newline after preceding empty substitutions', () => {
+    expect(
+      fillFormatTemplate({
+        template: '<textarea>{{EMPTY}}{{EMPTY}}{{NAME}}</textarea>',
+        owner: 'B',
+        placeholders: [
+          { token: '{{NAME}}', occurrences: 'all', value: { kind: 'text', text: '\nN' } },
+          { token: '{{EMPTY}}', occurrences: 'all', value: { kind: 'text', text: '' } },
+        ],
+      }),
+    ).toEqual({ output: '<textarea>\n\nN</textarea>', diagnostics: [] });
+  });
+
+  it('keeps adjacent ordinary string and text values and never expands inserted placeholders', () => {
+    expect(
+      fillName('<script>let x="{{STORY_NAME}}{{STORY_NAME}}";</script><p>{{STORY_NAME}}</p>', '{{STORY_NAME}}'),
+    ).toEqual({
+      output: '<script>let x="{{STORY_NAME}}{{STORY_NAME}}";</script><p>{{STORY_NAME}}</p>',
+      diagnostics: [],
+    });
+  });
+});
+
+describe('whole filler boundary work (#477)', () => {
+  it('locates many unsupported substitutions without rescanning their prefixes', () => {
+    const work = (n: number): number => {
+      const template = '<script>' + ' '.repeat(n * 256) + '{{STORY_NAME}};\n'.repeat(n) + '</script>';
+      const slice = vi.spyOn(String.prototype, 'slice');
+      try {
+        const result = fillName(template, 'N');
+        const copied = slice.mock.results.reduce(
+          (sum, r) => sum + (typeof r.value === 'string' ? r.value.length : 0),
+          0,
+        );
+        expect(result.diagnostics).toHaveLength(n);
+        expect(result.diagnostics.at(-1)?.message).toContain(`line ${n}, column 1`);
+        return copied;
+      } finally {
+        slice.mockRestore();
+      }
+    };
+    expect(work(400)).toBeLessThanOrEqual(work(100) * 6);
+  });
+
+  it.each([
+    ['text', (n: number) => '<p>' + 'x'.repeat(n * 256) + '<span>{{STORY_NAME}}</span>'.repeat(n) + '</p>'],
+    ['attribute', (n: number) => '<p title="' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '">'],
+    ['script', (n: number) => '<script>let x="' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '";</script>'],
+    ['style', (n: number) => '<style>a{content:"' + 'x'.repeat(n * 256) + '{{STORY_NAME}}'.repeat(n) + '"}</style>'],
+  ] as const)('bounds copied and regex-scanned text for %s', (_kind, build) => {
+    const work = (n: number): number => {
+      const template = build(n);
+      let scanned = 0;
+      // Call the captured method with each intercepted RegExp as its receiver.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const test = RegExp.prototype.test;
+      const scan = vi.spyOn(RegExp.prototype, 'test').mockImplementation(function (this: RegExp, text: string) {
+        scanned += text.length;
+        return test.call(this, text);
+      });
+      const slice = vi.spyOn(String.prototype, 'slice');
+      try {
+        const result = fillName(template, 'N');
+        const copied = slice.mock.results.reduce(
+          (sum, r) => sum + (typeof r.value === 'string' ? r.value.length : 0),
+          0,
+        );
+        expect(result.diagnostics).toEqual([]);
+        expect(result.output).toBe(template.replaceAll('{{STORY_NAME}}', 'N'));
+        return scanned + copied;
+      } finally {
+        scan.mockRestore();
+        slice.mockRestore();
+      }
+    };
+    expect(work(400)).toBeLessThanOrEqual(work(100) * 6);
   });
 });

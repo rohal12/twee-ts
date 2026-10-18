@@ -3,7 +3,7 @@
  * the input and the previous output are kept, for every kind of named input.
  */
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { rollup } from 'rollup';
 import { build } from 'vite';
@@ -20,6 +20,39 @@ const FORMAT = formatJs('OutputRaceUnique', '1.0.0');
 type Victim = 'source' | 'module' | 'head' | 'folder-source';
 
 describe('compileToFile when the output is retargeted during format resolution', () => {
+  it('refreshes a populated inode index after awaiting a format (#482)', async () => {
+    const dir = root();
+    const source = join(dir, 'story.tw');
+    const head = join(dir, 'head.html');
+    const output = join(dir, 'out.html');
+    writeFileSync(source, STORY);
+    writeFileSync(head, '<meta name="probe">');
+    // This unrelated linked input makes the initial safety check read the output inode index.
+    linkSync(head, join(dir, 'head-copy.html'));
+    writeFileSync(output, 'previous output');
+    const server = await startFormatServer({
+      '/format.js': (_req, res) => {
+        unlinkSync(output);
+        linkSync(source, output);
+        res.end(FORMAT);
+      },
+    });
+    await expect(
+      compileToFile({
+        sources: [source],
+        headFile: head,
+        outFile: output,
+        formatId: 'outputraceunique-1',
+        formatUrls: [`${server.origin}/format.js`],
+        useDefaultFormatIndices: false,
+        useTweegoPath: false,
+        formatPaths: [],
+      }),
+    ).rejects.toMatchObject({ code: 'OUTPUT_IS_INPUT' });
+    expect(readFileSync(source, 'utf8')).toBe(STORY);
+    expect(readFileSync(output, 'utf8')).toBe(STORY);
+  });
+
   it.each<Victim>(['source', 'module', 'head', 'folder-source'])(
     'rejects an output that now is the %s',
     async (victim) => {

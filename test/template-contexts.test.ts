@@ -232,3 +232,65 @@ describe('fillFormatTemplate: placeholders where no escaping helps', () => {
     }
   });
 });
+
+describe('tagged template placeholder values (#480)', () => {
+  it.each(['a\\b', '`', '${x}', '$', '\n', '\r', '\u2028', '\u2029'])(
+    'diagnoses a value requiring raw-text changes: %j',
+    (text) => {
+      const result = fillFormatTemplate({
+        template: '<script>let x=String.raw`{{X}}`;</script>',
+        owner: 'F',
+        placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text } }],
+      });
+      expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+      expect(result.diagnostics[0]?.message).toContain('JavaScript template');
+    },
+  );
+  it('preserves plain raw text without warning', () => {
+    expect(
+      fillFormatTemplate({
+        template: '<script>let x=String.raw`{{X}}`;</script>',
+        owner: 'F',
+        placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: 'Alpha' } }],
+      }),
+    ).toEqual({ output: '<script>let x=String.raw`Alpha`;</script>', diagnostics: [] });
+  });
+});
+
+it('diagnoses raw changes required at a tagged template boundary', () => {
+  const result = fillFormatTemplate({
+    template: '<script>let x=String.raw`<{{X}}`;</script>',
+    owner: 'F',
+    placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: '/script x' } }],
+  });
+  expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+});
+
+it('selects the first supported occurrence past an unsupported tagged template', () => {
+  expect(
+    fillFormatTemplate({
+      template: '<script>let x=String.raw`{{X}}`;let y="{{X}}";let z="{{X}}";</script>',
+      owner: 'F',
+      placeholders: [{ token: '{{X}}', occurrences: 'first', value: { kind: 'text', text: 'a\\b' } }],
+    }),
+  ).toEqual({
+    output: '<script>let x=String.raw`{{X}}`;let y="a\\u005cb";let z="{{X}}";</script>',
+    diagnostics: [],
+  });
+});
+
+it('selects the first supported site using the preceding replacement rather than its token', () => {
+  expect(
+    fillFormatTemplate({
+      template: '<script>let x=String.raw`<{{A}}{{B}}`;let y="{{B}}";</script>',
+      owner: 'F',
+      placeholders: [
+        { token: '{{B}}', occurrences: 'first', value: { kind: 'text', text: ' x' } },
+        { token: '{{A}}', occurrences: 'all', value: { kind: 'text', text: '/script' } },
+      ],
+    }),
+  ).toEqual({
+    output: '<script>let x=String.raw`</script{{B}}`;let y=" x";</script>',
+    diagnostics: [],
+  });
+});

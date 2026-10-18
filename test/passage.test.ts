@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import { applyTagAliases, countWords } from '../src/passage.js';
 import type { Diagnostic, Passage } from '../src/types.js';
@@ -85,6 +85,48 @@ describe('applyTagAliases', () => {
     ['an alias onto the repeated tag', { y: 'x' }, ['x', 'x']],
   ] as const)('keeps a tag written twice whatever the aliases, with %s (#297)', (_name, aliases, expected) => {
     expect(applyTagAliases([mkPassage('P', ['x', 'x'])], aliases)[0]!.tags).toEqual(expected);
+  });
+
+  it.each([false, true])('bounds membership work on long chains (reversed: %s) (#481)', (reversed) => {
+    const n = 2000;
+    const entries = Array.from({ length: n }, (_, i): [string, string] => [`t${i}`, `t${i + 1}`]);
+    if (reversed) entries.reverse();
+    const aliases = Object.fromEntries(entries);
+    const has = vi.spyOn(Set.prototype, 'has');
+    let result: Passage[];
+    let calls: number;
+    try {
+      result = applyTagAliases([mkPassage('A', ['t0']), mkPassage('B', ['t0', 't0'])], aliases);
+      calls = has.mock.calls.length;
+    } finally {
+      has.mockRestore();
+    }
+    expect(result[0]?.tags).toEqual(Array.from({ length: n + 1 }, (_, i) => `t${i}`));
+    expect(result[1]?.tags).toEqual(['t0', ...result[0]!.tags]);
+    expect(calls).toBeLessThan(n * 20);
+  });
+
+  it('matches the original mapping-pass order for arbitrary graphs and authored starting tags', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.tuple(fc.integer({ min: 0, max: 15 }), fc.integer({ min: 0, max: 15 }))),
+        fc.array(fc.integer({ min: 0, max: 15 })),
+        (pairs, initial) => {
+          const aliases = Object.fromEntries(pairs.map(([a, b]) => [`t${a}`, `t${b}`]));
+          const authored = initial.map((i) => `t${i}`);
+          const expected = new Set(authored);
+          let before: number;
+          do {
+            before = expected.size;
+            for (const [a, b] of Object.entries(aliases)) if (expected.has(a)) expected.add(b);
+          } while (expected.size > before);
+          expect(applyTagAliases([mkPassage('P', authored)], aliases)[0]?.tags).toEqual([
+            ...authored,
+            ...[...expected].slice(new Set(authored).size),
+          ]);
+        },
+      ),
+    );
   });
 
   it('does not mutate original passages', () => {

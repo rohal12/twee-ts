@@ -425,7 +425,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       watchOutputs = new WeakMap();
       forgetKeptResolver(config);
       if (this.meta.watchMode) {
-        const outputs = outputPaths(allOutputs(config));
+        const outputs = outputPaths(allOutputs(config), 'snapshot');
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
         for (const target of watchTargets(resolved.inputs, resolved.excluded, outputs, 'real')) {
           this.addWatchFile(target);
@@ -440,7 +440,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const registerEntryInputs = (): void => {
         if (!this.meta.watchMode) return;
         for (const file of watched) this.addWatchFile(canonicalPath(file));
-        const outputs = outputPaths(allOutputs(config));
+        const outputs = outputPaths(allOutputs(config), 'snapshot');
         for (const target of importWatchTargets(authored, outputs)) this.addWatchFile(target);
         for (const target of globWatchTargets(globs, outputs)) this.addWatchFile(target);
       };

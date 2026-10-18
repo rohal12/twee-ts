@@ -4,6 +4,8 @@ A story format provides the HTML template that turns your Twee source into a pla
 
 Template placeholders are escaped for their insertion context. Placeholders inside event handlers (such as `onclick`), `style` attributes or `srcdoc` require another language to be parsed after HTML attribute decoding. These nested attribute contexts are unsupported: twee-ts reports a warning and uses Tweego-compatible replacement, which may change the value or break the page. Format authors should place values in ordinary text or data attributes and read them from their code instead.
 
+Tagged JavaScript templates (such as `String.raw`) can observe the raw spelling of a value. If inserting a placeholder would require JavaScript escapes that change that raw text, twee-ts warns and uses Tweego-compatible replacement. Use an ordinary string or an untagged template literal for values that need escaping.
+
 ## Format Discovery
 
 A build asks for one story format (see [Format Selection](#format-selection)) and looks for it in these sources, in this order:
