@@ -241,8 +241,9 @@ export function tagAliasProblem(alias: string, target: string): string | undefin
  *   a folder that can't be searched, a file it may not read), is not valid JSON or fails {@link validateConfig}.
  */
 export function loadConfig(dir?: string, diagnostics?: Diagnostic[]): TweeTsConfig | null {
-  const base = dir ?? process.cwd();
-  return readConfig(join(base, CONFIG_FILENAME), 'found', diagnostics);
+  const base = dir === '' ? '.' : (dir ?? process.cwd());
+  // Appending must leave parent steps for the filesystem to take after preceding links.
+  return readConfig(`${base}${base.endsWith(sep) ? '' : sep}${CONFIG_FILENAME}`, 'found', diagnostics);
 }
 
 /**

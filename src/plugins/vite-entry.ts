@@ -593,6 +593,30 @@ function writtenPaths(source: string, importer: string | undefined, root: string
 }
 
 /**
+ * Package locations Node's upward node_modules search can use for an unresolved bare import. These are recovery
+ * inputs only: Vite still decides aliases, exports and the actual module. Watching the package itself sees a
+ * restored manifest, export target or nested subpath without watching every installed package recursively.
+ */
+function missingPackagePaths(source: string, importer: string | undefined): string[] {
+  if (
+    importer === undefined ||
+    !isAbsolute(fileOfId(importer)) ||
+    source === '' ||
+    /^[./\\#\0]/.test(source) ||
+    source.includes(':')
+  )
+    return [];
+  const parts = source.split('/');
+  const name = parts.slice(0, source.startsWith('@') ? 2 : 1).join('/');
+  const paths: string[] = [];
+  for (let folder = dirname(fileOfId(importer)); ; folder = dirname(folder)) {
+    if (toPosix(folder).split('/').at(-1) !== 'node_modules') paths.push(toPosix(join(folder, 'node_modules', name)));
+    if (dirname(folder) === folder) break;
+  }
+  return paths;
+}
+
+/**
  * Every path an import of `source` by `importer` is spelled as (see writtenPaths), and the path Vite's resolver
  * reaches the file by, links kept (`kept`, see keptPath). A caller then sees a link on the way that is retargeted,
  * which the file's own path never shows. Nothing for an import from a virtual module, or of one.
@@ -669,7 +693,13 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
       order: 'pre',
       async handler(source, importer) {
         if (onResolve === undefined) return null;
-        for (const spelled of (await importSpellings(this, source, importer, root)).spellings) onResolve(spelled);
+        const { spellings, kept } = await importSpellings(this, source, importer, root);
+        for (const spelled of spellings) onResolve(spelled);
+        // Missing packages have no resolved spelling yet. Keep their search locations as recovery inputs,
+        // without treating a whole ancestor of node_modules as a missing relative import's watch folder.
+        if (kept === undefined && spellings.length === 0) {
+          for (const path of missingPackagePaths(source, importer)) record(path);
+        }
         return null;
       },
     },

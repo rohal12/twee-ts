@@ -235,14 +235,20 @@ function expandShortAssignments(argv: readonly string[]): string[] {
     const letters = assignment?.[1];
     const value = assignment?.[2];
     if (letters === undefined || value === undefined) return [arg];
-    const name = optionOfShort(letters.slice(-1));
-    // An unknown letter is parseArgs' to report.
-    if (name === undefined) return [arg];
-    if (OPTIONS[name].type !== 'string') {
-      throw new CliUsageError(`option ${optionLabel(name)} does not take an argument`);
+    for (let index = 0; index < letters.length; index++) {
+      const name = optionOfShort(letters.charAt(index));
+      // An unknown letter is parseArgs' to report. A string option consumes all following letters as its value.
+      if (name === undefined) return [arg];
+      if (OPTIONS[name].type === 'string') {
+        if (index !== letters.length - 1) return [arg];
+        const others = letters.slice(0, index);
+        return [...(others === '' ? [] : [`-${others}`]), `--${name}=${value}`];
+      }
+      if (index === letters.length - 1) {
+        throw new CliUsageError(`option ${optionLabel(name)} does not take an argument`);
+      }
     }
-    const others = letters.slice(0, -1);
-    return [...(others === '' ? [] : [`-${others}`]), `--${name}=${value}`];
+    return [arg];
   });
   return [...expanded, ...argv.slice(options.length)];
 }

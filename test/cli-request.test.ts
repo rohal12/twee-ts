@@ -93,6 +93,18 @@ describe('-<letter>=<value> means -<letter> <value>', () => {
     expect(parseCliArgs(argv(`-${short}`, 'v'))).toEqual(expected);
   });
 
+  it.each(shorts.filter((o) => o.type === 'string'))(
+    '-$short consumes its attached value, including equals signs (#385)',
+    ({ name, short }) => {
+      for (const value of ['out=story.json', 'foo=bar', 'x=result.json', 'out==story.json']) {
+        expect(parseCliArgs([`-${short}${value}`, 'a.tw'])).toEqual(parseCliArgs([`--${name}=${value}`, 'a.tw']));
+        expect(parseCliArgs([`-d${short}${value}`, 'a.tw'])).toEqual(
+          parseCliArgs(['-d', `--${name}=${value}`, 'a.tw']),
+        );
+      }
+    },
+  );
+
   it.each(shorts.filter((o) => o.type === 'boolean' && o.name !== 'help'))(
     '-$short=v is refused: --$name takes no value',
     ({ short }) => {

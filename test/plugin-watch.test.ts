@@ -364,6 +364,21 @@ describe.skipIf(process.platform === 'win32')('linksOnTheWay', () => {
     expect(on(dir, 'y')).toEqual(['y', 'x']);
   });
 
+  it.each(['plain', 'literal\\parent'])(
+    'keeps directory characters in paths and relative link targets: %s (#308)',
+    (folder) => {
+      const dir = tempDir();
+      mkdirSync(join(dir, folder));
+      writeFileSync(join(dir, folder, 'a.js'), '');
+      symlinkSync('a.js', join(dir, folder, 'middle.js'));
+      symlinkSync(`${folder}/middle.js`, join(dir, 'entry.js'));
+      symlinkSync(folder, join(dir, 'parent'));
+      expect(on(dir, `${folder}/middle.js`)).toEqual([`${folder}/middle.js`]);
+      expect(on(dir, 'entry.js')).toEqual(['entry.js', `${folder}/middle.js`]);
+      expect(on(dir, 'parent/middle.js')).toEqual(['parent', `${folder}/middle.js`]);
+    },
+  );
+
   it('ends a loop of links after as many hops as the file system follows', () => {
     const dir = tempDir();
     symlinkSync('b', join(dir, 'a'));
