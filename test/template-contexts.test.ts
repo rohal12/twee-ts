@@ -77,6 +77,18 @@ describe('placeholder sites', () => {
     expect(sites(template)[0]?.context).toEqual(context);
   });
 
+  it.each([
+    ['svg', 'text', { kind: 'raw-text', element: 'text' }],
+    ['math', 'mrow', { kind: 'raw-text', element: 'mrow' }],
+    // MathML text integration points read CDATA syntax as an HTML bogus comment.
+    ['math', 'mi', { kind: 'comment' }],
+  ])('keeps CDATA state across placeholders and separate %s/%s text nodes', (root, element, raw) => {
+    const content = '{{X}}<![CDATA[{{X}}{{X}}]]>{{X}}<![CDATA[{{X}}]]><![CDATA[{{X}}]]>{{X}}';
+    const template = `<${root}><${element}>${content}</${element}><${element}>{{X}}</${element}></${root}>`;
+    const text = { kind: 'text', dropsLeadingNewline: false };
+    expect(sites(template).map((site) => site.context)).toEqual([text, raw, raw, text, raw, raw, text, text]);
+  });
+
   it('tells how the delimiters of a quoted placeholder are read', () => {
     expect(sites('<script>a = "X";</script>')[0]?.delimiters).toBe('string');
     expect(sites('<div data-size="X">')[0]?.delimiters).toBe('attribute');
@@ -230,5 +242,67 @@ describe('fillFormatTemplate: placeholders where no escaping helps', () => {
       });
       expect(diagnostics.map((d) => d.message)).toEqual([expect.stringContaining('do not stay in the head')]);
     }
+  });
+});
+
+describe('tagged template placeholder values (#480)', () => {
+  it.each(['a\\b', '`', '${x}', '$', '\n', '\r', '\u2028', '\u2029'])(
+    'diagnoses a value requiring raw-text changes: %j',
+    (text) => {
+      const result = fillFormatTemplate({
+        template: '<script>let x=String.raw`{{X}}`;</script>',
+        owner: 'F',
+        placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text } }],
+      });
+      expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+      expect(result.diagnostics[0]?.message).toContain('JavaScript template');
+    },
+  );
+  it('preserves plain raw text without warning', () => {
+    expect(
+      fillFormatTemplate({
+        template: '<script>let x=String.raw`{{X}}`;</script>',
+        owner: 'F',
+        placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: 'Alpha' } }],
+      }),
+    ).toEqual({ output: '<script>let x=String.raw`Alpha`;</script>', diagnostics: [] });
+  });
+});
+
+it('diagnoses raw changes required at a tagged template boundary', () => {
+  const result = fillFormatTemplate({
+    template: '<script>let x=String.raw`<{{X}}`;</script>',
+    owner: 'F',
+    placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: '/script x' } }],
+  });
+  expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+});
+
+it('selects the first supported occurrence past an unsupported tagged template', () => {
+  expect(
+    fillFormatTemplate({
+      template: '<script>let x=String.raw`{{X}}`;let y="{{X}}";let z="{{X}}";</script>',
+      owner: 'F',
+      placeholders: [{ token: '{{X}}', occurrences: 'first', value: { kind: 'text', text: 'a\\b' } }],
+    }),
+  ).toEqual({
+    output: '<script>let x=String.raw`{{X}}`;let y="a\\u005cb";let z="{{X}}";</script>',
+    diagnostics: [],
+  });
+});
+
+it('selects the first supported site using the preceding replacement rather than its token', () => {
+  expect(
+    fillFormatTemplate({
+      template: '<script>let x=String.raw`<{{A}}{{B}}`;let y="{{B}}";</script>',
+      owner: 'F',
+      placeholders: [
+        { token: '{{B}}', occurrences: 'first', value: { kind: 'text', text: ' x' } },
+        { token: '{{A}}', occurrences: 'all', value: { kind: 'text', text: '/script' } },
+      ],
+    }),
+  ).toEqual({
+    output: '<script>let x=String.raw`</script{{B}}`;let y=" x";</script>',
+    diagnostics: [],
   });
 });

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep adjacent template substitutions inside JavaScript and CSS comments (#479).
+- Warn when placeholder escaping would change a tagged template's raw value (#480).
+- Expand tag-alias chains without repeatedly scanning unrelated mappings, preserving tag order (#481).
+- Share output inode checks during synchronous discovery and validation, refreshing after awaits and between builds (#482).
+- Bound template boundary checks, attribute lookups, foreign-text CDATA checks and diagnostic locations to avoid repeated document scans (#477).
+
 - Preserve the supplied config directory's filesystem meaning through symlinks and parent steps (#476).
 - Recover Vite development entry builds when a missing package or export target becomes available, including a package's own exports (#269).
 - Preserve equals signs in attached short CLI option values (#385).

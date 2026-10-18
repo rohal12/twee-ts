@@ -106,22 +106,73 @@ function fillTemplate(fill: TemplateFill): FilledTemplate {
   const analysis = analyzeTemplate(document, found);
   const diagnostics: Diagnostic[] = [];
   const edits: Edit[] = [];
+  const locations = new Map<number, { line: number; column: number }>();
+  let line = 1;
+  let lineStart = 0;
+  let cursor = 0;
+  for (const occurrence of found) {
+    const chunk = document.slice(cursor, occurrence.start);
+    for (const match of chunk.matchAll(/\n/g)) {
+      line++;
+      lineStart = cursor + match.index + 1;
+    }
+    locations.set(occurrence.start, { line, column: occurrence.start - lineStart + 1 });
+    cursor = occurrence.start;
+  }
 
-  for (const placeholder of fill.placeholders) {
-    const occurrences = found.flatMap((occurrence, i) => {
-      const site = analysis.sites[i];
-      return occurrence.placeholder === placeholder && site !== undefined ? [{ occurrence, site }] : [];
-    });
-    const locate: MarkupLocator = {
-      isLive: (occurrence, probe) =>
-        replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
-      container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
-      keepsStructure: (occurrence) =>
-        removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
-    };
-    const placed = placeholderEdits(document, placeholder, occurrences, owner, locate);
-    pushAll(edits, placed.edits);
-    pushAll(diagnostics, placed.diagnostics);
+  const locate: MarkupLocator = {
+    isLive: (occurrence, probe) =>
+      replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
+    container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
+    keepsStructure: (occurrence) =>
+      removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
+  };
+  const unsupported = new Set<number>();
+  const report = (entry: PlaceholderEntry): Diagnostic => {
+    unsupported.add(entry.occurrence.start);
+    return unsupportedSite(
+      entry.occurrence.placeholder,
+      entry,
+      owner,
+      locations.get(entry.occurrence.start) ?? { line: 1, column: 1 },
+    );
+  };
+
+  const entries = found.flatMap((occurrence, i) => {
+    const site = analysis.sites[i];
+    return site === undefined ? [] : [{ occurrence, site }];
+  });
+  const placed = placeholderEdits(document, entries, locate, report);
+  pushAll(edits, placed.edits);
+  pushAll(diagnostics, placed.diagnostics);
+
+  // A first-only placeholder with no supported occurrence falls back at its first site. Recheck boundaries
+  // after those deferred edits, which can change what later substitutions follow.
+  const byStart = new Map(entries.map((entry) => [entry.occurrence.start, entry]));
+  let prefix = EMPTY_PREFIX;
+  cursor = 0;
+  edits.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 0; i < edits.length; i++) {
+    const edit = edits[i];
+    if (edit === undefined) continue;
+    prefix = advancePrefix(prefix, document.slice(cursor, edit.start));
+    const entry = byStart.get(edit.start);
+    if (entry !== undefined) prefix = occurrencePrefix(prefix, entry.site);
+    let text = edit.text;
+    if (entry?.site !== undefined && edit.end === entry.occurrence.end) {
+      const { placeholder } = entry.occurrence;
+      if (placeholder.value.kind !== 'markup' && !unsupported.has(entry.occurrence.start)) {
+        const replacement = replacementAt(document, { occurrence: entry.occurrence, site: entry.site }, prefix, locate);
+        if (replacement !== undefined) text = replacement;
+        else {
+          diagnostics.push(report({ occurrence: entry.occurrence, site: entry.site }));
+          text = fallbackFor(placeholder.value);
+        }
+      }
+    }
+    edits[i] = { ...edit, text };
+    prefix = advancePrefix(prefix, text);
+    cursor = edit.end;
   }
 
   const head = fill.head ?? '';
@@ -199,39 +250,49 @@ interface MarkupLocator {
   readonly keepsStructure: (occurrence: Found) => boolean;
 }
 
-/** The edits for one placeholder, given each of its occurrences and where it sits. */
+interface PlaceholderEntry {
+  readonly occurrence: Found;
+  readonly site: PlaceholderSite;
+}
+
+/** A replacement that is safe in its context and against the prefix already written. */
+function replacementAt(
+  document: string,
+  { occurrence, site }: PlaceholderEntry,
+  before: BoundaryPrefix,
+  locate: MarkupLocator,
+): string | undefined {
+  const { value } = occurrence.placeholder;
+  if (value.kind === 'markup') {
+    const { context, delimiters } = site;
+    const inText = delimiters === 'inside' && context.kind === 'text';
+    return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
+  }
+  const after = document.slice(occurrence.end, occurrence.end + 8);
+  const text = replacementFor(value, site, before, after);
+  // An empty value cannot be escaped; in a context that takes values, the template text around it joining up for
+  // the HTML tokenizer matters only where that changes the page (`<!` and `--` making `<!--` in script text that
+  // still ends at its end tag does not). A context that takes no value (JavaScript code), and text that joins up
+  // for the script or style language itself (`*` and `/` ending a comment, a backslash escape), still warn.
+  const empty =
+    value.kind === 'text' &&
+    value.text === '' &&
+    site.delimiters === 'inside' &&
+    escapeForContext('', site.context) !== undefined &&
+    !codeGlues(site.context, before, after);
+  return text === undefined && empty && locate.keepsStructure(occurrence) ? '' : text;
+}
+
+/** Select edits in source order, keeping first-occurrence choices consistent with preceding substitutions. */
 function placeholderEdits(
   document: string,
-  placeholder: Placeholder,
-  occurrences: readonly { readonly occurrence: Found; readonly site: PlaceholderSite }[],
-  owner: string,
+  occurrences: readonly PlaceholderEntry[],
   locate: MarkupLocator,
+  report: (entry: PlaceholderEntry) => Diagnostic,
 ): { edits: Edit[]; diagnostics: Diagnostic[] } {
-  const replace = ({ occurrence, site }: { occurrence: Found; site: PlaceholderSite }): string | undefined => {
-    const { value } = placeholder;
-    if (value.kind === 'markup') {
-      const { context, delimiters } = site;
-      const inText = delimiters === 'inside' && context.kind === 'text';
-      return inText && locate.isLive(occurrence, value.probe) ? value.html : undefined;
-    }
-    const before = document.slice(0, occurrence.start);
-    const after = document.slice(occurrence.end);
-    const text = replacementFor(value, site, before, after);
-    // An empty value cannot be escaped; in a context that takes values, the template text around it joining up for
-    // the HTML tokenizer matters only where that changes the page (`<!` and `--` making `<!--` in script text that
-    // still ends at its end tag does not). A context that takes no value (JavaScript code), and text that joins up
-    // for the script or style language itself (`*` and `/` ending a comment, a backslash escape), still warn.
-    const empty =
-      value.kind === 'text' &&
-      value.text === '' &&
-      site.delimiters === 'inside' &&
-      escapeForContext('', site.context) !== undefined &&
-      !codeGlues(site.context, before, after);
-    return text === undefined && empty && locate.keepsStructure(occurrence) ? '' : text;
-  };
   // The markup's comment goes before the element of the template's own that holds a live placeholder, else first.
   const edit = (occurrence: Found, text: string, live: boolean): Edit[] => {
-    const { value } = placeholder;
+    const { value } = occurrence.placeholder;
     const comment = value.kind === 'markup' ? value.comment : undefined;
     const container = comment !== undefined && live ? locate.container(occurrence) : undefined;
     if (comment === undefined) return [{ start: occurrence.start, end: occurrence.end, text }];
@@ -242,25 +303,39 @@ function placeholderEdits(
     ];
   };
 
-  if (placeholder.occurrences === 'first') {
-    for (const entry of occurrences) {
-      const text = replace(entry);
-      if (text !== undefined) return { edits: edit(entry.occurrence, text, true), diagnostics: [] };
-    }
-    const [first] = occurrences;
-    if (first === undefined) return { edits: [], diagnostics: [] };
-    return {
-      edits: edit(first.occurrence, fallbackFor(placeholder.value), false),
-      diagnostics: [unsupportedSite(placeholder, first, owner, document)],
-    };
-  }
-
   const edits: Edit[] = [];
   const diagnostics: Diagnostic[] = [];
+  const selected = new Set<Placeholder>();
+  const failed = new Map<Placeholder, PlaceholderEntry>();
+  let before = EMPTY_PREFIX;
+  let cursor = 0;
   for (const entry of occurrences) {
-    const text = replace(entry);
-    if (text === undefined) diagnostics.push(unsupportedSite(placeholder, entry, owner, document));
-    pushAll(edits, edit(entry.occurrence, text ?? fallbackFor(placeholder.value), text !== undefined));
+    const { occurrence } = entry;
+    const { placeholder } = occurrence;
+    before = advancePrefix(before, document.slice(cursor, occurrence.start));
+    cursor = occurrence.end;
+    before = occurrencePrefix(before, entry.site);
+    const first = placeholder.occurrences === 'first';
+    if (first && selected.has(placeholder)) {
+      before = advancePrefix(before, document.slice(occurrence.start, occurrence.end));
+      continue;
+    }
+    const text = replacementAt(document, entry, before, locate);
+    if (text === undefined && first) {
+      if (!failed.has(placeholder)) failed.set(placeholder, entry);
+      before = advancePrefix(before, document.slice(occurrence.start, occurrence.end));
+      continue;
+    }
+    if (text === undefined) diagnostics.push(report(entry));
+    const replacement = text ?? fallbackFor(placeholder.value);
+    pushAll(edits, edit(occurrence, replacement, text !== undefined));
+    before = advancePrefix(before, replacement);
+    selected.add(placeholder);
+  }
+  for (const [placeholder, entry] of failed) {
+    if (selected.has(placeholder)) continue;
+    diagnostics.push(report(entry));
+    pushAll(edits, edit(entry.occurrence, fallbackFor(placeholder.value), false));
   }
   return { edits, diagnostics };
 }
@@ -272,7 +347,7 @@ function placeholderEdits(
 function replacementFor(
   value: Exclude<PlaceholderValue, { kind: 'markup' }>,
   site: PlaceholderSite,
-  before: string,
+  before: BoundaryPrefix,
   after: string,
 ): string | undefined {
   const { context, delimiters } = site;
@@ -284,7 +359,7 @@ function replacementFor(
   if (delimiters === 'string') return `"${jsStringEscape(value.text)}"`;
   if (delimiters === 'attribute') return `"${htmlEscape(value.text)}"`;
   if (delimiters === 'split') return undefined;
-  const text = escapeAtBoundary(value.text, context, `${before}"`, `"${after}`);
+  const text = escapeAtBoundary(value.text, context, advancePrefix(before, '"'), `"${after}`);
   return text === undefined ? undefined : `"${text}"`;
 }
 
@@ -307,6 +382,43 @@ const STYLE_SEQUENCES = /<\/style[\t\n\f\r />]/gi;
 /** Matches text ending in an odd number of backslashes, which escape the character that follows. */
 const ESCAPING_BACKSLASH = /(?<!\\)(?:\\\\)*\\$/;
 
+/** Only the suffix state needed to check the next insertion, never an accumulated document prefix. */
+interface BoundaryPrefix {
+  readonly tail: string;
+  readonly reference: boolean;
+  readonly tag: boolean;
+  readonly escaping: boolean;
+  readonly dropsLeadingNewline: boolean;
+}
+
+const EMPTY_PREFIX: BoundaryPrefix = {
+  tail: '',
+  reference: false,
+  tag: false,
+  escaping: false,
+  dropsLeadingNewline: false,
+};
+
+/** Empty replacements keep the HTML parser at the start of a pre, listing or textarea element. */
+function occurrencePrefix(before: BoundaryPrefix, site: PlaceholderSite): BoundaryPrefix {
+  return site.context.kind === 'text' && site.context.dropsLeadingNewline
+    ? { ...before, dropsLeadingNewline: true }
+    : before;
+}
+
+/** Advance across disjoint chunks; regexes inspect each chunk a bounded number of times. */
+function advancePrefix(before: BoundaryPrefix, text: string): BoundaryPrefix {
+  if (text === '') return before;
+  const window = before.tail + text;
+  return {
+    dropsLeadingNewline: false,
+    tail: window.slice(-8),
+    reference: REFERENCE_START.test(window) || (before.reference && /^[0-9A-Za-z#]*$/.test(text)),
+    tag: TAG_START.test(window) || (before.tag && /^[A-Za-z]*$/.test(text)),
+    escaping: /^\\*$/.test(text) ? before.escaping !== (text.length % 2 === 1) : ESCAPING_BACKSLASH.test(text),
+  };
+}
+
 /** A context whose text has no escapes: a JavaScript or CSS comment. */
 type CodeContext = Extract<InsertionContext, { kind: 'script' | 'json' | 'style' }>;
 
@@ -321,12 +433,21 @@ function isCodeComment(context: CodeContext): boolean {
  * or `-->` in a script, a JavaScript or CSS escape sequence, a template substitution, or the end of a comment.
  * `undefined` when no escaping can avoid that.
  */
-function escapeAtBoundary(value: string, context: InsertionContext, before: string, after: string): string | undefined {
+function escapeAtBoundary(
+  value: string,
+  context: InsertionContext,
+  before: BoundaryPrefix,
+  after: string,
+): string | undefined {
   const escaped = escapeForContext(value, context);
   if (escaped === undefined) return undefined;
   // Where the parser drops a line feed right after the start tag, one more keeps the line feed that follows.
   const extraNewline =
-    context.kind === 'text' && context.dropsLeadingNewline && /^[\n\r]/.test(escaped + after) ? '\n' : '';
+    context.kind === 'text' &&
+    (context.dropsLeadingNewline || before.dropsLeadingNewline) &&
+    /^[\n\r]/.test(escaped + after)
+      ? '\n'
+      : '';
   if (escaped === '') return extraNewline === '' && startGlues(context, before, after) ? undefined : extraNewline;
   let text = escaped;
   if (startGlues(context, before, text)) {
@@ -334,7 +455,7 @@ function escapeAtBoundary(value: string, context: InsertionContext, before: stri
       text = `&#${text.charCodeAt(0)};${text.slice(1)}`;
     } else if (isCodeComment(context)) {
       text = ` ${text}`;
-    } else if (ESCAPING_BACKSLASH.test(before)) {
+    } else if (before.escaping) {
       // A backslash before the value escapes its first character, whatever that is.
       return undefined;
     } else {
@@ -344,6 +465,9 @@ function escapeAtBoundary(value: string, context: InsertionContext, before: stri
   if (endGlues(context, text, after)) {
     text = isCodeComment(context) ? `${text} ` : text.slice(0, -1) + codeEscape(context, '-');
   }
+  // A tag observes both raw and cooked strings. Escapes introduced even just at a boundary change its input.
+  if (context.kind === 'script' && context.js.kind === 'template' && context.js.tagged && text !== htmlEscape(value))
+    return undefined;
   return extraNewline + text;
 }
 
@@ -366,29 +490,26 @@ function endGlues(context: InsertionContext, text: string, after: string): conte
 }
 
 /** Whether `next`, written after the template text `before` in `context`, would be read together with it. */
-function startGlues(context: InsertionContext, before: string, next: string): boolean {
+function startGlues(context: InsertionContext, before: BoundaryPrefix, next: string): boolean {
   // Raw text and markup take no value (see `escapeForContext()`).
   if (next === '' || context.kind === 'raw-text' || context.kind === 'markup' || context.kind === 'nested-attribute')
     return false;
   // The input stream reads a carriage return and a line feed after it as one line break.
-  if (before.endsWith('\r') && next.startsWith('\n')) return true;
+  if (before.tail.endsWith('\r') && next.startsWith('\n')) return true;
   switch (context.kind) {
     case 'text':
-      return (
-        (REFERENCE_START.test(before) && /^[0-9A-Za-z#;=]/.test(next)) ||
-        (TAG_START.test(before) && /^[A-Za-z!/?]/.test(next))
-      );
+      return (before.reference && /^[0-9A-Za-z#;=]/.test(next)) || (before.tag && /^[A-Za-z!/?]/.test(next));
     case 'attribute':
-      return REFERENCE_START.test(before) && /^[0-9A-Za-z#;=]/.test(next);
+      return before.reference && /^[0-9A-Za-z#;=]/.test(next);
     case 'comment':
       return (
         // A bogus comment opened by `</` or `<!` is an end tag or a doctype, CDATA section or comment with a letter,
         // `[` or `-` after it, and nothing with `>` right after `</`.
-        (before.endsWith('</') && /^[A-Za-z>]/.test(next)) ||
-        (before.endsWith('<!') && /^[A-Za-z[-]/.test(next)) ||
-        (before.endsWith('-') && next.startsWith('-')) ||
-        (before.endsWith('--') && /^[!>]/.test(next)) ||
-        (before.endsWith('--!') && next.startsWith('>'))
+        (before.tail.endsWith('</') && /^[A-Za-z>]/.test(next)) ||
+        (before.tail.endsWith('<!') && /^[A-Za-z[-]/.test(next)) ||
+        (before.tail.endsWith('-') && next.startsWith('-')) ||
+        (before.tail.endsWith('--') && /^[!>]/.test(next)) ||
+        (before.tail.endsWith('--!') && next.startsWith('>'))
       );
     case 'style':
       return spansBoundary(STYLE_SEQUENCES, before, next) || codeGlues(context, before, next);
@@ -410,20 +531,20 @@ function startGlues(context: InsertionContext, before: string, next: string): bo
  * with it by that language (not by the HTML tokenizer): `*` and `/` ending a block comment, or a backslash escaping
  * the next character of a string. The HTML structure cannot show these, so an empty value warns here too.
  */
-function codeGlues(context: InsertionContext, before: string, next: string): boolean {
+function codeGlues(context: InsertionContext, before: BoundaryPrefix, next: string): boolean {
   if (next === '' || (context.kind !== 'style' && context.kind !== 'script' && context.kind !== 'json')) return false;
   if (!isCodeComment(context)) {
     // (A template literal's `${` cannot form: `$` right before a placeholder's `{{` would already be one.)
-    return ESCAPING_BACKSLASH.test(before);
+    return before.escaping;
   }
   const block = context.kind === 'style' || context.js.kind === 'block-comment';
-  return block && before.endsWith('*') && next.startsWith('/');
+  return block && before.tail.endsWith('*') && next.startsWith('/');
 }
 
 /** Whether `pattern` matches `before` followed by `next` across the boundary between them, but in neither alone. */
-function spansBoundary(pattern: RegExp, before: string, next: string): boolean {
+function spansBoundary(pattern: RegExp, before: BoundaryPrefix, next: string): boolean {
   // The longest sequence, `</script` and a space, has 9 characters.
-  const tail = before.slice(-8);
+  const tail = before.tail;
   const window = tail + next.slice(0, 8);
   return [...window.matchAll(pattern)].some((m) => m.index < tail.length && m.index + m[0].length > tail.length);
 }
@@ -462,11 +583,11 @@ function describeContext(site: PlaceholderSite): string {
 
 function unsupportedSite(
   placeholder: Placeholder,
-  entry: { readonly occurrence: Found; readonly site: PlaceholderSite },
+  entry: PlaceholderEntry,
   owner: string,
-  document: string,
+  location: { readonly line: number; readonly column: number },
 ): Diagnostic {
-  const { line, column } = lineAndColumn(document, entry.occurrence.start);
+  const { line, column } = location;
   const what =
     placeholder.value.kind === 'markup'
       ? 'is not where the HTML parser reads it as elements of the page, so the browser will not see the inserted story data'

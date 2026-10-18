@@ -192,7 +192,7 @@ export function watchWithWriteFilter(
 ): AbortController {
   validateCompileOptions(options, ['sources', 'outFile']);
   const written = toBuildOutputs(options.outFile);
-  checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(written), []);
+  checkNamedInputs(namedInputs(options, hooks.extraInputs ?? []), outputPaths(written, 'snapshot'), []);
   checkFolderOutputs(options, written);
 
   const controller = new AbortController();
@@ -575,7 +575,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
   validateCompileOptions(options, ['sources']);
   const { cache, changedFiles, outputs, extraInputs = [] } = context;
   const written = toBuildOutputs(outputs);
-  const outputGuard = outputPaths(written);
+  const outputGuard = outputPaths(written, 'snapshot');
   // The story file a user named (CLI, compileToFile, watch). A bundler's outputs are its own: it writes
   // over its chunks and assets in a source folder on every build, so for it only named inputs and its story
   // (`BuildOutputs.stories`) are checked.
@@ -677,7 +677,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
     format = await resolveStoryFormat(request, { ...options, noRemote }, diagnostics);
     // The caller may have aborted while the format was being found.
     options.signal?.throwIfAborted();
-    if (format) checkNamedInputs(formatInputs(format), outputGuard, diagnostics);
+    if (format) checkNamedInputs(formatInputs(format), outputPaths(written, 'snapshot'), diagnostics);
   }
 
   // Merge config from StoryData: command-line > StoryData > default.
@@ -765,7 +765,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
         .map((file) => ({ role: 'source' as const, path: file.path })),
       ...modules.files.map((file) => ({ role: 'module' as const, path: file.path })),
     ],
-    outputPaths(written),
+    outputPaths(written, 'snapshot'),
     diagnostics,
   );
   // The same holds for an output that became an authored file of a source or module folder while the build awaited

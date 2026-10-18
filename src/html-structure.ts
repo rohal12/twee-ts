@@ -656,9 +656,24 @@ export function analyzeTemplate(html: string, occurrences: readonly PlaceholderO
   const doc = parseHtml(marked);
   const found = findMarkers(doc, markers);
   const dropped: PlaceholderSite = { context: { kind: 'markup' }, delimiters: 'split' };
+  const cdataBefore = cdataLocator(html);
+  const quotes = new WeakMap<HtmlElement, Map<string, '"' | "'" | ''>>();
+  const quoteOf = (element: HtmlElement, name: string): '"' | "'" | '' => {
+    let cached = quotes.get(element);
+    if (cached === undefined) {
+      cached = new Map();
+      quotes.set(element, cached);
+    }
+    let quote = cached.get(name);
+    if (quote === undefined) {
+      quote = attributeQuote(html, element, name);
+      cached.set(name, quote);
+    }
+    return quote;
+  };
   const sites = occurrences.map((occurrence, i) => {
     const place = found.get(i);
-    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '');
+    return place === undefined ? dropped : siteOf(html, place, occurrence, markers[i] ?? '', quoteOf, cdataBefore);
   });
   return { marked, doc, sites: resolveCodeContexts(html, occurrences, sites, found) };
 }
@@ -688,6 +703,7 @@ type MarkerPlace =
       readonly name: string;
       readonly prefix: string | undefined;
       readonly value: string;
+      readonly markerStart: number;
     }
   | { readonly kind: 'markup' };
 
@@ -697,7 +713,8 @@ function findMarkers(doc: HtmlDocument, markers: readonly string[]): Map<number,
   const scan = (text: string, place: MarkerPlace): void => {
     for (const match of text.matchAll(/[\uE000-\uF8FF]/g)) {
       const i = index.get(match[0]);
-      if (i !== undefined && text.startsWith(markers[i] ?? '', match.index) && !found.has(i)) found.set(i, place);
+      if (i !== undefined && text.startsWith(markers[i] ?? '', match.index) && !found.has(i))
+        found.set(i, place.kind === 'attribute' ? { ...place, markerStart: match.index } : place);
     }
   };
   for (const { node, inTemplate } of descendants(doc, true)) {
@@ -705,7 +722,14 @@ function findMarkers(doc: HtmlDocument, markers: readonly string[]): Map<number,
       scan(node.tagName, { kind: 'markup' });
       for (const attr of node.attrs) {
         scan(attr.name, { kind: 'markup' });
-        scan(attr.value, { kind: 'attribute', element: node, name: attr.name, prefix: attr.prefix, value: attr.value });
+        scan(attr.value, {
+          kind: 'attribute',
+          element: node,
+          name: attr.name,
+          prefix: attr.prefix,
+          value: attr.value,
+          markerStart: 0,
+        });
       }
     } else if ('value' in node) {
       const parent = node.parentNode;
@@ -741,24 +765,32 @@ const URL_ATTRIBUTES: ReadonlySet<string> = new Set([
 const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['xmp', 'plaintext']);
 
 /** The site of an occurrence whose marker is at `place`; script and style contexts are filled in later. */
-function siteOf(html: string, place: MarkerPlace, occurrence: PlaceholderOccurrence, marker: string): PlaceholderSite {
+function siteOf(
+  html: string,
+  place: MarkerPlace,
+  occurrence: PlaceholderOccurrence,
+  marker: string,
+  quoteOf: (element: HtmlElement, name: string) => '"' | "'" | '',
+  cdataBefore: (node: ChildNode, offset: number) => boolean,
+): PlaceholderSite {
   const delimited =
     html.slice(occurrence.start, occurrence.innerStart) + marker + html.slice(occurrence.innerEnd, occurrence.end);
   // A delimiter right before or after a placeholder's name can only be read apart from it in a tag, so in a comment
   // or text it is read with it.
   if (place.kind === 'markup') return { context: { kind: 'markup' }, delimiters: 'split' };
   if (place.kind === 'comment') return { context: { kind: 'comment' }, delimiters: 'inside' };
-  if (place.kind === 'text') return { context: textContext(html, place, occurrence), delimiters: 'inside' };
+  if (place.kind === 'text') return { context: textContext(place, occurrence, cdataBefore), delimiters: 'inside' };
   const { element, name, prefix, value } = place;
   // The browser decodes references before interpreting event code, CSS or srcdoc HTML. A single HTML
   // escape cannot preserve a value in those languages; report the unsupported context instead.
   if (prefix === undefined && (name.startsWith('on') || name === 'style' || name === 'srcdoc')) {
     return { context: { kind: 'nested-attribute', name }, delimiters: 'inside' };
   }
-  const quote = attributeQuote(html, element, prefix === undefined || prefix === '' ? name : `${prefix}:${name}`);
+  const quote = quoteOf(element, prefix === undefined || prefix === '' ? name : `${prefix}:${name}`);
   const url = element.namespaceURI === HTML_NS ? URL_ATTRIBUTES.has(name) : name === 'href';
   const context: InsertionContext = { kind: 'attribute', quote, url };
-  if (value.includes(delimited)) return { context, delimiters: 'inside' };
+  if (value.startsWith(delimited, place.markerStart - (occurrence.innerStart - occurrence.start)))
+    return { context, delimiters: 'inside' };
   return {
     context,
     delimiters: value === marker && quote === '"' && delimited.startsWith('"') ? 'attribute' : 'split',
@@ -776,9 +808,9 @@ function attributeQuote(html: string, element: HtmlElement, rawName: string): '"
 
 /** The context of text: that of its parent element (script and style contexts are filled in later). */
 function textContext(
-  html: string,
   place: Extract<MarkerPlace, { kind: 'text' }>,
   occurrence: PlaceholderOccurrence,
+  cdataBefore: (node: ChildNode, offset: number) => boolean,
 ): InsertionContext {
   const { parent, node } = place;
   // After a plaintext start tag the tokenizer reads the rest of the document as text, also where the tree builder
@@ -786,8 +818,7 @@ function textContext(
   if (insidePlaintext(parent)) return { kind: 'raw-text', element: 'plaintext' };
   if (!isElement(parent)) return { kind: 'text', dropsLeadingNewline: false };
   if (parent.namespaceURI !== HTML_NS) {
-    const start = node.sourceCodeLocation?.startOffset ?? occurrence.start;
-    return inCdata(html.slice(start, occurrence.start))
+    return cdataBefore(node, occurrence.start)
       ? { kind: 'raw-text', element: parent.tagName }
       : { kind: 'text', dropsLeadingNewline: false };
   }
@@ -813,12 +844,22 @@ function insidePlaintext(node: ParentNode): boolean {
 const LEADING_NEWLINE_ELEMENTS: ReadonlySet<string> = new Set(['pre', 'listing', 'textarea']);
 
 /**
- * Whether the end of `source`, the text of foreign content (SVG or MathML) before a placeholder, is inside a CDATA
- * section. In that text, `<![CDATA[` always starts a section and `]]>` ends it.
+ * Locate CDATA in each foreign text node, advancing only across text since its previous placeholder. parse5 can
+ * merge ordinary text and CDATA into one node, so its source must distinguish them. Occurrences are in source order
+ * and start with placeholder delimiters, so no CDATA delimiter straddles the chunks.
  */
-function inCdata(source: string): boolean {
-  const open = source.lastIndexOf('<![CDATA[');
-  return open !== -1 && !source.includes(']]>', open + 9);
+function cdataLocator(html: string): (node: ChildNode, offset: number) => boolean {
+  const states = new WeakMap<ChildNode, { readonly cursor: number; readonly open: boolean }>();
+  return (node, offset) => {
+    const previous = states.get(node);
+    const start = previous?.cursor ?? node.sourceCodeLocation?.startOffset ?? offset;
+    const source = html.slice(start, offset);
+    const opening = source.lastIndexOf('<![CDATA[');
+    const open =
+      opening === -1 ? previous?.open === true && !source.includes(']]>') : !source.includes(']]>', opening + 9);
+    states.set(node, { cursor: offset, open });
+    return open;
+  };
 }
 
 /** The JavaScript MIME type essences (WHATWG MIME Sniffing), for which a script element holds a classic script. */
@@ -1394,8 +1435,9 @@ function codeContexts(
   const language = scriptLanguage(element);
   if (language === 'data') return ranges.map((range) => ({ range, context: { kind: 'raw-text', element: 'script' } }));
   const module = language === 'module';
+  const firstEscape = source.indexOf('<!--');
   return javaScriptContexts(source, ranges, module).map(({ range, context: js }) => {
-    const escapable = source.slice(0, range.start).includes('<!--');
+    const escapable = firstEscape !== -1 && firstEscape + 4 <= range.start;
     const context: InsertionContext =
       language === 'json' ? { kind: 'json', js, escapable } : { kind: 'script', module, js, escapable };
     return { range, context };

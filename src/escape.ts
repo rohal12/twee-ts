@@ -129,7 +129,10 @@ export function escapeForContext(value: string, context: InsertionContext): stri
  */
 function escapeForJavaScript(value: string, context: JavaScriptContext): string | undefined {
   if (context.kind === 'string') return htmlEscape(javaScriptStringBodyEscape(value));
-  if (context.kind === 'template') return htmlEscape(javaScriptStringBodyEscape(value).replace(/[`$]/g, '\\$&'));
+  if (context.kind === 'template') {
+    const escaped = javaScriptStringBodyEscape(value).replace(/[`$]/g, '\\$&');
+    return context.tagged && escaped !== value ? undefined : htmlEscape(escaped);
+  }
   if (context.kind === 'block-comment') return htmlEscape(value).replace(/\*\//g, '* /');
   return context.kind === 'line-comment' ? htmlEscape(value).replace(/[\n\r\u2028\u2029]/g, ' ') : undefined;
 }

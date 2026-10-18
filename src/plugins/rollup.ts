@@ -58,7 +58,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       meta: { watchMode: boolean };
     }) {
       if (!this.meta.watchMode) return;
-      const outputs = outputPaths(record.outputs());
+      const outputs = outputPaths(record.outputs(), 'snapshot');
       // In the platform's own form, as Rollup reports its module ids.
       const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'given');
       const targets = plan.targets.map((target) => identify(target).absolute);
