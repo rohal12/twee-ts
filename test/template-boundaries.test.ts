@@ -125,6 +125,41 @@ describe('structure location edge cases', () => {
   });
 });
 
+describe('template marker work (#477)', () => {
+  it('copies a linear amount of text while preserving every offset and context', () => {
+    const copied = (count: number): number => {
+      const html =
+        '<!doctype html><html><head></head><body>' +
+        '<span>{{STORY_NAME}}</span>'.repeat(count) +
+        'x'.repeat(count * 256) +
+        '</body></html>';
+      const occurrences = [...html.matchAll(/\{\{STORY_NAME\}\}/g)].map(({ index }) => ({
+        start: index,
+        end: index + 14,
+        innerStart: index + 2,
+        innerEnd: index + 12,
+      }));
+      const slice = vi.spyOn(String.prototype, 'slice');
+      try {
+        const result = analyzeTemplate(html, occurrences);
+        const work = slice.mock.results.reduce((sum, r) => sum + (typeof r.value === 'string' ? r.value.length : 0), 0);
+        expect(result.marked).toHaveLength(html.length);
+        expect(result.sites).toEqual(
+          Array.from({ length: count }, () => ({
+            context: { kind: 'text', dropsLeadingNewline: false },
+            delimiters: 'inside',
+          })),
+        );
+        expect(new Set(occurrences.map((o) => result.marked.substring(o.innerStart, o.innerEnd))).size).toBe(count);
+        return work;
+      } finally {
+        slice.mockRestore();
+      }
+    };
+    expect(copied(400)).toBeLessThanOrEqual(copied(100) * 5);
+  });
+});
+
 describe('unknown variants are rejected', () => {
   it('throws for an insertion context it does not know', () => {
     const unknown = (context: unknown): InsertionContext => context as InsertionContext;

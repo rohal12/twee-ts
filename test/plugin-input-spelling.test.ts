@@ -118,6 +118,34 @@ describe('plugin build watch: names with a literal backslash (#308)', { timeout:
     );
   });
 
+  it.skipIf(noRelinkWatch).each(['plain', 'literal\\parent'])(
+    'rebuilds after a source link under %s is retargeted, then edited (#308)',
+    async (folder) => {
+      const dir = makeProject({ 'a.tw': storyWith('FIRST'), 'b.tw': storyWith('SECOND') });
+      mkdirSync(join(dir, folder));
+      const source = join(folder, 'current.tw');
+      symlinkSync('../a.tw', join(dir, source));
+      const out = await watchStory(dir, { sources: [source] });
+      expect(text(out)).toContain('FIRST');
+      await applyUntil(
+        () => {
+          relink(join(dir, source), '../b.tw');
+        },
+        () => {
+          expect(text(out)).toContain('SECOND');
+        },
+      );
+      await applyUntil(
+        () => {
+          writeFileSync(join(dir, 'b.tw'), storyWith('EDITED'));
+        },
+        () => {
+          expect(text(out)).toContain('EDITED');
+        },
+      );
+    },
+  );
+
   /** A Rollup watch of the story at `source`; the logs it reports go to `logs`. */
   async function rollupWatch(source: string, logs: string[]): Promise<{ dir: string; stop: () => Promise<void> }> {
     const dir = makeProject({ [source]: storyWith('FIRST'), 'entry.js': 'export const a = 1;\n' });

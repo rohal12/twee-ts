@@ -645,10 +645,14 @@ export interface TemplateAnalysis {
  */
 export function analyzeTemplate(html: string, occurrences: readonly PlaceholderOccurrence[]): TemplateAnalysis {
   const markers = makeMarkers(html, occurrences);
-  let marked = html;
+  const parts: string[] = [];
+  let cursor = 0;
   for (const [i, occurrence] of occurrences.entries()) {
-    marked = marked.slice(0, occurrence.innerStart) + (markers[i] ?? '') + marked.slice(occurrence.innerEnd);
+    parts.push(html.slice(cursor, occurrence.innerStart), markers[i] ?? '');
+    cursor = occurrence.innerEnd;
   }
+  parts.push(html.slice(cursor));
+  const marked = parts.join('');
   const doc = parseHtml(marked);
   const found = findMarkers(doc, markers);
   const dropped: PlaceholderSite = { context: { kind: 'markup' }, delimiters: 'split' };

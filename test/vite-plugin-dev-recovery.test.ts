@@ -13,6 +13,7 @@ import {
   STORY,
   storyWith,
   COMPILE,
+  writeFiles,
 } from './helpers/plugins.js';
 
 let server: ViteDevServer | undefined;
@@ -171,6 +172,107 @@ describe('vite plugin dev: an import that does not exist when the entry is bundl
     writeFileSync(join(root, 'app/later.js'), CREATED);
     expect(await page(url)).toContain('RECOVERED');
   });
+});
+
+describe('vite plugin dev: unresolved packages (#269)', () => {
+  it.each(
+    [false, true].flatMap((watcher) =>
+      [false, true].flatMap((afterGood) =>
+        ['dependency', '@scope/dependency', 'dependency/feature', '-dependency', '~dependency'].map((source) => ({
+          watcher,
+          afterGood,
+          source,
+        })),
+      ),
+    ),
+  )(
+    'recovers after installing $source (watcher: $watcher, after good bundle: $afterGood)',
+    async ({ watcher, afterGood, source }) => {
+      const importing = `import { value } from ${JSON.stringify(source)}; globalThis.probe = value;`;
+      const root = makeProject({
+        'story/start.tw': STORY,
+        'app/main.js': afterGood ? 'globalThis.probe = "GOOD";' : importing,
+        'node_modules/other/package.json': '{}',
+      });
+      const entry = join(root, 'app/main.js');
+      const url = await start(root, entry, watcher);
+      expect(await page(url)).toContain(afterGood ? 'GOOD' : 'The story has not compiled yet.');
+      if (afterGood) writeFileSync(entry, importing);
+      expect(await page(url)).toContain(afterGood ? 'GOOD' : 'The story has not compiled yet.');
+      const name = source === 'dependency/feature' ? 'dependency' : source;
+      writeFiles(root, {
+        [`node_modules/${name}/package.json`]: JSON.stringify({
+          name,
+          type: 'module',
+          exports: { '.': './lib/value.js', './feature': './lib/value.js' },
+        }),
+        [`node_modules/${name}/lib/value.js`]: 'export const value = "RECOVERED";',
+      });
+      expect(await page(url)).toContain('RECOVERED');
+    },
+  );
+});
+
+describe('vite plugin dev: partially restored packages (#269)', () => {
+  it.each(['dependency', '@scope/dependency', 'dependency/feature'])(
+    'recovers after correcting the self-package manifest for %s',
+    async (source) => {
+      const name = source === 'dependency/feature' ? 'dependency' : source;
+      const manifest = (target: string): string =>
+        JSON.stringify({ name, type: 'module', exports: { '.': target, './feature': target } });
+      const root = makeProject({
+        'story/start.tw': STORY,
+        'app/main.js': `import { value } from ${JSON.stringify(source)}; globalThis.probe = value;`,
+        'package.json': manifest('./lib/deep/missing.js'),
+        'lib/deep/existing.js': 'export const value = "RECOVERED";',
+      });
+      const url = await start(root, join(root, 'app/main.js'), false);
+      expect(await page(url)).not.toContain('tw-storydata');
+      writeFileSync(join(root, 'package.json'), manifest('./lib/deep/existing.js'));
+      expect(await page(url)).toContain('RECOVERED');
+    },
+  );
+
+  it.each([
+    { folder: 'node_modules/dependency', name: 'dependency', source: 'dependency' },
+    { folder: '.', name: 'dependency', source: 'dependency' },
+    { folder: '.', name: '@scope/dependency', source: '@scope/dependency' },
+    { folder: '.', name: 'dependency', source: 'dependency/feature' },
+  ])(
+    'tracks a nested export target of $source in $folder without needless rebuilds',
+    async ({ folder, name, source }) => {
+      const root = makeProject({
+        'story/start.tw': STORY,
+        'app/main.js': `import { value } from ${JSON.stringify(source)}; globalThis.probe = value;`,
+        [`${folder}/package.json`]: JSON.stringify({
+          name,
+          type: 'module',
+          exports: { '.': './lib/deep/value.js', './feature': './lib/deep/value.js' },
+        }),
+        [`${folder}/lib/deep/other.js`]: '',
+        'node_modules/other/package.json': '{}',
+      });
+      let builds = 0;
+      const url = await startWith(root, join(root, 'app/main.js'), {
+        name: 'count-entry-builds',
+        buildStart() {
+          builds += 1;
+        },
+      });
+      expect(await page(url)).not.toContain('tw-storydata');
+      const before = builds;
+      expect(await page(url)).not.toContain('tw-storydata');
+      expect(builds).toBe(before);
+      writeFiles(root, { 'node_modules/other/unrelated.js': '' });
+      expect(await page(url)).not.toContain('tw-storydata');
+      expect(builds).toBe(before);
+      writeFileSync(join(root, folder, 'lib/deep/value.js'), 'export const value = "RECOVERED";');
+      expect(await page(url)).toContain('RECOVERED');
+      const recovered = builds;
+      expect(await page(url)).toContain('RECOVERED');
+      expect(builds).toBe(recovered);
+    },
+  );
 });
 
 describe('vite plugin dev: a file a plugin watches while the entry fails its first bundle (#269)', () => {

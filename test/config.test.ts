@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { identify } from '../src/path-identity.js';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync, existsSync } from 'node:fs';
 import type { Diagnostic } from '../src/types.js';
 import {
   validateConfig,
@@ -156,6 +156,37 @@ describe('loadConfig', () => {
     const config = loadConfig(dir);
     // Paths in a config file are relative to its folder (FS-11).
     expect(config).toEqual({ sources: [join(identify(dir).display, 'src/')] });
+  });
+
+  it.skipIf(process.platform === 'win32').each([false, true])(
+    'finds the filesystem directory through a link and parent step (competitor: %s) (#476)',
+    (competitor) => {
+      mkdirSync(join(dir, 'real/deep'), { recursive: true });
+      mkdirSync(join(dir, 'written'));
+      symlinkSync('../real/deep', join(dir, 'written/link'));
+      writeFileSync(join(dir, 'real', CONFIG_FILENAME), JSON.stringify({ sources: ['right.tw'] }));
+      if (competitor) writeFileSync(join(dir, 'written', CONFIG_FILENAME), JSON.stringify({ sources: ['wrong.tw'] }));
+      for (const base of [dir, relative(process.cwd(), dir)]) {
+        const supplied = `${base}/written/link/..`;
+        const config = loadConfig(supplied);
+        // System aliases such as macOS /var and /private/var can spell the same file differently.
+        expect(config?.sources?.map((source) => identify(source).key)).toEqual([
+          identify(join(dir, 'real/right.tw')).key,
+        ]);
+        expect(loadConfigFile(`${supplied}/${CONFIG_FILENAME}`)).toEqual(config);
+      }
+    },
+  );
+
+  it('keeps platform filesystem semantics for a missing intermediate directory (#476)', () => {
+    writeFileSync(join(dir, CONFIG_FILENAME), '{}');
+    const supplied = `${dir}${sep}missing${sep}..`;
+    // POSIX requires the intermediate folder; Win32 normalizes the parent step before opening the file.
+    expect(loadConfig(supplied)).toEqual(existsSync(`${supplied}${sep}${CONFIG_FILENAME}`) ? {} : null);
+  });
+
+  it('treats an empty directory argument as the working directory (#476)', () => {
+    expect(loadConfig('')).toEqual(loadConfig('.'));
   });
 
   it('throws on invalid JSON', () => {
