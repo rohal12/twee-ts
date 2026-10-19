@@ -202,14 +202,20 @@ export function parseCliArgs(argv: readonly string[]): CliParse {
 
 /** Whether `-h` or `--help` is given before any `--`, whatever else is on the line (even a malformed option). */
 function asksForHelp(argv: readonly string[]): boolean {
-  const { tokens } = parseArgs({
-    args: [...argv],
-    options: OPTIONS,
-    allowPositionals: true,
-    strict: false,
-    tokens: true,
+  const terminator = argv.indexOf('--');
+  const options = terminator === -1 ? argv : argv.slice(0, terminator);
+  // Read each word on its own: an unfinished string option must not consume a following help request.
+  // parseArgs still understands short bundles and attached values, so -oh and --output=--help are values.
+  return options.some((arg) => {
+    const { tokens } = parseArgs({
+      args: [arg],
+      options: OPTIONS,
+      allowPositionals: true,
+      strict: false,
+      tokens: true,
+    });
+    return tokens.some((token) => token.kind === 'option' && token.name === 'help');
   });
-  return tokens.some((token) => token.kind === 'option' && token.name === 'help');
 }
 
 /** The option a short letter stands for. */

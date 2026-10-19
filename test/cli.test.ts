@@ -986,6 +986,12 @@ describe('CLI --help wins over malformed options (#382)', () => {
     [['--help', '--bogus']],
     [['--bogus', '--help']],
     [['-h', '-o']],
+    [['--output', '--help']],
+    [['-o', '-h']],
+    [['-do', '-dh']],
+    [['--config', '--help']],
+    [['--format', '--help']],
+    [['--module', '--help']],
     [['-o', 'a', '-o', 'b', '-h']],
     [['-d=x', '-h']],
   ])('%j prints the help', (args) => {

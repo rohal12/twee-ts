@@ -6,8 +6,9 @@
  * hashbang, at the latest ECMAScript version acorn knows.
  */
 import { Parser } from 'acorn';
-import type { Options, Program } from 'acorn';
+import type { AnyNode, Options, Program } from 'acorn';
 import { escapeLoneSurrogates, quotableCharacterAt } from './source-text.js';
+import { isRecord, pushAll } from './util.js';
 
 /** How acorn's message for a character no token can start with begins. */
 const UNEXPECTED_CHARACTER = 'Unexpected character ';
@@ -93,4 +94,19 @@ export function trySyntax<T>(read: () => T): SyntaxRead<T> {
 /** Parse `source` as a classic script. */
 export function parseScript(source: string, options: Readonly<Options> = SCRIPT_OPTIONS): SyntaxRead<Program> {
   return trySyntax(() => AcornParser.parse(source, options));
+}
+
+/** Whether a value from an acorn tree is a syntax node. */
+function isNode(value: unknown): value is AnyNode {
+  return isRecord(value) && typeof value['type'] === 'string';
+}
+
+/** Every node below `root`, `root` first, in source order, without recursing on the JavaScript call stack. */
+export function* javaScriptNodes(root: AnyNode): Generator<AnyNode> {
+  const stack: unknown[] = [root];
+  for (let value = stack.pop(); value !== undefined; value = stack.pop()) {
+    if (isNode(value)) yield value;
+    const children: readonly unknown[] = Array.isArray(value) ? value : isNode(value) ? Object.values(value) : [];
+    pushAll(stack, children.toReversed());
+  }
 }

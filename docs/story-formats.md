@@ -6,6 +6,8 @@ Template placeholders are escaped for their insertion context. Placeholders insi
 
 Tagged JavaScript templates (such as `String.raw`) can observe the raw spelling of a value. If inserting a placeholder would require JavaScript escapes that change that raw text, twee-ts warns and uses Tweego-compatible replacement. Use an ordinary string or an untagged template literal for values that need escaping.
 
+Template tags are determined from JavaScript syntax, including function expressions used as tags. If the containing script cannot be parsed, placeholders in template literals warn because their tagged or untagged context cannot be established.
+
 ## Format Discovery
 
 A build asks for one story format (see [Format Selection](#format-selection)) and looks for it in these sources, in this order:

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { cssContexts, javaScriptContexts } from '../src/code-context.js';
+import { TEMPLATE_SYNTAX } from './helpers/template-syntax.js';
+import { compileJavaScript } from './helpers/javascript.js';
 
 /** The context of the first occurrence of `needle` in `source`. */
 function js(source: string, needle: string, module = false) {
@@ -32,6 +34,18 @@ describe('javaScriptContexts', () => {
   it('tells a regular expression from a division, with its flags', () => {
     expect(js('a = /X/giu', 'X')).toEqual({ kind: 'regexp', flags: 'giu' });
     expect(js('a = b / X / c', 'X')).toEqual({ kind: 'code' });
+  });
+
+  it.each(TEMPLATE_SYNTAX)('classifies templates by syntax: $source (#480)', ({ source, tagged, module }) => {
+    expect(js(source, 'X', module)).toEqual({ kind: 'template', tagged });
+    // The independent JavaScript engine must accept the script cases too.
+    if (!module) compileJavaScript(source);
+  });
+
+  it('reports templates whose syntax cannot establish a tag, while keeping lexical string contexts', () => {
+    const source = 'const a = "Y"; const b = ; tag`X`;';
+    expect(js(source, 'X')).toEqual({ kind: 'unparsable', reason: expect.any(String) });
+    expect(js(source, 'Y')).toEqual({ kind: 'string', quote: '"', whole: false });
   });
 
   it('finds comments, and where a single-line comment starts', () => {
@@ -71,6 +85,14 @@ describe('cssContexts', () => {
     expect(css('/* X', 'X')).toEqual({ kind: 'comment' });
     expect(css('a { content: "X', 'X')).toEqual({ kind: 'string', quote: '"' });
     expect(css('a\\" X', 'X')).toEqual({ kind: 'code' });
+  });
+
+  it.each(['\n', '\r\n', '\r', '\f'])('treats escaped %j as one continued newline (#484)', (newline) => {
+    for (const quote of ['"', "'"]) {
+      expect(css(`a { content: ${quote}prefix\\${newline}X${quote}; }`, 'X')).toEqual({ kind: 'string', quote });
+      expect(css(`a { content: ${quote}prefix${newline}X${quote}; }`, 'X')).toEqual({ kind: 'code' });
+      expect(css(`a { content: ${quote}prefix\\\\${newline}X${quote}; }`, 'X')).toEqual({ kind: 'code' });
+    }
   });
 });
 

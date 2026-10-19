@@ -45,7 +45,7 @@ import { tokTypes } from 'acorn';
 import type { FormatDecodeResult, Twine2FormatJSON } from './types.js';
 import { describePosition, lineColumnFinder } from './js-chars.js';
 import type { LineColumn } from './js-chars.js';
-import { AcornParser, SCRIPT_OPTIONS, parseScript, trySyntax } from './js-syntax.js';
+import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript, trySyntax } from './js-syntax.js';
 import { parseVersion } from './semver.js';
 
 /** The name given to a format.js that names no format. */
@@ -62,25 +62,11 @@ const OPTIONAL_TEXT_FIELDS = ['author', 'description', 'image', 'url', 'license'
  */
 const READ_FIELDS: readonly string[] = ['name', 'version', 'source', 'proofing', ...OPTIONAL_TEXT_FIELDS];
 
-/** Whether a value read from the tree is an acorn node. */
-function isNode(value: unknown): value is AnyNode {
-  return typeof value === 'object' && value !== null && 'type' in value && typeof value.type === 'string';
-}
-
 /** Every `storyFormat(…)` call in the program, in source order. */
 function findStoryFormatCalls(program: Program): CallExpression[] {
   const calls: CallExpression[] = [];
-  // An explicit stack, so deeply nested code cannot exhaust the call stack.
-  const pending: AnyNode[] = [program];
-  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+  for (const node of javaScriptNodes(program)) {
     if (node.type === 'CallExpression' && callsStoryFormat(node.callee)) calls.push(node);
-    for (const child of Object.values(node)) {
-      if (Array.isArray(child)) {
-        for (const item of child) if (isNode(item)) pending.push(item);
-      } else if (isNode(child)) {
-        pending.push(child);
-      }
-    }
   }
   return calls.sort((a, b) => a.start - b.start);
 }

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recognize help after an unfinished value-taking CLI option, while preserving attached values and `--` (#382).
+- Classify JavaScript template tags by syntax, including function expressions and contextual `yield`/`await` (#480).
+- Preserve CSS string escaping after a backslash followed by CRLF in a format template (#484).
 - Keep adjacent template substitutions inside JavaScript and CSS comments (#479).
 - Warn when placeholder escaping would change a tagged template's raw value (#480).
 - Expand tag-alias chains without repeatedly scanning unrelated mappings, preserving tag order (#481).

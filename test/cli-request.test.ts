@@ -340,6 +340,28 @@ describe('a build request', () => {
     expect(usage(['--bogus', '--', '--help'])).toBe('unknown option --bogus');
   });
 
+  const valueOptions = Object.entries(OPTIONS).flatMap(([name, option]) =>
+    option.type === 'string' ? [`--${name}`, ...('short' in option ? [`-${option.short}`] : [])] : [],
+  );
+  it.each(valueOptions)('recognizes help after the unfinished %s option (#382)', (option) => {
+    for (const help of ['--help', '-h', '-dh']) {
+      expect(request([option, help])).toEqual({ kind: 'help' });
+    }
+  });
+
+  it.each(['--output=--help', '-o=--help', '-o--help', '--output=-h', '-o=-h', '-o-h'])(
+    'keeps attached help-like values in %s',
+    (option) => {
+      expect(build([option, 'a.tw']).flags.output).toBe(option.endsWith('--help') ? '--help' : '-h');
+    },
+  );
+
+  it('keeps h inside an attached short-option value and respects the terminator', () => {
+    expect(build(['-doh', 'a.tw']).flags.output).toBe('h');
+    expect(build(['--', '--help', '-h']).sources).toEqual(['--help', '-h']);
+    expect(usage(['--output', '--', '--help'])).toContain('ambiguous');
+  });
+
   it('lets --list-formats choose the config', () => {
     expect(request(['--list-formats', '-c', 'x.json'])).toEqual({
       kind: 'list-formats',
