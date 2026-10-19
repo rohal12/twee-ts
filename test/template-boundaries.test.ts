@@ -11,6 +11,7 @@ import { escapeForContext } from '../src/escape.js';
 import { codeEscapeDiagnostics } from '../src/html-output-check.js';
 import type { InsertionContext } from '../src/escape.js';
 import { judgeStoryName } from './helpers/insertion-judges.js';
+import { TEMPLATE_SYNTAX } from './helpers/template-syntax.js';
 
 function fillName(template: string, text: string) {
   return fillFormatTemplate({
@@ -268,6 +269,13 @@ describe('code escape diagnostics: through compile() (#309)', () => {
 describe('code escape diagnostics', () => {
   const warnings = (text: string) =>
     codeEscapeDiagnostics('script', { text, parts: [{ label: 'module "m.js"', start: 0 }] });
+
+  it.each(TEMPLATE_SYNTAX.filter((entry) => entry.module !== true))(
+    'warns for raw-value changes according to syntax: $source (#480)',
+    ({ source, tagged }) => {
+      expect(warnings(source.replace('X', '</script>'))).toHaveLength(tagged ? 1 : 0);
+    },
+  );
 
   it('warns for <!-- escaped in a u or v regular expression, not in another', () => {
     expect(warnings('var r = /<!--/u; var s = "<script>";')).toHaveLength(1);

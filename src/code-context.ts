@@ -4,11 +4,11 @@
  * the script and style escapers use it to tell whether `<\/script` keeps the value of what it escapes.
  *
  * JavaScript is tokenized with acorn (bundled), which tells a regular expression literal from a division the way a
- * parser does. CSS needs only strings and comments, which CSS Syntax Level 3 tokenizes without context.
+ * parser does; template tags are established from its syntax tree. CSS needs only strings and comments, which CSS
+ * Syntax Level 3 tokenizes without context.
  */
 import { tokTypes } from 'acorn';
-import type { Token } from 'acorn';
-import { AcornParser, SCRIPT_OPTIONS, trySyntax } from './js-syntax.js';
+import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript, trySyntax } from './js-syntax.js';
 
 /** Where a range of JavaScript source lies. */
 export type JavaScriptContext =
@@ -19,7 +19,7 @@ export type JavaScriptContext =
   /** A single-line comment: `//`, or one of the HTML-like comments of classic scripts, which `start` with `<!--`. */
   | { readonly kind: 'line-comment'; readonly start: number }
   | { readonly kind: 'code' }
-  /** acorn could not tokenize the source; `reason` says why. */
+  /** acorn could not read the source or establish a template's syntax; `reason` says why. */
   | { readonly kind: 'unparsable'; readonly reason: string };
 
 /** Where a range of CSS source lies. */
@@ -85,8 +85,9 @@ function enclosingPiece<P extends SourceRange>(pieces: readonly P[], range: Sour
 
 /**
  * The literals and comments of JavaScript source, in source order, read as a classic script (see `js-syntax.ts`) or
- * a module, allowing what story formats allow around story code (`return` and `await` outside functions). Throws a
- * `JsSyntaxError` when acorn cannot tokenize it.
+ * a module, allowing `return` outside functions as story formats do around story code. Templates also need a
+ * syntax tree to establish tags; a template in source that cannot be parsed is reported as unparsable. Throws a
+ * `JsSyntaxError` when acorn cannot tokenize the source.
  */
 function javaScriptPieces(source: string, module: boolean): JavaScriptPiece[] {
   const pieces: JavaScriptPiece[] = [];
@@ -100,9 +101,6 @@ function javaScriptPieces(source: string, module: boolean): JavaScriptPiece[] {
       pieces.push({ start, end, context: block ? { kind: 'block-comment' } : { kind: 'line-comment', start } });
     },
   });
-  // A template literal is tagged when an expression ends right before its opening backquote.
-  const openTemplates: boolean[] = [];
-  let previous: Token | undefined;
   for (const token of tokens) {
     const { type, start, end } = token;
     if (type === tokTypes.string) {
@@ -111,33 +109,39 @@ function javaScriptPieces(source: string, module: boolean): JavaScriptPiece[] {
     } else if (type === tokTypes.regexp) {
       const raw = source.slice(start, end);
       pieces.push({ start, end, context: { kind: 'regexp', flags: raw.slice(raw.lastIndexOf('/') + 1) } });
-    } else if (type === tokTypes.backQuote) {
-      if (previous?.type === tokTypes.template || previous?.type === tokTypes.invalidTemplate) {
-        openTemplates.pop();
-      } else {
-        openTemplates.push(previous !== undefined && endsExpression(previous));
-      }
     } else if (type === tokTypes.template || type === tokTypes.invalidTemplate) {
-      const tagged = openTemplates[openTemplates.length - 1] === true;
-      pieces.push({ start, end, context: { kind: 'template', tagged } });
+      pieces.push({ start, end, context: { kind: 'template', tagged: false } });
     }
-    previous = token;
   }
-  return pieces.sort((a, b) => a.start - b.start);
+  return classifyTemplates(source, pieces, module).sort((a, b) => a.start - b.start);
 }
 
-/** Whether `token` can end an expression, so that a template literal after it is a tagged template. */
-function endsExpression(token: Token): boolean {
-  const { type } = token;
-  return (
-    type === tokTypes.name ||
-    type === tokTypes.parenR ||
-    type === tokTypes.bracketR ||
-    type === tokTypes.backQuote ||
-    type === tokTypes._this ||
-    type === tokTypes._super ||
-    type === tokTypes.privateId
-  );
+/** Only the grammar can tell a tag expression from a block, or an identifier from an await/yield operator. */
+function classifyTemplates(source: string, pieces: JavaScriptPiece[], module: boolean): JavaScriptPiece[] {
+  if (!pieces.some((piece) => piece.context.kind === 'template')) return pieces;
+  const parsed = parseScript(source, {
+    ...SCRIPT_OPTIONS,
+    sourceType: module ? 'module' : 'script',
+    allowReturnOutsideFunction: true,
+    allowImportExportEverywhere: true,
+  });
+  const tagged = new Set<number>();
+  if (parsed.ok) {
+    for (const node of javaScriptNodes(parsed.value)) {
+      if (node.type === 'TaggedTemplateExpression') {
+        for (const quasi of node.quasi.quasis) tagged.add(quasi.start);
+      }
+    }
+  }
+  return pieces.map((piece) => {
+    if (piece.context.kind !== 'template') return piece;
+    return {
+      ...piece,
+      context: parsed.ok
+        ? { kind: 'template', tagged: tagged.has(piece.start) }
+        : { kind: 'unparsable', reason: parsed.error.message },
+    };
+  });
 }
 
 /**
@@ -188,7 +192,8 @@ function cssStringEnd(source: string, from: number, quote: string): number {
     if (ch === quote) return i + 1;
     // An unescaped line break ends a bad string before it.
     if (ch === '\n' || ch === '\r' || ch === '\f') return i;
-    i += ch === '\\' ? 2 : 1;
+    // CSS input preprocessing treats CRLF as one newline; an escaped pair continues the same string.
+    i += ch === '\\' ? (source[i + 1] === '\r' && source[i + 2] === '\n' ? 3 : 2) : 1;
   }
   return source.length;
 }

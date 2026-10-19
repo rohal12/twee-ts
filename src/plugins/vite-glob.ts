@@ -18,8 +18,8 @@ import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
-import { AcornParser, trySyntax } from '../js-syntax.js';
-import { isRecord, pushAll } from '../util.js';
+import { AcornParser, javaScriptNodes, trySyntax } from '../js-syntax.js';
+import { isRecord } from '../util.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
 
@@ -54,20 +54,6 @@ const MODULE_OPTIONS: Readonly<Options> = { ecmaVersion: 'latest', sourceType: '
 /** Whether `code` may hold a glob call, as Vite's import-glob filters the modules it reads. */
 function mayHoldGlob(code: string): boolean {
   return code.includes('import.meta.glob');
-}
-
-function isNode(value: unknown): value is AnyNode {
-  return isRecord(value) && typeof value['type'] === 'string';
-}
-
-/** Every node below `root`, `root` first, in source order. */
-function* nodesOf(root: AnyNode): Generator<AnyNode> {
-  const stack: unknown[] = [root];
-  for (let value = stack.pop(); value !== undefined; value = stack.pop()) {
-    if (isNode(value)) yield value;
-    const children: readonly unknown[] = Array.isArray(value) ? value : isNode(value) ? Object.values(value) : [];
-    pushAll(stack, children.toReversed());
-  }
 }
 
 /** Whether `node` is the callee `import.meta.glob`. */
@@ -222,7 +208,7 @@ export function globCalls(code: string): GlobReading {
   if (parsed.ok) {
     const calls: GlobCall[] = [];
     const unreadable: number[] = [];
-    for (const node of nodesOf(parsed.value)) {
+    for (const node of javaScriptNodes(parsed.value)) {
       if (node.type !== 'CallExpression' || !isGlobCallee(node.callee)) continue;
       const call = callOf(node.arguments);
       if (call === undefined) unreadable.push(node.start);

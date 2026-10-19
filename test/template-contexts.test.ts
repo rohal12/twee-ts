@@ -8,6 +8,7 @@ import type { PlaceholderOccurrence } from '../src/html-structure.js';
 import { escapeForContext } from '../src/escape.js';
 import { fillFormatTemplate } from '../src/template.js';
 import type { Placeholder } from '../src/template.js';
+import { evaluateJavaScript } from './helpers/javascript.js';
 
 /** The site of each `{{X}}` (or `"X"`) in `template`. */
 function sites(template: string) {
@@ -246,6 +247,37 @@ describe('fillFormatTemplate: placeholders where no escaping helps', () => {
 });
 
 describe('tagged template placeholder values (#480)', () => {
+  it.each([
+    'function(s) { return s.raw[0]; }',
+    'function named(s) { return s.raw[0]; }',
+    'async function(s) { return s.raw[0]; }',
+    '(function(s) { return s.raw[0]; })',
+    'String.raw',
+  ])('diagnoses function-expression and other tags: %s', (tag) => {
+    const result = fillFormatTemplate({
+      template: `<script>let x=${tag}\`{{X}}\`;</script>`,
+      owner: 'F',
+      placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: 'a\\b' } }],
+    });
+    expect(result.diagnostics.map((d) => d.level)).toEqual(['warning']);
+    expect(result.diagnostics[0]?.message).toContain('JavaScript template');
+  });
+
+  it.each([
+    '(function*() { yield `{{X}}`; })().next().value',
+    '(function*() { yield* [`{{X}}`]; })().next().value',
+    '(async function() { return await `{{X}}`; })()',
+    '(async function*() { yield await `{{X}}`; })().next().then(s => s.value)',
+  ])('preserves cooked values after contextual operators: %s', async (expression) => {
+    const result = fillFormatTemplate({
+      template: `<script>return ${expression};</script>`,
+      owner: 'F',
+      placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: 'a\\b' } }],
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(await evaluateJavaScript(result.output.slice('<script>'.length, -'</script>'.length))).toBe('a\\b');
+  });
+
   it.each(['a\\b', '`', '${x}', '$', '\n', '\r', '\u2028', '\u2029'])(
     'diagnoses a value requiring raw-text changes: %j',
     (text) => {
