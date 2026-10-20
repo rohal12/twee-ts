@@ -6,13 +6,13 @@
  * Used" in docs/cli.md decides the rest. Each case runs through discovery and through the API, the watch and both
  * plugins.
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { rollup } from 'rollup';
 import { compile } from '../src/compiler.js';
 import { watch } from '../src/compiler.js';
-import { getFilenames } from '../src/filesystem.js';
+import { getFilenames, watchFilesystem } from '../src/filesystem.js';
 import { tweeTsPlugin as rollupTweeTs } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as viteTweeTs } from '../src/plugins/vite.js';
 import { buildFiles, cleanUp, COMPILE, makeProject, startServer, STORY, tempDir, textOf } from './helpers/plugins.js';
@@ -105,6 +105,47 @@ describe.skipIf(noLinks)('a link in a folder that cannot be followed, found by g
 });
 
 describe.skipIf(noLinks)('a link in a source folder that cannot be followed, through every surface (#446)', () => {
+  it.each(KINDS)('keeps watching ordinary files beside a %s link and notices its replacement', async (kind) => {
+    const dir = makeProject({ 'story/start.tw': STORY });
+    const folder = join(dir, 'story');
+    const link = join(folder, 'link.tw');
+    unreachableLink(kind, link);
+    const builds: (ReadonlySet<string> | undefined)[] = [];
+    const errors: Error[] = [];
+    const handle = watchFilesystem(
+      [folder],
+      join(dir, 'out.html'),
+      (files) => builds.push(files),
+      undefined,
+      (error) => errors.push(error),
+      { debounceMs: 10 },
+      { shared: false },
+    );
+    try {
+      expect(errors).toEqual([]);
+      writeFileSync(join(folder, 'start.tw'), STORY + '\nChanged.');
+      await vi.waitFor(
+        () => {
+          expect(builds.length).toBeGreaterThan(1);
+        },
+        { timeout: 5000 },
+      );
+      expect(errors).toEqual([]);
+      builds.length = 0;
+      unlinkSync(link);
+      writeFileSync(link, ':: Replaced\nNow readable.');
+      await vi.waitFor(
+        () => {
+          expect(builds.length).toBeGreaterThan(0);
+        },
+        { timeout: 5000 },
+      );
+      expect(errors).toEqual([]);
+    } finally {
+      handle.close();
+    }
+  });
+
   /** A project with a story and, per kind, a link excluded by name and a link of another type. */
   function project(): { dir: string; exclude: string[] } {
     const dir = makeProject({ 'story/start.tw': STORY });
