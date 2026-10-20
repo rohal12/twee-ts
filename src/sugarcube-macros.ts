@@ -707,21 +707,54 @@ function regionKind(opener: string): RegionKind {
 
 // SugarCube's `Patterns.htmlTagName`: an element name, or a custom element name.
 const CUSTOM_ELEMENT_NAME_CHAR = String.raw`(?:[\-.0-9A-Z_a-z\xB7\xC0-\xD6\xD8-\xF6\xF8-\u037D\u037F-\u1FFF\u200C\u200D\u203F\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])`;
-const HTML_TAG_NAME_RE = new RegExp(
-  `[A-Za-z](?:${CUSTOM_ELEMENT_NAME_CHAR}*-${CUSTOM_ELEMENT_NAME_CHAR}*|[0-9A-Za-z]*)`,
-  'y',
-);
-// The end tag that SugarCube's `htmlTag` parser looks for to close an element: `<\/name\s*>`.
-const HTML_END_TAG_RE = new RegExp(String.raw`<\/(${HTML_TAG_NAME_RE.source})\s*>`, 'y');
+const CUSTOM_ELEMENT_NAME_RE = new RegExp(`[A-Za-z]${CUSTOM_ELEMENT_NAME_CHAR}*`, 'y');
+const ORDINARY_TAG_NAME_RE = /[A-Za-z][0-9A-Za-z]*/y;
+
+/**
+ * SugarCube's greedy custom name when it contains a hyphen, otherwise its ASCII name alternative.
+ * Read the character run once rather than retrying every division around a hyphen on a failed end tag.
+ */
+function htmlTagNameAt(text: string, start: number): string | undefined {
+  CUSTOM_ELEMENT_NAME_RE.lastIndex = start;
+  const custom = CUSTOM_ELEMENT_NAME_RE.exec(text)?.[0];
+  if (custom === undefined || custom.includes('-')) return custom;
+  ORDINARY_TAG_NAME_RE.lastIndex = start;
+  return ORDINARY_TAG_NAME_RE.exec(text)?.[0];
+}
+
+/** ECMAScript's non-Unicode ignoreCase canonicalization of one UTF-16 code unit. */
+function endTagCase(ch: string): string {
+  const upper = ch.toUpperCase();
+  return upper.length !== 1 || (ch.charCodeAt(0) >= 128 && upper.charCodeAt(0) < 128) ? ch : upper;
+}
+
+/** SugarCube interpolates the name into a non-Unicode regex: only periods have special meaning. */
+function matchesEndTagName(text: string, from: number, name: string): boolean {
+  if (from + name.length > text.length) return false;
+  for (let i = 0; i < name.length; i++) {
+    const expected = name.charAt(i);
+    const actual = text.charAt(from + i);
+    if (expected === '.') {
+      if (isLineTerminator(actual)) return false;
+    } else if (expected !== actual && expected !== endTagCase(actual)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * The end tag at `start`, if one is there: `</`, a tag name and optional white space before `>`, the terminator
  * SugarCube's `htmlTag` parser looks for after a start tag. Its name is given in lower case, as the parser matches it.
  */
 export function htmlEndTagAt(text: string, start: number): { readonly name: string; readonly end: number } | undefined {
-  HTML_END_TAG_RE.lastIndex = start;
-  const name = HTML_END_TAG_RE.exec(text)?.[1];
-  return name === undefined ? undefined : { name: name.toLowerCase(), end: HTML_END_TAG_RE.lastIndex };
+  if (!text.startsWith('</', start)) return undefined;
+  const name = htmlTagNameAt(text, start + 2);
+  if (name === undefined) return undefined;
+  TAG_SPACES_RE.lastIndex = start + 2 + name.length;
+  TAG_SPACES_RE.exec(text);
+  const end = TAG_SPACES_RE.lastIndex;
+  return text[end] === '>' ? { name: name.toLowerCase(), end: end + 1 } : undefined;
 }
 
 // The parts of SugarCube's `htmlTag` pattern after the name: an attribute name, and an unquoted value.
@@ -804,8 +837,7 @@ function readHtmlStartTag(
  * many characters were read.
  */
 function htmlStartTagAt(text: string, start: number, spend: (characters: number) => void): HtmlStartTag | undefined {
-  HTML_TAG_NAME_RE.lastIndex = start + 1;
-  const name = HTML_TAG_NAME_RE.exec(text)?.[0];
+  const name = htmlTagNameAt(text, start + 1);
   if (name === undefined) return undefined;
   // How far the reading has looked.
   let reach = start + 1 + name.length;
@@ -866,11 +898,27 @@ function htmlTagReader(
   const hasEndTag = (name: string, from: number): boolean => {
     const known = endTags.get(name);
     if (known === -1 || (known !== undefined && known >= from)) return known !== -1;
-    // SugarCube builds the end tag pattern from the name as it is, ignoring case.
-    const re = new RegExp(`<\\/${name}\\s*>`, 'gi');
-    re.lastIndex = from;
-    const found = re.exec(text)?.index ?? -1;
-    spend((found === -1 ? text.length : found) - from);
+    // SugarCube uses the name as a regex: periods in custom names are wildcards. Keep that behavior, but
+    // charge each possible name match BEFORE running it; an unanchored regex hides quadratic trial work.
+    // Match directly rather than compiling an arbitrarily large regex from a long name.
+    const folded = name.split('').map(endTagCase).join('');
+    let found = -1;
+    for (let pos = from; budget.left >= 0;) {
+      const candidate = text.indexOf('</', pos);
+      spend((candidate === -1 ? text.length : candidate) - pos + name.length + 2);
+      if (candidate === -1 || budget.left < 0) break;
+      if (matchesEndTagName(text, candidate + 2, folded)) {
+        const nameEnd = candidate + 2 + name.length;
+        TAG_SPACES_RE.lastIndex = nameEnd;
+        TAG_SPACES_RE.exec(text);
+        spend(TAG_SPACES_RE.lastIndex - nameEnd);
+        if (text[TAG_SPACES_RE.lastIndex] === '>') {
+          found = candidate;
+          break;
+        }
+      }
+      pos = candidate + 2;
+    }
     endTags.set(name, found);
     return found !== -1;
   };

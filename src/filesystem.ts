@@ -772,9 +772,24 @@ export function watchFilesystem(
       // A recursive watch on a folder it can't read starts without an error on Linux, and
       // then never reports anything: check first.
       if (recursive) accessSync(path, fsConstants.R_OK | fsConstants.X_OK);
-      const watcher = fsWatch(path, { recursive }, (_event, filename) => {
-        if (!closed) listener(filename ?? '');
-      });
+      const watcher = fsWatch(
+        path,
+        {
+          recursive,
+          // Node's recursive watcher registers link targets too, and since 24.22 throws when a target
+          // loops or cannot be searched. Leave those links to discovery's input policy. The containing
+          // folder still reports their replacement; readable links keep their normal watches.
+          ignore: recursive
+            ? (filename) => {
+                const entry = join(path, filename);
+                return isSymbolicLink(entry) && pathKind(entry).kind === 'missing';
+              }
+            : undefined,
+        },
+        (_event, filename) => {
+          if (!closed) listener(filename ?? '');
+        },
+      );
       watcher.on('error', (e) => {
         watcher.close();
         watchesChanged();

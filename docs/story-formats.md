@@ -261,6 +261,8 @@ twee-ts recognizes the following special passage names. They are **info passages
 
 Twine 2 output leaves out `StoryTitle`, `StoryData` and a `StorySettings` passage with no settings, and writes the others as `<tw-passagedata>` elements; Twine 1 output writes all of them as tiddlers; JSON output leaves out `StoryTitle` and `StoryData`.
 
+Passages tagged `Twine.private`, including through a tag alias, are omitted from HTML story data in both versions. Twine 1 HTML requires an emitted `StoryTitle` tiddler, so a private title is a compilation error. Twine 2 HTML reads the name from its story-data attribute and can use a private title. Story formats may impose their own tag rules on emitted tiddlers: for example, SugarCube's Twine 1 build ignores `annotation` passages, so do not tag its `StoryTitle` as `annotation`.
+
 | Passage             | Purpose                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | `StoryTitle`        | Story name (required for Twine 1 and for HTML output unless an imported story names it)     |
