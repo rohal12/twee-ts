@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject a Twine 1 HTML title omitted by `Twine.private`, including tag aliases (#351).
+- Preserve JavaScript numeric escapes and CSS hex escapes across template substitutions (#486).
+- Bound custom-element end-tag recognition and wildcard closing-tag searches in word counts, inspection and lint (#487, #488).
+
 - Recognize help after an unfinished value-taking CLI option, while preserving attached values and `--` (#382).
 - Classify JavaScript template tags by syntax, including function expressions and contextual `yield`/`await` (#480).
 - Preserve CSS string escaping after a backslash followed by CRLF in a format template (#484).

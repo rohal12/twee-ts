@@ -379,15 +379,14 @@ const SCRIPT_SEQUENCES = /<!--|-->|<\/?script[\t\n\f\r />]/gi;
 const PLAIN_SCRIPT_SEQUENCES = /<!--|<\/?script[\t\n\f\r />]/gi;
 /** The sequence that ends style text. */
 const STYLE_SEQUENCES = /<\/style[\t\n\f\r />]/gi;
-/** Matches text ending in an odd number of backslashes, which escape the character that follows. */
-const ESCAPING_BACKSLASH = /(?<!\\)(?:\\\\)*\\$/;
-
 /** Only the suffix state needed to check the next insertion, never an accumulated document prefix. */
 interface BoundaryPrefix {
   readonly tail: string;
   readonly reference: boolean;
   readonly tag: boolean;
   readonly escaping: boolean;
+  /** Up to six hex digits following an active backslash; undefined once that escape has ended. */
+  readonly escapeDigits: string | undefined;
   readonly dropsLeadingNewline: boolean;
 }
 
@@ -396,6 +395,7 @@ const EMPTY_PREFIX: BoundaryPrefix = {
   reference: false,
   tag: false,
   escaping: false,
+  escapeDigits: undefined,
   dropsLeadingNewline: false,
 };
 
@@ -410,12 +410,27 @@ function occurrencePrefix(before: BoundaryPrefix, site: PlaceholderSite): Bounda
 function advancePrefix(before: BoundaryPrefix, text: string): BoundaryPrefix {
   if (text === '') return before;
   const window = before.tail + text;
+  let escaping = before.escaping;
+  let escapeDigits = before.escapeDigits;
+  for (const ch of text) {
+    const hex = /^[0-9a-f]$/i.test(ch);
+    if (escaping) {
+      escapeDigits = hex ? ch : undefined;
+      escaping = false;
+    } else if (ch === '\\') {
+      escaping = true;
+      escapeDigits = undefined;
+    } else {
+      escapeDigits = hex && escapeDigits !== undefined && escapeDigits.length < 6 ? escapeDigits + ch : undefined;
+    }
+  }
   return {
     dropsLeadingNewline: false,
     tail: window.slice(-8),
     reference: REFERENCE_START.test(window) || (before.reference && /^[0-9A-Za-z#]*$/.test(text)),
     tag: TAG_START.test(window) || (before.tag && /^[A-Za-z]*$/.test(text)),
-    escaping: /^\\*$/.test(text) ? before.escaping !== (text.length % 2 === 1) : ESCAPING_BACKSLASH.test(text),
+    escaping,
+    escapeDigits,
   };
 }
 
@@ -529,13 +544,24 @@ function startGlues(context: InsertionContext, before: BoundaryPrefix, next: str
 /**
  * Whether `next`, written after the template text `before` in JavaScript, JSON or CSS text, would be read together
  * with it by that language (not by the HTML tokenizer): `*` and `/` ending a block comment, or a backslash escaping
- * the next character of a string. The HTML structure cannot show these, so an empty value warns here too.
+ * the next character of a string, or a numeric escape consuming another digit (or CSS white space).
+ * The HTML structure cannot show these, so an empty value warns here too.
  */
 function codeGlues(context: InsertionContext, before: BoundaryPrefix, next: string): boolean {
   if (next === '' || (context.kind !== 'style' && context.kind !== 'script' && context.kind !== 'json')) return false;
   if (!isCodeComment(context)) {
     // (A template literal's `${` cannot form: `$` right before a placeholder's `{{` would already be one.)
-    return before.escaping;
+    if (before.escaping) return true;
+    const digits = before.escapeDigits;
+    if (digits === undefined) return false;
+    if (context.kind === 'style') {
+      return (digits.length < 6 && /^[0-9a-f]/i.test(next)) || /^[\t\n\f\r ]/.test(next);
+    }
+    if (context.kind === 'json') return false;
+    // Null escapes forbid any following decimal digit, including 8/9 in strict strings and templates.
+    if (digits === '0' && /^[0-9]/.test(next)) return true;
+    // Legacy octal escapes take at most three digits, and only two when the first is 4–7.
+    return /^(?:[0-3][0-7]?|[4-7])$/.test(digits) && /^[0-7]/.test(next);
   }
   const block = context.kind === 'style' || context.js.kind === 'block-comment';
   return block && before.tail.endsWith('*') && next.startsWith('/');
