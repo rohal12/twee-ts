@@ -10,7 +10,15 @@ import { watch } from 'rollup';
 import type { RollupWatcher } from 'rollup';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { tweeTsPlugin as rollupTweeTs } from '../src/plugins/rollup.js';
-import { cleanUp, COMPILE, makeProject, startBuildWatch, startServer, storyWith } from './helpers/plugins.js';
+import {
+  trackBuildWatch,
+  cleanUp,
+  COMPILE,
+  makeProject,
+  startBuildWatch,
+  startServer,
+  storyWith,
+} from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
@@ -149,16 +157,15 @@ describe('plugin build watch: names with a literal backslash (#308)', { timeout:
   /** A Rollup watch of the story at `source`; the logs it reports go to `logs`. */
   async function rollupWatch(source: string, logs: string[]): Promise<{ dir: string; stop: () => Promise<void> }> {
     const dir = makeProject({ [source]: storyWith('FIRST'), 'entry.js': 'export const a = 1;\n' });
-    const watcher: RollupWatcher = watch({
-      input: join(dir, 'entry.js'),
-      plugins: [rollupTweeTs({ sources: [join(dir, source)], format: 'test-format-1', compileOptions: COMPILE })],
-      output: { dir: join(dir, 'dist'), format: 'es' },
-      watch: { buildDelay: 50 },
-      onLog: (_level, log) => logs.push(log.message),
-    });
-    watcher.on('event', (event) => {
-      if (event.code === 'BUNDLE_END') void event.result.close();
-    });
+    const watcher: RollupWatcher = trackBuildWatch(
+      watch({
+        input: join(dir, 'entry.js'),
+        plugins: [rollupTweeTs({ sources: [join(dir, source)], format: 'test-format-1', compileOptions: COMPILE })],
+        output: { dir: join(dir, 'dist'), format: 'es' },
+        watch: { buildDelay: 50 },
+        onLog: (_level, log) => logs.push(log.message),
+      }),
+    );
     await vi.waitFor(() => {
       expect(text(join(dir, 'dist/index.html'))).toContain('FIRST');
     }, settled);

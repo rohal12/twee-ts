@@ -25,6 +25,7 @@ import {
 import { build } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
 import { removeDir } from './helpers/remove-dir.js';
+import { cleanUp, trackBuildWatch } from './helpers/plugins.js';
 
 const FORMATS = join(__dirname, 'fixtures', 'storyformats');
 const COMPILE = { formatPaths: [FORMATS], useTweegoPath: false, noRemote: true };
@@ -68,7 +69,8 @@ function makeProject(story: string): string {
   return dir;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await cleanUp();
   for (const dir of dirs.splice(0)) removeDir(dir);
 });
 
@@ -437,7 +439,6 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     const events: RollupWatcherEvent[] = [];
     return new Promise((done) => {
       const listener = (event: RollupWatcherEvent): void => {
-        if (event.code === 'BUNDLE_END') void event.result.close();
         events.push(event);
         if (event.code === 'END') {
           started.off('event', listener);
@@ -456,13 +457,15 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
   it('reports a failed build and keeps watching until the story is fixed', async () => {
     const dir = makeProject(NO_START);
     const outDir = join(dir, 'dist');
-    const started = watch({
-      input: join(dir, 'entry.js'),
-      plugins: [storyPlugin(dir)],
-      output: { dir: outDir, format: 'es' },
-      watch: { buildDelay: 50 },
-      onLog: () => {},
-    });
+    const started = trackBuildWatch(
+      watch({
+        input: join(dir, 'entry.js'),
+        plugins: [storyPlugin(dir)],
+        output: { dir: outDir, format: 'es' },
+        watch: { buildDelay: 50 },
+        onLog: () => {},
+      }),
+    );
     watcher = started;
 
     const failed = await nextBuild(started);
@@ -489,13 +492,15 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     const dir = makeProject(storyWith('OLD_TEXT'));
     const story = join(dir, 'story');
     const out = join(story, 'index.html');
-    const started = watch({
-      input: join(dir, 'entry.js'),
-      plugins: [storyPlugin(dir)],
-      output: { dir: story, format: 'es' },
-      watch: { buildDelay: 50 },
-      onLog: () => {},
-    });
+    const started = trackBuildWatch(
+      watch({
+        input: join(dir, 'entry.js'),
+        plugins: [storyPlugin(dir)],
+        output: { dir: story, format: 'es' },
+        watch: { buildDelay: 50 },
+        onLog: () => {},
+      }),
+    );
     watcher = started;
 
     const first = await nextBuild(started);
@@ -525,25 +530,24 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     const outDir = join(dir, 'story/z-build');
     const out = join(outDir, OUTPUT_IN_SOURCES);
     const changes: string[] = [];
-    const started = watch({
-      input: join(dir, 'entry.js'),
-      plugins: [
-        tweeTsPlugin({
-          sources: [join(dir, 'story')],
-          format: 'test-format-1',
-          outputFilename: OUTPUT_IN_SOURCES,
-          compileOptions: COMPILE,
-        }),
-        recordChanges(changes),
-      ],
-      output: { dir: outDir, format: 'es' },
-      watch: { buildDelay: 50 },
-      onLog: () => {},
-    });
+    const started = trackBuildWatch(
+      watch({
+        input: join(dir, 'entry.js'),
+        plugins: [
+          tweeTsPlugin({
+            sources: [join(dir, 'story')],
+            format: 'test-format-1',
+            outputFilename: OUTPUT_IN_SOURCES,
+            compileOptions: COMPILE,
+          }),
+          recordChanges(changes),
+        ],
+        output: { dir: outDir, format: 'es' },
+        watch: { buildDelay: 50 },
+        onLog: () => {},
+      }),
+    );
     watcher = started;
-    started.on('event', (event) => {
-      if (event.code === 'BUNDLE_END') void event.result.close();
-    });
     await vi.waitFor(() => {
       expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
     }, settled);

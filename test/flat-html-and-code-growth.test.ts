@@ -8,7 +8,8 @@ import { decompileHTML } from '../src/html-parser.js';
 import { parseHtml } from '../src/html-structure.js';
 import { toTwine2Archive } from '../src/output-twine2.js';
 import { createStory } from '../src/story.js';
-import { growth, LINEAR_GROWTH } from './helpers/growth.js';
+import { LINEAR_GROWTH } from './helpers/growth.js';
+import { measureTextWork } from './helpers/text-work.js';
 
 const STORY =
   '<tw-storydata name="Probe" ifid="D674C58C-DEFA-4F70-B7A2-27742230C0FC">' +
@@ -70,17 +71,27 @@ describe('flat HTML foster parenting (#381)', () => {
 });
 
 describe('many uniquely named code passages (#463)', () => {
-  it.each(['script', 'stylesheet'] as const)('renders %s passages in linear time', { timeout: 120_000 }, (kind) => {
-    const make = (n: number) => ({
-      ...createStory(),
-      passages: Array.from({ length: n }, (_, i) => ({
-        name: `P${String(i)}`,
-        tags: [kind],
-        text: kind === 'script' ? 'void 0;' : 'a{color:red}',
-      })),
-    });
-    expect(growth(make, (story) => toTwine2Archive(story, 'Start', { diagnostics: [] }), 4000)).toBeLessThan(
-      LINEAR_GROWTH,
-    );
-  });
+  it.each(['script', 'stylesheet'] as const)(
+    'renders %s passages with linear string work',
+    { timeout: 120_000 },
+    (kind) => {
+      const make = (n: number) => ({
+        ...createStory(),
+        passages: Array.from({ length: n }, (_, i) => ({
+          name: `P${String(i)}`,
+          tags: [kind],
+          text: kind === 'script' ? 'void 0;' : 'a{color:red}',
+        })),
+      });
+      const render = (n: number) => {
+        const story = make(n);
+        return measureTextWork(() => toTwine2Archive(story, 'Start', { diagnostics: [] }));
+      };
+      const small = render(250);
+      const large = render(1000);
+      expect(large.value).toContain(`twine-user-${kind} #1000: "P999"`);
+      expect(small.work).toBeGreaterThan(0);
+      expect(large.work).toBeLessThan(small.work * LINEAR_GROWTH);
+    },
+  );
 });

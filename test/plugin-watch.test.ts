@@ -15,6 +15,7 @@ import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
 import { linksOnTheWay, missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
 import {
+  trackBuildWatch,
   cleanUp,
   COMPILE,
   makeProject,
@@ -232,20 +233,22 @@ describe('rollup --watch', { timeout: 30_000 }, () => {
   it('starts no build for an edit to a file exclude leaves out (D11)', async () => {
     const project = excludeProject();
     const changes: string[] = [];
-    const started = watch({
-      input: join(project.dir, 'entry.js'),
-      plugins: [
-        rollupPlugin({
-          sources: [join(project.dir, 'story')],
-          format: 'test-format-1',
-          compileOptions: { ...COMPILE, exclude: [project.exclude] },
-        }),
-        recordChanges(changes),
-      ],
-      output: { dir: join(project.dir, 'dist'), format: 'es' },
-      watch: { buildDelay: 20 },
-      onLog: () => {},
-    });
+    const started = trackBuildWatch(
+      watch({
+        input: join(project.dir, 'entry.js'),
+        plugins: [
+          rollupPlugin({
+            sources: [join(project.dir, 'story')],
+            format: 'test-format-1',
+            compileOptions: { ...COMPILE, exclude: [project.exclude] },
+          }),
+          recordChanges(changes),
+        ],
+        output: { dir: join(project.dir, 'dist'), format: 'es' },
+        watch: { buildDelay: 20 },
+        onLog: () => {},
+      }),
+    );
     watcher = started;
     await nextBuild(started);
     const seen = await editExcludedThenSource(project, join(project.dir, 'dist', 'index.html'), changes);
@@ -265,16 +268,18 @@ describe('rollup --watch', { timeout: 30_000 }, () => {
       symlinkSync(join(project.dir, 'story'), link, 'junction');
       const changes: string[] = [];
       const out = join(project.dir, 'dist', 'index.html');
-      const started = watch({
-        input: join(project.dir, 'entry.js'),
-        plugins: [
-          rollupPlugin({ sources: [link], format: 'test-format-1', compileOptions: COMPILE }),
-          recordChanges(changes),
-        ],
-        output: { dir: join(project.dir, 'dist'), format: 'es' },
-        watch: { buildDelay: 20 },
-        onLog: () => {},
-      });
+      const started = trackBuildWatch(
+        watch({
+          input: join(project.dir, 'entry.js'),
+          plugins: [
+            rollupPlugin({ sources: [link], format: 'test-format-1', compileOptions: COMPILE }),
+            recordChanges(changes),
+          ],
+          output: { dir: join(project.dir, 'dist'), format: 'es' },
+          watch: { buildDelay: 20 },
+          onLog: () => {},
+        }),
+      );
       watcher = started;
       await nextBuild(started);
       await vi.waitFor(() => {

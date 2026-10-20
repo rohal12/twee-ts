@@ -7,6 +7,7 @@ import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { resolvePluginOptions } from '../src/plugins/options.js';
 import {
   buildFiles,
+  trackBuildWatch,
   cleanUp,
   COMPILE,
   makeProject,
@@ -87,14 +88,13 @@ describe.skipIf(process.platform === 'win32')('plugin authored parent steps (#46
       const options = { sources: [`${dir}/pivot/../story`], format: 'test-format-1', compileOptions: COMPILE };
       const outDir = join(dir, 'dist');
       const startRollup = () => {
-        const watcher = watch({
-          input: join(dir, 'entry.js'),
-          plugins: [rollupPlugin(options)],
-          output: { dir: outDir, format: 'es' },
-        });
-        watcher.on('event', (event) => {
-          if (event.code === 'BUNDLE_END') void event.result.close();
-        });
+        const watcher = trackBuildWatch(
+          watch({
+            input: join(dir, 'entry.js'),
+            plugins: [rollupPlugin(options)],
+            output: { dir: outDir, format: 'es' },
+          }),
+        );
         return watcher;
       };
       const watcher =
