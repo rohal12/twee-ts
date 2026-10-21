@@ -11,7 +11,7 @@ import { watch } from 'rollup';
 import type { RollupWatcher } from 'rollup';
 import { createLinkWatch } from '../src/plugins/link-watch.js';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
-import { cleanUp, COMPILE, makeProject, storyWith, tempDir } from './helpers/plugins.js';
+import { trackBuildWatch, cleanUp, COMPILE, makeProject, storyWith, tempDir } from './helpers/plugins.js';
 
 const settled = { timeout: 20_000, interval: 100 };
 const noLinks = process.platform === 'win32';
@@ -70,25 +70,26 @@ describe.skipIf(noLinks)('the link watch without a temporary folder (#444)', () 
       useTmpdir(make());
       const out = join(dir, 'dist', 'index.html');
       const warnings: string[] = [];
-      const watcher = watch({
-        input: join(dir, 'entry.js'),
-        plugins: [
-          tweeTsPlugin({
-            sources: [join(dir, 'story.tw')],
-            format: 'test-format-1',
-            compileOptions: COMPILE,
-          }),
-        ],
-        output: { dir: join(dir, 'dist'), format: 'es' },
-        watch: { buildDelay: 50 },
-        onLog: (level, log) => {
-          if (level === 'warn') warnings.push(log.message);
-        },
-      });
+      const watcher = trackBuildWatch(
+        watch({
+          input: join(dir, 'entry.js'),
+          plugins: [
+            tweeTsPlugin({
+              sources: [join(dir, 'story.tw')],
+              format: 'test-format-1',
+              compileOptions: COMPILE,
+            }),
+          ],
+          output: { dir: join(dir, 'dist'), format: 'es' },
+          watch: { buildDelay: 50 },
+          onLog: (level, log) => {
+            if (level === 'warn') warnings.push(log.message);
+          },
+        }),
+      );
       watchers.push(watcher);
       const errors: string[] = [];
       watcher.on('event', (event) => {
-        if (event.code === 'BUNDLE_END') void event.result.close();
         if (event.code === 'ERROR') errors.push(event.error.message);
       });
       await vi.waitFor(() => {

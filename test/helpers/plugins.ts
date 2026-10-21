@@ -39,7 +39,7 @@ export const buildWatchSeesFolders = !/^8\.[01]\./.test(version);
 
 /** The watcher `vite build --watch` returns, as far as the tests use it. */
 export interface BuildWatcher {
-  on(event: 'event', listener: (event: { code: string; result?: { close(): unknown } }) => void): unknown;
+  on(event: 'event', listener: (event: { code: string; result?: { close(): unknown } | null }) => void): unknown;
   close(): Promise<void>;
 }
 
@@ -66,6 +66,44 @@ function newTempDir(): string {
 const servers: ViteDevServer[] = [];
 const watchers: BuildWatcher[] = [];
 
+/**
+ * Registers a just-started build watcher for cleanUp(). Rollup's close() stops watching but does not await a write
+ * already in flight (#436). Close on END, after the output and bundle disposal finish, before removing the project.
+ * An idle watcher closes immediately, cancelling its pending debounce. Repeated closes share the same promise.
+ */
+export function trackBuildWatch<T extends BuildWatcher>(watcher: T): T {
+  let running = true;
+  let stopping: Promise<void> | undefined;
+  let atEnd: (() => void) | undefined;
+  watcher.on('event', (event) => {
+    if (event.code === 'START' || event.code === 'BUNDLE_START') running = true;
+    if (event.code === 'BUNDLE_END' || event.code === 'ERROR') return event.result?.close();
+    if (event.code === 'END') {
+      running = false;
+      atEnd?.();
+    }
+    return undefined;
+  });
+  const stop = (): Promise<void> => {
+    stopping ??= new Promise<void>((done, fail) => {
+      const finish = (): void => {
+        void watcher.close().then(done, fail);
+      };
+      if (running) atEnd = finish;
+      else finish();
+    });
+    return stopping;
+  };
+  // Rollup assigns close() asynchronously during startup. Keep its object intact and expose our close on a wrapper.
+  const tracked = new Proxy(watcher, {
+    get(target, key, receiver): unknown {
+      return key === 'close' ? stop : Reflect.get(target, key, receiver);
+    },
+  });
+  watchers.push(tracked);
+  return tracked;
+}
+
 /** Starts `vite build --watch` and waits for its first build; cleanUp() closes it. */
 export async function startBuildWatch(config: InlineConfig): Promise<BuildWatcher> {
   const started: unknown = await build({
@@ -75,15 +113,14 @@ export async function startBuildWatch(config: InlineConfig): Promise<BuildWatche
     build: { ...config.build, watch: {} },
   });
   if (!isBuildWatcher(started)) throw new Error('the build returned no watcher');
-  watchers.push(started);
+  const tracked = trackBuildWatch(started);
   await new Promise<void>((done, fail) => {
     started.on('event', (event) => {
-      if (event.code === 'BUNDLE_END') void event.result?.close();
       if (event.code === 'END') done();
       if (event.code === 'ERROR') fail(new Error('the first build failed'));
     });
   });
-  return started;
+  return tracked;
 }
 
 /** A temporary project with `files` (relative path to content); removed by cleanUp(). */

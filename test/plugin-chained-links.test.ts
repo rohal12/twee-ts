@@ -15,7 +15,7 @@ import { tweeTsPlugin as rollupTweeTs } from '../src/plugins/rollup.js';
 import { toPosix } from '../src/plugins/paths.js';
 import { createLinkWatch } from '../src/plugins/link-watch.js';
 import { watchPlan, watchTargets } from '../src/plugins/watch-targets.js';
-import { cleanUp, COMPILE, makeProject, startBuildWatch, storyWith } from './helpers/plugins.js';
+import { trackBuildWatch, cleanUp, COMPILE, makeProject, startBuildWatch, storyWith } from './helpers/plugins.js';
 
 afterEach(cleanUp);
 
@@ -77,16 +77,15 @@ async function watchStory(bundler: Bundler, dir: string, inputs: Inputs): Promis
     return join(outDir, 'index.html');
   }
   writeFileSync(join(dir, 'entry.js'), 'export const a = 1;\n');
-  const watcher: RollupWatcher = watch({
-    input: join(dir, 'entry.js'),
-    plugins: [rollupTweeTs(options)],
-    output: { dir: outDir, format: 'es' },
-    watch: { buildDelay: 50 },
-    onLog: () => undefined,
-  });
-  watcher.on('event', (event) => {
-    if (event.code === 'BUNDLE_END') void event.result.close();
-  });
+  const watcher: RollupWatcher = trackBuildWatch(
+    watch({
+      input: join(dir, 'entry.js'),
+      plugins: [rollupTweeTs(options)],
+      output: { dir: outDir, format: 'es' },
+      watch: { buildDelay: 50 },
+      onLog: () => undefined,
+    }),
+  );
   watchers.push(watcher);
   await vi.waitFor(() => {
     expect(text(join(outDir, 'index.html'))).toContain('FIRST');

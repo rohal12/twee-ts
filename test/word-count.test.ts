@@ -8,7 +8,8 @@ import { countNormalizationSegments, countTextWords, countTextWordsChecked, stri
 import { splitTweeFields } from '../src/twee-syntax.js';
 import { MAX_HTML_DEPTH, htmlText } from '../src/html-structure.js';
 import { compile, lint } from '../src/index.js';
-import { growth, LINEAR_GROWTH } from './helpers/growth.js';
+import { LINEAR_GROWTH } from './helpers/growth.js';
+import { measureTextWork } from './helpers/text-work.js';
 
 /**
  * Tweego's comment expression, `(?s:/%.*?%/|/\*.*?\*\/|<!--.*?-->)`, as a JavaScript expression. Both engines
@@ -515,12 +516,11 @@ describe("countTextWords 'whitespace'", () => {
   });
 });
 
-// The time limit only ends a hang: what the test checks is how the time grows (see helpers/growth.ts). Each input is
-// made of `n` units (each case was written at 100,000); the fastest readers start at a larger `n`, and growth()
-// doubles it further on a runner where the smaller input is still too fast to time.
-describe('word counts take linear time on adversarial text', () => {
+// Count the characters passed through real searches and slices: scheduling and collection pauses cannot turn
+// linear scans into a failed timing ratio (#436). Literal word-count expectations are covered above.
+describe('word counts do linear string work on adversarial text', () => {
   const half = (n: number): number => Math.floor(n / 2);
-  const N = 50_000;
+  const N = 4000;
   const cases: readonly (readonly [string, (n: number) => string, number?])[] = [
     ['unclosed comments', (n) => '/*'.repeat(n) + '/%'.repeat(n) + '<!--'.repeat(half(n))],
     ['unclosed macros', (n) => '<<'.repeat(2 * n)],
@@ -556,10 +556,12 @@ describe('word counts take linear time on adversarial text', () => {
   ];
   it.each(cases.map(([label, make, n = N]) => ({ label, make, n })))('$label', { timeout: 120_000 }, ({ make, n }) => {
     for (const method of ['tweego', 'whitespace'] as const) {
-      expect(
-        growth(make, (text) => countTextWords(text, method), n),
-        method,
-      ).toBeLessThan(LINEAR_GROWTH);
+      const small = make(n);
+      const large = make(n * 4);
+      const work = (text: string): number => measureTextWork(() => countTextWords(text, method)).work;
+      const before = work(small);
+      expect(before, method).toBeGreaterThan(0);
+      expect(work(large), method).toBeLessThan(before * LINEAR_GROWTH);
     }
   });
 });

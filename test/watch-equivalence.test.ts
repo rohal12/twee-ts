@@ -270,15 +270,18 @@ describe('watch output equals a fresh compile after any sequence of operations',
   // CI run 38136948300 (macOS, seed -1901776366, path "25"): the build after l2.tw was linked started watches on the
   // link's target, which replaced the FSEvents stream of every folder watch, and d3 with its file, created right
   // after, never showed (#436).
-  it.skipIf(!LINKS)('after a link whose watches start right before a folder is made (#436)', async () => {
-    expect.hasAssertions();
-    await replay([
-      { kind: 'link', name: 'l2.tw', target: 't2.tw' },
-      { kind: 'mkdirWithFile', dir: 'd3', text: 'one' },
-      { kind: 'link', name: 'l1.tw', target: 't2.tw' },
-      { kind: 'write', file: 'd2/e.tw', text: 'two' },
-    ]);
-  });
+  it.skipIf(!LINKS).each([1, 2, 3, 4, 5])(
+    'after a link whose watches start right before a folder is made (#436, run %i)',
+    async () => {
+      expect.hasAssertions();
+      await replay([
+        { kind: 'link', name: 'l2.tw', target: 't2.tw' },
+        { kind: 'mkdirWithFile', dir: 'd3', text: 'one' },
+        { kind: 'link', name: 'l1.tw', target: 't2.tw' },
+        { kind: 'write', file: 'd2/e.tw', text: 'two' },
+      ]);
+    },
+  );
 });
 
 describe('folders moved or renamed under a watched folder (FS-04)', { timeout: 30_000 }, () => {
@@ -307,29 +310,32 @@ describe('folders moved or renamed under a watched folder (FS-04)', { timeout: 3
     }
   });
 
-  it('rebuilds for a folder renamed, a folder with a dot in its name included', async () => {
-    const w = startWatch([STORY_DATA, src], { sourceInfo: true, outputMode: 'twine2-archive' });
-    try {
-      await eventually(
-        () => readOut().includes('sub/side.tw') || readOut().includes('sub\\side.tw'),
-        () => 'first build',
-      );
-      await primed(w, join(src, 'main.tw'));
-      renameSync(join(src, 'sub'), join(src, 'chapter.v2'));
-      await eventually(
-        () => readOut().includes('chapter.v2'),
-        () => 'renamed folder in the source info',
-      );
-      renameSync(join(src, 'chapter.v2'), join(outside, 'chapter.v2'));
-      await eventually(
-        () => !readOut().includes('SIDE'),
-        () => 'folder with a dot moved out',
-      );
-      expect(w.errors).toEqual([]);
-    } finally {
-      w.controller.abort();
-    }
-  });
+  it.each([1, 2, 3, 4, 5])(
+    'rebuilds for a folder renamed, a folder with a dot in its name included (run %i)',
+    async () => {
+      const w = startWatch([STORY_DATA, src], { sourceInfo: true, outputMode: 'twine2-archive' });
+      try {
+        await eventually(
+          () => readOut().includes('sub/side.tw') || readOut().includes('sub\\side.tw'),
+          () => 'first build',
+        );
+        await primed(w, join(src, 'main.tw'));
+        renameSync(join(src, 'sub'), join(src, 'chapter.v2'));
+        await eventually(
+          () => readOut().includes('chapter.v2'),
+          () => 'renamed folder in the source info',
+        );
+        renameSync(join(src, 'chapter.v2'), join(outside, 'chapter.v2'));
+        await eventually(
+          () => !readOut().includes('SIDE'),
+          () => 'folder with a dot moved out',
+        );
+        expect(w.errors).toEqual([]);
+      } finally {
+        w.controller.abort();
+      }
+    },
+  );
 });
 
 describe.skipIf(!LINKS)('a source named through a symbolic link (#239)', { timeout: 30_000 }, () => {
