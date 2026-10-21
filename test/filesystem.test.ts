@@ -310,6 +310,43 @@ describe.skipIf(process.platform === 'win32')('getFilenames with build outputs a
   });
 
   describe('outputPaths', () => {
+    it.skipIf(process.platform === 'win32').each(['file', 'parent'] as const)(
+      'refreshes a retargeted %s link in live guards but retains snapshot keys (#268)',
+      (kind) => {
+        const oldDir = join(root, 'old');
+        const newDir = join(root, 'new');
+        mkdirSync(oldDir);
+        mkdirSync(newDir);
+        const oldFile = join(oldDir, 'out.html');
+        const newFile = join(newDir, 'out.html');
+        writeFileSync(oldFile, 'old');
+        const link = join(root, 'output-link');
+        symlinkSync(kind === 'file' ? oldFile : oldDir, link);
+        const out = kind === 'file' ? link : join(link, 'out.html');
+        const outputs = { files: [out], dirs: kind === 'parent' ? [link] : [] };
+        const live = outputPaths(outputs);
+        const snapshot = outputPaths(outputs, 'snapshot');
+        expect(live.isFile(oldFile)).toBe(true);
+        rmSync(link);
+        symlinkSync(kind === 'file' ? newFile : newDir, link);
+        // The new target is still missing: path exclusion must not depend on its inode.
+        expect(live.isFile(newFile)).toBe(true);
+        expect(live.isFile(out)).toBe(true);
+        expect(live.isFile(oldFile)).toBe(false);
+        expect(live.holds(newDir)).toBe(true);
+        expect(live.holds(oldDir)).toBe(false);
+        expect(snapshot.isFile(oldFile)).toBe(true);
+        expect(snapshot.isFile(newFile)).toBe(false);
+        writeFileSync(newFile, 'new');
+        expect(live.isOutput(newFile, [root])).toBe(true);
+        expect(live.isOutput(oldFile, [root])).toBe(false);
+        expect(live.isDir(newDir)).toBe(kind === 'parent');
+        expect(live.isDir(oldDir)).toBe(false);
+        expect(live.isOutput(join(newDir, 'asset.js'), [root])).toBe(kind === 'parent');
+        expect(live.isOutput(join(oldDir, 'asset.js'), [root])).toBe(false);
+      },
+    );
+
     it('tells whether a path is one discovery leaves out, given the source folders', () => {
       const build = join(story, 'build');
       const output = outputPaths({ files: [join(root, 'out.html')], dirs: [build] });

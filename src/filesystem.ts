@@ -107,7 +107,16 @@ export interface OutputPaths {
 
 /** `snapshot` is only for a synchronous checking phase; watchers keep reading live identities. */
 export function outputPaths(outputs: BuildOutputs, mode: 'live' | 'snapshot' = 'live'): OutputPaths {
-  const files = new Set(outputs.files.map((f) => identify(f).key));
+  const keyOf = (path: string): string => identify(path).key;
+  const keys = (paths: readonly string[]): (() => ReadonlySet<string>) => {
+    const read = (): ReadonlySet<string> => new Set(paths.map(keyOf));
+    const initial = mode === 'snapshot' ? read() : undefined;
+    return () => initial ?? read();
+  };
+  // Watch guards outlive link retargets, including links in parent directories. Discovery's synchronous
+  // snapshot still indexes every output just once, rather than for every source it encounters (#268, #482).
+  const files = keys(outputs.files);
+  const dirs = keys(outputs.dirs);
   let snapshot: ReadonlySet<string> | undefined;
   const outputInodes = (): ReadonlySet<string> => {
     if (snapshot !== undefined) return snapshot;
@@ -115,11 +124,8 @@ export function outputPaths(outputs: BuildOutputs, mode: 'live' | 'snapshot' = '
     if (mode === 'snapshot') snapshot = inodes;
     return inodes;
   };
-  const dirs = new Set(outputs.dirs.map((d) => identify(d).key));
-  const all = [...files, ...dirs];
-  const keyOf = (path: string): string => identify(path).key;
   const isFile = (path: string): boolean => {
-    if (files.has(keyOf(path))) return true;
+    if (files().has(keyOf(path))) return true;
     try {
       const stats = statSync(path, { bigint: true });
       return stats.isFile() && stats.nlink > 1n && outputInodes().has(`${stats.dev}:${stats.ino}`);
@@ -129,15 +135,18 @@ export function outputPaths(outputs: BuildOutputs, mode: 'live' | 'snapshot' = '
   };
   return {
     isFile,
-    isDir: (path) => dirs.has(keyOf(path)),
+    isDir: (path) => dirs().has(keyOf(path)),
     holds(path) {
       const key = keyOf(path);
-      return dirs.has(key) || all.some((output) => output !== key && isKeyInside(output, key, sep));
+      const folders = dirs();
+      return (
+        folders.has(key) || [...files(), ...folders].some((output) => output !== key && isKeyInside(output, key, sep))
+      );
     },
     isOutput(path, roots) {
       if (isFile(path)) return true;
       const key = keyOf(path);
-      const owners = [...dirs].filter((dir) => isKeyInside(key, dir, sep));
+      const owners = [...dirs()].filter((dir) => isKeyInside(key, dir, sep));
       if (owners.length === 0) return false;
       // A root walks into the path unless an owned folder below the root holds it.
       const reaching = roots.map(keyOf).filter((root) => isKeyInside(key, root, sep));

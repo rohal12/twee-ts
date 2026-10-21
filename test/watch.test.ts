@@ -1265,6 +1265,42 @@ describe.skipIf(process.platform === 'win32')('watch with the output reached thr
     rmSync(root, { recursive: true, force: true });
   });
 
+  it.each(['file', 'parent'] as const)('ignores writes after retargeting the output %s link (#268)', async (kind) => {
+    const oldDir = join(root, 'old');
+    const story = join(root, 'story');
+    mkdirSync(oldDir);
+    mkdirSync(story);
+    const start = join(story, 'start.tw');
+    writeFileSync(start, STORY);
+    const link = join(root, 'out');
+    symlinkSync(kind === 'file' ? join(oldDir, 'z.html') : oldDir, link);
+    const outFile = kind === 'file' ? link : join(link, 'z.html');
+    const builds = buildQueue();
+    controller = await watch({
+      sources: [story],
+      outputMode: 'twine2-archive',
+      outFile,
+      onBuild: builds.onBuild,
+      onError: builds.onError,
+    });
+    await builds.next();
+    rmSync(link);
+    symlinkSync(kind === 'file' ? join(story, 'z.html') : story, link);
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    writeFileSync(start, STORY.replace('Hello from the story.', 'RETARGETED_CONTENT'));
+    emit(story, 'start.tw');
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+    expect((await builds.next()).output).toContain('RETARGETED_CONTENT');
+    expect(readFileSync(join(story, 'z.html'), 'utf-8')).toContain('RETARGETED_CONTENT');
+
+    vi.useFakeTimers(FAKE_TIMERS);
+    emit(story, 'z.html');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(builds.errors).toEqual([]);
+  });
+
   it('neither loads the output back nor rebuilds for writing it', async () => {
     const story = join(root, 'story');
     const start = join(story, 'start.tw');

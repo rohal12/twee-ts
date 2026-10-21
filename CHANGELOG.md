@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refresh watched output path identities after final or parent symlinks are retargeted, preventing rebuild loops (#268).
+- Merge attributes from repeated HTML `html` and `body` tags with indexed name checks (#495).
+- Trim script-type HTML whitespace in linear time during inspection, lint and template analysis (#496).
+
 - Preserve source-map directive text inside bundled JavaScript and CSS literals (#491).
 - Read long literal prefixes in Vite entry glob patterns without quadratic suffix searches (#492).
 - Tokenize distinct HTML attributes with indexed duplicate checks in documents, fragments and visible text (#493).

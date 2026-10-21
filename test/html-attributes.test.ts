@@ -1,13 +1,19 @@
 /** Unique attributes must not cause pairwise tokenizer work (#493). */
 import { describe, expect, it, vi } from 'vitest';
-import { parse, serialize, Tokenizer } from 'parse5';
+import { defaultTreeAdapter, parse, serialize, Tokenizer } from 'parse5';
 import type { Token } from 'parse5';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compile } from '../src/compiler.js';
 import { decompileHTML } from '../src/html-parser.js';
-import { htmlText, parseHtml, scriptsJQueryRuns, wikifiedElementAttributes } from '../src/html-structure.js';
+import {
+  analyzeTemplate,
+  htmlText,
+  parseHtml,
+  scriptsJQueryRuns,
+  wikifiedElementAttributes,
+} from '../src/html-structure.js';
 import { LINEAR_GROWTH } from './helpers/growth.js';
 
 const attributes = (n: number): string => Array.from({ length: n }, (_, i) => `a${String(i)}="x"`).join(' ');
@@ -22,6 +28,70 @@ interface AttributeHook {
 }
 
 describe('HTML attributes (#493)', () => {
+  it.each([
+    ['html', false],
+    ['html', true],
+    ['body', false],
+    ['body', true],
+  ] as const)('adopts repeated %s attributes with linear array work (duplicates: %s) (#495)', (tag, duplicates) => {
+    let reads = 0;
+    const create = defaultTreeAdapter.createElement.bind(defaultTreeAdapter);
+    const spy = vi.spyOn(defaultTreeAdapter, 'createElement').mockImplementation((...args) => {
+      const element = create(...args);
+      element.attrs = new Proxy(element.attrs, {
+        get(target, property, receiver): unknown {
+          if (property === 'length' || (typeof property === 'string' && /^(?:0|[1-9]\d*)$/.test(property))) reads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return element;
+    });
+    const work = (n: number): number => {
+      reads = 0;
+      const tags = Array.from({ length: n }, (_, i) => `<${tag} a${String(duplicates ? 0 : n + i)}="later">`).join('');
+      const result = decompileHTML(`<${tag} ${attributes(n)}>${tags}${story('')}`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('hi');
+      return reads;
+    };
+    try {
+      const small = work(250);
+      const large = work(1000);
+      expect(small).toBeGreaterThan(0);
+      expect(large).toBeLessThan(small * LINEAR_GROWTH);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(['html', 'body'])('preserves first adopted %s values and source locations (#495)', (tag) => {
+    const html =
+      `<${tag} A="first" __proto__="safe"><${tag} a="ignored" B="new">` +
+      `<${tag} b="ignored" constructor="own">${story('')}`;
+    expect(parseHtml(html)).toEqual(parse(html, { sourceCodeLocationInfo: true, scriptingEnabled: true }));
+    expect(serialize(parseHtml(html, false))).toBe(serialize(parse(html)));
+  });
+
+  it.each(['html', 'body'])('imports and analyzes many accumulating %s attributes (#495)', async (tag) => {
+    const dir = mkdtempSync(join(tmpdir(), 'twee-adopted-attributes-'));
+    try {
+      const prefix = `<${tag}>` + Array.from({ length: 16_000 }, (_, i) => `<${tag} a${String(i)}="x">`).join('');
+      const source = join(dir, 'story.html');
+      writeFileSync(source, prefix + story(''));
+      const result = await compile({ sources: [source], outputMode: 'json' });
+      expect(result.diagnostics).toEqual([]);
+      expect(result.story.passages.find((p) => p.name === 'Start')?.text).toBe('hi');
+      const template = `${prefix}<p>{{X}}</p>`;
+      const start = template.indexOf('{{X}}');
+      const analysis = analyzeTemplate(template, [
+        { start, end: start + 5, innerStart: start + 2, innerEnd: start + 3 },
+      ]);
+      expect(analysis.sites[0]?.context).toEqual({ kind: 'text', dropsLeadingNewline: false });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     {
       kind: 'document',
