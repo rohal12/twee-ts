@@ -11,8 +11,8 @@
  * (never text, a comment, an attribute value, template content or CDATA); where no such point exists, nothing is
  * inserted and the caller reports it.
  */
-import { defaultTreeAdapter, parse, parseFragment, Parser, html as htmlSpec } from 'parse5';
-import type { DefaultTreeAdapterTypes } from 'parse5';
+import { defaultTreeAdapter, parseFragment, Parser, Tokenizer, ErrorCodes, html as htmlSpec } from 'parse5';
+import type { DefaultTreeAdapterMap, DefaultTreeAdapterTypes, ParserOptions, Token } from 'parse5';
 import { cssContexts, javaScriptContexts } from './code-context.js';
 import type { InContext, SourceRange } from './code-context.js';
 import { attrEscape } from './escape.js';
@@ -28,6 +28,56 @@ type ChildNode = DefaultTreeAdapterTypes.ChildNode;
 type HtmlNode = DefaultTreeAdapterTypes.Node;
 
 const HTML_NS = htmlSpec.NS.HTML;
+
+/**
+ * parse5's attribute-name completion with an index in place of its backwards attribute-array search (#493).
+ * The rest follows Tokenizer._leaveAttrName: first value wins, names have already been folded by the tokenizer,
+ * and attribute locations are recorded before values are read. Namespace adjustment still belongs to the parser.
+ */
+class IndexedAttributeTokenizer extends Tokenizer {
+  private attributeToken: Token.Token | null = null;
+  private readonly attributeNames = new Set<string>();
+
+  protected override _leaveAttrName(): void {
+    const token = this.currentToken;
+    if (token === null || !('attrs' in token)) return;
+    if (token !== this.attributeToken) {
+      this.attributeToken = token;
+      this.attributeNames.clear();
+    }
+    const { name } = this.currentAttr;
+    if (this.attributeNames.has(name)) {
+      this._err(ErrorCodes.duplicateAttribute);
+      return;
+    }
+    this.attributeNames.add(name);
+    token.attrs.push(this.currentAttr);
+    if (token.location !== null && this.currentLocation !== null) {
+      if (token.location.attrs === undefined) {
+        const locations: Record<string, Token.Location> = {};
+        Object.setPrototypeOf(locations, null);
+        token.location.attrs = locations;
+      }
+      token.location.attrs[name] = this.currentLocation;
+      this._leaveAttrValue();
+    }
+  }
+}
+
+/** Install the indexed tokenizer before either document input or fragment-context initialization is read. */
+class HtmlParser extends Parser<DefaultTreeAdapterMap> {
+  constructor(
+    options?: ParserOptions<DefaultTreeAdapterMap>,
+    document?: HtmlDocument,
+    fragmentContext?: HtmlElement | null,
+    scriptHandler?: null | ((pendingScript: HtmlElement) => void),
+  ) {
+    super(options, document, fragmentContext, scriptHandler);
+    const { inForeignNode } = this.tokenizer;
+    this.tokenizer = new IndexedAttributeTokenizer(this.options, this);
+    this.tokenizer.inForeignNode = inForeignNode;
+  }
+}
 
 /**
  * The deepest nesting of elements read from HTML, as Chromium's parser limits it (512). An HTML parser looks through
@@ -128,7 +178,7 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
  * `TweeTsError` when elements nest more than `MAX_HTML_DEPTH` deep (an `HtmlNestingError`).
  */
 export function parseHtml(html: string, locations = true): HtmlDocument {
-  return parse(html, {
+  return HtmlParser.parse(html, {
     sourceCodeLocationInfo: locations,
     scriptingEnabled: true,
     treeAdapter: depthLimitedTreeAdapter(),
@@ -137,7 +187,7 @@ export function parseHtml(html: string, locations = true): HtmlDocument {
 
 /** Parse `html` as the content of a `div` element, as `parseHtml()` reads a document. */
 function parseHtmlFragment(html: string): DefaultTreeAdapterTypes.DocumentFragment {
-  const parser = Parser.getFragmentParser(FRAGMENT_CONTEXT, {
+  const parser = HtmlParser.getFragmentParser(FRAGMENT_CONTEXT, {
     scriptingEnabled: true,
     treeAdapter: depthLimitedTreeAdapter(),
   });
@@ -1116,7 +1166,7 @@ export function htmlText(html: string): string {
 
 /** The document `html` makes after `TEXT_CONTEXT` (see `afterContext`). */
 function parseText(html: string): HtmlDocument {
-  return parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
+  return HtmlParser.parse(TEXT_CONTEXT + html, { scriptingEnabled: true, treeAdapter: depthLimitedTreeAdapter() });
 }
 
 /** The body of the page that `TEXT_CONTEXT` starts. */
