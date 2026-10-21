@@ -25,6 +25,7 @@ import { toPosix } from './paths.js';
 import { moduleGlobScopes } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
 import { isRecord } from '../util.js';
+import { cssContexts, javaScriptContexts } from '../code-context.js';
 
 /** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
 export const PLUGIN_NAME = 'twee-ts';
@@ -188,10 +189,28 @@ export function entryInputSettings(
 }
 
 /** Removes a trailing source-map comment that points at a file (a data: URL map stays). */
-function dropFileSourceMapComment(code: string): string {
-  return code
-    .replace(/\n?\/\/# sourceMappingURL=(?!data:)\S*\s*$/, '')
-    .replace(/\n?\/\*# sourceMappingURL=(?!data:)[^*]*\*\/\s*$/, '');
+function dropFileSourceMapComment(code: string, language: 'js' | 'css'): string {
+  const end = code.trimEnd().length;
+  const start = Math.max(
+    language === 'js' ? code.lastIndexOf('//# sourceMappingURL=', end) : -1,
+    code.lastIndexOf('/*# sourceMappingURL=', end),
+  );
+  if (start === -1) return code;
+  const candidate = code.slice(start, end);
+  if (!/^(?:\/\/# sourceMappingURL=(?!data:)\S*|\/\*# sourceMappingURL=(?!data:)[^*]*\*\/)$/u.test(candidate)) {
+    return code;
+  }
+  // The whole candidate must be a comment, starting here: directive text inside a literal or another comment
+  // is data. Extending the range one character left distinguishes an opener from text inside an older comment.
+  const ranges = [
+    { start, end },
+    { start: Math.max(0, start - 1), end },
+  ];
+  const [at, before] = language === 'js' ? javaScriptContexts(code, ranges) : cssContexts(code, ranges);
+  const kind = at?.context.kind;
+  if (kind !== 'line-comment' && kind !== 'block-comment' && kind !== 'comment') return code;
+  if (start > 0 && before?.context.kind === kind) return code;
+  return code.slice(0, code[start - 1] === '\n' ? start - 1 : start);
 }
 
 /** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
@@ -232,12 +251,12 @@ export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputNam
   for (const [fileName, item] of Object.entries(bundle)) {
     if (item.type === 'chunk') {
       if (!item.isEntry || (inputName !== undefined && item.name !== inputName)) continue;
-      script = dropFileSourceMapComment(item.code);
+      script = dropFileSourceMapComment(item.code, 'js');
       for (const id of item.moduleIds) if (!id.startsWith('\0')) files.add(fileOfId(id));
       removeFromBundle(bundle, fileName);
     } else if (fileName.endsWith('.css') && !isImportedFile(item)) {
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
-      styles.push(dropFileSourceMapComment(css));
+      styles.push(dropFileSourceMapComment(css, 'css'));
       removeFromBundle(bundle, fileName);
     } else if (fileName.endsWith('.map') && (item.originalFileNames?.length ?? 0) === 0) {
       // Generated source maps have no originating resource; an imported .map has one, relative or absolute.

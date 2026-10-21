@@ -8,6 +8,7 @@ import { symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { build } from 'vite';
 import type { Plugin } from 'vite';
+import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 import {
   globCalls,
   moduleGlobScopes,
@@ -366,6 +367,43 @@ const hookContext = (
 ) => ({ resolve: vi.fn(resolve), warn: vi.fn() });
 
 const GLOB_CODE = "export const w = import.meta.glob('./w/*.js');";
+
+describe('literal glob suffix work (#492)', () => {
+  const magic = ['*', '?', '[', ']', '{', '}', '(', ')', '!', '+', '@', '\\'];
+
+  it.each(magic)('keeps the literal suffix after %s', async (character) => {
+    const root = makeProject({});
+    const scopes = await scopesOf(
+      {
+        patterns: [`./${'a'.repeat(1000)}${character}`, `./${'a'.repeat(1000)}${character}.Js`],
+        base: undefined,
+        exhaustive: false,
+      },
+      join(root, 'entry.js'),
+      root,
+      () => Promise.resolve(undefined),
+    );
+    expect(scopes.map((value) => ({ dir: value.dir, suffix: value.suffix }))).toEqual([
+      { dir: toPosix(root), suffix: '' },
+      { dir: toPosix(root), suffix: '.js' },
+    ]);
+  });
+
+  it('reads long literal prefixes ending in magic with linear growth', { timeout: 120_000 }, () => {
+    const root = makeProject({});
+    const ratio = growth(
+      (n) => magic.flatMap((character) => [`./${'a'.repeat(n)}${character}`, `./${'a'.repeat(n)}${character}.js`]),
+      (patterns) => {
+        // Relative patterns are processed synchronously before scopesOf returns its resolved promise.
+        void scopesOf({ patterns, base: undefined, exhaustive: false }, join(root, 'entry.js'), root, () =>
+          Promise.resolve(undefined),
+        );
+      },
+      1000,
+    );
+    expect(ratio).toBeLessThan(LINEAR_GROWTH);
+  });
+});
 
 describe('moduleGlobScopes', () => {
   it('reads nothing from a module without a glob call', async () => {

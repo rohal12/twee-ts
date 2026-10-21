@@ -26,6 +26,38 @@ const chunk = (name: string, isEntry: boolean, code: string): BundleItem => ({
 });
 
 describe('takeEntryFromBundle', () => {
+  it.each([
+    'globalThis.value="//# sourceMappingURL=example.map";',
+    "globalThis.value='//# sourceMappingURL=example.map';globalThis.after=1;",
+    'globalThis.value=`//# sourceMappingURL=example.map`;',
+    'globalThis.value=`before${1}/*# sourceMappingURL=example.map */`;',
+    'globalThis.value="/*# sourceMappingURL=example.map */";',
+    'globalThis.value=/[/*# sourceMappingURL=example.map]*/;',
+    '/* outer /*# sourceMappingURL=example.map */',
+    '// outer //# sourceMappingURL=example.map',
+  ])('preserves directive text that is not a complete trailing comment: %s', (code) => {
+    expect(takeEntryFromBundle({ 'entry.js': chunk('main', true, code) }).script).toBe(code);
+  });
+
+  it.each([
+    'a{content:"/*# sourceMappingURL=example.map */"}',
+    'a{--value:"//# sourceMappingURL=example.map"}',
+    '/* outer /*# sourceMappingURL=example.map */',
+    'a{}\n/*# sourceMappingURL=data:application/json;base64,e30= */',
+  ])('preserves stylesheet directive data: %s', (code) => {
+    expect(takeEntryFromBundle({ 'style.css': { type: 'asset', source: code } }).style).toBe(code);
+  });
+
+  it.each(['//# sourceMappingURL=entry.map', '/*# sourceMappingURL=entry.map */'])(
+    'removes a real trailing JavaScript comment: %s',
+    (comment) => {
+      const code = `globalThis.value="//# sourceMappingURL=example.map";\n${comment}\n`;
+      expect(takeEntryFromBundle({ 'entry.js': chunk('main', true, code) }).script).toBe(
+        'globalThis.value="//# sourceMappingURL=example.map";',
+      );
+    },
+  );
+
   it('keeps imported map resources while removing generated source maps', () => {
     const bundle: Record<string, BundleItem> = {
       'world.map': { type: 'asset', source: 'map data', originalFileNames: ['/p/world.map'] },

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve source-map directive text inside bundled JavaScript and CSS literals (#491).
+- Read long literal prefixes in Vite entry glob patterns without quadratic suffix searches (#492).
+- Tokenize distinct HTML attributes with indexed duplicate checks in documents, fragments and visible text (#493).
+
 - Reject a Twine 1 HTML title omitted by `Twine.private`, including tag aliases (#351).
 - Preserve JavaScript numeric escapes and CSS hex escapes across template substitutions (#486).
 - Bound custom-element end-tag recognition and wildcard closing-tag searches in word counts, inspection and lint (#487, #488).

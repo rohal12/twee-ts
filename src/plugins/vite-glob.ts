@@ -235,8 +235,12 @@ function lineColumn(code: string, offset: number): string {
 /** Characters that make a segment of a pattern match more than its own name (picomatch's, and its escape). */
 const MAGIC = /[*?[\]{}()!+@\\]/;
 
-/** The characters at the end of a segment after its last MAGIC one. */
-const LITERAL_END = /[^*?[\]{}()!+@\\]*$/;
+/** The characters after the last MAGIC one, found without retrying each literal prefix as a regex start. */
+function literalEnd(segment: string): string {
+  let start = segment.length;
+  while (start > 0 && !MAGIC.test(segment.charAt(start - 1))) start -= 1;
+  return segment.slice(start).toLowerCase();
+}
 
 /** Whether a pattern's segments may match a name starting with a dot, which a wildcard alone never does. */
 function namesDot(segments: readonly string[]): boolean {
@@ -258,7 +262,7 @@ function scopeOf(dir: string, rest: string, exhaustive: boolean): GlobScope {
     deep: below.length > 1 || below.some((segment) => segment.includes('**')),
     dot: exhaustive || namesDot(below),
     exhaustive,
-    suffix: (LITERAL_END.exec(below.at(-1) ?? '')?.[0] ?? '').toLowerCase(),
+    suffix: literalEnd(below.at(-1) ?? ''),
   };
 }
 

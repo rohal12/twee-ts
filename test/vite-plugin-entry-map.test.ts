@@ -1,6 +1,7 @@
 /** Explicitly imported map data survives both entry build branches and dev, outside the static root (#457). */
 import { afterEach, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import {
   COMPILE,
@@ -14,6 +15,38 @@ import {
 } from './helpers/plugins.js';
 
 afterEach(cleanUp);
+
+describe('source-map directive literals (#491)', () => {
+  it.each(['inside', 'separate'] as const)('executes minified entry literals: %s', async (mode) => {
+    const root = makeProject({
+      'story/start.tw': STORY,
+      'outer.js': 'globalThis.outer = 1;',
+      'entry.js': `globalThis.values = ['//# sourceMappingURL=example.map', \`/*# sourceMappingURL=template.map */\`];
+globalThis.after = 42;
+globalThis.last = '//# sourceMappingURL=last.map';`,
+    });
+    const files = await buildFiles({
+      root,
+      plugins: [
+        tweeTsPlugin({
+          sources: [join(root, 'story')],
+          entry: join(root, 'entry.js'),
+          format: 'test-format-1',
+          compileOptions: COMPILE,
+        }),
+      ],
+      build: {
+        minify: true,
+        ...(mode === 'separate' ? { rolldownOptions: { input: join(root, 'outer.js') } } : {}),
+      },
+    });
+    const context: { values?: unknown; after?: unknown; last?: unknown } = {};
+    runInNewContext(userScript(textOf(files.get('index.html'))), context);
+    expect(context.values).toEqual(['//# sourceMappingURL=example.map', '/*# sourceMappingURL=template.map */']);
+    expect(context.after).toBe(42);
+    expect(context.last).toBe('//# sourceMappingURL=last.map');
+  });
+});
 
 describe('imported map assets (#457)', () => {
   it.each(['inside', 'separate', 'dev'] as const)('serves the referenced bytes: %s', async (mode) => {
