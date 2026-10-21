@@ -102,6 +102,9 @@ export class HtmlNestingError extends TweeTsError {
  */
 function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
   const templateOfContent = new WeakMap<ParentNode, ParentNode>();
+  // Repeated html/body tags merge into the same element. Index its existing names once, rather than
+  // rebuilding parse5's Set from the growing attribute array for every start tag (#495).
+  const adoptedNames = new WeakMap<HtmlElement, Set<string>>();
   const parentOf = (node: ParentNode): ParentNode | null | undefined =>
     'parentNode' in node ? node.parentNode : templateOfContent.get(node);
   // The number of elements from a node up to the root, itself included, for the current `moves`.
@@ -137,6 +140,18 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
   const placed = checkDepth;
   return {
     ...defaultTreeAdapter,
+    adoptAttributes(recipient, attrs) {
+      let names = adoptedNames.get(recipient);
+      if (names === undefined) {
+        names = new Set(recipient.attrs.map((attr) => attr.name));
+        adoptedNames.set(recipient, names);
+      }
+      for (const attr of attrs) {
+        if (names.has(attr.name)) continue;
+        names.add(attr.name);
+        recipient.attrs.push(attr);
+      }
+    },
     appendChild(parent, child) {
       placed(parent, child);
       defaultTreeAdapter.appendChild(parent, child);
@@ -949,7 +964,13 @@ function scriptLanguage(script: HtmlElement): ScriptLanguage {
  * script, anything else a data block (`json` for a JSON type, which only template filling tells apart).
  */
 function typeStringLanguage(type: string): ScriptLanguage {
-  const typeString = type.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase());
+  // HTML trims only ASCII whitespace, not JavaScript's broader trim() set. Walk the ends once:
+  // an unanchored whitespace+$ retries every suffix of an internal run before a non-space (#496).
+  let start = 0;
+  let end = type.length;
+  while (start < end && '\t\n\f\r '.includes(type.charAt(start))) start += 1;
+  while (end > start && '\t\n\f\r '.includes(type.charAt(end - 1))) end -= 1;
+  const typeString = type.slice(start, end).replace(/[A-Z]/g, (c) => c.toLowerCase());
   if (JAVASCRIPT_TYPES.has(typeString)) return 'classic';
   if (typeString === 'module') return 'module';
   const essence = typeString.split(';')[0]?.trim() ?? '';

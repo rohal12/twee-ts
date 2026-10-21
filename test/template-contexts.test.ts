@@ -20,6 +20,23 @@ function sites(template: string) {
 }
 
 describe('placeholder sites', () => {
+  it.each([' ', '\t', '\n', '\f', '\r', '\u00a0', '\u2003', '\uFEFF'])(
+    'preserves script contexts around long %j runs (#496)',
+    (space) => {
+      const padding = space.repeat(16_000);
+      const ascii = [' ', '\t', '\n', '\f', '\r'].includes(space);
+      expect(sites(`<script type="text/javascript${padding}x">"{{X}}"</script>`)[0]?.context).toEqual({
+        kind: 'raw-text',
+        element: 'script',
+      });
+      expect(sites(`<script type="${padding}TEXT/JAVASCRIPT${padding}">"{{X}}"</script>`)[0]?.context).toEqual(
+        ascii
+          ? { kind: 'script', module: false, js: { kind: 'string', quote: '"', whole: false }, escapable: false }
+          : { kind: 'raw-text', element: 'script' },
+      );
+    },
+  );
+
   it.each([
     ['<title>{{X}}</title>', { kind: 'text', dropsLeadingNewline: false }],
     ['<p>{{X}}</p>', { kind: 'text', dropsLeadingNewline: false }],

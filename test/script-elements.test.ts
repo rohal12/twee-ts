@@ -14,6 +14,9 @@ import { javaScriptStrings } from '../src/javascript-strings.js';
 import { storyInspect } from '../src/inspect.js';
 import { parseTwee } from '../src/parser.js';
 import { StoryBuilder } from '../src/story.js';
+import { compile } from '../src/compiler.js';
+import { lint } from '../src/lint.js';
+import { growth, LINEAR_GROWTH } from './helpers/growth.js';
 
 /** WHATWG MIME Sniffing: the JavaScript MIME type essences. */
 const JS_ESSENCES = [
@@ -85,6 +88,40 @@ function runs(attrs: ScriptAttributes): 'classic' | 'module' | 'none' {
 }
 
 const none: ScriptAttributes = { type: undefined, language: undefined, src: undefined, nomodule: false };
+
+describe('script type whitespace work (#496)', () => {
+  it.each([' ', '\t', '\n', '\f', '\r'])(
+    'bounds growth for an internal run of %j followed by an invalid suffix',
+    { timeout: 120_000 },
+    (space) => {
+      const make = (n: number): string => element({ ...none, type: `text/javascript${space.repeat(n)}x` }, CODE);
+      expect(scriptsJQueryRuns(make(2000))).toEqual([]);
+      expect(growth(make, scriptsJQueryRuns, 2000)).toBeLessThan(LINEAR_GROWTH);
+    },
+  );
+
+  it.each([' ', '\t', '\n', '\f', '\r', '\u00a0', '\u2003', '\uFEFF'])(
+    'preserves long %j runs through inspection and default lint',
+    async (space) => {
+      const padding = space.repeat(16_000);
+      const valid = [' ', '\t', '\n', '\f', '\r'].includes(space);
+      const passage = (type: string): string => element({ ...none, type }, CODE);
+      expect(scriptsJQueryRuns(passage(`${padding}TEXT/JAVASCRIPT${padding}`))).toEqual(
+        valid ? [{ kind: 'classic', code: CODE }] : [],
+      );
+      const content =
+        `:: StoryTitle\nWhitespace\n:: StoryData\n` +
+        '{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n:: Start\n' +
+        passage(`text/javascript${padding}x`);
+      const sources = [{ filename: 'whitespace.tw', content }];
+      const compiled = await compile({ sources, outputMode: 'json' });
+      expect(storyInspect(compiled.story).brokenLinks).toEqual([]);
+      const linted = await lint({ sources });
+      expect(linted.brokenLinks).toEqual([]);
+      expect(linted.diagnostics).toEqual([]);
+    },
+  );
+});
 
 describe('scriptsJQueryRuns: which script elements run, and how (table)', () => {
   const cases: readonly [string, ScriptAttributes][] = [
