@@ -142,11 +142,14 @@ describe.skipIf(noLinks)('a link in a folder that cannot be followed, found by g
 
 describe.skipIf(noLinks)('a link in a source folder that cannot be followed, through every surface (#446)', () => {
   it.each(KINDS)('keeps watching ordinary files beside a %s link and notices its replacement', async (kind) => {
-    const dir = makeProject({ 'story/start.tw': STORY });
+    const probeContent = ':: Ready\nReady.\n';
+    const dir = makeProject({ 'story/start.tw': STORY, 'story/ready.tw': probeContent });
     const folder = join(dir, 'story');
     const link = join(folder, 'link.tw');
+    const probe = join(folder, 'ready.tw');
     unreachableLink(kind, link);
     const builds: (ReadonlySet<string> | undefined)[] = [];
+    const changed = (file: string): boolean => builds.some((files) => files?.has(relative(process.cwd(), file)));
     const errors: Error[] = [];
     const handle = watchFilesystem(
       [folder],
@@ -159,10 +162,21 @@ describe.skipIf(noLinks)('a link in a source folder that cannot be followed, thr
     );
     try {
       expect(errors).toEqual([]);
+      // With stream catch-up disabled, fs.watch() returning does not mean FSEvents has started. Probe with
+      // unchanged content until a real event arrives before making the one-shot edits this test asserts.
+      // Each assertion names its own file, so a late probe event cannot stand in for either actual edit.
+      await vi.waitFor(
+        () => {
+          if (!changed(probe)) writeFileSync(probe, probeContent);
+          expect(changed(probe)).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      builds.length = 0;
       writeFileSync(join(folder, 'start.tw'), STORY + '\nChanged.');
       await vi.waitFor(
         () => {
-          expect(builds.length).toBeGreaterThan(1);
+          expect(changed(join(folder, 'start.tw'))).toBe(true);
         },
         { timeout: 5000 },
       );
@@ -172,7 +186,7 @@ describe.skipIf(noLinks)('a link in a source folder that cannot be followed, thr
       writeFileSync(link, ':: Replaced\nNow readable.');
       await vi.waitFor(
         () => {
-          expect(builds.length).toBeGreaterThan(0);
+          expect(changed(link)).toBe(true);
         },
         { timeout: 5000 },
       );
