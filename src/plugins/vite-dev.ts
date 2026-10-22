@@ -177,9 +177,9 @@ function fileState(file: string): string | undefined {
  * `folder` is not a folder.
  */
 function folderState(folder: string): string | undefined {
-  if (statSync(folder, { throwIfNoEntry: false })?.isDirectory() !== true) return undefined;
   let names: string[];
   try {
+    if (statSync(folder, { throwIfNoEntry: false })?.isDirectory() !== true) return undefined;
     names = readdirSync(folder, { recursive: true, encoding: 'utf8' });
   } catch {
     return undefined;
@@ -407,6 +407,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // The input files as the last compile found them, to tell whether the watcher
   // missed a change (see catchUp).
   let compiledInputs = new Map<string, string>();
+  let compiledInputNames: string | undefined;
   let catchingUp: Promise<void> | undefined;
 
   // Stops this server's rebuilds when it closes, on close() and restart() alike;
@@ -423,12 +424,18 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   };
 
   // What each named input is, by identity and kind: a link to one retargeted, or a file replaced by a folder,
-  // changes it.
+  // changes it. A failed probe is a stable state too: the compiler reports its cause during rebuild, and a
+  // change from missing to unreadable (with no file in either walk) still needs that rebuild.
   const namedInputs = (): string =>
     inputs
       .map((input) => {
-        const stat = statSync(input, { throwIfNoEntry: false });
-        const kind = stat === undefined ? 'none' : stat.isFile() ? 'file' : stat.isDirectory() ? 'folder' : 'other';
+        let kind: string;
+        try {
+          const stat = statSync(input, { throwIfNoEntry: false });
+          kind = stat === undefined ? 'none' : stat.isFile() ? 'file' : stat.isDirectory() ? 'folder' : 'other';
+        } catch (error) {
+          kind = `failed:${String(error)}`;
+        }
         return `${fileKey(input)}\0${kind}`;
       })
       .join('\0');
@@ -669,6 +676,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // Taken before the compile reads anything, so a file written during it
       // still counts as changed afterwards.
       compiledInputs = storyInputFiles(true);
+      compiledInputNames = inputWalk?.named;
       // The compile cache trusts modification times, which a quick save may leave
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
@@ -754,6 +762,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
         if (queue === waited) break;
       }
       const changed = filesChanged(compiledInputs, storyInputFiles(false));
+      if (compiledInputNames !== inputWalk?.named) for (const input of inputs) changed.add(fileKey(input));
       for (const file of filesChanged(entryStates, fileStates(entryFiles))) changed.add(file);
       if (changed.size === 0 && pending.size === 0 && !linkMoved() && !globsChanged() && !foldersChanged()) return;
       // Changes the watcher did report, still waiting out the debounce, go into the same compile.

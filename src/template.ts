@@ -85,7 +85,7 @@ interface Edit {
 
 /**
  * Fill a story format template: placeholders, head content and the store area comment. Throws a TweeTsError naming
- * the template when it nests elements too deeply to read.
+ * the template when it nests elements too deeply to read or exceeds the structural validation work limit.
  */
 export function fillFormatTemplate(fill: TemplateFill): FilledTemplate {
   try {
@@ -120,12 +120,37 @@ function fillTemplate(fill: TemplateFill): FilledTemplate {
     cursor = occurrence.start;
   }
 
+  // Each structural check serializes and reparses the whole document. Bound their aggregate input rather than
+  // letting rejected markup sites or exceptional empty values multiply that work by the number of placeholders.
+  // A small floor allows ordinary short templates; above it the allowance is 64 document lengths (#499).
+  let validationWork = 64 * Math.max(document.length, 1024);
+  const validated = new Map<number, boolean>();
+  const validate = (occurrence: Found, probe: string, check: () => boolean): boolean => {
+    const cached = validated.get(occurrence.start);
+    if (cached !== undefined) return cached;
+    validationWork -= document.length + probe.length;
+    if (validationWork < 0) {
+      throw new TweeTsError(
+        `${owner}: Template structural validation work limit exceeded; too many placeholder sites require ` +
+          'reparsing the document to verify a safe replacement.',
+        [],
+        { code: 'FORMAT_UNAVAILABLE' },
+      );
+    }
+    const result = check();
+    validated.set(occurrence.start, result);
+    return result;
+  };
   const locate: MarkupLocator = {
     isLive: (occurrence, probe) =>
-      replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
+      validate(occurrence, probe, () =>
+        replacementIsLiveElement(analysis.marked, analysis.doc, occurrence.start, occurrence.end, probe),
+      ),
     container: (occurrence) => locateTextContainer(analysis.doc, occurrence.start),
     keepsStructure: (occurrence) =>
-      removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
+      validate(occurrence, '', () =>
+        removalKeepsStructure(analysis.marked, analysis.doc, occurrence.start, occurrence.end),
+      ),
   };
   const unsupported = new Set<number>();
   const report = (entry: PlaceholderEntry): Diagnostic => {

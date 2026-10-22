@@ -244,7 +244,8 @@ function parseInteger(value: string): number | undefined {
 
 /** A finite decimal number (`0.6`, `.5`, `6e-1`), with nothing else around it. */
 function parseDecimal(value: string): number | undefined {
-  if (!/^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)) return undefined;
+  // A decimal point must separate digit runs; otherwise an invalid suffix retries every split of the mantissa.
+  if (!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
 }

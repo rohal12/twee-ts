@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { build, createServer, version } from 'vite';
 import type { InlineConfig, ViteDevServer } from 'vite';
+import { isViteConfigTemp } from '../../src/plugins/paths.js';
 import { removeDir } from './remove-dir.js';
 
 const FORMATS = join(__dirname, '..', 'fixtures', 'storyformats');
@@ -221,14 +222,20 @@ function filesBelow(dir: string): string[] {
  */
 export async function watcherReady(server: ViteDevServer): Promise<void> {
   if (server.config.server.watch === null) return;
-  const files = filesBelow(server.config.root);
+  // Vite unlinks bundled config copies asynchronously. One can still be in this snapshot even though it is
+  // ignored by the watcher or disappears before the scan, so waiting for it can never establish readiness.
+  const files = filesBelow(server.config.root).filter((file) => !isViteConfigTemp(file));
   const deadline = Date.now() + 10_000;
   const watches = (file: string): boolean => {
     const watched: Readonly<Record<string, readonly string[] | undefined>> = server.watcher.getWatched();
     return watched[dirname(file)]?.includes(basename(file)) ?? false;
   };
   while (!files.every(watches)) {
-    if (Date.now() > deadline) throw new Error('the dev server never watched all the files of its root');
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the dev server never watched all the files of its root: ${files.filter((file) => !watches(file)).join(', ')}`,
+      );
+    }
     await new Promise((done) => setTimeout(done, 20));
   }
 }
