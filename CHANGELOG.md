@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validate imported HTML decimal zoom values without quadratic regex backtracking (#498).
 - Bound aggregate structural checks when selecting template placeholders, including rejected markup and empty values (#499).
 - Keep Vite development pages and input diagnostics available when named sources, modules or head files become unreachable (#500).
+- Exclude temporary Vite config copies from test watcher-readiness checks and name any files still unwatched on failure (#436).
 
 - Refresh watched output path identities after final or parent symlinks are retargeted, preventing rebuild loops (#268).
 - Merge attributes from repeated HTML `html` and `body` tags with indexed name checks (#495).
