@@ -130,16 +130,29 @@ describe('decompileHTML numbers are read whole', () => {
     ]);
   });
 
-  it.each(['1.5x', ' 1', '1,5', 'Infinity', 'NaN', '0x1p0', '1e', '.'])(
-    'warns about the zoom %j and keeps the default',
-    (value) => {
-      const { story, diagnostics } = decompileHTML(twine2(`zoom="${value}" ifid="${IFID}"`));
-      expect(story.twine2.zoom).toBe(1);
-      expect(diagnostics.map((d) => d.message)).toEqual([
-        `Cannot parse "tw-storydata" content attribute "zoom" as a float; value "${value}".`,
-      ]);
-    },
-  );
+  it.each([
+    '1.5x',
+    ' 1',
+    '1 ',
+    '1,5',
+    'Infinity',
+    'NaN',
+    '0x1p0',
+    '1e',
+    '1e+',
+    '1E-',
+    '.',
+    '+.',
+    '1..0',
+    '1e309',
+    '-1e309',
+  ])('warns about the zoom %j and keeps the default', (value) => {
+    const { story, diagnostics } = decompileHTML(twine2(`zoom="${value}" ifid="${IFID}"`));
+    expect(story.twine2.zoom).toBe(1);
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      `Cannot parse "tw-storydata" content attribute "zoom" as a float; value "${value}".`,
+    ]);
+  });
 
   it.each([
     ['0.6', 0.6],
@@ -147,7 +160,14 @@ describe('decompileHTML numbers are read whole', () => {
     ['.5', 0.5],
     ['5.', 5],
     ['+0.3', 0.3],
+    ['-0.3', -0.3],
+    ['0005', 5],
+    ['-.5', -0.5],
     ['6e-1', 0.6],
+    ['5.e+1', 50],
+    ['+.5E+1', 5],
+    ['1e-400', 0],
+    ['-0', -0],
   ])('reads the zoom %j', (value, zoom) => {
     const { story, diagnostics } = decompileHTML(twine2(`zoom="${value}" ifid="${IFID}"`));
     expect(diagnostics).toEqual([]);

@@ -52,6 +52,42 @@ const fromCwd = (file: string): string => relative(process.cwd(), file).replace(
 const messages = (diagnostics: readonly { readonly level: string; readonly message: string }[]): string[] =>
   diagnostics.map((d) => `${d.level}: ${d.message}`);
 
+describe.skipIf(noLinks)('a named link that cannot be followed (#500)', () => {
+  it.each(
+    (['source', 'module'] as const).flatMap((role) =>
+      [
+        { kind: 'loop' as const, level: 'error', cause: 'ELOOP' },
+        { kind: 'dangling' as const, level: 'warning', cause: 'Symbolic link to a missing target' },
+        ...(canLockFolder ? [{ kind: 'unsearchable' as const, level: 'error', cause: 'EACCES' }] : []),
+      ].map((failure) => ({ role, ...failure })),
+    ),
+  )('classifies a named $role $kind link as $level', ({ role, kind, level, cause }) => {
+    const dir = makeProject({});
+    const link = join(dir, role === 'source' ? 'link.tw' : 'link.js');
+    unreachableLink(kind, link);
+    const found = getFilenames([link], undefined, [], role);
+    expect(found.filenames).toEqual([]);
+    expect(found.diagnostics).toEqual([
+      expect.objectContaining({ level, message: expect.stringContaining(cause), file: link }),
+    ]);
+  });
+
+  it.each(['source', 'module'] as const)('keeps a named %s link below a file as a missing-target warning', (role) => {
+    const dir = makeProject({ blocker: 'a file' });
+    const link = join(dir, role === 'source' ? 'link.tw' : 'link.js');
+    symlinkSync('blocker/target', link);
+    const found = getFilenames([link], undefined, [], role);
+    expect(found.filenames).toEqual([]);
+    expect(found.diagnostics).toEqual([
+      expect.objectContaining({
+        level: 'warning',
+        message: expect.stringContaining('Symbolic link to a missing target'),
+        file: link,
+      }),
+    ]);
+  });
+});
+
 describe.skipIf(noLinks)('a link in a folder that cannot be followed, found by getFilenames (#446)', () => {
   // [role, a name the role loads, a name it does not]
   const ROLES = [

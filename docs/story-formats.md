@@ -8,6 +8,8 @@ Tagged JavaScript templates (such as `String.raw`) can observe the raw spelling 
 
 Template tags are determined from JavaScript syntax, including function expressions used as tags. If the containing script cannot be parsed, placeholders in template literals warn because their tagged or untagged context cannot be established.
 
+Checking whether story-data markup or an empty value can safely replace a placeholder sometimes requires reparsing the template. These checks share a work limit of 64 times the template length (with a minimum budget of 65,536 characters), counting the input characters of each check. Exceeding it stops the build with `FORMAT_UNAVAILABLE` and `Template structural validation work limit exceeded`. Move story-data placeholders out of unusable contexts such as `select` elements, and avoid repeated empty substitutions that join HTML syntax across a boundary.
+
 ## Format Discovery
 
 A build asks for one story format (see [Format Selection](#format-selection)) and looks for it in these sources, in this order:

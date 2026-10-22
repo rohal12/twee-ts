@@ -312,8 +312,10 @@ export function getFilenames(
     try {
       stat = statSync(pathname);
     } catch (e) {
-      if (isSymbolicLink(pathname)) problem('named', 'dangling-link', pathname, readLinkText(pathname));
-      else problem('named', failureOfError(e), pathname, e);
+      const failure = failureOfError(e);
+      if (failure === 'missing' && isSymbolicLink(pathname)) {
+        problem('named', 'dangling-link', pathname, readLinkText(pathname));
+      } else problem('named', failure, pathname, e);
       continue;
     }
     if (stat.isFile()) {
