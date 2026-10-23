@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve incremental change identities and purge stale cache entries once per build, preserving mixed file/inline source order (#505).
 - Transfer HTML siblings in one pass during formatting-tag recovery, preserving the recovered tree and nesting checks (#381).
 - Merge repeated StoryData tag-color objects without copying previously decoded colors (#502).
 - Rank story-format candidates once per source and use only cached copies after the resolution deadline (#503).

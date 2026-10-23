@@ -380,12 +380,35 @@ export function loadSourcesCached(
   processedFiles: Set<string>,
   cache: Map<string, FileCacheEntry>,
   changedFiles?: ReadonlySet<string>,
-  buildFiles?: ReadonlySet<string>,
 ): void {
-  const currentFiles = new Set<string>(buildFiles);
-  const changedKeys = changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => identify(f).key));
+  const files = filenames.map(toDiscovered);
+  loadSourceGroupCached(story, files, opts, diagnostics, processedFiles, cache, changedSourceKeys(changedFiles));
+  purgeSourceCache(cache, new Set(files.map((file) => file.path)));
+}
 
-  for (const file of filenames.map(toDiscovered)) {
+/** Resolve change spellings once per build, independently of its number of source groups. */
+export function changedSourceKeys(changedFiles?: ReadonlySet<string>): ReadonlySet<string> | undefined {
+  return changedFiles === undefined ? undefined : new Set([...changedFiles].map((f) => identify(f).key));
+}
+
+/** Purge once after every source group has loaded, retaining entries belonging to any group. */
+export function purgeSourceCache(cache: Map<string, FileCacheEntry>, currentFiles: ReadonlySet<string>): void {
+  for (const key of cache.keys()) {
+    if (!currentFiles.has(key)) cache.delete(key);
+  }
+}
+
+/** Load one ordered group using the build's already resolved change identities. */
+export function loadSourceGroupCached(
+  story: Story,
+  files: readonly DiscoveredFile[],
+  opts: LoadOptions,
+  diagnostics: Diagnostic[],
+  processedFiles: Set<string>,
+  cache: Map<string, FileCacheEntry>,
+  changedKeys?: ReadonlySet<string>,
+): void {
+  for (const file of files) {
     const filename = file.path;
     const earlier = alreadyLoaded(processedFiles, file);
     if (earlier !== undefined) {
@@ -396,7 +419,6 @@ export function loadSourcesCached(
       continue;
     }
 
-    currentFiles.add(filename);
     const optionsKey = parseOptionsKey(filename, opts);
     // An entry parsed under other options (or without a recorded key) is stale.
     const entry = cache.get(filename);
@@ -463,13 +485,6 @@ export function loadSourcesCached(
       continue;
     }
     markLoaded(processedFiles, file);
-  }
-
-  // Purge cache entries for deleted files
-  for (const key of cache.keys()) {
-    if (!currentFiles.has(key)) {
-      cache.delete(key);
-    }
   }
 
   prependStoryTitle(story, diagnostics);

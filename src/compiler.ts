@@ -39,7 +39,13 @@ import type {
   WatchTiming,
 } from './filesystem.js';
 import { formatRequestFor, resolveStoryFormat } from './format-resolution.js';
-import { loadSources, loadInlineSources, loadSourcesCached } from './loader.js';
+import {
+  loadSources,
+  loadInlineSources,
+  loadSourceGroupCached,
+  changedSourceKeys,
+  purgeSourceCache,
+} from './loader.js';
 import { applyTagAliases, hasTag, metadataForOutput } from './passage.js';
 import { generateIFID } from './ifid.js';
 import { toTwine2HTML, toTwine2Archive, terminateScript, twine2TagColors } from './output-twine2.js';
@@ -629,8 +635,9 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
   // Once the output is known to be no input, and before the work: a target that can't be written fails now.
   if (context.writesOutput === true && typeof outputs === 'string') checkWritable(outputs);
   context.onDiscovered?.([...walked.flatMap((group) => (group.kind === 'files' ? group.files : [])), ...modules.files]);
-  // Every file of the build, so that a cache purge while loading one group keeps the others' entries.
+  // Bookkeeping belongs to the build, regardless of how many file/inline groups its source order creates.
   const buildFiles = new Set(walked.flatMap((group) => (group.kind === 'files' ? group.files.map((f) => f.path) : [])));
+  const changedKeys = cache ? changedSourceKeys(changedFiles) : undefined;
 
   // Create story and load sources
   const story = createStory();
@@ -640,23 +647,12 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
     if (group.kind === 'inline') {
       loadInlineSources(story, group.sources, { trim, twee2Compat }, diagnostics);
     } else if (cache) {
-      loadSourcesCached(
-        story,
-        group.files,
-        { trim, twee2Compat },
-        diagnostics,
-        processedFiles,
-        cache,
-        changedFiles,
-        buildFiles,
-      );
+      loadSourceGroupCached(story, group.files, { trim, twee2Compat }, diagnostics, processedFiles, cache, changedKeys);
     } else {
       loadSources(story, group.files, { trim, twee2Compat }, diagnostics, processedFiles);
     }
   }
-  if (cache && buildFiles.size === 0) {
-    loadSourcesCached(story, [], { trim, twee2Compat }, diagnostics, processedFiles, cache, changedFiles);
-  }
+  if (cache) purgeSourceCache(cache, buildFiles);
 
   // Apply tag aliases (e.g. library → script)
   if (options.tagAliases) {
