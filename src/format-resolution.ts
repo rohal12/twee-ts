@@ -4,13 +4,13 @@
  * The request comes from the explicit `formatId` option, else the StoryData format name and
  * version, else the default ID. Sources are gathered in their documented order (local folders,
  * then each format URL, then each format index), every source yielding {@link FormatCandidate}s;
- * {@link selectFormat} alone picks one, and only the chosen candidate is downloaded. When obtaining
- * it fails, the failure is reported and the selection runs again without it. A request no source
+ * {@link rankFormats} alone orders them, and only the chosen candidate is downloaded. When obtaining
+ * it fails, the failure is reported and the next ranked candidate is tried. A request no source
  * can answer is reported as an error rather than swapped for a different story format.
  * docs/story-formats.md ("How a format is chosen") states the same policy.
  */
 import type { Diagnostic, FormatRequest, RemoteFetchOptions, RemoteResolveOptions, StoryFormatInfo } from './types.js';
-import type { FormatCandidate, MatchTier } from './formats.js';
+import type { FormatCandidate, FormatSelection, MatchTier } from './formats.js';
 import {
   describeFormatRequest,
   discoverAllFormats,
@@ -20,7 +20,7 @@ import {
   judgeCandidate,
   localCandidates,
   pruneFormats,
-  selectFormat,
+  rankFormats,
 } from './formats.js';
 import type { CacheRecord } from './format-cache.js';
 import { listRecords } from './format-cache.js';
@@ -157,7 +157,12 @@ function cachedCandidate(record: CacheRecord, rank: number, label: string): Sour
 }
 
 /** The candidates of a format index, from the index itself (online) or from what was downloaded from it. */
-function indexCandidates(index: FormatIndex, rank: number, options: RemoteFetchOptions): SourcedCandidate[] {
+function indexCandidates(
+  index: FormatIndex,
+  rank: number,
+  options: RemoteFetchOptions,
+  online: () => boolean,
+): SourcedCandidate[] {
   return index.entries.map((entry) => ({
     name: entry.name,
     version: entry.version,
@@ -165,7 +170,7 @@ function indexCandidates(index: FormatIndex, rank: number, options: RemoteFetchO
     source: 'index',
     rank,
     label: `${entry.twine} entry ${entry.name} ${entry.version} of format index ${index.url}`,
-    obtain: () => obtainIndexEntry(index, entry, options),
+    obtain: () => obtainIndexEntry(index, entry, options, !online()),
   }));
 }
 
@@ -196,10 +201,10 @@ function describeUnusable(
 const MAX_LISTED = 10;
 
 /**
- * Resolve a request against the sources: gather each source in order, and after each one select
- * among everything gathered so far. Because {@link selectFormat} ranks sources first, stopping at
- * the first source that answers gives the same result as gathering every source. When nothing
- * answers, a same-major older candidate is taken with a warning. Diagnostics go to `diagnostics`.
+ * Resolve a request against the sources: gather each source in order, rank its candidates once,
+ * and try them in order. Because {@link rankFormats} ranks sources first, stopping at the first
+ * source that answers gives the same result as gathering every source. When nothing answers,
+ * the saved same-major older candidates are tried with a warning. Diagnostics go to `diagnostics`.
  */
 async function resolveWith(
   request: FormatRequest,
@@ -210,9 +215,11 @@ async function resolveWith(
 ): Promise<Resolution> {
   const wanted = describeFormatRequest(request);
   const failures: string[] = [];
+  const failed = new Set<string>();
   const fail = (message: string): void => {
     const text = `Remote format fetch failed for ${wanted}: ${message}`;
-    if (failures.includes(text)) return;
+    if (failed.has(text)) return;
+    failed.add(text);
     failures.push(text);
     diagnostics.push({ level: 'warning', message: text });
   };
@@ -311,7 +318,7 @@ async function resolveWith(
         reason: s.reason,
       })),
     );
-    return indexCandidates(index, rank, options);
+    return indexCandidates(index, rank, options, online);
   };
 
   const { searchDirs } = sources;
@@ -321,14 +328,13 @@ async function resolveWith(
     ...sources.indices.map((url, j) => () => gatherIndex(url, 1 + sources.urls.length + j)),
   ];
 
-  const gathered: SourcedCandidate[] = [];
+  const older: FormatSelection<SourcedCandidate>[] = [];
   const seen: SourcedCandidate[] = [];
   const choose = async (
-    allowOlder: boolean,
+    selections: readonly FormatSelection<SourcedCandidate>[],
   ): Promise<{ readonly info: StoryFormatInfo; readonly tier: MatchTier; readonly label: string } | undefined> => {
-    for (;;) {
-      const selection = selectFormat(request, gathered, { allowOlder });
-      if (!selection) return undefined;
+    for (const selection of selections) {
+      throwIfAborted(deadline.caller);
       try {
         const obtained = await selection.choice.obtain();
         pushAll(
@@ -338,20 +344,25 @@ async function resolveWith(
         return { info: obtained.info, tier: selection.tier, label: selection.choice.label };
       } catch (e) {
         fail(failure(e));
-        gathered.splice(gathered.indexOf(selection.choice), 1);
       }
     }
+    return undefined;
   };
 
   let found: Awaited<ReturnType<typeof choose>>;
   for (const gather of groups) {
     const candidates = await gather();
-    pushAll(gathered, candidates);
     pushAll(seen, candidates);
-    found = await choose(false);
+    const ranked = rankFormats(request, candidates);
+    pushAll(
+      older,
+      ranked.filter((selection) => selection.tier === 'older'),
+    );
+    found = await choose(ranked.filter((selection) => selection.tier !== 'older'));
     if (found) break;
   }
-  found ??= await choose(true);
+  // Groups arrive in source-rank order; each group's older candidates are already ordered within it.
+  found ??= await choose(older);
 
   if (found) {
     const { info, tier, label } = found;
