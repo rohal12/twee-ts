@@ -26,5 +26,6 @@ Keep the standalone cached loader as a wrapper around group loading and build bo
 - [x] Move bookkeeping outside the ordered loading loop in `src/compiler.ts`.
 - [x] Run incremental, source-order and loader tests; add inline-only and empty-build cleanup coverage: 94 passed.
 - [x] Update `CHANGELOG.md`; run format, typecheck and lint (zero errors; one existing disabled-test warning).
-- [ ] Review the diff, commit with `Fixes #505`, push and check for an existing PR before opening one.
+- [x] Review the diff, commit with `Fixes #505`, push and check for an existing PR before opening one: PR #506.
+- [x] Keep this internal plan under validation evidence, outside the documentation site's required sidebar.
 - [ ] Watch CI and report its outcome, retaining #436 for the remaining observation requirement.
