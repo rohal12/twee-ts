@@ -50,6 +50,62 @@ function positions(output: string, ...markers: string[]): number[] {
 }
 
 describe('source order with inline sources mixed with files', () => {
+  it.each(['all', 'one', 'none', 'omitted'] as const)(
+    'bounds incremental bookkeeping across alternating groups with %s changed paths (#505)',
+    async (changed) => {
+      class CountedCache extends Map<string, FileCacheEntry> {
+        visits = 0;
+        override *keys(): MapIterator<string> {
+          for (const key of super.keys()) {
+            this.visits++;
+            yield key;
+          }
+        }
+      }
+      class CountedChanges extends Set<string> {
+        visits = 0;
+        override *[Symbol.iterator](): SetIterator<string> {
+          for (const key of super[Symbol.iterator]()) {
+            this.visits++;
+            yield key;
+          }
+        }
+      }
+
+      for (const count of [12, 48]) {
+        const dir = makeTmpDir();
+        const files = Array.from({ length: count }, (_, i) =>
+          writeFile(dir, `${String(i)}.tw`, `:: File ${String(i)}\nfile`),
+        );
+        const sources = files.flatMap((file, i) => [
+          file,
+          inline(`inline-${String(i)}.tw`, `:: Inline ${String(i)}\ninline`),
+        ]);
+        const options = { sources, outputMode: 'json' } as const;
+        const expected = await compile(options);
+        const removed = writeFile(dir, 'removed.tw', ':: Removed\nold');
+
+        for (const warm of [false, true]) {
+          const cache = new CountedCache();
+          if (warm) await compileIncremental({ ...options, sources: [...sources, removed] }, cache);
+          cache.visits = 0;
+          const changes =
+            changed === 'omitted'
+              ? undefined
+              : new CountedChanges(files.slice(0, changed === 'all' ? count : changed === 'one' ? 1 : 0));
+          const result = await compileIncremental(options, cache, changes);
+
+          expect(result.output).toBe(expected.output);
+          expect(result.diagnostics).toEqual(expected.diagnostics);
+          expect(cache.visits).toBeLessThanOrEqual(count + 1);
+          expect(changes?.visits ?? 0).toBe(changes?.size ?? 0);
+          expect(cache.size).toBe(count);
+          expect(cache.has(removed)).toBe(false);
+        }
+      }
+    },
+  );
+
   it('emits an inline script before a file that follows it, and after one that precedes it', async () => {
     const dir = makeTmpDir();
     const consumer = writeFile(dir, 'consumer.js', 'globalThis.answer = MARK_CONSUMER;');
@@ -123,6 +179,23 @@ describe('source order with inline sources mixed with files', () => {
     const two = writeFile(dir, 'two.js', 'var TWO = 2;');
     const { cache } = await buildAll([one, inline('mid.js', 'var MID = 1;'), two, inline('story.tw', twee('Hi'))]);
     expect(cache.size).toBe(2);
+  });
+
+  it.each([false, true])('purges the file cache when only inline sources remain: %s (#505)', async (inlineOnly) => {
+    const dir = makeTmpDir();
+    const file = writeFile(dir, 'old.tw', twee('OLD'));
+    const cache = new Map<string, FileCacheEntry>();
+    await compileIncremental({ ...base, sources: [file] }, cache);
+    expect(cache.size).toBe(1);
+
+    const sources = inlineOnly ? [inline('story.tw', twee('NEW'))] : [];
+    const options = { sources, outputMode: 'json' } as const;
+    const expected = await compile(options);
+    const result = await compileIncremental(options, cache, new Set());
+
+    expect(result.output).toBe(expected.output);
+    expect(result.diagnostics).toEqual(expected.diagnostics);
+    expect(cache.size).toBe(0);
   });
 
   it('reports a file named twice, across inline sources, as a duplicate', async () => {
