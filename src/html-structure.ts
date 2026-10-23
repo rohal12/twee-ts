@@ -77,6 +77,17 @@ class HtmlParser extends Parser<DefaultTreeAdapterMap> {
     this.tokenizer = new IndexedAttributeTokenizer(this.options, this);
     this.tokenizer.inForeignNode = inForeignNode;
   }
+
+  /** Transfer all siblings once, for both adoption-agency recovery and finished fragment extraction (#381). */
+  override _adoptNodes(donor: ParentNode, recipient: ParentNode): void {
+    const children = donor.childNodes;
+    donor.childNodes = [];
+    for (const child of children) {
+      child.parentNode = null;
+      // Keep the adapter's depth checks and subtree-depth invalidation on every placement.
+      this.treeAdapter.appendChild(recipient, child);
+    }
+  }
 }
 
 /**
@@ -207,16 +218,7 @@ function parseHtmlFragment(html: string): DefaultTreeAdapterTypes.DocumentFragme
     treeAdapter: depthLimitedTreeAdapter(),
   });
   parser.tokenizer.write(html, true);
-  const fragment = defaultTreeAdapter.createDocumentFragment();
-  const root = defaultTreeAdapter.getFirstChild(parser.document);
-  if (root !== null && 'childNodes' in root) {
-    // parse5's getFragment() detaches each first child with splice, shifting all remaining siblings each time.
-    // Transfer the completed child list once, preserving the same fragment tree and parent pointers in linear work.
-    fragment.childNodes = root.childNodes;
-    root.childNodes = [];
-    for (const child of fragment.childNodes) child.parentNode = fragment;
-  }
-  return fragment;
+  return parser.getFragment();
 }
 
 function isElement(node: HtmlNode): node is HtmlElement {

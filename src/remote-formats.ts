@@ -750,12 +750,14 @@ function metadataOf(data: FormatMetadata): FormatMetadata {
  * Obtain the format an index entry names: its cached copy when that is from the same index entry
  * and matches the checksums the index lists, else a download of its files, each checked against
  * the index's checksum, and (Twine 2) checked to be the format the entry names. The download is
- * then cached under the entry's origin.
+ * then cached under the entry's origin. After a resolution deadline, `cacheOnly` allows the same
+ * integrity-checked cached copy but never starts a download for a missing or damaged one.
  */
 export async function obtainIndexEntry(
   index: FormatIndex,
   entry: IndexEntry,
   options: RemoteFetchOptions = {},
+  cacheOnly = false,
 ): Promise<Obtained> {
   const origin = indexEntryOrigin(index, entry);
   const main = mainFile(entry.twine);
@@ -769,6 +771,7 @@ export async function obtainIndexEntry(
       warnings.push(`${errorText(e)}; downloading it again.`);
     }
   }
+  if (cacheOnly) throw new Error(`${entry.name} ${entry.version} has no usable cached copy from ${index.url}`);
 
   /** Download one of the entry's files and check it against the checksum the index lists. */
   const download = async (file: string): Promise<Uint8Array<ArrayBuffer>> => {

@@ -415,7 +415,8 @@ export interface FormatSelection<C extends FormatCandidate> {
 }
 
 /**
- * Choose the candidate that answers a request. This is the whole selection policy:
+ * Rank candidates once, so a failed download can advance without judging and sorting everything again.
+ * This is the whole selection policy:
  *
  * 1. Each candidate is judged alone ({@link judgeCandidate}); the result depends on its name,
  *    version and (local) folder, never on its source kind.
@@ -423,18 +424,16 @@ export interface FormatSelection<C extends FormatCandidate> {
  *    within one source, the better tier ({@link MatchTier}); then the greater version (SemVer
  *    precedence); then a name (or folder) in the request's exact letter case; then the
  *    higher-ranked search directory (local folders); then the earlier candidate.
- * 3. Only when no candidate answers, and `allowOlder` is set, the `older` candidates are ordered
- *    the same way (source rank, then greater version, …) and the first is taken.
+ * 3. Only when no candidate answers, the `older` candidates are tried in the same order.
  *
  * Because the source rank comes first among answering candidates, a source's answer never depends
  * on sources ranked after it, so callers may gather sources one at a time and stop at the first
  * answer: the result equals selecting over every source at once.
  */
-export function selectFormat<C extends FormatCandidate>(
+export function rankFormats<C extends FormatCandidate>(
   request: FormatRequest,
   candidates: readonly C[],
-  options: SelectFormatOptions = {},
-): FormatSelection<C> | undefined {
+): FormatSelection<C>[] {
   const judged = candidates.flatMap((candidate, index) => {
     const judgement = judgeCandidate(request, candidate);
     return judgement.kind === 'match' ? [{ candidate, index, tier: judgement.tier, version: judgement.version }] : [];
@@ -448,10 +447,19 @@ export function selectFormat<C extends FormatCandidate>(
     (b.candidate.dirRank ?? 0) - (a.candidate.dirRank ?? 0) ||
     a.index - b.index;
 
-  const answering = judged.filter((j) => j.tier !== 'older').sort(order);
-  const best =
-    answering[0] ?? (options.allowOlder ? judged.filter((j) => j.tier === 'older').sort(order)[0] : undefined);
-  return best && { choice: best.candidate, tier: best.tier };
+  return judged
+    .sort((a, b) => Number(a.tier === 'older') - Number(b.tier === 'older') || order(a, b))
+    .map((j) => ({ choice: j.candidate, tier: j.tier }));
+}
+
+/** Choose the first ranked candidate, leaving older versions out unless explicitly allowed. */
+export function selectFormat<C extends FormatCandidate>(
+  request: FormatRequest,
+  candidates: readonly C[],
+  options: SelectFormatOptions = {},
+): FormatSelection<C> | undefined {
+  const best = rankFormats(request, candidates)[0];
+  return best && (best.tier !== 'older' || options.allowOlder) ? best : undefined;
 }
 
 /** Compare versions that may be missing (a local Twine 1 format); a missing one ranks lowest. */

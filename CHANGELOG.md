@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Transfer HTML siblings in one pass during formatting-tag recovery, preserving the recovered tree and nesting checks (#381).
+- Merge repeated StoryData tag-color objects without copying previously decoded colors (#502).
+- Rank story-format candidates once per source and use only cached copies after the resolution deadline (#503).
+
 - Validate imported HTML decimal zoom values without quadratic regex backtracking (#498).
 - Bound aggregate structural checks when selecting template placeholders, including rejected markup and empty values (#499).
 - Keep Vite development pages and input diagnostics available when named sources, modules or head files become unreachable (#500).

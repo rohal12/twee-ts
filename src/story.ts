@@ -338,7 +338,9 @@ export function decodeStoryData(text: string): StoryDataDecodeResult {
             return;
           }
           const r = jsonRecordOf(nullAsZero(jsonString, ''))(value, path, issues);
-          if (r.ok) twine2.tagColors = new Map([...twine2.tagColors, ...r.value]);
+          if (r.ok) {
+            for (const [tag, color] of r.value) twine2.tagColors.set(tag, color);
+          }
         },
       },
       zoom: scalar(jsonNumber, (v) => {
