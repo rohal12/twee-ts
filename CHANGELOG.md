@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve shared Vite development dependency watches until every story releases them, including story inputs and overlapping folder watches (#517).
 - Index JavaScript scope membership without changing declaration or module-export checks (#507).
 - Index Vite glob warning locations, including all JavaScript line endings (#508).
 - Bound total Vite glob recovery work, including failed token lookahead, and warn when remaining calls cannot be read within the limit (#509).
