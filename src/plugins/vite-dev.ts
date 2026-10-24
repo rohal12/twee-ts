@@ -221,6 +221,16 @@ function tracked(paths: Iterable<string>): TrackedFiles {
   return new Map([...paths].map((path) => [fileKey(path), canonicalPath(path)]));
 }
 
+/** A native identity key and every parent above it, without identifying any path again. */
+function* keyParents(key: string): Generator<string> {
+  for (let current = key; ;) {
+    yield current;
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
 /**
  * The key of the file `authored` reaches, when it reaches it through a link (somewhere along the path, or
  * at the end of it): the one case where the file's own path says nothing of a change of target.
@@ -314,10 +324,20 @@ interface DevInstance {
   readonly paths: readonly string[];
   readonly assets: () => ReadonlyMap<string, string | Uint8Array> | undefined;
   readonly catchUp: () => Promise<void>;
+  /** Dynamic identities of sources, head and modules, including retargeted links. */
+  readonly inputKeys: () => readonly string[];
+  readonly entryWatches: TrackedFiles;
 }
 
-/** The story and assets each story instance of a dev server serves, so instances can see each other's names. */
-const devInstances = new WeakMap<ViteDevServer, Set<DevInstance>>();
+/** The instances and entry watches of each server; the watcher is shared by every story (#517). */
+const devServers = new WeakMap<
+  ViteDevServer,
+  {
+    readonly instances: Set<DevInstance>;
+    readonly watched: Map<string, string>;
+    readonly released: Map<string, string>;
+  }
+>();
 
 /** The error for a story page whose URL another story or an entry asset of the same dev server also claims. */
 function storyCollisionMessage(path: string): string {
@@ -362,9 +382,22 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // story fails to compile; then the page still served refers to the files of the bundle before it, so those are
   // the files served until a story compiles with the new one.
   let servedAssets: EntryBundle['assets'] | undefined;
-  const instances = devInstances.get(server) ?? new Set<DevInstance>();
-  devInstances.set(server, instances);
-  const self: DevInstance = { paths, assets: () => servedAssets, catchUp: () => catchUp() };
+  const state = devServers.get(server) ?? {
+    instances: new Set<DevInstance>(),
+    watched: new Map<string, string>(),
+    released: new Map<string, string>(),
+  };
+  devServers.set(server, state);
+  const { instances, watched, released } = state;
+  // Desired entry watches for this story; `watched` holds the server's actual registrations.
+  const watchedForEntry = new Map<string, string>();
+  const self: DevInstance = {
+    paths,
+    assets: () => servedAssets,
+    catchUp: () => catchUp(),
+    inputKeys,
+    entryWatches: watchedForEntry,
+  };
   instances.add(self);
   const fail = (res: ServerResponse, message: string): void => {
     config.logger.error(`[twee-ts] ${message}`);
@@ -398,8 +431,6 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // watcher; the catch-up compares states alone.
   let entryReads = new Map<string, FileRead>();
   const readsModules = config.server.watch !== null;
-  // Files outside the root the watcher was asked to add for the entry, by key; Vite watches the root itself.
-  const watchedForEntry = new Map<string, string>();
   let queue: Promise<void> = Promise.resolve();
   let pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -511,19 +542,43 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const entryWatchTargets = (): TrackedFiles =>
     new Map([...entryFiles, ...tracked(scopeWatchTargets(entryGlobs.values()))]);
 
-  // Watches the entry's files outside the root, and stops watching those it no longer uses.
+  // Watches entry targets outside the root, releasing them only when no story needs them. Unwatching a folder
+  // also ignores its descendants, and unwatching a file under another watched folder suppresses that file's
+  // events, so overlapping registrations must survive too. Retained targets are reconsidered on every release.
   const watchEntryFiles = (files: TrackedFiles): void => {
     const added = [...files].filter(
       ([key]) => !keyWithin(key, [root]) && !keyWithin(key, inputKeys()) && !watchedForEntry.has(key),
     );
-    const dropped = [...watchedForEntry].filter(([key]) => !files.has(key));
-    for (const [key] of dropped) watchedForEntry.delete(key);
-    for (const [key, path] of added) watchedForEntry.set(key, path);
-    if (dropped.length > 0) server.watcher.unwatch(dropped.map(([, path]) => path));
-    if (added.length > 0) {
-      server.watcher.add(added.map(([, path]) => path));
-      recheckOnceWatched(new Map(added)).catch(keepQueueAlive);
+    for (const key of watchedForEntry.keys()) if (!files.has(key)) watchedForEntry.delete(key);
+    for (const [key, path] of added) {
+      watchedForEntry.set(key, path);
+      watched.set(key, path);
     }
+    const owners = new Set([
+      root,
+      ...[...instances].flatMap((instance) => [...instance.inputKeys(), ...instance.entryWatches.keys()]),
+    ]);
+    // Index ancestors instead of comparing every registered target with every dependency.
+    const aboveOwners = new Set([...owners].flatMap((key) => [...keyParents(key)]));
+    const needed = (key: string): boolean =>
+      aboveOwners.has(key) || [...keyParents(key)].some((parent) => owners.has(parent));
+    const dropped = [...watched].filter(([key]) => !needed(key));
+    for (const [key, path] of dropped) {
+      watched.delete(key);
+      released.set(key, path);
+    }
+    // Chokidar retains ignores for an unwatched path (and its descendants). Re-adding only a child does not
+    // clear a released parent's ignore, nor does adding a parent clear a released child's ignore. Restore all
+    // overlapping registrations; this mirrors the watcher's retained ignores until they are cleared or it closes.
+    const restored = [...released].filter(([key]) => needed(key));
+    for (const [key, path] of restored) {
+      released.delete(key);
+      watched.set(key, path);
+    }
+    if (dropped.length > 0) server.watcher.unwatch(dropped.map(([, path]) => path));
+    const registrations = new Map([...restored, ...added]);
+    if (registrations.size > 0) server.watcher.add([...registrations.values()]);
+    if (added.length > 0) recheckOnceWatched(new Map(added)).catch(keepQueueAlive);
   };
 
   const isListed = (path: string): boolean => {
@@ -642,7 +697,6 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     globStates = globsRead;
     entryFolders = folders;
     entryReads = reads;
-    watchEntryFiles(entryWatchTargets());
   };
 
   // Whether the change reported for `key` is one the last good bundle already read (#343): a module of it, not a
@@ -681,6 +735,8 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
       if (entryStale || regrouped || unread.some(touchesEntry)) await bundle();
+      // Input-only stories can release a retained target too, by retargeting a named input link.
+      watchEntryFiles(entryWatchTargets());
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       // Only a playable page can run the client; other outputs are served as compiled.
