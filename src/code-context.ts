@@ -3,12 +3,13 @@
  * comment, or code. The template filler uses it to escape a placeholder written into a script or style element, and
  * the script and style escapers use it to tell whether `<\/script` keeps the value of what it escapes.
  *
- * JavaScript is tokenized with acorn (bundled), which tells a regular expression literal from a division the way a
- * parser does; template tags are established from its syntax tree. CSS needs only strings and comments, which CSS
- * Syntax Level 3 tokenizes without context.
+ * JavaScript is parsed with acorn (bundled), which establishes regular expressions, divisions and template tags
+ * from the grammar. JSON string tokens are read after RFC 8259 validation. CSS needs only strings and comments,
+ * which CSS Syntax Level 3 tokenizes without context.
  */
 import { tokTypes } from 'acorn';
-import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript, trySyntax } from './js-syntax.js';
+import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript } from './js-syntax.js';
+import { parseJSON } from './json-decode.js';
 
 /** Where a range of JavaScript source lies. */
 export type JavaScriptContext =
@@ -52,9 +53,32 @@ export function javaScriptContexts<R extends SourceRange>(
   ranges: readonly R[],
   module = false,
 ): InContext<R, JavaScriptContext>[] {
-  const read = trySyntax(() => javaScriptPieces(source, module));
-  if (!read.ok) return ranges.map((range) => ({ range, context: { kind: 'unparsable', reason: read.error.message } }));
-  const pieces = read.value;
+  return contextsInPieces(javaScriptPieces(source, module), ranges);
+}
+
+/**
+ * JSON has no regexp/division ambiguity. Validate with the iterative JSON parser, then read string tokens without
+ * imposing JavaScript's object-literal semantics or recursive parser stack limit on JSON data blocks.
+ */
+export function jsonContexts<R extends SourceRange>(
+  source: string,
+  ranges: readonly R[],
+): InContext<R, JavaScriptContext>[] {
+  if (!parseJSON(source).ok) return javaScriptContexts(source, ranges);
+  const pieces: JavaScriptPiece[] = [];
+  for (const { type, start, end } of AcornParser.tokenizer(source, SCRIPT_OPTIONS)) {
+    if (type === tokTypes.string) {
+      pieces.push({ start, end, context: { kind: 'string', quote: '"', whole: false } });
+    }
+  }
+  return contextsInPieces(pieces, ranges);
+}
+
+/** Classify ranges against non-overlapping literal/comment pieces, keeping each caller's range identity. */
+function contextsInPieces<R extends SourceRange>(
+  pieces: readonly JavaScriptPiece[],
+  ranges: readonly R[],
+): InContext<R, JavaScriptContext>[] {
   return ranges.map((range) => {
     const piece = enclosingPiece(pieces, range);
     if (piece === undefined) return { range, context: { kind: 'code' } };
@@ -85,45 +109,33 @@ function enclosingPiece<P extends SourceRange>(pieces: readonly P[], range: Sour
 
 /**
  * The literals and comments of JavaScript source, in source order, read as a classic script (see `js-syntax.ts`) or
- * a module, allowing `return` outside functions as story formats do around story code. Templates also need a
- * syntax tree to establish tags; a template in source that cannot be parsed is reported as unparsable. Throws a
- * `JsSyntaxError` when acorn cannot tokenize the source.
+ * a module, allowing `return` outside functions as story formats do around story code. Only tokens consumed by
+ * the parser establish contexts: standalone tokenization guesses incorrectly at some regexp/division boundaries.
+ * On failure, keep the confirmed prefix and report the unread remainder and uncertain template tags conservatively.
  */
 function javaScriptPieces(source: string, module: boolean): JavaScriptPiece[] {
   const pieces: JavaScriptPiece[] = [];
-  const tokens = AcornParser.tokenizer(source, {
-    ...SCRIPT_OPTIONS,
-    sourceType: module ? 'module' : 'script',
-    allowReturnOutsideFunction: true,
-    allowAwaitOutsideFunction: true,
-    allowImportExportEverywhere: true,
-    onComment: (block, _text, start, end) => {
-      pieces.push({ start, end, context: block ? { kind: 'block-comment' } : { kind: 'line-comment', start } });
-    },
-  });
-  for (const token of tokens) {
-    const { type, start, end } = token;
-    if (type === tokTypes.string) {
-      const quote = source[start] === "'" ? "'" : '"';
-      pieces.push({ start, end, context: { kind: 'string', quote, whole: false } });
-    } else if (type === tokTypes.regexp) {
-      const raw = source.slice(start, end);
-      pieces.push({ start, end, context: { kind: 'regexp', flags: raw.slice(raw.lastIndexOf('/') + 1) } });
-    } else if (type === tokTypes.template || type === tokTypes.invalidTemplate) {
-      pieces.push({ start, end, context: { kind: 'template', tagged: false } });
-    }
-  }
-  return classifyTemplates(source, pieces, module).sort((a, b) => a.start - b.start);
-}
-
-/** Only the grammar can tell a tag expression from a block, or an identifier from an await/yield operator. */
-function classifyTemplates(source: string, pieces: JavaScriptPiece[], module: boolean): JavaScriptPiece[] {
-  if (!pieces.some((piece) => piece.context.kind === 'template')) return pieces;
+  let readEnd = 0;
   const parsed = parseScript(source, {
     ...SCRIPT_OPTIONS,
     sourceType: module ? 'module' : 'script',
     allowReturnOutsideFunction: true,
     allowImportExportEverywhere: true,
+    onComment: (block, _text, start, end) => {
+      pieces.push({ start, end, context: block ? { kind: 'block-comment' } : { kind: 'line-comment', start } });
+    },
+    onToken: ({ type, start, end }) => {
+      readEnd = end;
+      if (type === tokTypes.string) {
+        const quote = source[start] === "'" ? "'" : '"';
+        pieces.push({ start, end, context: { kind: 'string', quote, whole: false } });
+      } else if (type === tokTypes.regexp) {
+        const raw = source.slice(start, end);
+        pieces.push({ start, end, context: { kind: 'regexp', flags: raw.slice(raw.lastIndexOf('/') + 1) } });
+      } else if (type === tokTypes.template || type === tokTypes.invalidTemplate) {
+        pieces.push({ start, end, context: { kind: 'template', tagged: false } });
+      }
+    },
   });
   const tagged = new Set<number>();
   if (parsed.ok) {
@@ -133,15 +145,25 @@ function classifyTemplates(source: string, pieces: JavaScriptPiece[], module: bo
       }
     }
   }
-  return pieces.map((piece) => {
-    if (piece.context.kind !== 'template') return piece;
-    return {
-      ...piece,
-      context: parsed.ok
-        ? { kind: 'template', tagged: tagged.has(piece.start) }
-        : { kind: 'unparsable', reason: parsed.error.message },
-    };
-  });
+  const confirmed = parsed.ok ? pieces : pieces.filter((piece) => piece.end <= readEnd);
+  if (!parsed.ok) {
+    confirmed.push({
+      start: readEnd,
+      end: source.length,
+      context: { kind: 'unparsable', reason: parsed.error.message },
+    });
+  }
+  return confirmed
+    .map<JavaScriptPiece>((piece) => {
+      if (piece.context.kind !== 'template') return piece;
+      return {
+        ...piece,
+        context: parsed.ok
+          ? { kind: 'template', tagged: tagged.has(piece.start) }
+          : { kind: 'unparsable', reason: parsed.error.message },
+      };
+    })
+    .sort((a, b) => a.start - b.start);
 }
 
 /**

@@ -13,7 +13,7 @@
  */
 import { defaultTreeAdapter, parseFragment, Parser, Tokenizer, ErrorCodes, html as htmlSpec } from 'parse5';
 import type { DefaultTreeAdapterMap, DefaultTreeAdapterTypes, ParserOptions, Token } from 'parse5';
-import { cssContexts, javaScriptContexts } from './code-context.js';
+import { cssContexts, javaScriptContexts, jsonContexts } from './code-context.js';
 import type { InContext, SourceRange } from './code-context.js';
 import { attrEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
@@ -1509,7 +1509,8 @@ function codeContexts(
   if (language === 'data') return ranges.map((range) => ({ range, context: { kind: 'raw-text', element: 'script' } }));
   const module = language === 'module';
   const firstEscape = source.indexOf('<!--');
-  return javaScriptContexts(source, ranges, module).map(({ range, context: js }) => {
+  const contexts = language === 'json' ? jsonContexts(source, ranges) : javaScriptContexts(source, ranges, module);
+  return contexts.map(({ range, context: js }) => {
     const escapable = firstEscape !== -1 && firstEscape + 4 <= range.start;
     const context: InsertionContext =
       language === 'json' ? { kind: 'json', js, escapable } : { kind: 'script', module, js, escapable };

@@ -9,6 +9,7 @@ import { escapeForContext } from '../src/escape.js';
 import { fillFormatTemplate } from '../src/template.js';
 import type { Placeholder } from '../src/template.js';
 import { evaluateJavaScript } from './helpers/javascript.js';
+import { scriptTexts } from './helpers/html.js';
 
 /** The site of each `{{X}}` (or `"X"`) in `template`. */
 function sites(template: string) {
@@ -20,6 +21,20 @@ function sites(template: string) {
 }
 
 describe('placeholder sites', () => {
+  it.each([
+    { label: 'deep arrays', source: '['.repeat(2000) + '"{{X}}"' + ']'.repeat(2000) },
+    { label: 'duplicate prototype keys', source: '{"__proto__":1,"__proto__":2,"name":"{{X}}"}' },
+  ])('preserves JSON string values in $label (#521)', ({ source }) => {
+    const value = 'A\nB\\C';
+    const result = fillFormatTemplate({
+      template: `<script type="application/json">${source}</script>`,
+      placeholders: [{ token: '{{X}}', occurrences: 'all', value: { kind: 'text', text: value } }],
+      owner: 'JSON',
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(JSON.parse(scriptTexts(result.output)[0] ?? '')).toEqual(JSON.parse(source.replace('{{X}}', 'A\\nB\\\\C')));
+  });
+
   it.each([' ', '\t', '\n', '\f', '\r', '\u00a0', '\u2003', '\uFEFF'])(
     'preserves script contexts around long %j runs (#496)',
     (space) => {

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Classify JavaScript escape and substitution contexts with the parser, warning when regular-expression escaping or title substitution changes code (#521).
+- Use Vite's supported `rolldownOptions` in the Rollup integration tests so deprecation-aware lint passes (#520).
 - Preserve shared Vite development dependency watches until every story releases them, including story inputs and overlapping folder watches (#517).
 - Index JavaScript scope membership without changing declaration or module-export checks (#507).
 - Index Vite glob warning locations, including all JavaScript line endings (#508).
