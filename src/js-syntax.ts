@@ -32,6 +32,25 @@ export class JsSyntaxError extends Error {
 }
 
 /**
+ * Acorn 8's scope lists use only push(name), indexOf(name) as a membership test, and lexical[0] for a simple
+ * catch binding. Keep that interface indexed, leaving all declaration and export rules in Acorn itself.
+ * Names are append-only for the lifetime of a scope; duplicate var/function declarations are ordinary members.
+ */
+class ScopeNames {
+  private readonly names = new Set<string>();
+  0: string | undefined;
+
+  push(name: string): void {
+    this[0] ??= name;
+    this.names.add(name);
+  }
+
+  indexOf(name: string): number {
+    return this.names.has(name) ? 0 : -1;
+  }
+}
+
+/**
  * Acorn's parser, reporting syntax errors as {@link JsSyntaxError}. Acorn's own `raise` works out a
  * line and column for its message by reading the input from the start, which callers that recover
  * from many errors cannot afford; positions are reported by offset, and the caller describes them.
@@ -44,6 +63,13 @@ export class JsSyntaxError extends Error {
 export class AcornParser extends Parser {
   /** Acorn's current scanning position, which its type declarations leave out. */
   declare pos: number;
+
+  /** Acorn's internal scope shape; its constructor calls enterScope before reading any bindings. */
+  declare scopeStack: { flags: number; var: ScopeNames; lexical: ScopeNames; functions: ScopeNames }[];
+
+  enterScope(flags: number): void {
+    this.scopeStack.push({ flags, var: new ScopeNames(), lexical: new ScopeNames(), functions: new ScopeNames() });
+  }
 
   raise(pos: number, message: string): never {
     if (message === ACORN_STACK_OVERFLOW) throw tooDeep(pos, this.pos);

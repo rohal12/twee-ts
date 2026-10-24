@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Index JavaScript scope membership without changing declaration or module-export checks (#507).
+- Index Vite glob warning locations, including all JavaScript line endings (#508).
+- Bound total Vite glob recovery work, including failed token lookahead, and warn when remaining calls cannot be read within the limit (#509).
 - Resolve incremental change identities and purge stale cache entries once per build, preserving mixed file/inline source order (#505).
 - Transfer HTML siblings in one pass during formatting-tag recovery, preserving the recovered tree and nesting checks (#381).
 - Merge repeated StoryData tag-color objects without copying previously decoded colors (#502).

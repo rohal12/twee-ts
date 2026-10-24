@@ -19,6 +19,7 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
 import { AcornParser, javaScriptNodes, trySyntax } from '../js-syntax.js';
+import { lineColumnFinder } from '../js-chars.js';
 import { isRecord } from '../util.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
@@ -156,20 +157,39 @@ function callOf(args: readonly (Expression | SpreadElement)[]): GlobCall | undef
 /** Where Vite's import-glob finds a call in a module's text: the callee, any TypeScript type arguments, `(`. */
 const GLOB_CALL_START = /\bimport\.meta\.glob(?:<\w+>)?\s*\(/g;
 
+/** Shared character allowance for tokenization and expression parsing across every recovery candidate. */
+interface RecoveryBudget {
+  remaining: number;
+}
+
 /**
  * The end (offset just past it) of the argument list that opens at `paren`, as acorn's tokenizer reads the text from
  * there: past strings, template literals, regular expressions and comments that hold parentheses. Undefined when the
  * list does not close, or the text cannot be tokenized.
  */
-function argumentsEnd(code: string, paren: number): number | undefined {
+function argumentsEnd(code: string, paren: number, budget: RecoveryBudget): number | undefined {
+  // An empty tokenizer starts in the same expression context as `(`. Set its input/offset without Acorn's
+  // startPos constructor path, which searches the source prefix for a line start even with locations disabled.
+  const tokenizer = Object.assign(AcornParser.tokenizer('', MODULE_OPTIONS), { input: code, pos: paren });
   const read = trySyntax(() => {
     let depth = 0;
-    for (const token of AcornParser.tokenizer(code.slice(paren), MODULE_OPTIONS)) {
+    for (;;) {
+      const from = tokenizer.pos;
+      let token;
+      try {
+        token = tokenizer.getToken();
+      } finally {
+        // A failed token may search the entire suffix without advancing pos (an unclosed comment or
+        // Unicode escape). Invalid template tokens can recover from that same escape search. Charge the
+        // whole suffix in either case; cursor movement covers ordinary tokens, whitespace and comments.
+        const searched = token === undefined || token.type === tokTypes.invalidTemplate ? code.length : tokenizer.pos;
+        budget.remaining -= Math.max(1, searched - from);
+      }
+      if (budget.remaining < 0 || token.type === tokTypes.eof) return undefined;
       if (token.type === tokTypes.parenL) depth += 1;
       else if (token.type === tokTypes.parenR) depth -= 1;
-      if (depth === 0) return paren + token.end;
+      if (depth === 0) return token.end;
     }
-    return undefined;
   });
   return read.ok ? read.value : undefined;
 }
@@ -185,9 +205,12 @@ function wholeExpression(text: string, options: Readonly<Options>): AnyNode | un
  * of its argument list: as a call expression, or, with type arguments between the two (which JavaScript reads as
  * comparisons), as its argument list in parentheses. Undefined when acorn reads neither.
  */
-function callAt(code: string, start: number, paren: number): GlobCall | undefined {
-  const end = argumentsEnd(code, paren);
+function callAt(code: string, start: number, paren: number, budget: RecoveryBudget): GlobCall | undefined {
+  const end = argumentsEnd(code, paren, budget);
   if (end === undefined) return undefined;
+  // Both expression reads and their slices are covered, including nested apparent calls with closing parens.
+  budget.remaining -= end - start + end - paren;
+  if (budget.remaining < 0) return undefined;
   const call = wholeExpression(code.slice(start, end), MODULE_OPTIONS);
   if (call?.type === 'CallExpression' && isGlobCallee(call.callee)) return callOf(call.arguments);
   const list = wholeExpression(code.slice(paren, end), { ...MODULE_OPTIONS, preserveParens: true });
@@ -200,6 +223,8 @@ function callAt(code: string, start: number, paren: number): GlobCall | undefine
 export interface GlobReading {
   readonly calls: readonly GlobCall[];
   readonly unreadable: readonly number[];
+  /** Recovery stopped before reading all candidates because their aggregate work exceeded the allowance. */
+  readonly recoveryLimited?: true;
 }
 
 /** The glob calls of a module's code: read whole when it is a module, else each call on its own. */
@@ -218,18 +243,16 @@ export function globCalls(code: string): GlobReading {
   }
   const calls: GlobCall[] = [];
   const unreadable: number[] = [];
+  // Ordinary disjoint calls take a few passes over their own text. Overlapping or malformed candidates may
+  // spend at most sixteen source lengths, plus the final token, regardless of how many apparent calls occur.
+  const budget: RecoveryBudget = { remaining: code.length * 16 };
   for (const match of code.matchAll(GLOB_CALL_START)) {
-    const call = callAt(code, match.index, match.index + match[0].length - 1);
+    const call = callAt(code, match.index, match.index + match[0].length - 1, budget);
     if (call === undefined) unreadable.push(match.index);
     else calls.push(call);
+    if (budget.remaining < 0) return { calls, unreadable, recoveryLimited: true };
   }
   return { calls, unreadable };
-}
-
-/** Where `offset` is in `code`, as `line:column`, both from 1. */
-function lineColumn(code: string, offset: number): string {
-  const lines = code.slice(0, offset).split('\n');
-  return `${String(lines.length)}:${String((lines.at(-1)?.length ?? 0) + 1)}`;
 }
 
 /** Characters that make a segment of a pattern match more than its own name (picomatch's, and its escape). */
@@ -457,11 +480,18 @@ export async function moduleGlobScopes(
   root: string,
 ): Promise<GlobScope[]> {
   if (!mayHoldGlob(code)) return [];
-  const { calls, unreadable } = globCalls(code);
+  const { calls, unreadable, recoveryLimited } = globCalls(code);
   if (unreadable.length > 0) {
-    const where = unreadable.map((offset) => lineColumn(code, offset)).join(', ');
+    const locate = lineColumnFinder(code);
+    const where = unreadable
+      .map((offset) => {
+        const { line, column } = locate(offset);
+        return `${String(line)}:${String(column)}`;
+      })
+      .join(', ');
     context.warn(
       `twee-ts could not read the import.meta.glob() call at ${where} of ${id}; ` +
+        (recoveryLimited === true ? 'recovery work limit reached; remaining calls were not read; ' : '') +
         'files added to its folders are bundled the next time something else changes.',
     );
   }
