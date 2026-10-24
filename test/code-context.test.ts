@@ -36,6 +36,37 @@ describe('javaScriptContexts', () => {
     expect(js('a = b / X / c', 'X')).toEqual({ kind: 'code' });
   });
 
+  it.each([
+    'async function f(){await REGEXP;}',
+    'const f = async () => await REGEXP;',
+    'async function* f(){yield await REGEXP;}',
+    '{} {} REGEXP;',
+    'function f(){} {} REGEXP;',
+    'class C{} {} REGEXP;',
+    'if (true) {} REGEXP;',
+    'function* f(){yield REGEXP;}',
+    'const r = REGEXP;',
+  ])('uses grammar to classify regexps in %s (#521)', (pattern) => {
+    for (const content of ['"X"', "'X'", 'tag`X`']) {
+      const source = pattern.replace('REGEXP', `/${content}/u`) + ' const s = "Y";';
+      compileJavaScript(source);
+      expect(js(source, 'X')).toEqual({ kind: 'regexp', flags: 'u' });
+      expect(js(source, 'Y')).toEqual({ kind: 'string', quote: '"', whole: false });
+    }
+  });
+
+  it('uses module grammar for a regexp after top-level await (#521)', () => {
+    expect(js('await /"X"/v;', 'X', true)).toEqual({ kind: 'regexp', flags: 'v' });
+  });
+
+  it('does not guess string contexts beyond a syntax error (#521)', () => {
+    expect(js('const a = ; async function f(){await /"X"/u;}', 'X')).toEqual({
+      kind: 'unparsable',
+      reason: expect.any(String),
+    });
+    expect(js('async function f(){await /"X"/u;} @', 'X')).toEqual({ kind: 'regexp', flags: 'u' });
+  });
+
   it.each(TEMPLATE_SYNTAX)('classifies templates by syntax: $source (#480)', ({ source, tagged, module }) => {
     expect(js(source, 'X', module)).toEqual({ kind: 'template', tagged });
     // The independent JavaScript engine must accept the script cases too.

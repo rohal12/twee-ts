@@ -18,7 +18,7 @@ import { normalizeIFID } from '../src/ifid.js';
 import * as templateModule from '../src/template.js';
 import * as modulesModule from '../src/modules.js';
 import type { Diagnostic, Passage } from '../src/types.js';
-import { attr, elements, parseDocument, textContent } from './helpers/html.js';
+import { attr, elements, parseDocument, scriptTexts, textContent } from './helpers/html.js';
 import { allNodes, documentHead } from './helpers/html-oracle.js';
 import { judgeHeadFile, judgeModule, judgeViteClient } from './helpers/insertion-judges.js';
 
@@ -426,6 +426,61 @@ describe('#244 RC6: lossy encodings are reported', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain(`script passage "Code" has ${sequence} at line 1 outside a string`);
   });
+
+  it.each(['async function f(){await REGEXP;}', '{} {} REGEXP;'])(
+    '#521: reports grammar-sensitive regexp corruption in script output and injected modules: %s',
+    async (pattern) => {
+      for (const quote of ['"', "'"]) {
+        for (const flags of ['u', 'v']) {
+          const code = pattern.replace('REGEXP', `/${quote}<!--${quote}/${flags}`) + ' const s="<script>";';
+          expect(() => new Script(code)).not.toThrow();
+          const { back, warnings } = await scriptRoundTrip(code);
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toContain('which changes the code');
+          expect(() => new Script(back ?? '')).toThrow(SyntaxError);
+
+          const file = join(dir, 'regexp.js');
+          writeFileSync(file, code);
+          const diagnostics: Diagnostic[] = [];
+          const output = modifyHead('<html><head></head><body></body></html>', [file], undefined, diagnostics);
+          expect(diagnostics).toEqual([
+            { level: 'warning', message: expect.stringContaining(`module "${file}" has "<!--"`) },
+          ]);
+          expect(scriptTexts(output)).toHaveLength(1);
+          expect(() => new Script(scriptTexts(output)[0] ?? '')).toThrow(SyntaxError);
+        }
+      }
+    },
+  );
+
+  it.each(['async function f(){await /"{{STORY_NAME}}"/;}', '{} {} /"{{STORY_NAME}}"/;'])(
+    '#521: warns for a format title placeholder in a regexp: %s',
+    async (code) => {
+      const formatDir = join(dir, 'Context');
+      mkdirSync(formatDir);
+      writeFileSync(
+        join(formatDir, 'format.js'),
+        `window.storyFormat(${JSON.stringify({
+          name: 'Context',
+          version: '1.0.0',
+          source: `${D}<head><script>${code}</script></head><body>{{STORY_DATA}}</body></html>`,
+        })});`,
+      );
+      const result = await compile({
+        sources: [{ filename: 's.tw', content: `:: StoryTitle\nA/B\n:: StoryData\n{"ifid":"${IFID}"}\n:: Start\nHi` }],
+        outputMode: 'html',
+        formatId: 'Context',
+        formatPaths: [dir],
+        useTweegoPath: false,
+        noRemote: true,
+      });
+      expect(result.diagnostics).toEqual([
+        { level: 'warning', message: expect.stringContaining('in a script (JavaScript regexp)') },
+      ]);
+      expect(scriptTexts(result.output)[0]).toBe(code.replace('{{STORY_NAME}}', 'A/B'));
+      expect(() => new Script(scriptTexts(result.output)[0] ?? '')).toThrow(SyntaxError);
+    },
+  );
 });
 
 describe('#149: obfuscation follows the StorySettings the output carries', () => {

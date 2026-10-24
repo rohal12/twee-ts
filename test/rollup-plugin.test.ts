@@ -588,7 +588,7 @@ describe('rollup plugin: in a Vite build', { timeout: 30_000 }, () => {
       configFile: false,
       root: dir,
       logLevel: 'silent',
-      build: { outDir: join(dir, 'dist'), rollupOptions: { input: join(dir, 'entry.js') } },
+      build: { outDir: join(dir, 'dist'), rolldownOptions: { input: join(dir, 'entry.js') } },
       plugins: [storyPlugin(dir)],
     });
   }
