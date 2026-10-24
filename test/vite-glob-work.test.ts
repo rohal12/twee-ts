@@ -70,6 +70,17 @@ describe('aggregate glob recovery work (#509)', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('recovery work limit'));
   });
 
+  it.each(['import.meta.glob(/* ', 'import.meta.glob("\\u{', 'import.meta.glob(`\\u{`); '])(
+    'bounds token searches beyond the reported cursor: %s',
+    (opener) => {
+      const code = 'type T = string; ' + opener.repeat(1000);
+      const measured = measureTextWork(() => globCalls(code));
+      expect(measured.value.calls).toEqual([]);
+      expect(measured.work).toBeLessThan(code.length * 100);
+      expect(measured.value.recoveryLimited).toBe(true);
+    },
+  );
+
   it('bounds repeated parsing of nested closed calls', () => {
     const code = 'type T = string; ' + 'import.meta.glob('.repeat(1000) + '"./*.js"' + ')'.repeat(1000);
     const measured = measureTextWork(() => globCalls(code));

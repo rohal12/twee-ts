@@ -179,8 +179,11 @@ function argumentsEnd(code: string, paren: number, budget: RecoveryBudget): numb
       try {
         token = tokenizer.getToken();
       } finally {
-        // Include whitespace, comments, EOF and failed tokens, not just tokens the iterator would yield.
-        budget.remaining -= Math.max(1, tokenizer.pos - from);
+        // A failed token may search the entire suffix without advancing pos (an unclosed comment or
+        // Unicode escape). Invalid template tokens can recover from that same escape search. Charge the
+        // whole suffix in either case; cursor movement covers ordinary tokens, whitespace and comments.
+        const searched = token === undefined || token.type === tokTypes.invalidTemplate ? code.length : tokenizer.pos;
+        budget.remaining -= Math.max(1, searched - from);
       }
       if (budget.remaining < 0 || token.type === tokTypes.eof) return undefined;
       if (token.type === tokTypes.parenL) depth += 1;
