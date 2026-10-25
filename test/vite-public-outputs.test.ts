@@ -1,4 +1,4 @@
-import { readFileSync, symlinkSync } from 'node:fs';
+import { readFileSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { build } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,50 @@ const PUBLIC_FILES = {
   'vendor.png': Buffer.from('PUBLIC_IMAGE'),
   'vendor.tw': ':: PublicPassage\nPUBLIC_PASSAGE',
 };
+
+describe.each(['sources', 'modules'] as const)('Vite public copy history beside %s (#184)', (role) => {
+  it.each(['remove files', 'retarget link'] as const)('excludes earlier copies after %s', async (change) => {
+    const dir = makeProject({
+      'story/start.tw': STORY,
+      'story/authored.js': 'globalThis.AUTHORED_SCRIPT = 1;',
+      ...Object.fromEntries(Object.entries(PUBLIC_FILES).map(([name, text]) => [`shared/${name}`, text])),
+      'next/new.js': 'export const PUBLIC_NEXT = 1;',
+      'public/.keep': '',
+    });
+    const link = join(dir, 'public/vendor');
+    symlinkSync(join(dir, 'shared'), link, 'junction');
+    const plugin = tweeTsPlugin({
+      sources: [join(dir, role === 'sources' ? 'story' : 'story/start.tw')],
+      format: 'test-format-1',
+      compileOptions: { ...COMPILE, ...(role === 'modules' ? { modules: [join(dir, 'story')] } : {}) },
+    });
+    const config = {
+      root: dir,
+      build: { outDir: join(dir, 'story'), emptyOutDir: false },
+    };
+    await build({ configFile: false, logLevel: 'silent', ...config, plugins: [plugin] });
+    if (change === 'remove files') {
+      for (const name of Object.keys(PUBLIC_FILES)) rmSync(join(dir, 'shared', name));
+    } else {
+      unlinkSync(link);
+      symlinkSync(join(dir, 'next'), link, 'junction');
+    }
+    await build({ configFile: false, logLevel: 'silent', ...config, plugins: [plugin] });
+    // Vite leaves old copies in place with emptyOutDir:false; they still belong to this plugin's build.
+    expect(readFileSync(join(dir, 'story/vendor/vendor.js'), 'utf8')).toBe(PUBLIC_FILES['vendor.js']);
+    const html = readFileSync(join(dir, 'story/index.html'), 'utf8');
+    expect(html).toContain('AUTHORED_SCRIPT');
+    expect(html).toContain('Hello from the story.');
+    expect(html).not.toMatch(/PUBLIC_SCRIPT|PUBLIC_STYLE|PUBLIC_PASSAGE|PUBLIC_NEXT|Twine\.image/);
+    const { url } = await startServer({ ...config, server: { watch: null }, plugins: [plugin] });
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    const devHtml = await response.text();
+    expect(devHtml).toContain('AUTHORED_SCRIPT');
+    expect(devHtml).toContain('Hello from the story.');
+    expect(devHtml).not.toMatch(/PUBLIC_SCRIPT|PUBLIC_STYLE|PUBLIC_PASSAGE|PUBLIC_NEXT|Twine\.image/);
+  });
+});
 
 describe.each(['sources', 'modules'] as const)('Vite public copies beside %s (#184)', (role) => {
   describe.each(['ordinary', 'directory link', 'nested links', 'file links'] as const)('%s', (kind) => {
