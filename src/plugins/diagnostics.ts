@@ -2,10 +2,11 @@
  * How the build plugins turn compile results into bundler errors and warnings.
  */
 import type { CompileOptions, CompileResult, Diagnostic, FileCacheEntry } from '../types.js';
-import { compileForOutputFile } from '../compiler.js';
+import { checkNamedInputs, compileForOutputFile } from '../compiler.js';
 import { escapeTerminalControls, formatDiagnostic } from '../diagnostic-text.js';
 import { TweeTsError } from '../errors.js';
 import type { BuildOutputs } from '../filesystem.js';
+import { outputPaths } from '../filesystem.js';
 
 /** An error carrying the file and line the bundler reports (and Vite shows in its overlay). */
 export interface LocatedError extends Error {
@@ -59,21 +60,35 @@ export interface CompiledStory {
  * Compiles the story for a plugin, leaving out what a build writes (`outputs`).
  * `writesStory` is whether the story goes to a file (a build, not the dev server): a story path in `outputs`
  * that holds an authored file of a source folder then fails the compile (`OUTPUT_IS_INPUT`), as a named output
- * does. Throws a LocatedError when the compile fails or reports errors.
+ * does. `entryFiles` are physical inputs the story must also never replace. Throws a LocatedError when the
+ * compile fails or reports errors.
  */
 export async function compileStory(
   options: CompileOptions,
   outputs: BuildOutputs,
   cache?: Map<string, FileCacheEntry>,
   writesStory = false,
+  entryFiles: Iterable<string> = [],
 ): Promise<CompiledStory> {
+  const inputs = [...entryFiles].map((path) => ({ role: 'entry' as const, path }));
+  // Only the story is protected here; overwriting bundler chunks and assets follows the bundler's policy.
+  // Re-read identities after compilation too: awaiting a format may let an output link change targets.
+  const checkEntry = (): void => {
+    checkNamedInputs(
+      inputs,
+      outputPaths({ files: writesStory ? (outputs.stories ?? []) : [], dirs: [] }, 'snapshot'),
+      [],
+    );
+  };
   let result: CompileResult;
   try {
+    checkEntry();
     result = await compileForOutputFile(
       options,
       writesStory ? outputs : { files: outputs.files, dirs: outputs.dirs },
       cache,
     );
+    checkEntry();
   } catch (e) {
     throw fatalError(e);
   }

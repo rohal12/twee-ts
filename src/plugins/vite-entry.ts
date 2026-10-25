@@ -370,29 +370,86 @@ function appliesTo(plugin: Plugin, command: ViteCommand, config: UserConfig, env
 /**
  * `plugin` as the entry build runs it: without `apply` (already decided by
  * appliesTo), and, for the dev command, with its `config`, `configEnvironment`
- * and `configResolved` hooks seeing the dev command, as the dev server's
- * instance of the plugin sees it. The plugin object itself is left untouched.
+ * and `configResolved` hooks, environment selection and hook contexts seeing
+ * the dev command. Vite's own build plugins still see build. The plugin object itself is left untouched.
  */
-function asEntryBuildPlugin(plugin: Plugin, command: ViteCommand): Plugin {
+function asEntryBuildPlugin(
+  plugin: Plugin,
+  command: ViteCommand,
+  views: { readonly configs: WeakMap<object, object>; readonly environments: WeakMap<object, object> },
+): Plugin {
   const overrides = new Map<PropertyKey, unknown>([['apply', undefined]]);
   if (command === 'serve') {
     const devEnv = (env: unknown): unknown => Object.assign({}, env, { command, isSsrBuild: false });
-    const wrap = (name: 'config' | 'configEnvironment' | 'configResolved', patch: (args: unknown[]) => unknown[]) => {
-      const hook: unknown = plugin[name];
+    const devConfig = (config: unknown): unknown => {
+      if (!isRecord(config)) return config;
+      let view = views.configs.get(config);
+      if (view === undefined) {
+        view = withOverrides(config, new Map([['command', command]]));
+        views.configs.set(config, view);
+      }
+      return view;
+    };
+    const devEnvironment = (environment: unknown): unknown => {
+      if (!isRecord(environment)) return environment;
+      const known = views.environments.get(environment);
+      if (known !== undefined) return known;
+      const overrides = new Map<PropertyKey, unknown>([['config', devConfig(environment['config'])]]);
+      const topLevel = environment['getTopLevelConfig'];
+      if (typeof topLevel === 'function') {
+        overrides.set('getTopLevelConfig', () => devConfig(Reflect.apply(topLevel, environment, [])));
+      }
+      const view = withOverrides(environment, overrides);
+      views.environments.set(environment, view);
+      return view;
+    };
+    const devContext = (context: unknown): unknown => {
+      if (!isRecord(context) || context['environment'] === undefined) return context;
+      const environment = devEnvironment(context['environment']);
+      return new Proxy(context, {
+        get(target, key) {
+          if (key === 'environment') return environment;
+          const value: unknown = Reflect.get(target, key, target);
+          const bound: unknown = typeof value === 'function' ? value.bind(target) : value;
+          return bound;
+        },
+      });
+    };
+    const wrap = (name: PropertyKey, patch: (args: unknown[]) => unknown[] = (args) => args) => {
+      const hook: unknown = Reflect.get(plugin, name);
       const handler = hookHandler(hook);
       if (typeof handler !== 'function') return;
       overrides.set(
         name,
         withHandler(hook, function (this: unknown, ...args: unknown[]): unknown {
-          return Reflect.apply(handler, this, patch(args));
+          return Reflect.apply(handler, devContext(this), patch(args));
         }),
       );
     };
+    // Include inherited hooks and getters as well as own hooks, retaining hook object metadata. This covers
+    // every user hook context without an allowlist that leaves a new Vite/Rolldown hook with build semantics.
+    const keys = new Set<PropertyKey>();
+    for (
+      let object: object | null = plugin;
+      object !== null && object !== Object.prototype;
+      object = Reflect.getPrototypeOf(object)
+    ) {
+      for (const key of Reflect.ownKeys(object)) keys.add(key);
+    }
+    for (const key of keys) if (key !== 'constructor' && key !== 'apply' && key !== 'applyToEnvironment') wrap(key);
     wrap('config', ([config, env]) => [config, devEnv(env)]);
     wrap('configEnvironment', ([name, config, env]) => [name, config, devEnv(env)]);
-    wrap('configResolved', ([config]) => [
-      isRecord(config) ? withOverrides(config, new Map([['command', command]])) : config,
-    ]);
+    wrap('configResolved', ([config]) => [devConfig(config)]);
+    const select = plugin.applyToEnvironment;
+    if (select !== undefined) {
+      overrides.set('applyToEnvironment', async function (this: unknown, environment: unknown): Promise<unknown> {
+        const result: unknown = await Reflect.apply(select, this, [devEnvironment(environment)]);
+        if (result === true || !result) return result;
+        return (await flattenPlugins(result))
+          .filter(isPlugin)
+          .map((selected) => asEntryBuildPlugin(selected, command, views));
+      });
+    }
   }
   return pluginWith(plugin, overrides);
 }
@@ -492,7 +549,7 @@ function entryBuildEnforcer(entryPath: string, command: ViteCommand, outputFilen
   };
 }
 
-/** Build-phase plugin hooks that may call `this.addWatchFile`. */
+/** Plugin hooks that may read an entry input and register it with `this.addWatchFile` before the story is emitted. */
 const WATCH_FILE_HOOKS = [
   'buildStart',
   'resolveId',
@@ -501,6 +558,10 @@ const WATCH_FILE_HOOKS = [
   'transform',
   'moduleParsed',
   'buildEnd',
+  'renderStart',
+  'renderChunk',
+  'augmentChunkHash',
+  'generateBundle',
 ] as const;
 
 /** A plugin context whose `addWatchFile` also passes the file to `record`. */
@@ -514,7 +575,7 @@ function recordingContext(context: object, record: (file: string) => void): obje
         return bound;
       }
       return (id: unknown): unknown => {
-        if (typeof id === 'string' && !id.startsWith('\0')) record(fileOfId(resolve(id)));
+        if (typeof id === 'string' && !id.startsWith('\0')) record(resolve(id));
         return Reflect.apply(value, target, [id]);
       };
     },
@@ -527,7 +588,10 @@ function recordingContext(context: object, record: (file: string) => void): obje
  * never collects wrappers. A plugin without such hooks (a built-in one, for
  * instance) is returned as it is.
  */
-function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin {
+function recordingPlugin(
+  plugin: Plugin,
+  recordFor: (hook: (typeof WATCH_FILE_HOOKS)[number], args: readonly unknown[]) => (file: string) => void,
+): Plugin {
   const overrides = new Map<PropertyKey, unknown>();
   for (const name of WATCH_FILE_HOOKS) {
     const hook = plugin[name];
@@ -536,6 +600,7 @@ function recordingPlugin(plugin: Plugin, record: (file: string) => void): Plugin
     overrides.set(
       name,
       withHandler(hook, function (this: unknown, ...args: unknown[]): unknown {
+        const record = recordFor(name, args);
         const context = typeof this === 'object' && this !== null ? recordingContext(this, record) : this;
         return Reflect.apply(handler, context, args);
       }),
@@ -708,14 +773,53 @@ export interface EntryBuildObserver {
  * which sees the final plugin list, including the plugins Vite resolves per
  * environment (`applyToEnvironment`) after `configResolved`.
  */
-function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuildObserver): Plugin {
+export function recordWatchFiles(
+  files: Set<string> | undefined,
+  root: string,
+  observer: EntryBuildObserver = {},
+): { readonly plugin: Plugin; readonly inputs: () => ReadonlySet<string> } {
   const { onLoad, onResolve, onGlob, onWatchFile } = observer;
+  // Keep watches of cached modules, but release those of a module the current graph no longer uses.
+  // A watch registered by a build or rendering hook belongs to that build rather than to a module.
+  const watches = new Map<string | undefined, Set<string>>();
+  const touched = new Set<string>();
+  let modules = new Set<string>();
+  let started = false;
   const record = (file: string): void => {
-    files.add(file);
+    files?.add(file);
     onWatchFile?.(file);
   };
-  return {
+  const recordFor = (hook: (typeof WATCH_FILE_HOOKS)[number], args: readonly unknown[]): ((file: string) => void) => {
+    if (hook === 'buildStart' && !started) {
+      started = true;
+      touched.clear();
+      watches.delete(undefined);
+    }
+    const owner =
+      hook === 'transform' || hook === 'resolveId' || hook === 'resolveDynamicImport'
+        ? args[1]
+        : hook === 'load'
+          ? args[0]
+          : hook === 'moduleParsed' && isRecord(args[0])
+            ? args[0]['id']
+            : undefined;
+    const id = typeof owner === 'string' ? owner : undefined;
+    if (id !== undefined && (hook === 'load' || hook === 'transform') && !touched.has(id)) {
+      touched.add(id);
+      watches.delete(id);
+    }
+    return (file) => {
+      record(file);
+      const owned = watches.get(id) ?? new Set<string>();
+      watches.set(id, owned.add(file));
+    };
+  };
+  const plugin: Plugin = {
     name: `${PLUGIN_NAME}:record-watch-files`,
+    buildStart() {
+      // Advance even when no other plugin has a buildStart hook.
+      recordFor('buildStart', []);
+    },
     // Called for each module just before its file is read, so a caller can note the file's state as the
     // bundle is about to see it. It reads nothing itself: the module is loaded as usual.
     load: {
@@ -766,9 +870,12 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
     // Every module of the graph, also one the bundle renders no code of (a module
     // whose constant the bundler inlined), which the chunk's module list leaves out.
     buildEnd() {
-      for (const id of this.getModuleIds()) {
+      modules = new Set(this.getModuleIds());
+      started = false;
+      for (const owner of watches.keys()) if (owner !== undefined && !modules.has(owner)) watches.delete(owner);
+      for (const id of modules) {
         const file = fileOfId(id);
-        if (isAbsolute(file)) files.add(file);
+        if (isAbsolute(file)) files?.add(file);
       }
     },
     options: {
@@ -778,9 +885,24 @@ function recordWatchFiles(files: Set<string>, root: string, observer: EntryBuild
         // the user's plugin list is read (see userEntryConfig()).
         const plugins = (await flattenPlugins(inputOptions.plugins))
           .filter(isPlugin)
-          .map((p) => recordingPlugin(p, record));
+          .map((p) => recordingPlugin(p, recordFor));
         return { ...inputOptions, plugins };
       },
+    },
+  };
+  return {
+    plugin,
+    inputs: () => {
+      const current = new Set(
+        [...modules]
+          .filter((id) => !id.startsWith('\0'))
+          .map(fileOfId)
+          .filter(isAbsolute),
+      );
+      for (const [owner, watched] of watches) {
+        if (owner === undefined || modules.has(owner)) for (const file of watched) current.add(file);
+      }
+      return current;
     },
   };
 }
@@ -838,10 +960,14 @@ export async function bundleEntry(
   const watchFiles = observer.watchFiles ?? new Set<string>();
   const env: ConfigEnv = { command, mode: config.mode, isSsrBuild: false, isPreview: false };
   const user = await userConfigFor(config, env);
-  const plugins = (await flattenPlugins(user.plugins))
-    .filter(isPlugin)
-    .filter((plugin) => plugin.name !== PLUGIN_NAME && appliesTo(plugin, command, user, env))
-    .map((plugin) => asEntryBuildPlugin(plugin, command));
+  const views = { configs: new WeakMap<object, object>(), environments: new WeakMap<object, object>() };
+  const entryPlugins = async (option: unknown): Promise<Plugin[]> =>
+    (await flattenPlugins(option))
+      .filter(isPlugin)
+      .filter((plugin) => plugin.name !== PLUGIN_NAME && appliesTo(plugin, command, user, env))
+      .map((plugin) => asEntryBuildPlugin(plugin, command, views));
+  const plugins = await entryPlugins(user.plugins);
+  const workerPlugins = user.worker?.plugins;
   const inline: InlineConfig = {
     ...withoutExcludedKeys(user),
     configFile: false,
@@ -855,11 +981,17 @@ export async function bundleEntry(
     plugins: [
       ...plugins,
       entryBuildEnforcer(entryPath, command, outputFilename),
-      recordWatchFiles(watchFiles, config.root, observer),
+      recordWatchFiles(watchFiles, config.root, observer).plugin,
     ],
     // A worker the entry starts is bundled by a build nested in this one, with the plugins of `worker.plugins`:
     // its modules, globs and import spellings are the entry's too (#424).
-    worker: withWorkerPlugin(user.worker, () => recordWatchFiles(watchFiles, config.root, observer)),
+    worker: withWorkerPlugin(
+      {
+        ...user.worker,
+        plugins: () => [entryPlugins(typeof workerPlugins === 'function' ? workerPlugins() : workerPlugins)],
+      },
+      () => recordWatchFiles(watchFiles, config.root, observer).plugin,
+    ),
   };
   // One output, as entryBuildSettings sets it, and no watcher (`watch: null`).
   const [result] = [await build(inline)].flat();

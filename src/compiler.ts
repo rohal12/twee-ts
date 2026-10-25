@@ -355,7 +355,7 @@ function toError(e: unknown): Error {
 
 /** An input the output must not overwrite, named by the user. */
 interface NamedInput {
-  readonly role: 'source' | 'module' | 'head' | 'config' | 'story format';
+  readonly role: 'source' | 'module' | 'head' | 'config' | 'story format' | 'entry';
   readonly path: string;
 }
 
@@ -390,7 +390,7 @@ function outputIsInput(input: NamedInput, diagnostics: readonly Diagnostic[], de
  * TweeTsError, as in Tweego. Writing the build would overwrite it. A folder that holds an output is
  * walked instead, and the output inside it left out (see checkSkippedOutputs).
  */
-function checkNamedInputs(
+export function checkNamedInputs(
   inputs: readonly NamedInput[],
   output: OutputPaths,
   diagnostics: readonly Diagnostic[],
