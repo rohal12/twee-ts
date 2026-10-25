@@ -73,6 +73,7 @@ function resolvedConfig(root: string, build: Record<string, unknown> = {}, comma
     command,
     root,
     publicDir: '',
+    environments: {},
     build: { outDir: 'dist', copyPublicDir: false, ...build },
     logger: { warn: vi.fn() },
   };

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject Vite story output that would overwrite the entry or its dependencies, including stylesheets, resources, worker inputs and plugin watch files, in either entry build path (#525).
+- Preserve the development command in entry plugins' environment selection and hook contexts, including plugins returned by `applyToEnvironment` (#249).
 - Exclude public resources copied through directory symlinks and junctions from Vite story sources and modules, retaining earlier copies across builds after public-file removal or link retargeting (#184).
 - Classify JavaScript escape and substitution contexts with the parser, warning when regular-expression escaping or title substitution changes code (#521).
 - Use Vite's supported `rolldownOptions` in the Rollup integration tests so deprecation-aware lint passes (#520).

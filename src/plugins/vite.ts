@@ -40,6 +40,7 @@ import {
   PLUGIN_NAME,
   pluginWith,
   removeFromBundle,
+  recordWatchFiles,
   takeEntryFromBundle,
   withWorkerPlugin,
 } from './vite-entry.js';
@@ -223,6 +224,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // The entry bundled by a build of its own, for each build (by environment) that
   // couldn't bundle it inside itself.
   const ownBuilds = new WeakMap<object, EntryBundle>();
+  const entryInputs = new WeakMap<ResolvedConfig, () => ReadonlySet<string>>();
   // The files this plugin's builds write, and their output folders, as each bundle
   // reports them. A source folder may hold any of them; none is a source.
   const record = createOutputRecord(outputFilename);
@@ -249,7 +251,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   };
 
   /** Whether this instance's entry is an input of the build with this config. */
-  const bundlesEntryInside = (config: ResolvedConfig): boolean => {
+  const bundlesEntryInside = (config: { readonly build: unknown }): boolean => {
     const input = bundlerOptionsOf(config.build)?.['input'];
     return isRecord(input) && Object.hasOwn(input, entryInput);
   };
@@ -391,6 +393,23 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     configResolved(config) {
       if (entryPath === undefined) return;
+      if (
+        config.command === 'build' &&
+        (bundlesEntryInside(config) || bundlesEntryInside({ build: config.environments[CLIENT]?.build }))
+      ) {
+        const recorder = recordWatchFiles(undefined, config.root);
+        entryInputs.set(config, recorder.inputs);
+        // The final plugin list includes environment-selected plugins. Record their addWatchFile calls,
+        // as the separate entry build does, before any module or stylesheet is read.
+        Reflect.set(
+          config.plugins,
+          config.plugins.length,
+          pluginWith(
+            recorder.plugin,
+            new Map([['applyToEnvironment', (environment: { name: string }) => environment.name === CLIENT]]),
+          ),
+        );
+      }
       // `vite build --watch` with the entry inside the build: note the imports the user's plugins resolve (see
       // resolveId below). Vite builds each environment's plugins from this list after this hook.
       if (config.command === 'build' && config.build.watch && bundlesEntryInside(config)) {
@@ -549,7 +568,23 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         record.addFiles(outputOptions, [...Object.keys(bundle), ...(entry?.assets.keys() ?? [])]);
         let story: CompiledStory;
         try {
-          story = await compileStory(resolved.compile(entrySources(entry)), configOutputs(config, record), cache, true);
+          // Chunk moduleIds omit tree-shaken modules; CSS and worker plugins also read files registered only
+          // with addWatchFile. Protect all of them, including the entry itself, from the story's write.
+          const entryFiles =
+            entryPath === undefined
+              ? []
+              : [
+                  entryPath,
+                  ...(entry?.files ?? []),
+                  ...(entryInputs.get(this.environment.getTopLevelConfig())?.() ?? []),
+                ].filter((id) => !id.startsWith('\0'));
+          story = await compileStory(
+            resolved.compile(entrySources(entry)),
+            configOutputs(config, record),
+            cache,
+            true,
+            entryFiles,
+          );
         } catch (e) {
           return this.error(fatalError(e));
         }
