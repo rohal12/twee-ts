@@ -120,6 +120,7 @@ export const MATRIX = {
       'private start rejected',
       'effective Twee metadata round trip',
       'missing IFID reported',
+      'public directory-link copies excluded from overlapping Vite output',
     ],
   },
   CLI: {

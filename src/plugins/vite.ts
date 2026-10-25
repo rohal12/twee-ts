@@ -11,13 +11,13 @@
  * overlay (see vite-dev.ts). A build emits the story with the configured file
  * name, in the client environment only.
  */
-import { relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
-import { getFilenames, outputPaths } from '../filesystem.js';
+import { outputPaths } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
@@ -26,6 +26,7 @@ import type { SharedPluginOptions } from './options.js';
 import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation } from './paths.js';
 import { installStoryRoute, setUpDevStory } from './vite-dev.js';
+import { publicFiles } from './vite-public.js';
 import {
   bundleEntry,
   ENTRY_INPUT_NAME,
@@ -128,13 +129,10 @@ function configOutputLocations(config: ResolvedConfig): OutputLocation[] {
  */
 function configOutputs(config: ResolvedConfig, outputFilename: string): BuildOutputs {
   const record = createOutputRecord(outputFilename);
-  const publicFiles =
-    config.build.copyPublicDir && config.publicDir
-      ? getFilenames([config.publicDir]).filenames.map((file) => relative(config.publicDir, resolve(file)))
-      : [];
+  const copiedFiles = config.build.copyPublicDir && config.publicDir ? publicFiles(config.publicDir) : [];
   for (const location of configOutputLocations(config)) {
     record.addLocation(location);
-    record.addFiles(location, publicFiles);
+    record.addFiles(location, copiedFiles);
   }
   return record.outputs();
 }
