@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exclude public resources copied through directory symlinks and junctions from Vite story sources and modules, retaining earlier copies across builds after public-file removal or link retargeting (#184).
 - Classify JavaScript escape and substitution contexts with the parser, warning when regular-expression escaping or title substitution changes code (#521).
 - Use Vite's supported `rolldownOptions` in the Rollup integration tests so deprecation-aware lint passes (#520).
 - Preserve shared Vite development dependency watches until every story releases them, including story inputs and overlapping folder watches (#517).

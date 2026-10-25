@@ -2,9 +2,11 @@
  * The compiler's public API, CLI and type declarations, as the build in dist/ provides them.
  * Matrix groups WRITE, TYPE, FORMAT, RESOLVE, INPUT, OUTPUT, CLI and ABORT (see cases.ts).
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, utimesSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect } from 'vitest';
+import { build } from 'vite';
+import { tweeTsPlugin } from '@rohal12/twee-ts/vite';
 import {
   compile,
   compileIncremental,
@@ -349,6 +351,36 @@ defineContracts('OUTPUT', {
     // Twine 2 story data requires an IFID; Twee, JSON and Twine 1 output do not, as in Tweego (#370).
     const result = await compile({ sources: [inline(':: Start\nHello')], outputMode: 'twine2-archive' });
     expect(errorsOf(result).some((message) => message.includes('IFID'))).toBe(true);
+  },
+  'public directory-link copies excluded from overlapping Vite output': async (root) => {
+    const { formatId, options } = localFormat(root);
+    const source = join(root, 'story');
+    write(join(source, 'start.tw'), story());
+    const resource = 'export const PUBLIC_ONLY = 1;';
+    write(join(root, 'shared/vendor.js'), resource);
+    write(join(root, 'next/new.js'), 'export const PUBLIC_NEXT = 1;');
+    mkdirSync(join(root, 'public'));
+    const link = join(root, 'public/vendor');
+    symlinkSync(join(root, 'shared'), link, 'junction');
+    const plugin = tweeTsPlugin({ sources: [source], format: formatId, compileOptions: options });
+    for (let pass = 0; pass < 3; pass++) {
+      if (pass === 2) {
+        unlinkSync(link);
+        symlinkSync(join(root, 'next'), link, 'junction');
+      }
+      await build({
+        configFile: false,
+        root,
+        logLevel: 'silent',
+        build: { outDir: source, emptyOutDir: false },
+        plugins: [plugin],
+      });
+      expect(readFileSync(join(source, 'vendor/vendor.js'), 'utf8')).toBe(resource);
+      const html = readFileSync(join(source, 'index.html'), 'utf8');
+      expect(html).not.toContain('PUBLIC_ONLY');
+      expect(html).not.toContain('PUBLIC_NEXT');
+      expect(decompileHTML(html).story.passages.find((p) => p.name === 'Start')?.text).toBe('Hello');
+    }
   },
 });
 

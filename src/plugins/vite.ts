@@ -11,21 +11,22 @@
  * overlay (see vite-dev.ts). A build emits the story with the configured file
  * name, in the client environment only.
  */
-import { relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
-import { getFilenames, outputPaths } from '../filesystem.js';
+import { outputPaths } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
 import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
 import { checkViteVersion, resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
 import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
-import type { OutputLocation } from './paths.js';
+import type { OutputLocation, OutputRecord } from './paths.js';
 import { installStoryRoute, setUpDevStory } from './vite-dev.js';
+import { publicFiles } from './vite-public.js';
 import {
   bundleEntry,
   ENTRY_INPUT_NAME,
@@ -124,17 +125,14 @@ function configOutputLocations(config: ResolvedConfig): OutputLocation[] {
  * Every path a build with this config writes, as far as the config tells: each
  * output's folder (see configOutputLocations), the story in it, and the copies
  * of the public files Vite puts there. The plugin adds the files each bundle
- * writes as it builds (see createOutputRecord).
+ * writes as it builds (see createOutputRecord). A build passes its persistent
+ * record so public copies remain excluded after a file is removed or a link is retargeted.
  */
-function configOutputs(config: ResolvedConfig, outputFilename: string): BuildOutputs {
-  const record = createOutputRecord(outputFilename);
-  const publicFiles =
-    config.build.copyPublicDir && config.publicDir
-      ? getFilenames([config.publicDir]).filenames.map((file) => relative(config.publicDir, resolve(file)))
-      : [];
+function configOutputs(config: ResolvedConfig, record: OutputRecord): BuildOutputs {
+  const copiedFiles = config.build.copyPublicDir && config.publicDir ? publicFiles(config.publicDir) : [];
   for (const location of configOutputLocations(config)) {
     record.addLocation(location);
-    record.addFiles(location, publicFiles);
+    record.addFiles(location, copiedFiles);
   }
   return record.outputs();
 }
@@ -231,7 +229,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // Everything the builds and the dev server leave out: what the config says a
   // build writes, and what the builds so far wrote.
   const allOutputs = (config: ResolvedConfig): BuildOutputs =>
-    mergeOutputs(configOutputs(config, outputFilename), record.outputs());
+    mergeOutputs(configOutputs(config, createOutputRecord(outputFilename)), record.outputs());
 
   /**
    * The build settings this instance adds to a client build: none when the
@@ -551,7 +549,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         record.addFiles(outputOptions, [...Object.keys(bundle), ...(entry?.assets.keys() ?? [])]);
         let story: CompiledStory;
         try {
-          story = await compileStory(resolved.compile(entrySources(entry)), allOutputs(config), cache, true);
+          story = await compileStory(resolved.compile(entrySources(entry)), configOutputs(config, record), cache, true);
         } catch (e) {
           return this.error(fatalError(e));
         }
