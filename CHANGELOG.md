@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Export synchronous `startPassageDiagnostics()` and `passageOmission()` so editors can share the compiler's entry and output rules over an in-memory story (#528).
+
 ### Fixed
 
 - Protect authored files under directory-only Vite entry watches from story output, including nested files, filesystem aliases and directories that cannot be listed, while allowing unchanged prior generated stories and their hard-link aliases to be replaced (#525).
