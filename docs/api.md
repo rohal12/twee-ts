@@ -334,6 +334,27 @@ The builder's story changes only through `add()`, `rename()` and `remove()`, so 
 
 Before 2.0, `builder.story` gave the builder's mutable story; see [Migrating to 2.0](./migrating-to-2#storybuilder).
 
+### Entry Validation
+
+`startPassageDiagnostics(story: ReadonlyStory, startName?: string, target?: PassageOutputTarget): readonly Diagnostic[]` synchronously checks whether the selected entry exists and is emitted by the output. It returns the same errors as the compiler, or an empty array for a usable entry. The default name is `story.twine2.start`, falling back to `Start` when unset or empty; an explicit name is used verbatim for this check without changing the story. The default target is `twine2`; pass `undefined` for the name to check the effective entry against `twine1` rules. No files or formats are loaded.
+
+`passageOmission(story: ReadonlyStory, passage: ReadonlyPassage, target: PassageOutputTarget): PassageOmission | undefined` gives the structured reason an output leaves a passage out, or `undefined` when it emits the passage. Both functions share the compiler's implementation, including special names, tags and the effective legacy StorySettings. Build the story with `StoryBuilder` to apply duplicate replacements and metadata decoding (including null values) as the compiler does. These functions check entry eligibility and passage omission; other compiler diagnostics, such as an invalid IFID, still come from story construction or compilation.
+
+```typescript
+import { passageOmission, startPassageDiagnostics, StoryBuilder } from '@rohal12/twee-ts';
+
+const builder = new StoryBuilder();
+builder.add({ name: 'Start', tags: ['script'], text: 'void 0;' }, []);
+builder.add({ name: 'Begin', tags: [], text: 'Hello' }, []);
+const story = builder.build();
+console.log(startPassageDiagnostics(story)[0]?.message); // Start is omitted by Twine 2
+console.log(startPassageDiagnostics(story, 'Begin')); // []
+console.log(startPassageDiagnostics(story, undefined, 'twine1')); // []: Twine 1 keeps script passages
+for (const passage of story.passages) {
+  console.log(passage.name, passageOmission(story, passage, 'twine2'));
+}
+```
+
 ### HTML Decompiler
 
 `decompileHTML(html: string, options?: DecompileOptions): DecompileResult` reads compiled Twine 2 or Twine 1 HTML (or an archive) back into a story model: `{ story: Story; diagnostics: Diagnostic[] }`.

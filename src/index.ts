@@ -11,6 +11,8 @@ export { WatchPathError } from './filesystem.js';
 // Story inspection, and the story model builder
 export { storyInspect } from './inspect.js';
 export { StoryBuilder } from './story.js';
+export { startPassageDiagnostics } from './start-passage.js';
+export { passageOmission } from './passage-omission.js';
 
 // HTML decompiler
 export { decompileHTML } from './html-parser.js';

@@ -6,13 +6,15 @@ import type { Diagnostic, PassageOutputTarget, ReadonlyStory } from './types.js'
 import { describeOmission, passageOmission } from './passage-omission.js';
 
 /**
- * Check that `startName` names a passage the `target` output emits.
- * Returns the error diagnostics to report (empty when the start is usable).
+ * Synchronously check that `startName` names a passage the `target` output emits.
+ * By default, use the story's effective start, falling back to `Start`, and Twine 2 rules.
+ * An explicit name overrides the metadata for this check only; the story is never changed.
+ * Returns the compiler's error diagnostics (empty when the start is usable).
  */
 export function startPassageDiagnostics(
   story: ReadonlyStory,
-  startName: string,
-  target: PassageOutputTarget,
+  startName: string = story.twine2.start || 'Start',
+  target: PassageOutputTarget = 'twine2',
 ): readonly Diagnostic[] {
   const passage = story.passages.find((p) => p.name === startName);
   if (passage === undefined) {
