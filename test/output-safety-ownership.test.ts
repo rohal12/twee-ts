@@ -73,7 +73,9 @@ describe.skipIf(process.platform === 'win32')('an owned output edited in place w
     const build = { sources: [folder, story], outputMode: 'twee3' as const, outFile };
     await compileToFile(build);
     replaceKeepingMtime(outFile, AUTHORED);
-    linkSync(outFile, join(dir, 'alias.tw'));
+    const alias = join(dir, 'alias.tw');
+    linkSync(outFile, alias);
+    expect(isOwnOutput(alias)).toBe(false);
     await expect(compileToFile(build)).rejects.toMatchObject({ code: 'OUTPUT_IS_INPUT' });
     expect(readFileSync(outFile, 'utf-8')).toContain('UserContent');
   });
@@ -89,6 +91,9 @@ describe('an unchanged earlier build', () => {
     const build = { sources: [folder, story], outputMode: 'twee3' as const, outFile };
     await compileToFile(build);
     expect(isOwnOutput(outFile)).toBe(true);
+    const alias = join(folder, 'alias.tw');
+    linkSync(outFile, alias);
+    expect(isOwnOutput(alias)).toBe(true);
     chmodSync(outFile, 0o644);
     expect(isOwnOutput(outFile)).toBe(true);
     const second = await compileToFile(build);

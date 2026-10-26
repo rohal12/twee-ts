@@ -93,8 +93,20 @@ function signatureOf(path: string): string | undefined {
  */
 export function isOwnOutput(path: string): boolean {
   const signature = signatureOf(path);
-  const written = ownOutputs.get(identify(path).key);
-  if (signature === undefined || written?.signature !== signature) return false;
+  if (signature === undefined) return false;
+  let written = ownOutputs.get(identify(path).key);
+  // A directory walk may reach a hard-link alias instead of the spelling we wrote. The signature includes
+  // its device and inode; matching it preserves ownership through aliases, but still requires the same bytes.
+  if (written?.signature !== signature) {
+    written = undefined;
+    for (const output of ownOutputs.values()) {
+      if (output.signature === signature) {
+        written = output;
+        break;
+      }
+    }
+  }
+  if (written === undefined) return false;
   try {
     return sha256(readFileSync(path)) === written.hash;
   } catch {

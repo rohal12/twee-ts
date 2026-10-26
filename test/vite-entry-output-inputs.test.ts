@@ -1,7 +1,7 @@
 /** A story must never replace a file its entry read, in either bundling path (#525). */
 import { afterEach, describe, expect, it } from 'vitest';
-import { linkSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, linkSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { build } from 'vite';
 import type { Plugin } from 'vite';
 import type { OutputMode } from '../src/types.js';
@@ -175,6 +175,43 @@ describe.each(['inside the build', 'a separate build'] as const)('entry input pr
     expect(readFileSync(join(outDir, output), 'utf8')).toBe(authored);
   });
 
+  it
+    .skipIf(process.platform === 'win32' || process.getuid?.() === 0)
+    .each(['direct', 'nested', 'directory link', 'hard link'])(
+    'preserves a %s input when its watched directory cannot be listed',
+    async (kind) => {
+      const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+      const folder = join(dir, 'data');
+      mkdirSync(folder);
+      const locked = kind === 'nested' ? join(folder, 'nested') : folder;
+      mkdirSync(locked, { recursive: true });
+      const file = join(locked, 'catalog.txt');
+      const authored = 'authored catalog';
+      writeFileSync(file, authored);
+      let watched = folder;
+      let output = file;
+      if (kind === 'directory link') {
+        watched = join(dir, 'watched');
+        symlinkSync(folder, watched, 'junction');
+      } else if (kind === 'hard link') {
+        output = join(dir, 'story.html');
+        linkSync(file, output);
+      }
+      chmodSync(locked, 0o311);
+      try {
+        // Searching a known filename still works; only directory enumeration is denied.
+        expect(readFileSync(file, 'utf8')).toBe(authored);
+        await expect(run(dir, relative(dir, output), dir, [readFolder(watched, file)])).rejects.toThrow(
+          'Cannot inspect entry watch path',
+        );
+        expect(readFileSync(file, 'utf8')).toBe(authored);
+        expect(readFileSync(output, 'utf8')).toBe(authored);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
+
   it.each([
     ['html', 'story.html'],
     ['html', 'story.txt'],
@@ -194,6 +231,7 @@ describe.each(['inside the build', 'a separate build'] as const)('entry input pr
       const plugins = [readFolder(folder, file)];
       const output = join(folder, outputFilename);
       await run(dir, outputFilename, folder, plugins, { outputMode });
+      linkSync(output, join(folder, 'output-alias.txt'));
       await run(dir, outputFilename, folder, plugins, { outputMode });
       expect(readFileSync(output, 'utf8')).toContain('Hello from the story.');
       rmSync(output);

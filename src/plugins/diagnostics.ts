@@ -75,9 +75,14 @@ function* entryFolderFiles(paths: Iterable<string>): Generator<string> {
       if (visited.has(key)) return;
       visited.add(key);
       names = readdirSync(path);
-    } catch {
-      // Unreachable paths could not supply a directory's input bytes.
-      return;
+    } catch (e) {
+      const code = e instanceof Error && 'code' in e ? e.code : undefined;
+      // A missing target or a link loop supplied no bytes. A searchable directory may still supply a known
+      // file when it cannot be listed, so permission and I/O failures must stop output verification.
+      if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP') return;
+      throw new Error(`Cannot inspect entry watch path ${path}: ${e instanceof Error ? e.message : String(e)}`, {
+        cause: e,
+      });
     }
     for (const name of names) yield* walk(join(path, name), false);
   }
