@@ -15,6 +15,7 @@ import { resolve } from 'node:path';
 import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
+import { recordOwnOutput } from '../atomic-write.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { outputPaths } from '../filesystem.js';
@@ -23,7 +24,7 @@ import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
 import { checkViteVersion, resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
-import { canonicalPath, createOutputRecord, fileKey, outputLocations, toPosix } from './paths.js';
+import { canonicalPath, createOutputRecord, emittedFilePath, fileKey, outputLocations, toPosix } from './paths.js';
 import type { OutputLocation, OutputRecord } from './paths.js';
 import { installStoryRoute, setUpDevStory } from './vite-dev.js';
 import { publicFiles } from './vite-public.js';
@@ -592,6 +593,14 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         this.emitFile({ type: 'asset', fileName: outputFilename, source: story.output });
         return undefined;
       },
+    },
+
+    writeBundle(outputOptions, bundle) {
+      const story = bundle[outputFilename];
+      const path = emittedFilePath(outputOptions, outputFilename);
+      // Vite writes the asset itself, so record its bytes only after the write. This also recognises markless
+      // output modes and HTML with arbitrary filenames on subsequent builds, without trusting edited files.
+      if (story?.type === 'asset' && path !== undefined) recordOwnOutput(path, story.source);
     },
 
     async configureServer(server) {

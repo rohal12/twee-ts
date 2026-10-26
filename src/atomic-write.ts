@@ -50,9 +50,17 @@ export function writeFileAtomic(path: string, data: string, platform: NodeJS.Pla
   } catch (e) {
     throw writeError(path, e);
   }
+  recordOwnOutput(path, data);
+}
+
+/** Records output just written by this process, including story assets written by a bundler. */
+export function recordOwnOutput(path: string, data: string | Uint8Array): void {
   const signature = signatureOf(path);
   if (signature !== undefined)
-    ownOutputs.set(identify(path).key, { signature, hash: sha256(Buffer.from(data, 'utf-8')) });
+    ownOutputs.set(identify(path).key, {
+      signature,
+      hash: sha256(typeof data === 'string' ? Buffer.from(data, 'utf-8') : data),
+    });
 }
 
 /** What identifies a file this process wrote: its stat signature right after the write, and a hash of what was written. */
