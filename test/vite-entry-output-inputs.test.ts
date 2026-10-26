@@ -1,9 +1,10 @@
 /** A story must never replace a file its entry read, in either bundling path (#525). */
 import { afterEach, describe, expect, it } from 'vitest';
-import { linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, linkSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { build } from 'vite';
 import type { Plugin } from 'vite';
+import type { OutputMode } from '../src/types.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { cleanUp, COMPILE, makeProject, STORY, trackBuildWatch } from './helpers/plugins.js';
 
@@ -45,7 +46,13 @@ function watchInput(dir: string): Plugin {
 }
 
 describe.each(['inside the build', 'a separate build'] as const)('entry input protection: %s', (branch) => {
-  async function run(dir: string, outputFilename: string, outDir = dir): Promise<unknown> {
+  async function run(
+    dir: string,
+    outputFilename: string,
+    outDir = dir,
+    extra: Plugin[] = [],
+    settings: { watch?: boolean; outputMode?: OutputMode } = {},
+  ): Promise<Awaited<ReturnType<typeof build>>> {
     return build({
       configFile: false,
       root: dir,
@@ -54,16 +61,18 @@ describe.each(['inside the build', 'a separate build'] as const)('entry input pr
       build: {
         outDir,
         emptyOutDir: false,
+        ...(settings.watch ? { watch: {} } : {}),
         ...(branch === 'a separate build' ? { rolldownOptions: { input: join(dir, 'other.js') } } : {}),
       },
       plugins: [
+        ...extra,
         watchInput(dir),
         tweeTsPlugin({
           sources: [join(dir, 'story.tw')],
           entry: join(dir, 'entry.js'),
           outputFilename,
           format: 'test-format-1',
-          compileOptions: COMPILE,
+          compileOptions: { ...COMPILE, outputMode: settings.outputMode },
         }),
       ],
     });
@@ -112,6 +121,184 @@ describe.each(['inside the build', 'a separate build'] as const)('entry input pr
     await run(dir, 'story.html');
     expect(readFileSync(join(dir, 'story.html'), 'utf8')).toContain('Hello from the story.');
     expect(readFileSync(join(dir, 'entry.js'), 'utf8')).toBe(FILES['entry.js']);
+  });
+
+  function readFolder(folder: string, file: string): Plugin {
+    return {
+      name: 'directory-only-input',
+      resolveId: (id) => (id === 'virtual:catalog' ? '\0catalog' : undefined),
+      load(id) {
+        if (id !== '\0catalog') return undefined;
+        this.addWatchFile(folder);
+        return `export default ${JSON.stringify(readFileSync(file, 'utf8'))};`;
+      },
+    };
+  }
+
+  it.each([
+    'direct',
+    'nested',
+    'watched directory link',
+    'nested directory link',
+    'output directory link',
+    'hard link',
+  ])('preserves a %s directory-watched input', async (kind) => {
+    const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+    const folder = join(dir, 'data');
+    mkdirSync(join(folder, 'nested'), { recursive: true });
+    const file = join(folder, kind === 'nested' ? 'nested/catalog.txt' : 'catalog.txt');
+    const authored = 'authored catalog';
+    writeFileSync(file, authored);
+    let watched = folder;
+    let consumed = file;
+    let outDir = folder;
+    let output = kind === 'nested' ? 'nested/catalog.txt' : 'catalog.txt';
+    if (kind === 'watched directory link' || kind === 'nested directory link') {
+      watched = join(dir, 'watched');
+      mkdirSync(watched);
+      symlinkSync(folder, join(watched, 'alias'), 'junction');
+      if (kind === 'watched directory link') watched = join(watched, 'alias');
+      consumed = join(dir, 'watched', 'alias', 'catalog.txt');
+    } else if (kind === 'output directory link') {
+      outDir = join(dir, 'output-alias');
+      symlinkSync(folder, outDir, 'junction');
+    } else if (kind === 'hard link') {
+      outDir = join(dir, 'output');
+      mkdirSync(outDir);
+      output = 'story.html';
+      linkSync(file, join(outDir, output));
+    }
+    await expect(run(dir, output, outDir, [readFolder(watched, consumed)])).rejects.toThrow(
+      'Output file cannot be an input source',
+    );
+    expect(readFileSync(file, 'utf8')).toBe(authored);
+    expect(readFileSync(join(outDir, output), 'utf8')).toBe(authored);
+  });
+
+  it
+    .skipIf(process.platform === 'win32' || process.getuid?.() === 0)
+    .each(['direct', 'nested', 'directory link', 'hard link'])(
+    'preserves a %s input when its watched directory cannot be listed',
+    async (kind) => {
+      const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+      const folder = join(dir, 'data');
+      mkdirSync(folder);
+      const locked = kind === 'nested' ? join(folder, 'nested') : folder;
+      mkdirSync(locked, { recursive: true });
+      const file = join(locked, 'catalog.txt');
+      const authored = 'authored catalog';
+      writeFileSync(file, authored);
+      let watched = folder;
+      let output = file;
+      if (kind === 'directory link') {
+        watched = join(dir, 'watched');
+        symlinkSync(folder, watched, 'junction');
+      } else if (kind === 'hard link') {
+        output = join(dir, 'story.html');
+        linkSync(file, output);
+      }
+      chmodSync(locked, 0o311);
+      try {
+        // Searching a known filename still works; only directory enumeration is denied.
+        expect(readFileSync(file, 'utf8')).toBe(authored);
+        await expect(run(dir, relative(dir, output), dir, [readFolder(watched, file)])).rejects.toThrow(
+          'Cannot inspect entry watch path',
+        );
+        expect(readFileSync(file, 'utf8')).toBe(authored);
+        expect(readFileSync(output, 'utf8')).toBe(authored);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
+
+  it.each([
+    ['html', 'story.html'],
+    ['html', 'story.txt'],
+    ['twee3', 'story.tw'],
+    ['twee1', 'story.txt'],
+    ['twine2-archive', 'archive.txt'],
+    ['twine1-archive', 'archive.txt'],
+    ['json', 'story.txt'],
+  ] as const)(
+    'rechecks a watched folder between builds and allows prior %s story replacement (%s)',
+    async (outputMode, outputFilename) => {
+      const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+      const folder = join(dir, 'data');
+      mkdirSync(folder);
+      const file = join(folder, 'catalog.txt');
+      writeFileSync(file, 'authored catalog');
+      const plugins = [readFolder(folder, file)];
+      const output = join(folder, outputFilename);
+      await run(dir, outputFilename, folder, plugins, { outputMode });
+      linkSync(output, join(folder, 'output-alias.txt'));
+      await run(dir, outputFilename, folder, plugins, { outputMode });
+      expect(readFileSync(output, 'utf8')).toContain('Hello from the story.');
+      rmSync(output);
+      linkSync(file, output);
+      await expect(run(dir, outputFilename, folder, plugins, { outputMode })).rejects.toThrow(
+        'Output file cannot be an input source',
+      );
+      expect(readFileSync(file, 'utf8')).toBe('authored catalog');
+    },
+  );
+
+  it('preserves directory-watched text that quotes a generated story marker', async () => {
+    const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+    const folder = join(dir, 'data');
+    mkdirSync(folder);
+    const file = join(folder, 'catalog.txt');
+    const authored = `globalThis.example = '<tw-storydata creator="Twee-ts">';`;
+    writeFileSync(file, authored);
+    await expect(run(dir, 'catalog.txt', folder, [readFolder(folder, file)])).rejects.toThrow(
+      'Output file cannot be an input source',
+    );
+    expect(readFileSync(file, 'utf8')).toBe(authored);
+  });
+
+  it('keeps ordinary builds working beside a directory-link cycle and a dangling link', async () => {
+    const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+    const folder = join(dir, 'data');
+    mkdirSync(folder);
+    const file = join(folder, 'catalog.txt');
+    writeFileSync(file, 'authored catalog');
+    symlinkSync(folder, join(folder, 'cycle'), 'junction');
+    symlinkSync(join(dir, 'missing'), join(folder, 'missing'), 'junction');
+    await run(dir, 'story.html', dir, [readFolder(folder, file)]);
+    expect(readFileSync(join(dir, 'story.html'), 'utf8')).toContain('authored catalog');
+    expect(readFileSync(file, 'utf8')).toBe('authored catalog');
+  });
+
+  it('protects changed directory contents on the next build-watch generation', { timeout: 30_000 }, async () => {
+    const dir = makeProject({ ...FILES, 'entry.js': 'import data from "virtual:catalog"; globalThis.data = data;' });
+    const folder = join(dir, 'data');
+    mkdirSync(folder);
+    const file = join(folder, 'catalog.txt');
+    writeFileSync(file, 'first catalog');
+    const output = join(dir, 'story.html');
+    const result = await run(dir, 'story.html', dir, [readFolder(folder, file)], { watch: true });
+    if (Array.isArray(result) || !('on' in result)) throw new Error('expected a build watcher');
+    const watcher = trackBuildWatch(result);
+    const outcomes: string[] = [];
+    let ended = 0;
+    await new Promise<void>((done, fail) => {
+      watcher.on('event', (event) => {
+        if (event.code === 'ERROR') outcomes.push(event.error.message);
+        if (event.code === 'BUNDLE_END') outcomes.push('built');
+        if (event.code !== 'END') return;
+        ended++;
+        if (ended === 1) {
+          writeFileSync(file, 'changed catalog');
+          rmSync(output);
+          linkSync(file, output);
+          writeFileSync(join(dir, 'entry.js'), 'import data from "virtual:catalog"; globalThis.changed = data;');
+        }
+        if (ended === 2) void watcher.close().then(done, fail);
+      });
+    });
+    expect(outcomes).toEqual(['built', expect.stringContaining('Output file cannot be an input source')]);
+    expect(readFileSync(file, 'utf8')).toBe('changed catalog');
+    expect(readFileSync(output, 'utf8')).toBe('changed catalog');
   });
 });
 

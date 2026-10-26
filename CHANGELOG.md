@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Protect authored files under directory-only Vite entry watches from story output, including nested files, filesystem aliases and directories that cannot be listed, while allowing unchanged prior generated stories and their hard-link aliases to be replaced (#525).
 - Reject Vite story output that would overwrite the entry or its dependencies, including stylesheets, resources, worker inputs and plugin watch files, in either entry build path (#525).
 - Preserve the development command in entry plugins' environment selection and hook contexts, including plugins returned by `applyToEnvironment` (#249).
 - Exclude public resources copied through directory symlinks and junctions from Vite story sources and modules, retaining earlier copies across builds after public-file removal or link retargeting (#184).
