@@ -234,11 +234,12 @@ describe('parseCpdReport', () => {
     `<file begintoken="1" column="1" endcolumn="2" endline="${endline}" endtoken="9" line="${line}"\n path="${path}"/>`;
   const a = join(TREE, 'src', 'a.ts');
   const b = join(TREE, 'src', 'b&c.ts');
+  const bAttribute = b.replaceAll('&', '&amp;');
   const xml =
     header +
     `<file path="${a}" totalNumberOfTokens="500"/>\n` +
-    `<file path="${b.replace('&', '&amp;')}" totalNumberOfTokens="400"/>\n` +
-    `<duplication lines="10" tokens="60">\n${file(a, 1, 10)}\n${file(b.replace('&', '&amp;'), 21, 30)}\n` +
+    `<file path="${bAttribute}" totalNumberOfTokens="400"/>\n` +
+    `<duplication lines="10" tokens="60">\n${file(a, 1, 10)}\n${file(bAttribute, 21, 30)}\n` +
     // Fragments are code; markup in them must not be read as instances
     '<codefragment><![CDATA[const s = \'<file path="x.ts" line="1" endline="2"/></duplication>\';]]></codefragment>\n' +
     '</duplication>\n' +

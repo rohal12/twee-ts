@@ -15,6 +15,7 @@ import { tweeLexer } from '../src/lexer.js';
 import { ItemType } from '../src/types.js';
 import type { LexerItem, CompileOptions, CompileResult } from '../src/types.js';
 import { parseJsonObject } from '../test/helpers/json.js';
+import { attr, elements, scriptTexts, textContent } from '../test/helpers/html.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -3642,11 +3643,10 @@ describe('Script and Stylesheet — Element Type Specificity', () => {
     const source = minimalStory(':: Start\nHello\n\n:: CSS [stylesheet]\n.red { color: red; }');
     const result = await compileInline(source);
     // The style content should be in <style>, not <script>
-    const styleMatch = /<style[^>]*type="text\/twine-css"[^>]*>([\s\S]*?)<\/style>/.exec(result.output);
-    expect(styleMatch?.[1]).toContain('.red { color: red; }');
+    const styles = elements(result.output, (e) => e.tagName === 'style' && attr(e, 'type') === 'text/twine-css');
+    expect(styles.map(textContent).join('\n')).toContain('.red { color: red; }');
     // The style content should NOT be in any <script> element
-    const scripts = [...result.output.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-    expect(scripts.join('\n')).not.toContain('.red { color: red; }');
+    expect(scriptTexts(result.output).join('\n')).not.toContain('.red { color: red; }');
   });
 });
 

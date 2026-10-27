@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import { compile } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
+import { elements, textContent } from '../test/helpers/html.js';
 
 // =============================================================================
 // Helpers
@@ -355,12 +356,13 @@ describe('Twine 2 Archive Spec -- <style> and <script> Elements', () => {
     // All three attributes must appear on the SAME <script> element
     const result = await compileToArchive(minimalStory('Script All Attrs', ':: Start\nHello'));
     const block = extractStoryDataBlock(result.output);
-    const scriptMatch = /<script[^>]*>/.exec(block);
-    if (!scriptMatch) throw new Error('Expected <script> element in output');
-    const scriptTag = scriptMatch[0];
-    expect(scriptTag).toContain('role="script"');
-    expect(scriptTag).toContain('id="twine-user-script"');
-    expect(scriptTag).toContain('type="text/twine-javascript"');
+    const scripts = elements(block, (e) => e.tagName === 'script');
+    expect(scripts).toHaveLength(1);
+    expect(Object.fromEntries(scripts[0]?.attrs.map((a) => [a.name, a.value]) ?? [])).toMatchObject({
+      role: 'script',
+      id: 'twine-user-script',
+      type: 'text/twine-javascript',
+    });
   });
 
   it('stylesheet-tagged passage content goes into <style> element, not <tw-passagedata>', async () => {
@@ -894,8 +896,9 @@ describe('Twine 2 Archive Spec -- Example Conformance', () => {
     const result = await compileToArchive(minimalStory('Empty Elements', ':: Start\nHello'));
     const block = extractStoryDataBlock(result.output);
     // Style and script elements must be present even if empty
-    expect(block).toMatch(/<style[^>]*><\/style>/);
-    expect(block).toMatch(/<script[^>]*><\/script>/);
+    const empty = (tagName: string) => elements(block, (e) => e.tagName === tagName).map(textContent);
+    expect(empty('style')).toEqual(['']);
+    expect(empty('script')).toEqual(['']);
   });
 });
 

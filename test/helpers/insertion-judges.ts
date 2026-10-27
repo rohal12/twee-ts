@@ -141,6 +141,9 @@ function expectedMarkupFill(
   markup: string,
   probe: (n: HtmlNode) => boolean,
 ): string | undefined {
+  // The text of the comment the markup starts with, if it starts with one.
+  const leading = allNodes(parseDocument(markup)).find((n) => 'data' in n && n.sourceCodeLocation?.startOffset === 0);
+  const lead = leading !== undefined && 'data' in leading ? leading.data : undefined;
   for (let i = template.indexOf(token); i !== -1; i = template.indexOf(token, i + token.length)) {
     const candidate = template.slice(0, i) + markup + template.slice(i + token.length);
     const doc = parseDocument(candidate);
@@ -151,7 +154,6 @@ function expectedMarkupFill(
     if (inTemplateContent(element)) continue;
     // Leave out the markup's nodes: the probe element, and the comment that leads the markup (wherever the parser
     // puts it).
-    const lead = /^<!--(.*?)-->/.exec(markup)?.[1];
     const markupNodes = new Set<HtmlNode>([element, ...allNodes(doc).filter((n) => 'data' in n && n.data === lead)]);
     // The template as written, with this placeholder taken out of its text (a private-use character stands in for
     // it, which every tokenizer state reads as the placeholder's characters, and is then removed).

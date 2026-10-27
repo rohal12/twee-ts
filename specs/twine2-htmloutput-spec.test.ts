@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { compile } from '../src/compiler.js';
 import type { CompileOptions, CompileResult } from '../src/types.js';
+import { elements, parentTag, scriptTexts } from '../test/helpers/html.js';
 
 const FIXTURES_DIR = join(__dirname, '..', 'test', 'fixtures');
 const FORMAT_DIR = join(FIXTURES_DIR, 'storyformats');
@@ -1140,17 +1141,15 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     const source = minimalStory([':: Start', 'Hello', '', ':: JS [script]', 'window.setup = {};'].join('\n'));
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
-    if (!scriptMatch) throw new Error('expected <script> element');
-    expect(scriptMatch[1]).toContain('window.setup = {};');
+    const [script] = scriptTexts(chunk);
+    expect(script).toContain('window.setup = {};');
   });
 
   it('single <script> element even when no script passages exist (empty)', async () => {
     const source = minimalStory(':: Start\nHello');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatches = [...chunk.matchAll(/<script[^>]*>/g)];
-    expect(scriptMatches).toHaveLength(1);
+    expect(scriptTexts(chunk)).toHaveLength(1);
   });
 
   it('multiple script passages are merged into a single <script> element', async () => {
@@ -1168,19 +1167,16 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     );
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatches = [...chunk.matchAll(/<script[^>]*>/g)];
-    expect(scriptMatches).toHaveLength(1);
-    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
-    if (!scriptMatch) throw new Error('expected <script> element');
-    expect(scriptMatch[1]).toContain('window.a = 1;');
-    expect(scriptMatch[1]).toContain('window.b = 2;');
+    const scripts = scriptTexts(chunk);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain('window.a = 1;');
+    expect(scripts[0]).toContain('window.b = 2;');
   });
 
   it('<script> element is inside <tw-storydata>', async () => {
     const source = minimalStory(':: Start\nHello');
     const result = await compileToArchive(source);
-    const chunk = extractStoryData(result.output);
-    expect(chunk).toMatch(/<script[^>]*>[\s\S]*?<\/script>/);
+    expect(elements(result.output, (e) => e.tagName === 'script').map(parentTag)).toEqual(['tw-storydata']);
   });
 
   it('script content is raw JavaScript, not HTML-escaped', async () => {
@@ -1189,24 +1185,24 @@ describe('Twine 2 HTML Output Spec — Story JavaScript', () => {
     );
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = /<script[^>]*>([\s\S]*?)<\/script>/.exec(chunk);
-    if (!scriptMatch) throw new Error('expected <script> element');
     // Script content must NOT be HTML-escaped — it is raw JavaScript
-    expect(scriptMatch[1]).toContain('if (a < b && c > d) { x = "y"; }');
-    expect(scriptMatch[1]).not.toContain('&lt;');
-    expect(scriptMatch[1]).not.toContain('&gt;');
-    expect(scriptMatch[1]).not.toContain('&amp;');
+    const [script] = scriptTexts(chunk);
+    expect(script).toContain('if (a < b && c > d) { x = "y"; }');
+    expect(script).not.toContain('&lt;');
+    expect(script).not.toContain('&gt;');
+    expect(script).not.toContain('&amp;');
   });
 
   it('<script> element has all three attributes: id, type, and role', async () => {
     const source = minimalStory(':: Start\nHello');
     const result = await compileToArchive(source);
     const chunk = extractStoryData(result.output);
-    const scriptMatch = /<script[^>]*>/.exec(chunk);
-    if (!scriptMatch) throw new Error('expected <script> element');
-    expect(scriptMatch[0]).toContain('id="twine-user-script"');
-    expect(scriptMatch[0]).toContain('type="text/twine-javascript"');
-    expect(scriptMatch[0]).toContain('role="script"');
+    const [script] = elements(chunk, (e) => e.tagName === 'script');
+    expect(Object.fromEntries(script?.attrs.map((a) => [a.name, a.value]) ?? [])).toMatchObject({
+      id: 'twine-user-script',
+      type: 'text/twine-javascript',
+      role: 'script',
+    });
   });
 });
 

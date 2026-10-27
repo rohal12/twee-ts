@@ -242,7 +242,7 @@ const propertyKey = fc
     stringLiteral,
     numericLiteral,
   )
-  .filter((key) => !key.includes('__proto__') && !/^__\\u|proto/.test(key));
+  .filter((key) => !key.startsWith('__\\u') && !key.includes('proto'));
 
 /** A function-valued property: not data, which twee-ts leaves out. */
 const functionProperty = fc
