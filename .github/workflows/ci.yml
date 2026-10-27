@@ -161,6 +161,7 @@ jobs:
       - name: Install Vite ${{ matrix.vite }}
         env:
           VITE_LINE: ${{ matrix.vite }}
+        # zizmor: ignore[adhoc-packages] the job tests an older Vite line than the lockfile's, on purpose
         run: |
           pnpm add -D "vite@~$VITE_LINE.0"
           echo "Vite $(node -p "require('vite/package.json').version")" >> "$GITHUB_STEP_SUMMARY"
@@ -170,7 +171,7 @@ jobs:
 
   # Builds and packs the tarball, then checks it on every platform as users consume it.
   package:
-    uses: ./.github/workflows/package.yml
+    uses: ./.github/workflows/package.yml # zizmor: ignore[self-repository] the reusable workflow of this commit
     permissions:
       contents: read
 
@@ -197,6 +198,7 @@ jobs:
         env:
           VITE_VERSION: '8'
           ROLLUP_VERSION: '4'
+        # zizmor: ignore[adhoc-packages] the latest Vite 8 and Rollup 4, installed as users install them, on purpose
         run: |
           mkdir -p "$RUNNER_TEMP/peer"
           cd "$RUNNER_TEMP/peer"
@@ -213,6 +215,7 @@ jobs:
           mv "$RUNNER_TEMP"/rohal12-twee-ts-*.tgz "$RUNNER_TEMP/package.tgz"
 
       - name: Type-check a consumer config
+        # zizmor: ignore[adhoc-packages] a consumer project that installs the packed tarball, on purpose
         run: |
           cd "$RUNNER_TEMP/peer"
           npm install --no-audit --no-fund "$RUNNER_TEMP/package.tgz" typescript@7.0.2 @types/node@22

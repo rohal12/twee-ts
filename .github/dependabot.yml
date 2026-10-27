@@ -1,10 +1,54 @@
+# Version and security updates for every package ecosystem in the repository: the pnpm workspace at the root
+# (package.json, pnpm-lock.yaml) and the GitHub Actions in .github/workflows, pinned to commit SHAs.
+#
+# Dependency bumps are chores (Conventional Commits), so they never decide a release version.
 version: 2
 updates:
-  - package-ecosystem: 'npm'
-    directory: '/'
+  - package-ecosystem: npm
+    directory: /
     schedule:
-      interval: 'weekly'
-  - package-ecosystem: 'github-actions'
-    directory: '/'
+      interval: weekly
+      day: monday
+    # pnpm installs no version published less than a day ago (minimumReleaseAge); wait longer than that.
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+    groups:
+      # Released together, and their versions must match: one pull request, majors included.
+      vitest:
+        patterns: ['vitest', '@vitest/coverage-*']
+      # Released together; patches/ holds a patch for one exact version of the vitest runner, so a bump of this
+      # group also updates the patch (pnpm-workspace.yaml, patchedDependencies).
+      stryker:
+        patterns: ['@stryker-mutator/*']
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: 'weekly'
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      # The release action stays in a pull request of its own: the commit that merges a pull request naming it
+      # requests a release (CLAUDE.md, "Releasing").
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        exclude-patterns: ['tobua/*']
+      actions-security:
+        applies-to: security-updates
+        patterns: ['*']
+        exclude-patterns: ['tobua/*']
