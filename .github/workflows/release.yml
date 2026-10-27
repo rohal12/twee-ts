@@ -47,7 +47,7 @@ jobs:
   # Builds, packs and checks the tarball (all platforms) and uploads it as the "package" artifact.
   package:
     if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/package.yml
+    uses: ./.github/workflows/package.yml # zizmor: ignore[self-repository] the reusable workflow of this commit
     permissions:
       contents: read
 
@@ -60,6 +60,7 @@ jobs:
     steps:
       # semantic-release reads the commit history and the release annotation in the head commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # zizmor: ignore[artipacked] semantic-release pushes the tag with these credentials; no artifact is uploaded
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
