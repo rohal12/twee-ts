@@ -38,7 +38,7 @@ describe('lineColumnFinder', () => {
       fc.property(text, (source) => {
         const find = lineColumnFinder(source);
         for (let offset = 0; offset <= source.length; offset++) {
-          if (source[offset - 1] === '\r' && source[offset] === '\n') continue;
+          if (offset > 0 && source.startsWith('\r\n', offset - 1)) continue;
           const acorn = getLineInfo(source, offset);
           expect(find(offset), `${JSON.stringify(source)} @${offset}`).toEqual({
             line: acorn.line,

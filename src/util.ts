@@ -2,7 +2,7 @@
  * Shared file I/O utilities.
  */
 import { constants as bufferConstants } from 'node:buffer';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { parse as parsePath } from 'node:path';
 import type { Diagnostic } from './types.js';
 import { normalizeSourceText } from './source-text.js';
@@ -151,9 +151,7 @@ export function decodeText(bytes: Uint8Array, filename: string): DecodedText {
  *   {@link TextDecodeError} when it cannot be decoded.
  */
 export function readUTF8(filename: string, diagnostics?: Diagnostic[]): string {
-  // Checked before reading, so a file too large to hold as text fails at once rather than after reading it.
-  checkTextSize(statSync(filename).size, MAX_STRING_LENGTH);
-  const decoded = decodeText(readFileSync(filename), filename);
+  const decoded = decodeText(readCheckedFile(filename, MAX_STRING_LENGTH), filename);
   pushAll(diagnostics, decoded.diagnostics);
   return normalizeSourceText(decoded.text);
 }
@@ -161,8 +159,22 @@ export function readUTF8(filename: string, diagnostics?: Diagnostic[]): string {
 /** Read a file as base64. */
 export function readBase64(filename: string): string {
   // Base64 writes 4 characters for every 3 bytes.
-  checkTextSize(statSync(filename).size, Math.floor(MAX_STRING_LENGTH / 4) * 3, ' as base64');
-  return readFileSync(filename).toString('base64');
+  return readCheckedFile(filename, Math.floor(MAX_STRING_LENGTH / 4) * 3, ' as base64').toString('base64');
+}
+
+/**
+ * Read a file whose size {@link checkTextSize} checks first, so a file too large to hold as text fails at once
+ * rather than after reading it. Both go through one open descriptor: a file put at the path after the check is not
+ * the one read.
+ */
+function readCheckedFile(filename: string, limit: number, as?: string): Buffer {
+  const fd = openSync(filename, 'r');
+  try {
+    checkTextSize(fstatSync(fd).size, limit, as);
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The most UTF-16 code units a JavaScript string holds in this engine (2^29 - 24 in V8). */

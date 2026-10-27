@@ -370,9 +370,7 @@ describe('a download must be the format its index entry names (#207)', () => {
     beforeEach(() => {
       const realFetch = globalThis.fetch;
       vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) =>
-        (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).includes(
-          'videlais.github.io',
-        )
+        new URL(input instanceof Request ? input.url : input).hostname === 'videlais.github.io'
           ? Promise.resolve(new Response(JSON.stringify({ twine1: [], twine2: [] })))
           : realFetch(input, init),
       );

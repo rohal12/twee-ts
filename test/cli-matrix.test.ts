@@ -331,11 +331,18 @@ describe('watch mode stops on an error no edit can fix (FS-13)', () => {
 describe('--list-formats lists the cached downloads a build would consider', () => {
   const SFA = 'https://videlais.github.io/story-formats-archive/official/index.json';
 
-  /** Writes a cache entry in a child process, so the cache path comes from XDG_CACHE_HOME as the CLI reads it. */
+  /**
+   * Writes a cache entry in a child process, so the cache path comes from XDG_CACHE_HOME as the CLI reads it. The
+   * module and the record are the script's arguments, not part of its code.
+   */
   function writeEntry(env: NodeJS.ProcessEnv, record: object): void {
     const module = pathToFileURL(join(ROOT, 'src', 'format-cache.ts')).href;
-    const script = `import(${JSON.stringify(module)}).then((m) => m.writeEntry(${JSON.stringify(record)}, new Map([['format.js', Buffer.from('window.storyFormat({})')]])))`;
-    const r = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script], { env, encoding: 'utf-8' });
+    const script =
+      "const [url, json] = process.argv.slice(1); import(url).then((m) => m.writeEntry(JSON.parse(json), new Map([['format.js', Buffer.from('window.storyFormat({})')]])))";
+    const r = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script, module, JSON.stringify(record)], {
+      env,
+      encoding: 'utf-8',
+    });
     expect(r.stderr).toBe('');
   }
 

@@ -669,11 +669,7 @@ describe('downloads from format URLs and from indices', () => {
     const unreachable = await compileStory({ formatUrls: [FORK_URL] });
     expect(titleOf(unreachable)).toBe('FORK');
     expect(unreachable.diagnostics.map((d) => d.message)).toEqual([
-      expect.stringMatching(
-        new RegExp(
-          `Failed to download format from ${FORK_URL.replace(/\./g, '\\.')}: offline; using the copy downloaded on `,
-        ),
-      ),
+      expect.stringContaining(`Failed to download format from ${FORK_URL}: offline; using the copy downloaded on `),
     ]);
     vi.mocked(fetch).mockClear();
     const offline = await compileStory({ formatUrls: [FORK_URL], noRemote: true });
