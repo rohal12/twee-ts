@@ -10,6 +10,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Dependabot's auto-merged pull requests are merged with a workflow token, and a push made with one starts no
+  # workflow: the daily run brings the dependency graph up to date after them.
+  schedule:
+    - cron: '37 5 * * *'
 
 permissions: {}
 
@@ -52,7 +56,7 @@ jobs:
   submit:
     needs: snapshot
     # A pull request from a fork gets a token that cannot submit
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       # The dependency submission API needs it. The job checks out nothing and runs no repository code: it sends
