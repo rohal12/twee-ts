@@ -1,5 +1,7 @@
 overrides:
   vitepress>vite: ^6.4.2
+  # typed-rest-client 2.3.1 (from @stryker-mutator/core) pins qs 6.15.1, which has known vulnerabilities.
+  typed-rest-client>qs: ^6.16.1
 
 patchedDependencies:
   '@stryker-mutator/vitest-runner@10.0.0': patches/@stryker-mutator__vitest-runner@10.0.0.patch

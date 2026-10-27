@@ -24,9 +24,12 @@ updates:
       # group also updates the patch (pnpm-workspace.yaml, patchedDependencies).
       stryker:
         patterns: ['@stryker-mutator/*']
+      # Dependabot prefers a group with update-types over one with only patterns, so the packages of the groups
+      # above are left out here.
       npm-minor-and-patch:
         applies-to: version-updates
         update-types: [minor, patch]
+        exclude-patterns: ['vitest', '@vitest/coverage-*', '@stryker-mutator/*']
       npm-security:
         applies-to: security-updates
         patterns: ['*']
