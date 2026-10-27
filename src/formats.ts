@@ -366,6 +366,17 @@ function namesFolder(request: { readonly id: string }, candidate: FormatCandidat
 
 /** Judge one candidate against a request: the policy for a single candidate, whatever its source. */
 export function judgeCandidate(request: FormatRequest, candidate: FormatCandidate): Judgement {
+  return createCandidateJudge(request)(candidate);
+}
+
+/** Prepare one request for judging a group, including rejection diagnostics, without reparsing its version. */
+export function createCandidateJudge(request: FormatRequest): (candidate: FormatCandidate) => Judgement {
+  const wanted = request.kind === 'name' ? parseVersion(request.version) : null;
+  return (candidate) => judgeWithVersion(request, candidate, wanted);
+}
+
+/** The single-candidate policy with the request version already parsed by the caller. */
+function judgeWithVersion(request: FormatRequest, candidate: FormatCandidate, wanted: SemVer | null): Judgement {
   const version = parseVersion(candidate.version);
   switch (request.kind) {
     case 'id': {
@@ -383,7 +394,6 @@ export function judgeCandidate(request: FormatRequest, candidate: FormatCandidat
       if (formatNameKey(candidate.name) !== formatNameKey(request.name)) return rejected('a different format');
       if (!candidate.isTwine2) return rejected('a Twine 1 format (StoryData names Twine 2 formats)');
       if (!version) return rejected('its version is not a SemVer version');
-      const wanted = parseVersion(request.version);
       if (!wanted) return { kind: 'match', tier: 'any', version };
       const order = compareVersions(version, wanted);
       if (order === 0) return { kind: 'match', tier: 'exact', version };
@@ -434,8 +444,9 @@ export function rankFormats<C extends FormatCandidate>(
   request: FormatRequest,
   candidates: readonly C[],
 ): FormatSelection<C>[] {
+  const judge = createCandidateJudge(request);
   const judged = candidates.flatMap((candidate, index) => {
-    const judgement = judgeCandidate(request, candidate);
+    const judgement = judge(candidate);
     return judgement.kind === 'match' ? [{ candidate, index, tier: judgement.tier, version: judgement.version }] : [];
   });
   type Judged = (typeof judged)[number];

@@ -6,7 +6,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { findPackageJSON } from 'node:module';
-import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build, createIdResolver, loadConfigFromFile, mergeConfig } from 'vite';
 import type {
@@ -76,11 +76,13 @@ export type BundleItem =
       readonly isEntry: boolean;
       readonly name: string;
       readonly moduleIds: readonly string[];
+      /** The generated source map owned by this chunk, including hidden maps. */
+      readonly sourcemapFileName?: string | null | undefined;
     }
   | {
       readonly type: 'asset';
       readonly source: string | Uint8Array;
-      /** The source files the bundler made the asset from (the bundler's own stylesheet names no file). */
+      /** The source files the bundler made the asset from (Vite marks its combined stylesheet with style.css). */
       readonly originalFileNames?: readonly string[] | undefined;
     };
 
@@ -225,19 +227,20 @@ export function removeFromBundle(bundle: Record<string, unknown>, fileName: stri
 }
 
 /**
- * Whether an asset is a file the entry imported as a URL (`theme.css?url`), not the stylesheet the bundler made
- * of the entry's CSS. The bundler names the files an asset came from; for its own stylesheet that is a bare
- * output name (`style.css`), for an imported file the file's path.
+ * Vite marks its combined stylesheet (cssCodeSplit: false) with the original name `style.css`, even if
+ * output naming changes its filename. Missing provenance is normal for resources emitted by other plugins;
+ * neither a .css extension nor a missing/relative original path makes an asset the entry's stylesheet.
  */
-function isImportedFile(item: Extract<BundleItem, { type: 'asset' }>): boolean {
-  return (item.originalFileNames ?? []).some((name) => isAbsolute(name) || win32.isAbsolute(name));
+function isEntryStylesheet(item: Extract<BundleItem, { type: 'asset' }>): boolean {
+  return item.originalFileNames?.includes('style.css') === true;
 }
 
 /**
  * Takes the entry out of a bundle: its entry chunk (the one named `inputName`,
  * when the entry is one input of the user's build; the only one, from the
- * entry's own build), every stylesheet it made of the entry's CSS (a CSS file imported as a URL stays an asset), and the map files, which the story
- * cannot ship. The chunk is found by its input's name, not by its module's
+ * entry's own build), the stylesheet Vite made of the entry's CSS, and the
+ * chunk's generated source map. URL resources, including CSS and .map files,
+ * stay assets. The chunk is found by its input's name, not by its module's
  * path, which the bundler may spell another way (a root reached through a
  * link is read by its real path). Anything else the bundler emitted for it
  * stays in the bundle, so a build writes it next to the HTML, and is also
@@ -248,18 +251,29 @@ export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputNam
   const files = new Set<string>();
   const assets = new Map<string, string | Uint8Array>();
   const styles: string[] = [];
+  // Read ownership before removing anything: a map may precede its chunk in the bundle.
+  const sourceMaps = new Set<string>();
+  for (const item of Object.values(bundle)) {
+    if (
+      item.type === 'chunk' &&
+      item.isEntry &&
+      (inputName === undefined || item.name === inputName) &&
+      item.sourcemapFileName
+    ) {
+      sourceMaps.add(item.sourcemapFileName);
+    }
+  }
   for (const [fileName, item] of Object.entries(bundle)) {
     if (item.type === 'chunk') {
       if (!item.isEntry || (inputName !== undefined && item.name !== inputName)) continue;
       script = dropFileSourceMapComment(item.code, 'js');
       for (const id of item.moduleIds) if (!id.startsWith('\0')) files.add(fileOfId(id));
       removeFromBundle(bundle, fileName);
-    } else if (fileName.endsWith('.css') && !isImportedFile(item)) {
+    } else if (fileName.endsWith('.css') && isEntryStylesheet(item)) {
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
       styles.push(dropFileSourceMapComment(css, 'css'));
       removeFromBundle(bundle, fileName);
-    } else if (fileName.endsWith('.map') && (item.originalFileNames?.length ?? 0) === 0) {
-      // Generated source maps have no originating resource; an imported .map has one, relative or absolute.
+    } else if (sourceMaps.has(fileName)) {
       removeFromBundle(bundle, fileName);
     } else {
       assets.set(fileName, item.source);

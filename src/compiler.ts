@@ -140,7 +140,10 @@ export async function compileForLint(
   options: Omit<CompileOptions, 'outputMode'>,
   outputs: string | undefined,
 ): Promise<CompileResult> {
-  return buildOutput({ ...options, outputMode: 'json' }, { outputs, checkHead: true, omitStyleImports: true });
+  return buildOutput(
+    { ...options, outputMode: 'json' },
+    { outputs, checkHead: true, omitStyleImports: true, requireIFID: true },
+  );
 }
 
 /**
@@ -687,7 +690,7 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
   }
 
   // The Twine 2 story data carries the IFID; the other outputs write it when the story has one (as Tweego does).
-  if (requiresIFID(outputMode, format)) ensureIFID(story, diagnostics);
+  if (context.requireIFID === true || requiresIFID(outputMode, format)) ensureIFID(story, diagnostics);
 
   // Generate output
   let output: string;
@@ -802,6 +805,8 @@ interface BuildContext {
   readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
   /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
   readonly checkHead?: boolean;
+  /** Check the Twine 2 IFID prerequisite even in the JSON build lint inspects. */
+  readonly requireIFID?: boolean;
   /**
    * Leave out the warnings about `@import` rules that JSON output's stylesheet makes ineffective (for lint, which
    * reports those of the Twine 2 HTML output's stylesheet instead).

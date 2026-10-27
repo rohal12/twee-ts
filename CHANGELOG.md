@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve CSS and `.map` resources emitted by Vite plugins in development and both entry build paths; extract only Vite's combined stylesheet and the selected entry's generated source map (#331, #457).
+- Report a missing IFID during offline lint, including the Twine 2 build's legacy IFID fallback (#365).
+- Parse the requested story-format version once per candidate group, including failure diagnostics, so long valid versions do not multiply selection work (#503).
+
 - Check the size of a text or media file and read it through one open descriptor, so a file put at the path in between is not the one read (#532).
 - Recognize Rollup's completed story writes on subsequent builds and watch rebuilds, including Twee and Twine 1 archive output inside source folders, while preserving authored-file protection (#530).
 - Protect authored files under directory-only Vite entry watches from story output, including nested files, filesystem aliases and directories that cannot be listed, while allowing unchanged prior generated stories and their hard-link aliases to be replaced (#525).

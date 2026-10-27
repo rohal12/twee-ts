@@ -87,6 +87,40 @@ describe('lint reports what Twine 2 HTML output reports about the story data (#3
   });
 });
 
+describe('lint checks the Twine 2 IFID prerequisite (#365)', () => {
+  it.each([
+    ['absent StoryData', ''],
+    ['absent IFID', ':: StoryData\n{}\n\n'],
+    ['empty IFID', ':: StoryData\n{"ifid":""}\n\n'],
+  ])('fails for %s without resolving a format', async (_name, metadata) => {
+    const sources = [{ filename: 'story.tw', content: `:: StoryTitle\nTitle\n\n${metadata}:: Start\nHello` }];
+    const result = await lint({ sources, noRemote: true, formatPaths: [], useTweegoPath: false });
+    const built = await compile({ sources, ...HTML_OPTIONS });
+    expect(built.diagnostics).toContainEqual(
+      expect.objectContaining({ level: 'error', message: expect.stringContaining('Story IFID not found.') }),
+    );
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ level: 'error', message: expect.stringContaining('Story IFID not found.') }),
+    );
+    expect(formatLintReport(result)).toContain('Lint failed.');
+    for (const outputMode of ['json', 'twee1', 'twee3', 'twine1-archive'] as const) {
+      expect((await compile({ sources, outputMode })).diagnostics.filter((d) => d.level === 'error')).toEqual([]);
+    }
+  });
+
+  it.each([
+    ['StoryData', `:: StoryData\n{"ifid":"${IFID}"}\n\n`],
+    ['StorySettings', `:: StorySettings\nifid: ${IFID}\n\n`],
+  ])('accepts the valid IFID in %s', async (_name, metadata) => {
+    const sources = [{ filename: 'story.tw', content: `:: StoryTitle\nTitle\n\n${metadata}:: Start\nHello` }];
+    const result = await lint({ sources, noRemote: true });
+    const built = await compile({ sources, ...HTML_OPTIONS });
+    expect(result.diagnostics).toEqual(built.diagnostics);
+    expect(result.diagnostics.filter((d) => d.level === 'error')).toEqual([]);
+    expect(formatLintReport(result)).toContain('Lint passed.');
+  });
+});
+
 describe('lint reports what Twine 2 HTML output reports about the modules and the head file', () => {
   let dir: string;
   beforeEach(() => {

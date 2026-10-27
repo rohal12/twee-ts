@@ -17,7 +17,7 @@ import {
   errorText,
   formatNameKey,
   getFormatSearchDirs,
-  judgeCandidate,
+  createCandidateJudge,
   localCandidates,
   pruneFormats,
   rankFormats,
@@ -186,11 +186,12 @@ function describeUnusable(
     request.kind === 'name'
       ? formatNameKey(name) === wantedName
       : formatNameKey(name).replace(/\s+/g, '-') === wantedName;
+  const judge = createCandidateJudge(request);
   const candidates = seen
     .filter((c) => related(c.name))
     .map((c) => {
       // Nothing answered, so a candidate that matches was chosen once and could not be obtained.
-      const judgement = judgeCandidate(request, c);
+      const judgement = judge(c);
       const why = judgement.kind === 'rejected' ? judgement.reason : 'could not be obtained (see the warning)';
       return `${c.label} (${c.name} ${c.version || 'without a version'}): ${why}`;
     });
@@ -373,10 +374,11 @@ async function resolveWith(
       });
     }
     if (tier === 'id') {
+      const judge = createCandidateJudge(request);
       const names = new Set(
         seen
           .filter((c) => {
-            const judgement = judgeCandidate(request, c);
+            const judgement = judge(c);
             return judgement.kind === 'match' && judgement.tier === 'id';
           })
           .map((c) => c.name),

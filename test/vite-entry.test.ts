@@ -17,7 +17,7 @@ import {
   type BundleItem,
 } from '../src/plugins/vite-entry.js';
 
-const chunk = (name: string, isEntry: boolean, code: string): BundleItem => ({
+const chunk = (name: string, isEntry: boolean, code: string): Extract<BundleItem, { type: 'chunk' }> => ({
   type: 'chunk',
   code,
   isEntry,
@@ -45,7 +45,9 @@ describe('takeEntryFromBundle', () => {
     '/* outer /*# sourceMappingURL=example.map */',
     'a{}\n/*# sourceMappingURL=data:application/json;base64,e30= */',
   ])('preserves stylesheet directive data: %s', (code) => {
-    expect(takeEntryFromBundle({ 'style.css': { type: 'asset', source: code } }).style).toBe(code);
+    expect(
+      takeEntryFromBundle({ 'style.css': { type: 'asset', source: code, originalFileNames: ['style.css'] } }).style,
+    ).toBe(code);
   });
 
   it.each(['//# sourceMappingURL=entry.map', '/*# sourceMappingURL=entry.map */'])(
@@ -60,6 +62,7 @@ describe('takeEntryFromBundle', () => {
 
   it('keeps imported map resources while removing generated source maps', () => {
     const bundle: Record<string, BundleItem> = {
+      'entry.js': { ...chunk('main', true, 'ENTRY'), sourcemapFileName: 'entry.js.map' },
       'world.map': { type: 'asset', source: 'map data', originalFileNames: ['/p/world.map'] },
       'relative.map': { type: 'asset', source: 'relative data', originalFileNames: ['../shared/world.map'] },
       'windows.map': { type: 'asset', source: 'windows data', originalFileNames: ['C:\\p\\windows.map'] },
@@ -70,11 +73,18 @@ describe('takeEntryFromBundle', () => {
   });
   it('takes the entry chunk named for the instance, every stylesheet and the maps, and leaves the rest', () => {
     const bundle: Record<string, BundleItem> = {
-      'mine.js': chunk('twee-ts-entry-1', true, 'MINE\n//# sourceMappingURL=mine.js.map'),
+      'mine.js': {
+        ...chunk('twee-ts-entry-1', true, 'MINE\n//# sourceMappingURL=mine.js.map'),
+        sourcemapFileName: 'mine.js.map',
+      },
       'other.js': chunk('other', true, 'OTHER'),
       'lazy.js': chunk('lazy', false, 'LAZY'),
-      'a.css': { type: 'asset', source: '.a{}' },
-      'b.css': { type: 'asset', source: new TextEncoder().encode('.b{}\n/*# sourceMappingURL=b.css.map */') },
+      'a.css': { type: 'asset', source: '.a{}', originalFileNames: ['style.css'] },
+      'b.css': {
+        type: 'asset',
+        source: new TextEncoder().encode('.b{}\n/*# sourceMappingURL=b.css.map */'),
+        originalFileNames: ['style.css'],
+      },
       'mine.js.map': { type: 'asset', source: '{}' },
       'keep.png': { type: 'asset', source: new Uint8Array([1, 2]) },
     };
@@ -96,6 +106,21 @@ describe('takeEntryFromBundle', () => {
     expect(entry.style).toBe('.own{}');
     expect([...entry.assets.keys()]).toEqual(['theme.css', 'win.css']);
     expect(Object.keys(bundle)).toEqual(['theme.css', 'win.css']);
+  });
+
+  it('removes only the selected entry source map, including a hidden map before its chunk', () => {
+    const bundle: Record<string, BundleItem> = {
+      'entry.hidden': { type: 'asset', source: '{}' },
+      'resource.map': { type: 'asset', source: 'data' },
+      'entry.js': { ...chunk('mine', true, 'MINE'), sourcemapFileName: 'entry.hidden' },
+      'other.js': { ...chunk('other', true, 'OTHER'), sourcemapFileName: 'other.js.map' },
+      'other.js.map': { type: 'asset', source: '{}' },
+      'plugin.css': { type: 'asset', source: '.plugin{}' },
+    };
+    const entry = takeEntryFromBundle(bundle, 'mine');
+    expect(entry.style).toBe('');
+    expect([...entry.assets.keys()]).toEqual(['resource.map', 'other.js.map', 'plugin.css']);
+    expect(Object.keys(bundle)).toEqual(['resource.map', 'other.js', 'other.js.map', 'plugin.css']);
   });
 
   it('takes the only entry chunk of the entry’s own build, keeping an inline source map', () => {
