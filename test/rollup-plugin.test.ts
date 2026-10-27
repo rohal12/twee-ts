@@ -24,6 +24,7 @@ import {
 } from 'rollup';
 import { build } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/rollup.js';
+import { isOwnOutput } from '../src/atomic-write.js';
 import { removeDir } from './helpers/remove-dir.js';
 import { cleanUp, trackBuildWatch } from './helpers/plugins.js';
 
@@ -126,6 +127,15 @@ function hasDeletedPassage(html: string): boolean {
  * passages would replace the edited ones.
  */
 const OUTPUT_IN_SOURCES = 'z-output.html';
+
+const OUTPUT_MODES = [
+  ['twee1', 'z-output.tw'],
+  ['twee3', 'z-output.tw'],
+  ['twine1-archive', 'z-output.html'],
+  ['twine2-archive', 'z-output.html'],
+  ['html', 'z-output.html'],
+  ['json', 'z-output.json'],
+] as const;
 
 /** Runs a real Rollup build and writes it with `output`. */
 async function writeProject(
@@ -335,32 +345,61 @@ describe('rollup plugin: build', { timeout: 30_000 }, () => {
   });
 
   // output.dir puts the story in that folder; output.file puts it next to the file.
-  it.each([
+  const locations = [
     ['output.dir', (dir: string): OutputOptions => ({ dir: join(dir, 'story'), format: 'es' }), 'story'],
     [
       'output.file',
       (dir: string): OutputOptions => ({ file: join(dir, 'story/zz/bundle.js'), format: 'es' }),
       'story/zz',
     ],
-  ])(
-    'leaves the story of the last build out when %s writes it inside a source folder',
-    async (_name, output, storyDir) => {
+  ] as const;
+  it.each(
+    OUTPUT_MODES.flatMap(([mode, filename]) => locations.map((location) => [mode, filename, ...location] as const)),
+  )(
+    'rebuilds %s (%s) when %s writes it inside a source folder (#530)',
+    async (outputMode, outputFilename, _name, output, storyDir) => {
       const dir = makeProject(storyWith('OLD_TEXT') + DELETED_PASSAGE);
       const plugin = tweeTsPlugin({
         sources: [join(dir, 'story')],
         format: 'test-format-1',
-        outputFilename: OUTPUT_IN_SOURCES,
-        compileOptions: COMPILE,
+        outputFilename,
+        compileOptions: { ...COMPILE, outputMode },
       });
       await writeProject(dir, plugin, output(dir));
       writeFileSync(join(dir, 'story/start.tw'), storyWith('NEW_TEXT'));
       await writeProject(dir, plugin, output(dir));
-      const html = readFileSync(join(dir, storyDir, OUTPUT_IN_SOURCES), 'utf-8');
+      const html = readFileSync(join(dir, storyDir, outputFilename), 'utf-8');
       expect(html).toContain('NEW_TEXT');
       expect(html).not.toContain('OLD_TEXT');
-      expect(hasDeletedPassage(html)).toBe(false);
+      expect(html).not.toContain('Delete me');
     },
   );
+
+  it('keeps disk ownership unchanged by an in-memory generate (#530)', async () => {
+    const dir = makeProject(storyWith('OLD_TEXT'));
+    const out = join(dir, 'story', 'story.tw');
+    const plugin = tweeTsPlugin({
+      sources: [join(dir, 'story')],
+      outputFilename: 'story.tw',
+      compileOptions: { ...COMPILE, outputMode: 'twee3' },
+    });
+    const output = { dir: join(dir, 'story'), format: 'es' } as const;
+    await writeProject(dir, plugin, output);
+    writeFileSync(join(dir, 'story', 'start.tw'), storyWith('NEW_TEXT'));
+    const bundle = await rollup({ input: join(dir, 'entry.js'), plugins: [plugin], onLog: () => {} });
+    try {
+      const generated = await bundle.generate(output);
+      expect(generated.output.find((item) => item.fileName === 'story.tw')).toMatchObject({
+        source: expect.stringContaining('NEW_TEXT'),
+      });
+      expect(readFileSync(out, 'utf8')).toContain('OLD_TEXT');
+      expect(isOwnOutput(out)).toBe(true);
+      await bundle.write(output);
+      expect(readFileSync(out, 'utf8')).toContain('NEW_TEXT');
+    } finally {
+      await bundle.close();
+    }
+  });
 
   type WriteAll = (bundle: RollupBuild, outputs: readonly OutputOptions[]) => Promise<unknown>;
   it.each<[string, WriteAll]>([
@@ -488,42 +527,52 @@ describe('rollup plugin: watch', { timeout: 30_000 }, () => {
     expect(readFileSync(join(outDir, 'index.html'), 'utf-8')).toContain('Hello from the story.');
   });
 
-  it('builds, and rebuilds for an edit, when output.dir is the source folder itself (#187)', async () => {
-    const dir = makeProject(storyWith('OLD_TEXT'));
-    const story = join(dir, 'story');
-    const out = join(story, 'index.html');
-    const started = trackBuildWatch(
-      watch({
-        input: join(dir, 'entry.js'),
-        plugins: [storyPlugin(dir)],
-        output: { dir: story, format: 'es' },
-        watch: { buildDelay: 50 },
-        onLog: () => {},
-      }),
-    );
-    watcher = started;
+  it.each(OUTPUT_MODES)(
+    'rebuilds %s (%s) in the source folder under watch (#187, #530)',
+    async (outputMode, outputFilename) => {
+      const dir = makeProject(storyWith('OLD_TEXT'));
+      const story = join(dir, 'story');
+      const out = join(story, outputFilename);
+      const started = trackBuildWatch(
+        watch({
+          input: join(dir, 'entry.js'),
+          plugins: [
+            tweeTsPlugin({
+              sources: [story],
+              format: 'test-format-1',
+              outputFilename,
+              compileOptions: { ...COMPILE, outputMode },
+            }),
+          ],
+          output: { dir: story, format: 'es' },
+          watch: { buildDelay: 50 },
+          onLog: () => {},
+        }),
+      );
+      watcher = started;
 
-    const first = await nextBuild(started);
-    expect(errorMessages(first)).toEqual([]);
-    expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
-    expect(existsSync(join(story, 'entry.js'))).toBe(true);
+      const first = await nextBuild(started);
+      expect(errorMessages(first)).toEqual([]);
+      expect(readFileSync(out, 'utf-8')).toContain('OLD_TEXT');
+      expect(existsSync(join(story, 'entry.js'))).toBe(true);
 
-    // Rollup's file watcher may not be ready right after the first build; the
-    // edit is saved again until a build picks it up.
-    const save = (): void => {
-      writeFileSync(join(story, 'start.tw'), storyWith('NEW_TEXT'), 'utf-8');
-    };
-    save();
-    const resave = setInterval(save, 250);
-    await vi
-      .waitFor(() => {
-        expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT');
-      }, settled)
-      .finally(() => {
-        clearInterval(resave);
-      });
-    expect(readFileSync(out, 'utf-8')).not.toContain('OLD_TEXT');
-  });
+      // Rollup's file watcher may not be ready right after the first build; the
+      // edit is saved again until a build picks it up.
+      const save = (): void => {
+        writeFileSync(join(story, 'start.tw'), storyWith('NEW_TEXT'), 'utf-8');
+      };
+      save();
+      const resave = setInterval(save, 250);
+      await vi
+        .waitFor(() => {
+          expect(readFileSync(out, 'utf-8')).toContain('NEW_TEXT');
+        }, settled)
+        .finally(() => {
+          clearInterval(resave);
+        });
+      expect(readFileSync(out, 'utf-8')).not.toContain('OLD_TEXT');
+    },
+  );
 
   it('neither loads nor keeps rebuilding for the files it writes inside a source folder', async () => {
     const dir = makeProject(storyWith('OLD_TEXT') + DELETED_PASSAGE);

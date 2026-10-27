@@ -8,7 +8,7 @@ import { defineConfig } from 'vitest/config';
 
 const dist = resolve(import.meta.dirname, 'dist');
 // validation/contracts/setup.ts stops the run when the build is missing.
-const entries = { '': 'index.js', '/vite': 'plugins/vite.js' };
+const entries = { '': 'index.js', '/vite': 'plugins/vite.js', '/rollup': 'plugins/rollup.js' };
 
 export default defineConfig({
   resolve: {

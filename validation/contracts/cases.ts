@@ -121,6 +121,7 @@ export const MATRIX = {
       'effective Twee metadata round trip',
       'missing IFID reported',
       'public directory-link copies excluded from overlapping Vite output',
+      'Rollup markless story writes remain rebuildable',
     ],
   },
   CLI: {

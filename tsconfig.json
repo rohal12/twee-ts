@@ -31,7 +31,8 @@
     // come from the sources here, and vitest.contracts.config.ts runs them against the build.
     "paths": {
       "@rohal12/twee-ts": ["./src/index.ts"],
-      "@rohal12/twee-ts/vite": ["./src/plugins/vite.ts"]
+      "@rohal12/twee-ts/vite": ["./src/plugins/vite.ts"],
+      "@rohal12/twee-ts/rollup": ["./src/plugins/rollup.ts"]
     }
   },
   "include": [
