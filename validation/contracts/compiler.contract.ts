@@ -6,7 +6,9 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, 
 import { join, resolve } from 'node:path';
 import { expect } from 'vitest';
 import { build } from 'vite';
+import { rollup } from 'rollup';
 import { tweeTsPlugin } from '@rohal12/twee-ts/vite';
+import { tweeTsPlugin as rollupStoryPlugin } from '@rohal12/twee-ts/rollup';
 import {
   compile,
   compileIncremental,
@@ -380,6 +382,30 @@ defineContracts('OUTPUT', {
       expect(html).not.toContain('PUBLIC_ONLY');
       expect(html).not.toContain('PUBLIC_NEXT');
       expect(decompileHTML(html).story.passages.find((p) => p.name === 'Start')?.text).toBe('Hello');
+    }
+  },
+  'Rollup markless story writes remain rebuildable': async (root) => {
+    for (const [outputMode, outputFilename] of [
+      ['twee1', 'compiled.tw'],
+      ['twee3', 'compiled.tw'],
+      ['twine1-archive', 'compiled.html'],
+    ] as const) {
+      const folder = join(root, outputMode);
+      const source = write(join(folder, 'start.tw'), story('FIRST_TEXT'));
+      const entry = write(join(root, 'entry.js'), 'export const value = 1;');
+      const plugin = rollupStoryPlugin({ sources: [folder], outputFilename, compileOptions: { outputMode } });
+      for (const text of ['FIRST_TEXT', 'SECOND_TEXT']) {
+        write(source, story(text));
+        const bundle = await rollup({ input: entry, plugins: [plugin], onLog: () => undefined });
+        try {
+          await bundle.write({ dir: folder, format: 'es' });
+        } finally {
+          await bundle.close();
+        }
+        const compiled = readFileSync(join(folder, outputFilename), 'utf8');
+        expect(compiled).toContain(text);
+        expect(compiled.match(/(?:FIRST|SECOND)_TEXT/g)).toHaveLength(1);
+      }
     }
   },
 });

@@ -18,8 +18,10 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { rollup } from 'rollup';
 import { compileToFile } from '../src/compiler.js';
 import { isOwnOutput } from '../src/atomic-write.js';
+import { tweeTsPlugin } from '../src/plugins/rollup.js';
 
 const STORY = ':: StoryData\n{"ifid":"D674C58C-DEFA-4F70-B7A2-27742230C0FC"}\n\n:: Start\noriginal\n';
 
@@ -111,4 +113,50 @@ describe('an unchanged earlier build', () => {
     writeFileSync(outFile, `${readFileSync(outFile, 'utf-8')}x`);
     await expect(compileToFile(build)).rejects.toMatchObject({ code: 'OUTPUT_IS_INPUT' });
   });
+});
+
+describe('Rollup story ownership (#530)', () => {
+  const modes = [
+    ['twee1', 'output.tw'],
+    ['twee3', 'output.tw'],
+    ['twine1-archive', 'output.html'],
+  ] as const;
+
+  it.each(modes)(
+    'protects %s (%s) edited after a build, including through aliases',
+    async (outputMode, outputFilename) => {
+      const folder = join(dir, 'folder');
+      mkdirSync(folder);
+      const source = join(folder, 'start.tw');
+      const entry = join(dir, 'entry.js');
+      writeFileSync(source, STORY);
+      writeFileSync(entry, 'export const value = 1;');
+      const output = join(folder, outputFilename);
+      const alias = join(folder, `alias-${outputFilename}`);
+      const plugin = tweeTsPlugin({ sources: [folder], outputFilename, compileOptions: { outputMode } });
+      const run = async (): Promise<void> => {
+        const bundle = await rollup({ input: entry, plugins: [plugin], onLog: () => {} });
+        try {
+          await bundle.write({ dir: folder, format: 'es' });
+        } finally {
+          await bundle.close();
+        }
+      };
+      await run();
+      linkSync(output, alias);
+      // Both spellings remain replaceable until an author edits the file.
+      writeFileSync(source, STORY.replace('original', 'revised'));
+      await run();
+      expect(readFileSync(output, 'utf8')).toContain('revised');
+      expect(isOwnOutput(alias)).toBe(true);
+      const authored = readFileSync(alias, 'utf8').replace('revised', 'changed');
+      if (process.platform === 'win32') writeFileSync(alias, authored);
+      else replaceKeepingMtime(alias, authored);
+      expect(isOwnOutput(output)).toBe(false);
+      expect(isOwnOutput(alias)).toBe(false);
+      await expect(run()).rejects.toThrow('Output file cannot be an input source');
+      expect(readFileSync(output, 'utf8')).toBe(authored);
+      expect(readFileSync(alias, 'utf8')).toBe(authored);
+    },
+  );
 });

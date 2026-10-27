@@ -5,11 +5,12 @@
  */
 import { resolve, sep } from 'node:path';
 import { outputPaths } from '../filesystem.js';
+import { recordOwnOutput } from '../atomic-write.js';
 import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory, LocatedError } from './diagnostics.js';
 import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
-import { createOutputRecord, outputLocations } from './paths.js';
+import { createOutputRecord, emittedFilePath, outputLocations } from './paths.js';
 import type { OutputLocation } from './paths.js';
 import { createLinkWatch } from './link-watch.js';
 import type { LinkWatch } from './link-watch.js';
@@ -133,6 +134,19 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       }
       for (const warning of story.warnings) this.warn(warning);
       this.emitFile({ type: 'asset', fileName: outputFilename, source: story.output });
+    },
+
+    writeBundle(
+      outputOptions: OutputLocation,
+      bundle: Readonly<
+        Record<string, { readonly type: 'asset'; readonly source: string | Uint8Array } | { readonly type: 'chunk' }>
+      >,
+    ): void {
+      const asset = bundle[outputFilename];
+      const destination = emittedFilePath(outputOptions, outputFilename);
+      // Rollup writes the asset itself. Only a completed write establishes ownership, including for output
+      // modes without creator markers; generate() must leave the ownership of existing disk bytes unchanged.
+      if (asset?.type === 'asset' && destination !== undefined) recordOwnOutput(destination, asset.source);
     },
   };
 }
