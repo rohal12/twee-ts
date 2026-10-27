@@ -66,7 +66,7 @@ src/
     rollup.ts          Rollup plugin
     diagnostics.ts, paths.ts, watch-targets.ts  Shared plugin helpers
 bin/twee-ts.ts         CLI entry point
-scripts/               Package check, duplication measurement, licence notices, ESLint restrictions
+scripts/               Package check, duplication measurement, licence notices, ESLint restrictions, dependency snapshot
 validation/contracts/  The compiler contract matrix, run against dist/ (vitest.contracts.config.ts)
 validation/evidence/   Review reports of past releases (historical)
 test/                  *.test.ts (unit, property, differential); helpers/; fixtures/

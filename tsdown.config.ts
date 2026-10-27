@@ -2,18 +2,10 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defineConfig } from 'tsdown';
 import type { TsdownHooks, UserConfig } from 'tsdown';
-import { NOTICES_FILE, updateThirdPartyNotices } from './scripts/third-party-notices.mjs';
+import { BUNDLED_PACKAGES, NOTICES_FILE, updateThirdPartyNotices } from './scripts/third-party-notices.mjs';
 
 const RE_DTS = /\.d\.c?ts$/;
 const RE_SOURCE_MAPPING_URL = /\n\/\/# sourceMappingURL=\S+\s*$/;
-
-/**
- * The only packages from node_modules that may be bundled into dist/. twee-ts has no runtime
- * dependencies: these are bundled on purpose, and bundling anything else fails the build.
- * The build regenerates THIRD_PARTY_NOTICES from the packages it actually bundled and fails
- * when that set differs from this list.
- */
-const BUNDLED_PACKAGES = ['parse5', 'entities', 'acorn'];
 
 const BIN_CHUNK = 'bin/twee-ts.js';
 const LEGAL_BANNER =
@@ -71,7 +63,7 @@ const shared = {
   // Keep .js/.d.ts for ESM and .cjs/.d.cts for CJS (tsdown defaults to .mjs/.d.mts),
   // so the file names in the package.json exports map stay valid.
   fixedExtension: false,
-  deps: { onlyBundle: BUNDLED_PACKAGES },
+  deps: { onlyBundle: [...BUNDLED_PACKAGES] },
   // tsconfig.json asks for declaration maps, but they would point at src/, which is not published.
   dts: { compilerOptions: { declarationMap: false } },
   hooks: {
