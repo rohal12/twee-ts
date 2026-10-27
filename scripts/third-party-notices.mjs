@@ -9,6 +9,14 @@ import { join } from 'node:path';
 
 export const NOTICES_FILE = 'THIRD_PARTY_NOTICES';
 
+/**
+ * The only packages from node_modules that may be bundled into dist/ (`deps.onlyBundle` in tsdown.config.ts).
+ * twee-ts has no runtime dependencies: these are bundled on purpose, and bundling anything else fails the build.
+ * The build regenerates THIRD_PARTY_NOTICES from the packages it actually bundled and fails when that set differs
+ * from this list. scripts/dependency-snapshot.ts reports them as runtime dependencies.
+ */
+export const BUNDLED_PACKAGES = Object.freeze(['parse5', 'entities', 'acorn']);
+
 const NODE_MODULES = '/node_modules/';
 const LICENCE_FILE = /^(?:licen[cs]e|copying)(?:[.-][\w.-]*)?$/i;
 const RULE = '='.repeat(80);

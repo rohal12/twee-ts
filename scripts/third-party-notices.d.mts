@@ -13,6 +13,7 @@ export interface PackageLicence {
 }
 
 export declare const NOTICES_FILE: string;
+export declare const BUNDLED_PACKAGES: readonly string[];
 export declare function packageOfModuleId(moduleId: string): BundledPackage | undefined;
 export declare function bundledPackages(moduleIds: Iterable<string>): BundledPackage[];
 export declare function compareWithAllowList(
