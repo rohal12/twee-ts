@@ -229,10 +229,33 @@ export function removeFromBundle(bundle: Record<string, unknown>, fileName: stri
 /**
  * Vite marks its combined stylesheet (cssCodeSplit: false) with the original name `style.css`, even if
  * output naming changes its filename. Missing provenance is normal for resources emitted by other plugins;
- * neither a .css extension nor a missing/relative original path makes an asset the entry's stylesheet.
+ * neither a .css extension nor a missing/relative original path makes an asset the entry's stylesheet. An
+ * explicit file URL can name a resource with this same provenance; takeEntryFromBundle keeps that resource.
  */
 function isEntryStylesheet(item: Extract<BundleItem, { type: 'asset' }>): boolean {
   return item.originalFileNames?.includes('style.css') === true;
+}
+
+/** Explicit file URLs identify resources even when their names and provenance match Vite's stylesheet. */
+export function entryAssetReferences(): { readonly plugin: Plugin; readonly files: ReadonlySet<string> } {
+  const files = new Set<string>();
+  return {
+    files,
+    plugin: {
+      name: `${PLUGIN_NAME}:entry-asset-references`,
+      enforce: 'pre',
+      renderStart() {
+        files.clear();
+      },
+      resolveFileUrl: {
+        order: 'pre',
+        handler({ fileName }) {
+          files.add(fileName);
+          return null;
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -246,7 +269,11 @@ function isEntryStylesheet(item: Extract<BundleItem, { type: 'asset' }>): boolea
  * stays in the bundle, so a build writes it next to the HTML, and is also
  * returned, so the dev server can serve it.
  */
-export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputName?: string): EntryBundle {
+export function takeEntryFromBundle(
+  bundle: Record<string, BundleItem>,
+  inputName?: string,
+  assetReferences: ReadonlySet<string> = new Set(),
+): EntryBundle {
   let script = '';
   const files = new Set<string>();
   const assets = new Map<string, string | Uint8Array>();
@@ -269,7 +296,7 @@ export function takeEntryFromBundle(bundle: Record<string, BundleItem>, inputNam
       script = dropFileSourceMapComment(item.code, 'js');
       for (const id of item.moduleIds) if (!id.startsWith('\0')) files.add(fileOfId(id));
       removeFromBundle(bundle, fileName);
-    } else if (fileName.endsWith('.css') && isEntryStylesheet(item)) {
+    } else if (fileName.endsWith('.css') && isEntryStylesheet(item) && !assetReferences.has(fileName)) {
       const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
       styles.push(dropFileSourceMapComment(css, 'css'));
       removeFromBundle(bundle, fileName);
@@ -981,6 +1008,7 @@ export async function bundleEntry(
       .filter((plugin) => plugin.name !== PLUGIN_NAME && appliesTo(plugin, command, user, env))
       .map((plugin) => asEntryBuildPlugin(plugin, command, views));
   const plugins = await entryPlugins(user.plugins);
+  const assetReferences = entryAssetReferences();
   const workerPlugins = user.worker?.plugins;
   const inline: InlineConfig = {
     ...withoutExcludedKeys(user),
@@ -993,6 +1021,7 @@ export async function bundleEntry(
     // Public files stay resolvable (`/logo.svg`, base rewriting); `copyPublicDir: false` keeps them uncopied.
     publicDir: config.publicDir || false,
     plugins: [
+      assetReferences.plugin,
       ...plugins,
       entryBuildEnforcer(entryPath, command, outputFilename),
       recordWatchFiles(watchFiles, config.root, observer).plugin,
@@ -1011,6 +1040,6 @@ export async function bundleEntry(
   const [result] = [await build(inline)].flat();
   if (result === undefined || !('output' in result)) throw new Error('twee-ts: the entry build returned no bundle.');
   const bundle: Record<string, BundleItem> = Object.fromEntries(result.output.map((item) => [item.fileName, item]));
-  const entry = takeEntryFromBundle(bundle);
+  const entry = takeEntryFromBundle(bundle, undefined, assetReferences.files);
   return { ...entry, files: new Set([...entry.files, ...watchFiles]) };
 }

@@ -34,6 +34,7 @@ import {
   entryInputSettings,
   entryRenderBuiltUrl,
   entryCollisionMessage,
+  entryAssetReferences,
   entrySources,
   fileOfId,
   forgetKeptResolver,
@@ -226,6 +227,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // couldn't bundle it inside itself.
   const ownBuilds = new WeakMap<object, EntryBundle>();
   const entryInputs = new WeakMap<ResolvedConfig, () => ReadonlySet<string>>();
+  const entryAssets = new WeakMap<ResolvedConfig, ReadonlySet<string>>();
   // The files this plugin's builds write, and their output folders, as each bundle
   // reports them. A source folder may hold any of them; none is a source.
   const record = createOutputRecord(outputFilename);
@@ -400,16 +402,21 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       ) {
         const recorder = recordWatchFiles(undefined, config.root);
         entryInputs.set(config, recorder.inputs);
+        const assetReferences = entryAssetReferences();
+        entryAssets.set(config, assetReferences.files);
         // The final plugin list includes environment-selected plugins. Record their addWatchFile calls,
         // as the separate entry build does, before any module or stylesheet is read.
-        Reflect.set(
-          config.plugins,
-          config.plugins.length,
+        const clientOnly = (plugin: Plugin): Plugin =>
           pluginWith(
-            recorder.plugin,
+            plugin,
             new Map([['applyToEnvironment', (environment: { name: string }) => environment.name === CLIENT]]),
-          ),
-        );
+          );
+        // resolveFileUrl stops at the first answer, so observe references before a user's custom resolver.
+        Reflect.set(config, 'plugins', [
+          clientOnly(assetReferences.plugin),
+          ...config.plugins,
+          clientOnly(recorder.plugin),
+        ]);
       }
       // `vite build --watch` with the entry inside the build: note the imports the user's plugins resolve (see
       // resolveId below). Vite builds each environment's plugins from this list after this hook.
@@ -553,7 +560,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         let entry: EntryBundle | undefined;
         if (entryPath !== undefined) {
           const items: Record<string, BundleItem> = bundle;
-          entry = bundlesEntryInside(config) ? takeEntryFromBundle(items, entryInput) : ownBuilds.get(this.environment);
+          entry = bundlesEntryInside(config)
+            ? takeEntryFromBundle(items, entryInput, entryAssets.get(this.environment.getTopLevelConfig()))
+            : ownBuilds.get(this.environment);
           if (!bundlesEntryInside(config)) {
             for (const [fileName, source] of entry?.assets ?? []) {
               if (fileName === outputFilename || Object.hasOwn(bundle, fileName)) {
