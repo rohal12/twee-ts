@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-28
+
 ### Added
 
 - Export synchronous `startPassageDiagnostics()` and `passageOmission()` so editors can share the compiler's entry and output rules over an in-memory story (#528).
