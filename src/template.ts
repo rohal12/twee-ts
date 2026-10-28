@@ -19,7 +19,7 @@ import {
   STORE_AREA_DESCRIPTION,
 } from './html-structure.js';
 import type { HeadPlacement, PlaceholderOccurrence, PlaceholderSite } from './html-structure.js';
-import { escapeForContext, htmlEscape, jsStringEscape } from './escape.js';
+import { escapeForContext, htmlEscape, jsStringEscape, jsonStringEscape } from './escape.js';
 import type { InsertionContext } from './escape.js';
 import { pushAll } from './util.js';
 import { TweeTsError } from './errors.js';
@@ -37,7 +37,7 @@ export type PlaceholderValue =
    */
   | { readonly kind: 'markup'; readonly html: string; readonly probe: string; readonly comment?: string }
   /**
-   * Text whose placeholder's quotes become the quotes of a JavaScript string literal (`"START_AT"`) or of an
+   * Text whose placeholder's quotes become the quotes of a JavaScript or JSON string literal (`"START_AT"`) or of an
    * attribute value (`data-size="STORY_SIZE"`), as Tweego writes them; elsewhere the quotes are kept as text.
    */
   | { readonly kind: 'quoted'; readonly text: string };
@@ -380,8 +380,11 @@ function replacementFor(
   if (value.kind === 'text') {
     return delimiters === 'inside' ? escapeAtBoundary(value.text, context, before, after) : undefined;
   }
-  // A quoted placeholder: its quotes are a JavaScript string literal's, an attribute value's, or text.
-  if (delimiters === 'string') return `"${jsStringEscape(value.text)}"`;
+  // A quoted placeholder: its quotes are a JavaScript/JSON string literal's, an attribute value's, or text.
+  if (delimiters === 'string') {
+    const text = context.kind === 'json' ? jsonStringEscape(value.text) : jsStringEscape(value.text);
+    return `"${text}"`;
+  }
   if (delimiters === 'attribute') return `"${htmlEscape(value.text)}"`;
   if (delimiters === 'split') return undefined;
   const text = escapeAtBoundary(value.text, context, advancePrefix(before, '"'), `"${after}`);

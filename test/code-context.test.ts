@@ -99,6 +99,37 @@ describe('javaScriptContexts', () => {
 });
 
 describe('cssContexts', () => {
+  it.each(['url', 'URL', 'uRl', String.raw`\75rl`, String.raw`u\72 l`, String.raw`\000075rl`])(
+    'consumes %s URL tokens before looking for comments or strings (#545)',
+    (name) => {
+      expect(css(`a{b:${name}(https://e.test/*X*/image.png)}`, 'X')).toEqual({ kind: 'code' });
+      expect(css(`a{b:${name}(https://e.test/*image.png);content:"X"}`, 'X')).toEqual({
+        kind: 'string',
+        quote: '"',
+      });
+      expect(css(`a{b:${name}( \t"/*X*/image.png")}`, 'X')).toEqual({ kind: 'string', quote: '"' });
+    },
+  );
+
+  it.each(['url(bad"/*X\\)still)', 'url(bad space/*"X")', 'url(bad\\\n/*X)', 'url(\u0001/*X)'])(
+    'consumes bad URL remnants in %j and recovers at the closing parenthesis (#545)',
+    (url) => {
+      expect(css(`${url};a{content:"Y"}`, 'X')).toEqual({ kind: 'code' });
+      expect(css(`${url};a{content:"Y"}`, 'Y')).toEqual({ kind: 'string', quote: '"' });
+    },
+  );
+
+  it.each(['url(/*X', 'url(bad"/*X', 'url(bad space/*X'])('consumes an unclosed %j through EOF (#545)', (url) => {
+    expect(css(url, 'X')).toEqual({ kind: 'code' });
+  });
+
+  it.each(['#url', '@url', '1url', '-url', 'myurl', 'url '])(
+    'keeps %s from being read as a URL token (#545)',
+    (name) => {
+      expect(css(`${name}(/*X*/)`, 'X')).toEqual({ kind: 'comment' });
+    },
+  );
+
   it('finds strings and comments', () => {
     expect(css('a { content: "X"; }', 'X')).toEqual({ kind: 'string', quote: '"' });
     expect(css("a { content: 'X'; }", 'X')).toEqual({ kind: 'string', quote: "'" });
