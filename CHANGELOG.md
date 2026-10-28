@@ -7,15 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Export synchronous `startPassageDiagnostics()` and `passageOmission()` so editors can share the compiler's entry and output rules over an in-memory story (#528).
-
 ### Fixed
 
 - Preserve CSS and `.map` resources emitted by Vite plugins in development and both entry build paths, including CSS resources with the same name and provenance as Vite's stylesheet; extract only Vite's combined stylesheet and the selected entry's generated source map (#331, #457).
 - Report a missing IFID during offline lint, including the Twine 2 build's legacy IFID fallback (#365).
 - Parse the requested story-format version once per candidate group, including failure diagnostics, so long valid versions do not multiply selection work (#503).
+
+## [2.1.0] - 2026-10-28
+
+### Added
+
+- Export synchronous `startPassageDiagnostics()` and `passageOmission()` so editors can share the compiler's entry and output rules over an in-memory story (#528).
+
+### Fixed
 
 - Check the size of a text or media file and read it through one open descriptor, so a file put at the path in between is not the one read (#532).
 - Recognize Rollup's completed story writes on subsequent builds and watch rebuilds, including Twee and Twine 1 archive output inside source folders, while preserving authored-file protection (#530).
