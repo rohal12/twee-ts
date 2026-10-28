@@ -7,9 +7,29 @@
  * files by their identity key (see path-identity.ts), and spell a path they
  * hand a watcher by its canonical (real) path.
  */
-import { dirname, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import type { BuildOutputs } from '../filesystem.js';
 import { identify, isKeyInside } from '../path-identity.js';
+
+/** A bundler module ID is a filesystem path with an optional query, not a URL: `#` is a filename character. */
+export function fileOfId(id: string): string {
+  return toPosix(id.replace(/\?.*$/s, ''));
+}
+
+/** Physical graph inputs, including modules removed by tree shaking and raw plugin watch paths. */
+export function bundlerInputs(context: {
+  getModuleIds(): IterableIterator<string>;
+  getWatchFiles?(): string[];
+}): ReadonlySet<string> {
+  const modules = [...context.getModuleIds()]
+    .filter((id) => !id.startsWith('\0'))
+    .map(fileOfId)
+    .filter(isAbsolute);
+  // addWatchFile takes filesystem paths, so query/hash characters here are literal too.
+  // Rolldown's Rollup-compatible context exposes the graph but has no getWatchFiles method.
+  const watched = (context.getWatchFiles?.() ?? []).filter((id) => !id.startsWith('\0')).map((path) => resolve(path));
+  return new Set([...modules, ...watched]);
+}
 
 /** The real path of `path`, with forward slashes: how the Vite plugin spells a path it hands a watcher. */
 export function canonicalPath(path: string): string {

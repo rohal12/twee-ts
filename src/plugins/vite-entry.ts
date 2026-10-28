@@ -21,7 +21,7 @@ import type {
   UserConfig,
 } from 'vite';
 import type { InlineSource } from '../types.js';
-import { toPosix } from './paths.js';
+import { fileOfId, toPosix } from './paths.js';
 import { moduleGlobScopes } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
 import { isRecord } from '../util.js';
@@ -213,11 +213,6 @@ function dropFileSourceMapComment(code: string, language: 'js' | 'css'): string 
   if (kind !== 'line-comment' && kind !== 'block-comment' && kind !== 'comment') return code;
   if (start > 0 && before?.context.kind === kind) return code;
   return code.slice(0, code[start - 1] === '\n' ? start - 1 : start);
-}
-
-/** A module id or watched file as a forward-slash file path, without a query or hash (like Vite's cleanUrl). */
-export function fileOfId(id: string): string {
-  return toPosix(id.replace(/[?#].*$/s, ''));
 }
 
 /** Removes a file from a bundle, which bundlers hand plugins as a plain object keyed by file name. */

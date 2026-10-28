@@ -10,7 +10,7 @@ import { compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory, LocatedError } from './diagnostics.js';
 import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
-import { createOutputRecord, emittedFilePath, outputLocations } from './paths.js';
+import { bundlerInputs, createOutputRecord, emittedFilePath, outputLocations } from './paths.js';
 import type { OutputLocation } from './paths.js';
 import { createLinkWatch } from './link-watch.js';
 import type { LinkWatch } from './link-watch.js';
@@ -113,6 +113,8 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
         emitFile: (opts: { type: 'asset'; fileName: string; source: string }) => void;
         error: (error: LocatedError | string) => never;
         warn: (message: string) => void;
+        getModuleIds(): IterableIterator<string>;
+        getWatchFiles?(): string[];
       },
       outputOptions: OutputLocation,
       bundle: Readonly<Record<string, unknown>>,
@@ -128,7 +130,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       record.addFiles(outputOptions, Object.keys(bundle));
       let story: CompiledStory;
       try {
-        story = await compileStory(resolved.compile(), record.outputs(), undefined, true);
+        story = await compileStory(resolved.compile(), record.outputs(), undefined, true, bundlerInputs(this));
       } catch (e) {
         return this.error(fatalError(e));
       }

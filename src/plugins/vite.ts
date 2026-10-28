@@ -24,7 +24,15 @@ import { insertViteClient } from '../html-structure.js';
 import { isSameOrInside } from '../path-identity.js';
 import { checkViteVersion, resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
-import { canonicalPath, createOutputRecord, emittedFilePath, fileKey, outputLocations, toPosix } from './paths.js';
+import {
+  canonicalPath,
+  createOutputRecord,
+  emittedFilePath,
+  fileKey,
+  fileOfId,
+  outputLocations,
+  toPosix,
+} from './paths.js';
 import type { OutputLocation, OutputRecord } from './paths.js';
 import { installStoryRoute, setUpDevStory } from './vite-dev.js';
 import { publicFiles } from './vite-public.js';
@@ -36,7 +44,6 @@ import {
   entryCollisionMessage,
   entryAssetReferences,
   entrySources,
-  fileOfId,
   forgetKeptResolver,
   importSpellings,
   PLUGIN_NAME,
@@ -395,11 +402,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     },
 
     configResolved(config) {
-      if (entryPath === undefined) return;
-      if (
-        config.command === 'build' &&
-        (bundlesEntryInside(config) || bundlesEntryInside({ build: config.environments[CLIENT]?.build }))
-      ) {
+      if (config.command === 'build') {
         const recorder = recordWatchFiles(undefined, config.root);
         entryInputs.set(config, recorder.inputs);
         const assetReferences = entryAssetReferences();
@@ -418,6 +421,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
           clientOnly(recorder.plugin),
         ]);
       }
+      if (entryPath === undefined) return;
       // `vite build --watch` with the entry inside the build: note the imports the user's plugins resolve (see
       // resolveId below). Vite builds each environment's plugins from this list after this hook.
       if (config.command === 'build' && config.build.watch && bundlesEntryInside(config)) {
@@ -533,7 +537,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         if (resolved === null || resolved.external === true || resolved.external === 'absolute') return undefined;
         const file = canonicalPath(fileOfId(resolved.id));
         if (file === now || !targets.has(file)) return undefined;
-        return { ...resolved, id: `${now}${/[?#].*$/s.exec(resolved.id)?.[0] ?? ''}` };
+        return { ...resolved, id: `${now}${/\?.*$/s.exec(resolved.id)?.[0] ?? ''}` };
       },
     },
 
@@ -580,14 +584,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         try {
           // Chunk moduleIds omit tree-shaken modules; CSS and worker plugins also read files registered only
           // with addWatchFile. Protect all of them, including the entry itself, from the story's write.
-          const entryFiles =
-            entryPath === undefined
-              ? []
-              : [
-                  entryPath,
-                  ...(entry?.files ?? []),
-                  ...(entryInputs.get(this.environment.getTopLevelConfig())?.() ?? []),
-                ].filter((id) => !id.startsWith('\0'));
+          const entryFiles = [
+            ...(entryPath === undefined ? [] : [entryPath]),
+            ...(entry?.files ?? []),
+            ...(entryInputs.get(this.environment.getTopLevelConfig())?.() ?? []),
+          ].filter((id) => !id.startsWith('\0'));
           story = await compileStory(
             resolved.compile(entrySources(entry)),
             configOutputs(config, record),

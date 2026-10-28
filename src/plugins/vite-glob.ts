@@ -21,7 +21,7 @@ import { tokTypes } from 'acorn';
 import { AcornParser, javaScriptNodes, trySyntax } from '../js-syntax.js';
 import { lineColumnFinder } from '../js-chars.js';
 import { isRecord } from '../util.js';
-import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
+import { canonicalPath, fileKey, fileOfId, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { missingImportFolders } from './watch-targets.js';
 
 /**
@@ -495,7 +495,7 @@ export async function moduleGlobScopes(
         'files added to its folders are bundled the next time something else changes.',
     );
   }
-  const file = id.replace(/[?#].*$/s, '');
+  const file = fileOfId(id);
   const importer = isAbsolute(file) && !id.startsWith('\0') ? file : undefined;
   const resolver: GlobResolver = (pattern) => resolveGlob(context, pattern, id);
   const scopes = await Promise.all(calls.map((call) => scopesOf(call, importer, root, resolver)));
