@@ -31,7 +31,7 @@ interface BundleContext {
   emitFile(file: { type: 'asset'; fileName: string; source: string }): void;
   warn(message: string): void;
   error(error: Error | string): never;
-  environment: { config: unknown };
+  environment: { config: unknown; getTopLevelConfig(): unknown };
 }
 
 /** The hooks as the tests call them. */
@@ -72,6 +72,7 @@ function resolvedConfig(root: string, build: Record<string, unknown> = {}, comma
   return {
     command,
     root,
+    plugins: [],
     publicDir: '',
     environments: {},
     build: { outDir: 'dist', copyPublicDir: false, ...build },
@@ -222,7 +223,7 @@ describe('vite plugin hooks: generateBundle', () => {
         error: (error) => {
           throw typeof error === 'string' ? new Error(error) : error;
         },
-        environment: { config },
+        environment: { config, getTopLevelConfig: () => config },
       },
       { dir: join(tmpdir(), 'twee-ts-never-written') },
       bundle,
