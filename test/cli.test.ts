@@ -668,6 +668,17 @@ describe('CLI --lint', () => {
     ]);
   }, 30_000);
 
+  it.each(['', ':: StoryData\n{"ifid":""}\n\n'])(
+    'fails offline lint when the IFID is missing (#365): %s',
+    (metadata) => {
+      writeFileSync(join(dir, 'story.tw'), `:: StoryTitle\nTest\n\n${metadata}:: Start\nHello\n`);
+      const r = runCli(dir, ['--no-config', '--no-remote', '--lint', 'story.tw']);
+      expect(r.stdout).toContain('error: Story IFID not found.');
+      expect(r.stdout).toContain('Lint failed.');
+      expect(r.status).toBe(1);
+    },
+  );
+
   it('fails a story that HTML output rejects for text HTML cannot carry (#365)', () => {
     const r = lintStory(`:: StoryTitle\nTest\n\n${STORY_DATA}\n:: Start\nA\u0000B\n`);
     expect(r.stdout).toContain('error: The text of passage "Start" contains U+0000, which HTML cannot carry');

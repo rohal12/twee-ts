@@ -66,6 +66,71 @@ describe('failed format candidate selection work (#503)', () => {
     }
   });
 
+  it.each([
+    ['lookup', true],
+    ['compile', true],
+    ['lookup', false],
+    ['compile', false],
+  ] as const)('bounds parsed version bytes through %s (usable first candidate: %s)', async (mode, usable) => {
+    let bytes = 0;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Called with the native RegExp receiver.
+    const exec = RegExp.prototype.exec;
+    const spy = vi.spyOn(RegExp.prototype, 'exec').mockImplementation(function (this: RegExp, text: string) {
+      if (this.source.startsWith('^[vV]?')) bytes += text.length;
+      return exec.call(this, text);
+    });
+    const work = async (n: number, identifiers: number): Promise<number> => {
+      const version = `1.0.0-${'a.'.repeat(identifiers)}a`;
+      const index = indexJson(
+        Array.from({ length: n }, (_, i) => ({ name: 'Review', version: `1.0.0+b${String(i)}` })),
+      );
+      const requests: string[] = [];
+      vi.stubGlobal('fetch', (input: string | URL | Request) => {
+        const url = fetchUrl(input);
+        requests.push(url);
+        return Promise.resolve(
+          new Response(url.endsWith('/index.json') ? index : usable ? formatJs('Review', '1.0.0+b0') : 'missing', {
+            status: url.endsWith('/index.json') || usable ? 200 : 404,
+          }),
+        );
+      });
+      const indices = [`https://bytes-${String(n)}-${String(identifiers)}.test/index.json`];
+      bytes = 0;
+      const result =
+        mode === 'lookup'
+          ? resolveRemoteFormat('Review', version, { indices, useDefaultIndices: false, resolutionTimeout: 0 })
+          : compile({
+              sources: storySource('Review', version),
+              formatPaths: [],
+              useTweegoPath: false,
+              formatIndices: indices,
+              useDefaultFormatIndices: false,
+              formatResolutionTimeout: 0,
+            });
+      const outcome = await result.catch((error: unknown) => error);
+      expect(outcome).toMatchObject(
+        usable
+          ? mode === 'lookup'
+            ? { version: '1.0.0+b0' }
+            : { format: { version: '1.0.0+b0' } }
+          : { code: mode === 'lookup' ? 'FORMAT_UNAVAILABLE' : 'BUILD_FAILED' },
+      );
+      expect(requests).toHaveLength(usable ? 2 : n + 1);
+      return bytes;
+    };
+    try {
+      const short = await work(400, 1);
+      const single = await work(1, 10000);
+      const combined = await work(400, 10000);
+      expect(short).toBeGreaterThan(0);
+      expect(single).toBeGreaterThan(20000);
+      // Aggregate bytes may grow with either input; their product is not an acceptable bound.
+      expect(combined).toBeLessThan((short + single) * 2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it.each(['first', 'last'] as const)('obtains the %s usable candidate from a large ranked group', async (position) => {
     const versions = Array.from({ length: 400 }, (_, i) => `1.0.0+b${String(i)}`);
     const usable = position === 'first' ? versions[0] : versions.at(-1);
