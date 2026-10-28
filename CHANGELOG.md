@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serialize whole quoted Twine 1 start placeholders as JSON in JSON data blocks, preserving control characters and script boundaries (#544).
+- Share CSS tokenization between import analysis and template contexts, diagnosing unquoted URL substitutions instead of corrupting them with comment escaping (#545).
+
 - Preserve CSS and `.map` resources emitted by Vite plugins in development and both entry build paths, including CSS resources with the same name and provenance as Vite's stylesheet; extract only Vite's combined stylesheet and the selected entry's generated source map (#331, #457).
 - Report a missing IFID during offline lint, including the Twine 2 build's legacy IFID fallback (#365).
 - Parse the requested story-format version once per candidate group, including failure diagnostics, so long valid versions do not multiply selection work (#503).

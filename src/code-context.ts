@@ -4,12 +4,13 @@
  * the script and style escapers use it to tell whether `<\/script` keeps the value of what it escapes.
  *
  * JavaScript is parsed with acorn (bundled), which establishes regular expressions, divisions and template tags
- * from the grammar. JSON string tokens are read after RFC 8259 validation. CSS needs only strings and comments,
- * which CSS Syntax Level 3 tokenizes without context.
+ * from the grammar. JSON string tokens are read after RFC 8259 validation. CSS tokens (including URLs, whose contents
+ * are neither strings nor comments) come from the shared CSS Syntax Level 3 tokenizer.
  */
 import { tokTypes } from 'acorn';
 import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript } from './js-syntax.js';
 import { parseJSON } from './json-decode.js';
+import { createCssTokenizer } from './css-syntax.js';
 
 /** Where a range of JavaScript source lies. */
 export type JavaScriptContext =
@@ -167,9 +168,9 @@ function javaScriptPieces(source: string, module: boolean): JavaScriptPiece[] {
 }
 
 /**
- * The CSS context of each of `ranges` in `source`, tokenized as CSS Syntax Level 3 does: a comment runs from `/*` to
- * the next `*\/`; a string from a quote to the same unescaped quote or an unescaped line break (a bad string); a
- * backslash escapes the next character.
+ * The CSS context of each of `ranges` in `source`. Consume complete CSS Syntax Level 3 tokens so that strings
+ * and comments inside URL or bad-URL tokens are not mistaken for separate tokens. URLs are code: substitutions
+ * there require an unsupported-context diagnostic rather than string or comment escaping.
  */
 export function cssContexts<R extends SourceRange>(source: string, ranges: readonly R[]): InContext<R, CssContext>[] {
   const pieces = cssPieces(source);
@@ -185,37 +186,14 @@ interface CssPiece extends SourceRange {
 
 function cssPieces(source: string): CssPiece[] {
   const pieces: CssPiece[] = [];
-  let i = 0;
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === '/' && source[i + 1] === '*') {
-      const close = source.indexOf('*/', i + 2);
-      const end = close === -1 ? source.length : close + 2;
-      pieces.push({ start: i, end, context: { kind: 'comment' } });
-      i = end;
-    } else if (ch === '"' || ch === "'") {
-      const end = cssStringEnd(source, i + 1, ch);
-      pieces.push({ start: i, end, context: { kind: 'string', quote: ch } });
-      i = end;
-    } else if (ch === '\\') {
-      i += 2;
-    } else {
-      i += 1;
+  const next = createCssTokenizer(source, true);
+  for (let token = next(); token.type !== 'eof'; token = next()) {
+    const { start, end, type } = token;
+    if (type === 'comment') {
+      pieces.push({ start, end, context: { kind: 'comment' } });
+    } else if (type === 'string' || type === 'badstring') {
+      pieces.push({ start, end, context: { kind: 'string', quote: source[start] === "'" ? "'" : '"' } });
     }
   }
   return pieces;
-}
-
-/** The offset after a CSS string whose content starts at `from`. */
-function cssStringEnd(source: string, from: number, quote: string): number {
-  let i = from;
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === quote) return i + 1;
-    // An unescaped line break ends a bad string before it.
-    if (ch === '\n' || ch === '\r' || ch === '\f') return i;
-    // CSS input preprocessing treats CRLF as one newline; an escaped pair continues the same string.
-    i += ch === '\\' ? (source[i + 1] === '\r' && source[i + 2] === '\n' ? 3 : 2) : 1;
-  }
-  return source.length;
 }

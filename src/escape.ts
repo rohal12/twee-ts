@@ -160,7 +160,7 @@ function htmlCommentTextEscape(s: string): string {
 }
 
 /** Escape for the inside of a double-quoted JSON string written into a `script` element. */
-function jsonStringEscape(s: string): string {
+export function jsonStringEscape(s: string): string {
   return JSON.stringify(s)
     .slice(1, -1)
     .replace(/[<\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
