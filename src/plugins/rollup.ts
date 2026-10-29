@@ -41,7 +41,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   // Where each registered path led when Rollup's watcher first followed it.
   const followed = new Map<string, string>();
   const viteInputs = new WeakMap<object, () => ReadonlySet<string>>();
-  let checkWrite: (() => void) | undefined;
+  let checkWrite: ((writtenFile?: string) => void) | undefined;
   const inputsOf = (context: InputContext): string[] => [
     ...bundlerInputs(context),
     ...(context.environment === undefined ? [] : (viteInputs.get(context.environment.getTopLevelConfig())?.() ?? [])),
@@ -50,11 +50,20 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     name: 'twee-ts:protect-inputs',
     generateBundle: {
       order: 'post' as const,
-      handler(this: InputContext): void {
-        checkWrite = () => {
+      handler(this: InputContext, outputOptions: OutputLocation, bundle: Readonly<Record<string, unknown>>): void {
+        const files = new Set(
+          Object.keys(bundle).flatMap((name) => {
+            const path = emittedFilePath(outputOptions, name);
+            return path === undefined ? [] : [path];
+          }),
+        );
+        checkWrite = (writtenFile) => {
           checkStoryInputs(record.outputs(), inputsOf(this));
+          // Later concurrent IO may see this build's own story before writeBundle records ownership.
+          // A plugin's cache IO before it registers more inputs must not consume the preflight.
+          if (writtenFile !== undefined && files.has(resolve(writtenFile))) checkWrite = undefined;
         };
-        checkWrite();
+        checkStoryInputs(record.outputs(), inputsOf(this));
       },
     },
   };
@@ -84,6 +93,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     // Typed `object`: a type with only optional properties would share none with
     // Rollup's InputOptions, and the plugin would no longer be assignable to Plugin.
     options(this: object, inputOptions: object): object {
+      checkWrite = undefined;
       const output: unknown = Reflect.get(inputOptions, 'output');
       for (const location of outputLocations(output)) record.addLocation(location);
       // Run after user generateBundle hooks too: they can register more inputs before the write.
@@ -91,20 +101,18 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       if ('environment' in this) return guarded;
       const configuredFs: unknown = Reflect.get(inputOptions, 'fs');
       const io = isRecord(configuredFs) ? configuredFs : fs;
-      const protectedFs = {
-        writeFile(...args: unknown[]): unknown {
-          const [path] = args;
-          // Output plugins run after input plugins. At the write boundary their watch registrations
-          // are complete, including those of frozen plugins that cannot be wrapped in outputOptions.
-          if (typeof path === 'string' && record.outputs().stories?.includes(resolve(path))) {
-            checkWrite?.();
-          }
-          const write: unknown = Reflect.get(io, 'writeFile');
-          if (typeof write !== 'function') throw new Error('The Rollup filesystem has no writeFile method.');
-          const result: unknown = Reflect.apply(write, undefined, args);
+      // Output plugins run after input plugins. Validate before output IO starts, including mkdir:
+      // Rollup writes files concurrently, so rejecting one write must not leave sibling writes in flight.
+      const guardedIO =
+        (method: 'mkdir' | 'writeFile') =>
+        (...args: unknown[]): unknown => {
+          checkWrite?.(method === 'writeFile' && typeof args[0] === 'string' ? args[0] : undefined);
+          const operation: unknown = Reflect.get(io, method);
+          if (typeof operation !== 'function') throw new Error(`The Rollup filesystem has no ${method} method.`);
+          const result: unknown = Reflect.apply(operation, undefined, args);
           return result;
-        },
-      };
+        };
+      const protectedFs = { mkdir: guardedIO('mkdir'), writeFile: guardedIO('writeFile') };
       Object.setPrototypeOf(protectedFs, io);
       return { ...guarded, fs: protectedFs };
     },

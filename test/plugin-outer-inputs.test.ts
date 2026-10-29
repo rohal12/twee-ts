@@ -141,16 +141,33 @@ describe.each(['rollup', 'rollup in vite', 'vite', 'vite with entry'] as const)(
 it('keeps a custom Rollup filesystem when protecting story writes', async () => {
   const dir = makeProject(FILES);
   const writes: string[] = [];
+  const storyWritten = Promise.withResolvers<undefined>();
+  let directories = 0;
   const io = Object.freeze({
     ...fs,
+    async mkdir(path: string, options?: { recursive?: boolean; mode?: string | number }): Promise<void> {
+      directories += 1;
+      // Let the story finish before the chunk's write starts, while Rollup still owns neither output.
+      if (directories === 1) await storyWritten.promise;
+      await fs.mkdir(path, options);
+    },
     async writeFile(path: string, data: string | Uint8Array): Promise<void> {
       writes.push(path);
       await fs.writeFile(path, data);
+      if (path === join(dir, 'index.html')) storyWritten.resolve(undefined);
     },
   });
   const config = {
     input: join(dir, 'outer.js'),
-    plugins: [rollupStory({ sources: [join(dir, 'story.tw')], compileOptions: { outputMode: 'twee3' } })],
+    plugins: [
+      rollupStory({ sources: [join(dir, 'story.tw')], compileOptions: { outputMode: 'twee3' } }),
+      {
+        name: 'directory-reader',
+        buildStart(this: { addWatchFile(path: string): void }) {
+          this.addWatchFile(dir);
+        },
+      },
+    ],
   };
   // Node's current readFile overloads exceed Rollup's filesystem declaration; use its JavaScript config boundary.
   Reflect.set(config, 'fs', io);
@@ -158,8 +175,61 @@ it('keeps a custom Rollup filesystem when protecting story writes', async () => 
   try {
     await bundle.write({ dir, entryFileNames: 'bundle.js', format: 'es' });
   } finally {
+    storyWritten.resolve(undefined);
     await bundle.close();
   }
   expect(writes.sort()).toEqual([join(dir, 'bundle.js'), join(dir, 'index.html')].sort());
   expect(readFileSync(join(dir, 'index.html'), 'utf8')).toContain('Hello from the story.');
+});
+
+it.each([false, true])('rejects a late Rollup overlap before concurrent writes, plugin IO %s', async (pluginIO) => {
+  const dir = makeProject(FILES);
+  const writes: string[] = [];
+  const config = {
+    input: join(dir, 'outer.js'),
+    plugins: [
+      rollupStory({
+        sources: [join(dir, 'story.tw')],
+        outputFilename: 'generated.txt',
+        compileOptions: { outputMode: 'twee3' as const },
+      }),
+    ],
+  };
+  Reflect.set(config, 'fs', {
+    ...fs,
+    mkdir: () => Promise.resolve(),
+    writeFile: (path: string): Promise<void> => {
+      writes.push(path);
+      return Promise.resolve();
+    },
+  });
+  const bundle = await rollup(config);
+  try {
+    await expect(
+      bundle.write({
+        dir,
+        entryFileNames: 'bundle.js',
+        format: 'es',
+        plugins: [
+          {
+            name: 'late-reader',
+            generateBundle: {
+              order: 'post',
+              async handler() {
+                if (pluginIO) {
+                  await this.fs.mkdir(join(dir, 'cache'), { recursive: true });
+                  await this.fs.writeFile(join(dir, 'cache', 'data'), 'cached data');
+                }
+                this.addWatchFile(join(dir, 'generated.txt'));
+              },
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow('Output file cannot be an input source');
+  } finally {
+    await bundle.close();
+  }
+  expect(writes).toEqual(pluginIO ? [join(dir, 'cache', 'data')] : []);
+  expect(readFileSync(join(dir, 'generated.txt'), 'utf8')).toBe(FILES['generated.txt']);
 });
