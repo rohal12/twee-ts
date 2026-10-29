@@ -4,9 +4,10 @@
  * and emit nothing; warnings go through Rollup's warnings.
  */
 import { resolve, sep } from 'node:path';
+import * as fs from 'node:fs/promises';
 import { outputPaths } from '../filesystem.js';
 import { recordOwnOutput } from '../atomic-write.js';
-import { compileStory, fatalError } from './diagnostics.js';
+import { checkStoryInputs, compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory, LocatedError } from './diagnostics.js';
 import { resolvePluginOptions } from './options.js';
 import type { SharedPluginOptions } from './options.js';
@@ -16,10 +17,15 @@ import { createLinkWatch } from './link-watch.js';
 import type { LinkWatch } from './link-watch.js';
 import { watchPlan } from './watch-targets.js';
 import { identify } from '../path-identity.js';
+import { isRecord } from '../util.js';
 
 export type { PluginCompileOptions } from './options.js';
 
 export type TweeTsRollupPluginOptions = SharedPluginOptions;
+
+type InputContext = Parameters<typeof bundlerInputs>[0] & {
+  readonly environment?: { getTopLevelConfig(): object };
+};
 
 export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   const resolved = resolvePluginOptions('rollup', options);
@@ -34,18 +40,73 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
   let linkWatchUnavailable = false;
   // Where each registered path led when Rollup's watcher first followed it.
   const followed = new Map<string, string>();
+  const viteInputs = new WeakMap<object, () => ReadonlySet<string>>();
+  let checkWrite: (() => void) | undefined;
+  const inputsOf = (context: InputContext): string[] => [
+    ...bundlerInputs(context),
+    ...(context.environment === undefined ? [] : (viteInputs.get(context.environment.getTopLevelConfig())?.() ?? [])),
+  ];
+  const finalGuard = {
+    name: 'twee-ts:protect-inputs',
+    generateBundle: {
+      order: 'post' as const,
+      handler(this: InputContext): void {
+        checkWrite = () => {
+          checkStoryInputs(record.outputs(), inputsOf(this));
+        };
+        checkWrite();
+      },
+    },
+  };
 
   return {
     name: 'twee-ts',
+
+    // Vite also accepts this plugin, but Rolldown has no getWatchFiles(). Use its recorder only when
+    // Vite hosts the build, so standalone Rollup never loads the optional Vite runtime.
+    async configResolved(config: {
+      readonly command: string;
+      readonly root: string;
+      readonly plugins: readonly unknown[];
+    }) {
+      if (config.command !== 'build') return;
+      const { recordWatchFiles } = await import('./vite-entry.js');
+      const recorder = recordWatchFiles(undefined, config.root, {}, () => {
+        checkStoryInputs(record.outputs(), recorder.inputs());
+      });
+      viteInputs.set(config, recorder.inputs);
+      // Rolldown does not install new plugins returned by options(), so install its final guard here.
+      Reflect.set(config, 'plugins', [...config.plugins, recorder.plugin, finalGuard]);
+    },
 
     // Rollup's watch mode and CLI pass the whole config here, outputs included, so
     // they are known before the first build starts and before any is written.
     // Typed `object`: a type with only optional properties would share none with
     // Rollup's InputOptions, and the plugin would no longer be assignable to Plugin.
-    options(inputOptions: object): undefined {
+    options(this: object, inputOptions: object): object {
       const output: unknown = Reflect.get(inputOptions, 'output');
       for (const location of outputLocations(output)) record.addLocation(location);
-      return undefined;
+      // Run after user generateBundle hooks too: they can register more inputs before the write.
+      const guarded = { ...inputOptions, plugins: [Reflect.get(inputOptions, 'plugins'), finalGuard] };
+      if ('environment' in this) return guarded;
+      const configuredFs: unknown = Reflect.get(inputOptions, 'fs');
+      const io = isRecord(configuredFs) ? configuredFs : fs;
+      const protectedFs = {
+        writeFile(...args: unknown[]): unknown {
+          const [path] = args;
+          // Output plugins run after input plugins. At the write boundary their watch registrations
+          // are complete, including those of frozen plugins that cannot be wrapped in outputOptions.
+          if (typeof path === 'string' && record.outputs().stories?.includes(resolve(path))) {
+            checkWrite?.();
+          }
+          const write: unknown = Reflect.get(io, 'writeFile');
+          if (typeof write !== 'function') throw new Error('The Rollup filesystem has no writeFile method.');
+          const result: unknown = Reflect.apply(write, undefined, args);
+          return result;
+        },
+      };
+      Object.setPrototypeOf(protectedFs, io);
+      return { ...guarded, fs: protectedFs };
     },
 
     // `rollup --watch` rebuilds for the files the build registers. The story's
@@ -109,12 +170,10 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     },
 
     async generateBundle(
-      this: {
+      this: InputContext & {
         emitFile: (opts: { type: 'asset'; fileName: string; source: string }) => void;
         error: (error: LocatedError | string) => never;
         warn: (message: string) => void;
-        getModuleIds(): IterableIterator<string>;
-        getWatchFiles?(): string[];
       },
       outputOptions: OutputLocation,
       bundle: Readonly<Record<string, unknown>>,
@@ -130,7 +189,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       record.addFiles(outputOptions, Object.keys(bundle));
       let story: CompiledStory;
       try {
-        story = await compileStory(resolved.compile(), record.outputs(), undefined, true, bundlerInputs(this));
+        story = await compileStory(resolved.compile(), record.outputs(), undefined, true, inputsOf(this));
       } catch (e) {
         return this.error(fatalError(e));
       }

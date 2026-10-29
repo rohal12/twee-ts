@@ -16,7 +16,7 @@ import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
 import { recordOwnOutput } from '../atomic-write.js';
-import { compileStory, fatalError } from './diagnostics.js';
+import { checkStoryInputs, compileStory, fatalError } from './diagnostics.js';
 import type { CompiledStory } from './diagnostics.js';
 import { outputPaths } from '../filesystem.js';
 import type { BuildOutputs, OutputPaths } from '../filesystem.js';
@@ -235,6 +235,13 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const ownBuilds = new WeakMap<object, EntryBundle>();
   const entryInputs = new WeakMap<ResolvedConfig, () => ReadonlySet<string>>();
   const entryAssets = new WeakMap<ResolvedConfig, ReadonlySet<string>>();
+  const separateInputs = new WeakMap<ResolvedConfig, ReadonlySet<string>>();
+  const storyInputs = (config: ResolvedConfig): string[] =>
+    [
+      ...(entryPath === undefined ? [] : [entryPath]),
+      ...(separateInputs.get(config) ?? []),
+      ...(entryInputs.get(config)?.() ?? []),
+    ].filter((id) => !id.startsWith('\0'));
   // The files this plugin's builds write, and their output folders, as each bundle
   // reports them. A source folder may hold any of them; none is a source.
   const record = createOutputRecord(outputFilename);
@@ -403,7 +410,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
 
     configResolved(config) {
       if (config.command === 'build') {
-        const recorder = recordWatchFiles(undefined, config.root);
+        const recorder = recordWatchFiles(undefined, config.root, {}, (environmentConfig) => {
+          if (isStoryBuild(environmentConfig)) {
+            checkStoryInputs(configOutputs(environmentConfig, record), storyInputs(config));
+          }
+        });
         entryInputs.set(config, recorder.inputs);
         const assetReferences = entryAssetReferences();
         entryAssets.set(config, assetReferences.files);
@@ -419,6 +430,20 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
           clientOnly(assetReferences.plugin),
           ...config.plugins,
           clientOnly(recorder.plugin),
+          clientOnly({
+            name: `${PLUGIN_NAME}:protect-inputs`,
+            generateBundle: {
+              order: 'post',
+              handler() {
+                if (isStoryBuild(configOf(this))) {
+                  checkStoryInputs(
+                    configOutputs(configOf(this), record),
+                    storyInputs(this.environment.getTopLevelConfig()),
+                  );
+                }
+              },
+            },
+          }),
         ]);
       }
       if (entryPath === undefined) return;
@@ -487,6 +512,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         return this.error(fatalError(e));
       }
       ownBuilds.set(this.environment, bundle);
+      separateInputs.set(this.environment.getTopLevelConfig(), bundle.files);
       for (const file of bundle.files) watched.add(file);
       registerEntryInputs();
       return undefined;
@@ -584,11 +610,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         try {
           // Chunk moduleIds omit tree-shaken modules; CSS and worker plugins also read files registered only
           // with addWatchFile. Protect all of them, including the entry itself, from the story's write.
-          const entryFiles = [
-            ...(entryPath === undefined ? [] : [entryPath]),
-            ...(entry?.files ?? []),
-            ...(entryInputs.get(this.environment.getTopLevelConfig())?.() ?? []),
-          ].filter((id) => !id.startsWith('\0'));
+          const entryFiles = storyInputs(this.environment.getTopLevelConfig());
           story = await compileStory(
             resolved.compile(entrySources(entry)),
             configOutputs(config, record),

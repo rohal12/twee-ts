@@ -813,6 +813,7 @@ export function recordWatchFiles(
   files: Set<string> | undefined,
   root: string,
   observer: EntryBuildObserver = {},
+  checkOutput?: (config: ResolvedConfig) => void,
 ): { readonly plugin: Plugin; readonly inputs: () => ReadonlySet<string> } {
   const { onLoad, onResolve, onGlob, onWatchFile } = observer;
   // Keep watches of cached modules, but release those of a module the current graph no longer uses.
@@ -923,6 +924,32 @@ export function recordWatchFiles(
           .filter(isPlugin)
           .map((p) => recordingPlugin(p, recordFor));
         return { ...inputOptions, plugins };
+      },
+    },
+    outputOptions: {
+      order: 'post',
+      handler(outputOptions) {
+        const config = this.environment.config;
+        // Rolldown installs output plugins after this hook, so record their reads too. Unlike Rollup,
+        // it also accepts a terminal output plugin here, after all user generateBundle hooks.
+        const plugins = flattenPlugins(outputOptions.plugins).then((plugins) =>
+          plugins.filter(isPlugin).map((plugin) => recordingPlugin(plugin, recordFor)),
+        );
+        return {
+          ...outputOptions,
+          plugins: [
+            plugins,
+            {
+              name: `${PLUGIN_NAME}:check-output-inputs`,
+              generateBundle: {
+                order: 'post',
+                handler() {
+                  checkOutput?.(config);
+                },
+              },
+            },
+          ],
+        };
       },
     },
   };
