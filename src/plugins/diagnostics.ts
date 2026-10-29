@@ -60,6 +60,22 @@ export interface CompiledStory {
   readonly warnings: readonly string[];
 }
 
+/** Refuses story writes over physical bundler inputs, including authored files of directory-only watches. */
+export function checkStoryInputs(outputs: BuildOutputs, entryFiles: Iterable<string>): void {
+  try {
+    const inputs = [...entryFiles].map((path) => ({ role: 'entry' as const, path }));
+    const output = outputPaths({ files: outputs.stories ?? [], dirs: [] }, 'snapshot');
+    checkNamedInputs(inputs, output, []);
+    for (const path of entryFolderFiles(inputs.map((input) => input.path))) {
+      // A watched directory includes prior generated stories too; they remain replaceable, as in source folders.
+      if (!output.isFile(path) || isOwnOutput(path) || isPreviousBuild(path)) continue;
+      checkNamedInputs([{ role: 'entry', path }], output, []);
+    }
+  } catch (e) {
+    throw fatalError(e);
+  }
+}
+
 /** Files covered by directory-only entry watches, including directory links, without following cycles. */
 function* entryFolderFiles(paths: Iterable<string>): Generator<string> {
   const visited = new Set<string>();
@@ -103,18 +119,12 @@ export async function compileStory(
   writesStory = false,
   entryFiles: Iterable<string> = [],
 ): Promise<CompiledStory> {
-  const inputs = [...entryFiles].map((path) => ({ role: 'entry' as const, path }));
+  const inputs = [...entryFiles];
   // Only the story is protected here; overwriting bundler chunks and assets follows the bundler's policy.
   // Re-read identities after compilation too: awaiting a format may let an output link change targets.
   const checkEntry = (): void => {
     if (!writesStory) return;
-    const output = outputPaths({ files: outputs.stories ?? [], dirs: [] }, 'snapshot');
-    checkNamedInputs(inputs, output, []);
-    for (const path of entryFolderFiles(inputs.map((input) => input.path))) {
-      // A watched directory includes prior generated stories too; they remain replaceable, as in source folders.
-      if (!output.isFile(path) || isOwnOutput(path) || isPreviousBuild(path)) continue;
-      checkNamedInputs([{ role: 'entry', path }], output, []);
-    }
+    checkStoryInputs(outputs, inputs);
   };
   let result: CompileResult;
   try {
