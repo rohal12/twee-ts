@@ -57,8 +57,20 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
             return path === undefined ? [] : [path];
           }),
         );
+        let checkedDirectories = false;
         checkWrite = (writtenFile) => {
-          checkStoryInputs(record.outputs(), inputsOf(this));
+          if (writtenFile !== undefined || !checkedDirectories) {
+            checkStoryInputs(record.outputs(), inputsOf(this));
+          }
+          // Rollup starts one mkdir per output before awaiting any of them. Share that synchronous
+          // preflight, but expire it before async hooks can register more inputs. File writes always
+          // recheck, including with a custom filesystem that changes inputs during mkdir.
+          if (!checkedDirectories) {
+            checkedDirectories = true;
+            queueMicrotask(() => {
+              checkedDirectories = false;
+            });
+          }
           // Later concurrent IO may see this build's own story before writeBundle records ownership.
           // A plugin's cache IO before it registers more inputs must not consume the preflight.
           if (writtenFile !== undefined && files.has(resolve(writtenFile))) checkWrite = undefined;

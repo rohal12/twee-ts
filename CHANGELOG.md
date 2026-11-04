@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Share Rollup input validation across concurrent output-directory creations, bounding build work as module and asset counts grow while retaining late-input and custom-filesystem protection (#552).
+
 - Protect outer Rollup and Vite build inputs, including tree-shaken modules and plugin watch paths registered by late bundle hooks, from generated story writes; also cover the Rollup plugin hosted in Vite (#547).
 - Preserve literal hash characters in Vite module filenames and importer directories when tracking entry updates, glob matches and output aliases (#548).
 
