@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
+  fstatSync,
   openSync,
   linkSync,
   mkdirSync,
@@ -246,7 +247,7 @@ describe('how a target is classified', () => {
     const target = join(dir, 'target');
     const fd = openSync(target, 'w');
     symlinkSync('/dev', join(dir, 'devices'));
-    const before = statSync(target).ino;
+    const before = fstatSync(fd).ino;
     try {
       writeFileAtomic(`${dir}/devices/fd/${fd}`, 'through the descriptor');
     } finally {
