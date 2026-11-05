@@ -19,6 +19,7 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import type { AnyNode, Expression, Options, SpreadElement } from 'acorn';
 import { tokTypes } from 'acorn';
 import { AcornParser, javaScriptNodes, trySyntax } from '../js-syntax.js';
+import { escapeTerminalControls } from '../diagnostic-text.js';
 import { lineColumnFinder } from '../js-chars.js';
 import { isRecord } from '../util.js';
 import { canonicalPath, fileKey, fileOfId, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
@@ -490,7 +491,7 @@ export async function moduleGlobScopes(
       })
       .join(', ');
     context.warn(
-      `twee-ts could not read the import.meta.glob() call at ${where} of ${id}; ` +
+      `twee-ts could not read the import.meta.glob() call at ${where} of ${escapeTerminalControls(id)}; ` +
         (recoveryLimited === true ? 'recovery work limit reached; remaining calls were not read; ' : '') +
         'files added to its folders are bundled the next time something else changes.',
     );

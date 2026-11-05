@@ -280,6 +280,15 @@ export function attributeOf(element: HtmlElement, name: string): string | undefi
   return element.attrs.find((attr) => attr.name === name && attr.namespace === undefined)?.value;
 }
 
+/** The first live HTML base URL (template contents do not affect the document). */
+export function documentBaseHref(html: string): string | undefined {
+  const element = findElement(
+    parseHtml(html),
+    (element) => isHtmlElement(element, 'base') && attributeOf(element, 'href') !== undefined,
+  );
+  return element === undefined ? undefined : attributeOf(element, 'href');
+}
+
 /** The text of an element as the DOM's `textContent` gives it: all its descendant text, outside template contents. */
 export function textContent(element: HtmlElement): string {
   let text = '';

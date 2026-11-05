@@ -32,7 +32,7 @@ import {
   writeSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { basename, dirname, isAbsolute, join, posix, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { getSystemErrorMessage } from 'node:util';
 import { identify } from './path-identity.js';
 
@@ -123,11 +123,13 @@ type WriteStrategy = 'atomic' | 'in-place' | 'stream';
  * by its `/dev/fd` path.
  */
 export function ownDescriptor(path: string): number | undefined {
-  const match = /^\/dev\/(?:(stdout)|(stderr)|fd\/(\d+))$|^\/proc\/self\/fd\/(\d+)$/.exec(posix.resolve(path));
+  const match = /^\/dev\/(?:(stdout)|(stderr)|(stdin)|fd\/(\d+))$|^\/proc\/(self|\d+)\/fd\/(\d+)$/.exec(path);
   if (match === null) return undefined;
   if (match[1] !== undefined) return 1;
   if (match[2] !== undefined) return 2;
-  return Number(match[3] ?? match[4]);
+  if (match[3] !== undefined) return 0;
+  if (match[5] !== undefined && match[5] !== 'self' && match[5] !== String(process.pid)) return undefined;
+  return Number(match[4] ?? match[6]);
 }
 
 /** Writes all of `data` to the open descriptor `fd`, waiting while a non-blocking pipe is full. */
@@ -159,13 +161,13 @@ export function checkWritable(path: string, platform: NodeJS.Platform = process.
   }
 }
 
-/** The file `path` is written to (links resolved) and how, or undefined for a stream path; throws when it can't be. */
+/** The file or stream `path` is written to (links resolved) and how; throws when it cannot be written. */
 function planWrite(
   path: string,
   platform: NodeJS.Platform,
-): { readonly target: string; readonly strategy: WriteStrategy } | undefined {
-  if (isStreamPath(path, platform)) return undefined;
-  const target = resolveWriteTarget(path);
+): { readonly target: string; readonly strategy: WriteStrategy } {
+  const target = resolveWriteTarget(path, platform);
+  if (isStreamPath(target, platform)) return { target, strategy: 'stream' };
   const stat = statSync(target, { throwIfNoEntry: false });
   if (stat === undefined) checkFolder(target);
   return { target, strategy: strategyFor(target, stat) };
@@ -182,16 +184,14 @@ function checkFolder(target: string): void {
 }
 
 function writeTo(path: string, data: string, platform: NodeJS.Platform): void {
-  const plan = planWrite(path, platform);
-  if (plan === undefined) {
-    const fd = platform === 'win32' ? undefined : ownDescriptor(path);
-    if (fd === undefined) writeFileSync(path, data, { encoding: 'utf-8' });
-    else writeToDescriptor(fd, data);
-    return;
-  }
-  const { target, strategy } = plan;
+  const { target, strategy } = planWrite(path, platform);
   switch (strategy) {
-    case 'stream':
+    case 'stream': {
+      const fd = platform === 'win32' ? undefined : ownDescriptor(target);
+      if (fd === undefined) writeFileSync(target, data, { encoding: 'utf-8' });
+      else writeToDescriptor(fd, data);
+      return;
+    }
     case 'in-place':
       writeFileSync(target, data, { encoding: 'utf-8' });
       return;
@@ -237,7 +237,7 @@ export function isStreamPath(path: string, platform: NodeJS.Platform): boolean {
   if (platform === 'win32') {
     return path.startsWith('\\\\.\\') || WINDOWS_DEVICE.test(path);
   }
-  return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(posix.resolve(path));
+  return /^\/dev\/(?:stdout|stderr|stdin|fd\/\d+)$|^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(path);
 }
 
 /** The most bytes (UTF-8) of the target's name that a temporary name repeats. */
@@ -344,15 +344,19 @@ const MAX_LINK_DEPTH = 40;
  * of them) still resolves to the file that should be created. A relative target is resolved against
  * the folder that really holds the link (see path-identity.ts). A cycle or an unreadable link throws.
  */
-function resolveWriteTarget(path: string): string {
+function resolveWriteTarget(path: string, platform: NodeJS.Platform): string {
   let current = path;
   for (let depth = 0; depth <= MAX_LINK_DEPTH; depth++) {
+    // A descriptor is an endpoint, even when procfs exposes it as a link to a synthetic socket/pipe name.
+    // Match only resolved spellings: lexical normalization can erase a directory link before `..`.
+    if (isStreamPath(current, platform)) return current;
     const stat = lstatSync(current, { throwIfNoEntry: false });
     // Resolve the parent with filesystem semantics, including links before `..`. Requiring the parent to exist
     // also keeps a missing intermediate directory from being normalized away into a writable destination.
     if (stat === undefined) checkFolder(current);
     const parent = realpathSync.native(dirname(current));
-    if (!stat?.isSymbolicLink()) return join(parent, basename(current));
+    const located = join(parent, basename(current));
+    if (isStreamPath(located, platform) || !stat?.isSymbolicLink()) return located;
     const target = readlinkSync(current);
     current = isAbsolute(target) ? target : `${parent}${sep}${target}`;
   }

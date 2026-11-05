@@ -24,7 +24,10 @@ import type { InlineSource } from '../types.js';
 import { fileOfId, toPosix } from './paths.js';
 import { moduleGlobScopes } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
+import { escapeTerminalControls } from '../diagnostic-text.js';
 import { isRecord } from '../util.js';
+import { documentBaseHref } from '../html-structure.js';
+import { createCssTokenizer, decodeCssEscapes } from '../css-syntax.js';
 import { cssContexts, javaScriptContexts } from '../code-context.js';
 
 /** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
@@ -54,7 +57,7 @@ export interface EntryBundle {
 
 /** The error for a file the entry emits under a name the build (or another story's entry) already writes. */
 export function entryCollisionMessage(fileName: string): string {
-  return `twee-ts: the entry emits ${fileName}, a file the build already writes; rename one of them.`;
+  return `twee-ts: the entry emits ${escapeTerminalControls(fileName)}, a file the build already writes; rename one of them.`;
 }
 
 /** The entry's script and stylesheet as inline sources of the story (none without an entry). */
@@ -129,13 +132,66 @@ const ONE_FILE = { cssCodeSplit: false, assetsInlineLimit: (): boolean => true }
  * as a classic script inside the story page, where `import.meta` does not exist (the bundler leaves `{}.url`, so
  * `new URL(asset, import.meta.url)` and Vite's worker URLs throw `Invalid URL`). The files the build writes
  * besides the story, such as an asset marked `?no-inline`, are found from the output folder the story is below,
- * so the base is the story page's URL, taken up one level for each folder of a nested `outputFilename`.
+ * so the base is document.URL (unaffected by a base element), taken up one level for each folder of a nested
+ * `outputFilename`.
  */
 function entryDefine(outputFilename: string): { readonly 'import.meta.url': string } {
   const depth = folderDepth(outputFilename);
-  const base =
-    depth === 0 ? 'document.baseURI' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.baseURI).href`;
+  const base = depth === 0 ? 'document.URL' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.URL).href`;
   return { 'import.meta.url': base };
+}
+
+/**
+ * Relative inline stylesheet URLs depend on the document base; root-relative URLs also depend on its origin.
+ * The deployment location is unknown at build time, so refuse combinations that can send assets elsewhere.
+ * Inspect the emitted URLs, since renderBuiltUrl can return relative paths with any Vite base.
+ */
+export function checkEntryStyleBase(html: string, entry: EntryBundle | undefined): void {
+  if (entry?.style === undefined || entry.style === '') return;
+  const href = documentBaseHref(html);
+  if (href === undefined) return;
+  const css = entry.style;
+  const next = createCssTokenizer(css);
+  let inUrl = false;
+  for (let token = next(); token.type !== 'eof'; token = next()) {
+    if (token.type === 'ws') continue;
+    let value: string | undefined;
+    if (token.type === 'url') {
+      const raw = css.slice(token.start, token.end);
+      value = raw.slice(raw.indexOf('(') + 1, raw.endsWith(')') ? -1 : undefined).trim();
+    } else if (inUrl && token.type === 'string') {
+      value = css.slice(token.start + 1, token.end - 1);
+    }
+    inUrl = token.type === 'function' && token.value === 'url';
+    if (value === undefined) continue;
+    const url = decodeCssEscapes(value);
+    if (/^[\u0000-\u0020]*#/.test(url)) continue;
+    // The deployment is unknown. Compare native resolution with and without the base for web and local pages.
+    // The probe path is deeper than both references can climb, so root clamping cannot hide a difference.
+    const depth = href.split(/[/\\]/).length + url.split(/[/\\]/).length + 2;
+    const pagePath = `${'d/'.repeat(depth)}story.html`;
+    const changesUrl = ['https://first.invalid/', 'http://second.invalid/', 'file:///'].some((origin) => {
+      const page = new URL(pagePath, origin);
+      const base = URL.parse(href, page);
+      if (base === null) return false;
+      // This is HTML base interpretation, not URL sanitization. Only these two schemes are ignored by HTML;
+      // vbscript: and other schemes still supply a base, even when a relative asset cannot resolve against it.
+      switch (base.protocol) {
+        case 'data:':
+        case 'javascript:':
+          return false;
+        case 'vbscript:':
+        default:
+          return URL.parse(url, base)?.href !== URL.parse(url, page)?.href;
+      }
+    });
+    if (!changesUrl) continue;
+    throw new Error(
+      'twee-ts: a document base element with relative entry stylesheet URLs is unsupported; ' +
+        'set Vite base or experimental.renderBuiltUrl to a full deployment URL, including scheme and host ' +
+        'when the base element specifies an origin.',
+    );
+  }
 }
 
 /** How many folders deep `outputFilename` puts the story below the output folder. */
@@ -151,7 +207,9 @@ function folderDepth(outputFilename: string): number {
  * The story page holds both inline, so such a URL resolves against the page, which a nested `outputFilename` puts
  * below the output folder the files are written to. For the entry's script, the URL is then resolved at run time
  * against the output folder, as `import.meta.url` is (see `entryDefine`); in its stylesheet, it is a path up from
- * the page. Every stylesheet of such a build is the entry's: the build bundles nothing else.
+ * the page. Root-relative Vite bases anchor script assets to the page's origin too, since an HTML base can
+ * otherwise change the origin of an imported asset string. Every stylesheet of such a build is the entry's:
+ * the build bundles nothing else.
  */
 export function entryRenderBuiltUrl(
   base: string | undefined,
@@ -159,17 +217,18 @@ export function entryRenderBuiltUrl(
   user: RenderBuiltAssetUrl | undefined,
 ): RenderBuiltAssetUrl | undefined {
   const depth = folderDepth(outputFilename);
-  if ((base !== '' && base !== './') || depth === 0) return user;
-  const outputFolder = entryDefine(outputFilename)['import.meta.url'];
+  const relative = base === '' || base === './';
+  if (!relative && (base === undefined || !base.startsWith('/') || base.startsWith('//'))) return user;
+  const outputFolder = relative ? entryDefine(outputFilename)['import.meta.url'] : 'document.URL';
   return (filename, type) => {
     const own = user?.(filename, type);
     if (own !== undefined) return own;
     // As Vite writes a file name into a URL.
     const path = filename.replaceAll('%', '%25');
     if (type.hostType === 'js' && type.hostId === ENTRY_SCRIPT_NAME) {
-      return { runtime: `new URL(${JSON.stringify(path)}, ${outputFolder}).href` };
+      return { runtime: `new URL(${JSON.stringify(relative ? path : `${base}${path}`)}, ${outputFolder}).href` };
     }
-    return type.hostType === 'css' ? `${'../'.repeat(depth)}${path}` : undefined;
+    return type.hostType === 'css' && relative ? `${'../'.repeat(depth)}${path}` : undefined;
   };
 }
 

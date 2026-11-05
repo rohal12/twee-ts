@@ -72,6 +72,28 @@ defineContracts(
       await expect(compileToFile(jsonToFile(output))).rejects.toThrow(/ELOOP|symbolic link|symlink/i);
       expect(lstatSync(output).isSymbolicLink(), 'a failed write must keep the cyclic link').toBe(true);
     },
+    'regular destination with a stream-looking lexical spelling': async (root) => {
+      mkdirSync(join(root, 'actual/a/b'), { recursive: true });
+      const target = write(join(root, 'dev/stdout'), 'previous output');
+      symlinkSync('actual/a/b', join(root, 'pivot'));
+      const source = write(join(root, 'story.tw'), story());
+      const result = await run(
+        process.execPath,
+        [CLI, '--no-config', '--json', '-o', `${root}/pivot/../../../dev/stdout`, source],
+        { cwd: root },
+      );
+      expect(result).toMatchObject({ status: 0, stdout: '', stderr: '' });
+      expect(JSON.parse(readFileSync(target, 'utf8'))).toHaveProperty('passages');
+    },
+    'symlink alias of piped stdout': async (root) => {
+      const source = write(join(root, 'story.tw'), story());
+      const output = join(root, 'output.json');
+      symlinkSync('/dev/stdout', output);
+      const result = await run(process.execPath, [CLI, '--no-config', '--json', '-o', output, source], { cwd: root });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toHaveProperty('passages');
+      expect(lstatSync(output).isSymbolicLink()).toBe(true);
+    },
     'symlink target with an intermediate link followed by dot-dot': async (root) => {
       mkdirSync(join(root, 'real/deep'), { recursive: true });
       const source = join(root, 'story.tw');
@@ -89,7 +111,7 @@ defineContracts(
       expect(lstatSync(output).isSymbolicLink()).toBe(true);
     },
   },
-  { skip: (variant) => (variant.includes('symlink') ? noSymlinks : undefined) },
+  { skip: (variant) => (variant.includes('symlink') || variant.includes('stream-looking') ? noSymlinks : undefined) },
 );
 
 function jsonToFile(outFile: string): CompileToFileOptions {

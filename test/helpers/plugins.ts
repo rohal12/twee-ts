@@ -298,10 +298,10 @@ export function userScript(html: string): string {
 /**
  * What a bundled entry script leaves in `globalThis.out` when it runs, as JSON:
  * the entry under test assigns what it observed there. The script runs in a
- * fresh context with an empty `out` object.
+ * fresh context with an empty `out` object and the browser URL globals at `pageUrl`.
  */
-export function runEntry(script: string): unknown {
-  const context: Record<string, unknown> = { out: {} };
+export function runEntry(script: string, pageUrl = 'http://localhost/index.html'): unknown {
+  const context: Record<string, unknown> = { out: {}, URL, document: { URL: pageUrl, baseURI: pageUrl } };
   runInNewContext(script, context);
   return JSON.parse(JSON.stringify(context['out']));
 }

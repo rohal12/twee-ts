@@ -12,6 +12,7 @@
  * name, in the client environment only.
  */
 import { resolve } from 'node:path';
+import { escapeTerminalControls } from '../diagnostic-text.js';
 import { version as viteVersion } from 'vite';
 import type { BuildEnvironmentOptions, Plugin, ResolvedConfig, UserConfig } from 'vite';
 import type { FileCacheEntry } from '../types.js';
@@ -44,6 +45,7 @@ import {
   entryCollisionMessage,
   entryAssetReferences,
   entrySources,
+  checkEntryStyleBase,
   forgetKeptResolver,
   importSpellings,
   PLUGIN_NAME,
@@ -460,8 +462,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         });
       }
       if (resolved.inputs.some((input) => isSameOrInside(entryPath, input))) {
+        const sourceList = resolved.sources.map((source) => escapeTerminalControls(source)).join(', ');
         config.logger.warn(
-          `[twee-ts] The entry ${toPosix(entryPath)} is inside the story sources (${resolved.sources.join(', ')}). ` +
+          `[twee-ts] The entry ${escapeTerminalControls(toPosix(entryPath))} is inside the story sources (${sourceList}). ` +
             'twee-ts also loads the .js and .css files it finds in source folders, unbundled, as Story JavaScript ' +
             "and Story Stylesheet; keep the entry's folder out of `sources`.",
         );
@@ -583,7 +586,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         }
         if (Object.hasOwn(bundle, outputFilename)) {
           return this.error(
-            `twee-ts: the build already writes a file named ${outputFilename} (another input or plugin emits it); ` +
+            `twee-ts: the build already writes a file named ${escapeTerminalControls(outputFilename)} (another input or plugin emits it); ` +
               "set the plugin's outputFilename to another name.",
           );
         }
@@ -618,6 +621,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
             true,
             entryFiles,
           );
+          checkEntryStyleBase(story.output, entry);
         } catch (e) {
           return this.error(fatalError(e));
         }

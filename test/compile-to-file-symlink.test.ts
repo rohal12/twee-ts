@@ -8,9 +8,12 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { compileToFile } from '../src/compiler.js';
 import type { CompileToFileOptions } from '../src/types.js';
 
@@ -68,5 +71,49 @@ describe.skipIf(process.platform === 'win32')('compileToFile with a dangling out
     await expect(build(link)).rejects.toThrow();
     expect(readlinkSync(link)).toBe(join('missing', 'served.json'));
     expect(readdirSync(dir)).toEqual(['output.json']);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('stream destination aliases (#219)', () => {
+  const api = pathToFileURL(join(import.meta.dirname, '../src/compiler.ts')).href;
+  function child(outFile: string) {
+    return spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        `import { compileToFile } from ${JSON.stringify(api)};
+       await compileToFile(${JSON.stringify({ sources: [STORY], outFile, outputMode: 'json' })});`,
+      ],
+      { encoding: 'utf8', timeout: 20_000 },
+    );
+  }
+
+  it('updates the regular file when lexical dot-dot removal would name stdout', () => {
+    mkdirSync(join(dir, 'actual/a/b'), { recursive: true });
+    mkdirSync(join(dir, 'dev'));
+    const target = join(dir, 'dev/stdout');
+    writeFileSync(target, 'ORIGINAL');
+    symlinkSync(join(dir, 'actual/a/b'), join(dir, 'pivot'));
+    // Do not use path.join: the kernel must follow pivot before resolving its parent components.
+    const result = child(`${dir}/pivot/../../../dev/stdout`);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(readFileSync(target, 'utf8')).toContain('Hello');
+  });
+
+  it.each(
+    process.platform === 'linux' ? ['/dev/stdout', '/dev/fd/1', '/proc/self/fd/1'] : ['/dev/stdout', '/dev/fd/1'],
+  )('writes through a link chain to %s with piped stdout', (descriptor) => {
+    symlinkSync(descriptor, join(dir, 'endpoint'));
+    symlinkSync('endpoint', join(dir, 'out'));
+    const result = child(join(dir, 'out'));
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toHaveProperty('passages');
+    expect(readlinkSync(join(dir, 'out'))).toBe('endpoint');
   });
 });

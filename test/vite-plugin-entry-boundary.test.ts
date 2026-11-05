@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import type { InlineConfig } from 'vite';
 import { runInNewContext } from 'node:vm';
+import { createLogger } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import {
   COMPILE,
@@ -59,9 +60,34 @@ describe('the entry after a story script without a final semicolon (#334)', () =
       html = textOf(files.get('index.html'));
     }
     const globals: Record<string, unknown> = {};
-    runInNewContext(userScript(html), { globalThis: globals, document: { baseURI: 'http://localhost/' }, window: {} });
+    runInNewContext(userScript(html), {
+      globalThis: globals,
+      document: { URL: 'http://localhost/', baseURI: 'http://localhost/' },
+      window: {},
+    });
     expect([globals['storySetting'], globals['later'], globals['entryRan']]).toEqual([1, 2, true]);
   });
+});
+
+it('escapes terminal controls in dev-server story collision logs (#458)', async () => {
+  const dir = makeProject(FILES);
+  const errors: string[] = [];
+  const filename = '雪\u009b31m.html';
+  const options = {
+    sources: [join(dir, 'story')],
+    format: 'test-format-1',
+    outputFilename: filename,
+    compileOptions: COMPILE,
+  };
+  const { url } = await startServer({
+    root: dir,
+    server: { watch: null },
+    customLogger: { ...createLogger('silent'), error: (message) => errors.push(message) },
+    plugins: [tweeTsPlugin(options), tweeTsPlugin(options)],
+  });
+  expect((await fetch(`${url}/${encodeURIComponent(filename)}`)).status).toBe(500);
+  expect(errors.join('')).toContain('more than one generated file');
+  expect(errors.join('')).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
 });
 
 describe('two instances emitting one file name in the dev server (#335)', () => {

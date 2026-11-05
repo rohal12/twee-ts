@@ -49,7 +49,7 @@ interface Observed {
 }
 
 /** Runs a story script as the story page would: a classic script, with a Worker that records its URL. */
-function run(script: string, pageUrl: string): Observed {
+function run(script: string, pageUrl: string, baseURI = pageUrl): Observed {
   const out: Observed = {};
   class Worker {
     readonly url: string;
@@ -58,7 +58,7 @@ function run(script: string, pageUrl: string): Observed {
       out.worker = this.url;
     }
   }
-  runInNewContext(script, { out, URL, Worker, document: { baseURI: pageUrl }, window: {} });
+  runInNewContext(script, { out, URL, Worker, document: { URL: pageUrl, baseURI }, window: {} });
   return out;
 }
 
@@ -150,9 +150,9 @@ describe.each(SETUPS)('an entry under base $base and outputFilename $outputFilen
   });
 });
 
-describe('a relative base and a nested outputFilename (#289)', () => {
-  const OWN_INPUT = (dir: string): BuildEnvironmentOptions => ({ rolldownOptions: { input: join(dir, 'extra.js') } });
+const OWN_INPUT = (dir: string): BuildEnvironmentOptions => ({ rolldownOptions: { input: join(dir, 'extra.js') } });
 
+describe('a relative base and a nested outputFilename (#289)', () => {
   it.each(['inside the build', 'a build of its own'] as const)(
     'gives the stylesheet a URL that finds a file that is not inlined: %s',
     async (branch) => {
@@ -209,4 +209,186 @@ describe('a relative base and a nested outputFilename (#289)', () => {
       expect(userScript(textOf(files.get('nested/story.html')))).toContain('https://cdn.example/image.png');
     },
   );
+});
+
+describe.each(['inside the build', 'a build of its own'] as const)('a document base with %s (#289)', (branch) => {
+  it.each(['index.html', 'nested/story.html'])(
+    'anchors an imported asset with a root-relative Vite base: %s',
+    async (outputFilename) => {
+      const dir = makeProject({
+        ...FILES,
+        'head.html': '<base href="https://elsewhere.example/">',
+        'entry.js': 'import image from "./image.png?no-inline"; out.url = image;',
+      });
+      const files = await buildFiles({
+        root: dir,
+        base: '/published/',
+        publicDir: false,
+        plugins: [
+          tweeTsPlugin({
+            sources: [join(dir, 'story')],
+            entry: join(dir, 'entry.js'),
+            format: 'test-format-1',
+            outputFilename,
+            compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') },
+          }),
+        ],
+        build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+      });
+      const out = run(
+        userScript(textOf(files.get(outputFilename))),
+        `https://story.example/published/${outputFilename}`,
+        'https://elsewhere.example/',
+      );
+      expect(out.url).toBe('https://story.example/published/image.png');
+      expect(files.has('image.png')).toBe(true);
+    },
+  );
+
+  describe.each(['index.html', 'nested/story.html'])('output %s', (outputFilename) => {
+    it.each(['an asset URL that is not inlined', 'a worker URL'] as const)(
+      'anchors %s to the story location',
+      async (kind) => {
+        const dir = makeProject({ ...FILES, 'head.html': '<base href="/elsewhere/">', 'entry.js': ENTRIES[kind] });
+        const files = await buildFiles({
+          root: dir,
+          base: './',
+          publicDir: false,
+          plugins: [
+            tweeTsPlugin({
+              sources: [join(dir, 'story')],
+              entry: join(dir, 'entry.js'),
+              format: 'test-format-1',
+              outputFilename,
+              compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') },
+            }),
+          ],
+          build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+        });
+        const out = run(
+          userScript(textOf(files.get(outputFilename))),
+          `http://localhost/published/${outputFilename}`,
+          'http://localhost/elsewhere/',
+        );
+        const found = out.url ?? out.worker ?? '';
+        const url = new URL(found);
+        expect(url.pathname).toMatch(/^\/published\//);
+        expect(files.has(url.pathname.slice('/published/'.length))).toBe(true);
+      },
+    );
+  });
+
+  it.each([
+    'absolute base',
+    'absolute CSS override',
+    'inlined asset',
+    'inert base markup',
+    'escaped absolute URL',
+    'full deployment URL',
+    'invalid base URL',
+  ] as const)('keeps stylesheet assets usable with %s', async (setup) => {
+    const dir = makeProject({
+      ...FILES,
+      'head.html':
+        setup === 'inert base markup'
+          ? '<!-- <base href="/elsewhere/"> --><template><base href="/elsewhere/"></template>'
+          : `<base href="${setup === 'full deployment URL' ? 'https://elsewhere.example/' : setup === 'invalid base URL' ? 'http://[' : '/elsewhere/'}">`,
+      'entry.js': 'import "./style.css";',
+      'style.css':
+        setup === 'escaped absolute URL'
+          ? 'body { background: url("https\\3a //cdn.example/image.png"); }'
+          : `body { background: url("./image.png${setup === 'inlined asset' ? '' : '?no-inline'}"); }`,
+    });
+    const files = await buildFiles({
+      root: dir,
+      base:
+        setup === 'absolute base'
+          ? '/published/'
+          : setup === 'full deployment URL'
+            ? 'https://story.example/published/'
+            : './',
+      publicDir: false,
+      plugins: [
+        tweeTsPlugin({
+          sources: [join(dir, 'story')],
+          entry: join(dir, 'entry.js'),
+          format: 'test-format-1',
+          outputFilename: 'nested/story.html',
+          compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') },
+        }),
+      ],
+      experimental:
+        setup === 'absolute CSS override' ? { renderBuiltUrl: (filename) => `https://cdn.example/${filename}` } : {},
+      build: { ...(branch === 'a build of its own' ? OWN_INPUT(dir) : {}), cssMinify: false },
+    });
+    expect(files.has('nested/story.html')).toBe(true);
+  });
+
+  it.each(['head file', 'format template'] as const)(
+    'diagnoses relative stylesheet assets with a base in the %s',
+    async (where) => {
+      const format = `window.storyFormat(${JSON.stringify({ name: 'Base', version: '1.0.0', source: '<html><head><base href="/elsewhere/"></head><body>{{STORY_DATA}}</body></html>' })});`;
+      const dir = makeProject({
+        ...FILES,
+        'head.html': '<base href="/elsewhere/">',
+        'formats/base/format.js': format,
+        'entry.js': 'import "./style.css";',
+        'style.css': 'body { background: url("./image.png?no-inline"); }',
+      });
+      await expect(
+        buildFiles({
+          root: dir,
+          base: './',
+          publicDir: false,
+          plugins: [
+            tweeTsPlugin({
+              sources: [join(dir, 'story')],
+              entry: join(dir, 'entry.js'),
+              outputFilename: 'nested/story.html',
+              format: where === 'head file' ? 'test-format-1' : 'base',
+              compileOptions:
+                where === 'head file'
+                  ? { ...COMPILE, headFile: join(dir, 'head.html') }
+                  : { ...COMPILE, formatPaths: [join(dir, 'formats')] },
+            }),
+          ],
+          build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+        }),
+      ).rejects.toThrow(/base.*relative.*stylesheet/i);
+    },
+  );
+
+  it.each([
+    { href: 'https://elsewhere.example/', base: '/published/', override: false },
+    { href: '//elsewhere.example/', base: '/published/', override: false },
+    { href: 'https://elsewhere.example/', base: './', override: true },
+    { href: '/elsewhere/', base: '/published/', override: true },
+  ])('diagnoses stylesheet URLs redirected by $href with Vite base $base and override $override', async (setup) => {
+    const dir = makeProject({
+      ...FILES,
+      'head.html': `<base href="${setup.href}">`,
+      'entry.js': 'import "./style.css";',
+      'style.css': 'body { background: url("./image.png?no-inline"); }',
+    });
+    await expect(
+      buildFiles({
+        root: dir,
+        base: setup.base,
+        publicDir: false,
+        plugins: [
+          tweeTsPlugin({
+            sources: [join(dir, 'story')],
+            entry: join(dir, 'entry.js'),
+            outputFilename: 'nested/story.html',
+            format: 'test-format-1',
+            compileOptions: { ...COMPILE, headFile: join(dir, 'head.html') },
+          }),
+        ],
+        experimental: setup.override
+          ? { renderBuiltUrl: (filename) => `${setup.base === './' ? '/published/' : ''}${filename}` }
+          : {},
+        build: branch === 'a build of its own' ? OWN_INPUT(dir) : {},
+      }),
+    ).rejects.toThrow(/base.*relative.*stylesheet/i);
+  });
 });

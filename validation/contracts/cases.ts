@@ -30,6 +30,8 @@ export const MATRIX = {
       'dangling symlink chain',
       'symlink cycle',
       'symlink target with an intermediate link followed by dot-dot',
+      'regular destination with a stream-looking lexical spelling',
+      'symlink alias of piped stdout',
     ],
   },
   TYPE: {
