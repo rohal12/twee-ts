@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -245,16 +246,18 @@ describe('how a target is classified', () => {
 
   it.skipIf(!POSIX)('recognizes a descriptor reached through a directory alias without replacing its file', () => {
     const target = join(dir, 'target');
-    const fd = openSync(target, 'w');
+    const fd = openSync(target, 'w+');
     symlinkSync('/dev', join(dir, 'devices'));
-    const before = fstatSync(fd).ino;
     try {
       writeFileAtomic(`${dir}/devices/fd/${fd}`, 'through the descriptor');
+      const bytes = Buffer.alloc(22);
+      expect(readSync(fd, bytes, 0, bytes.length, 0)).toBe(22);
+      expect(bytes.toString()).toBe('through the descriptor');
+      // The open handle still names the original inode even if the pathname was replaced.
+      expect(statSync(target).ino).toBe(fstatSync(fd).ino);
     } finally {
       closeSync(fd);
     }
-    expect(readFileSync(target, 'utf8')).toBe('through the descriptor');
-    expect(statSync(target).ino).toBe(before);
   });
 
   it('writes a Windows device name through, without replacing anything', () => {
