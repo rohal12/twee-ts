@@ -173,17 +173,18 @@ describe('vite plugin dev requests: files the entry emits separately (D9)', () =
       ],
     });
     const built = await buildFiles(config());
-    const builtUrls = runEntry(userScript(textOf(built.get('index.html'))));
     const { url } = await startServer(config());
-    const html = await (await fetch(`${url}${encodeURI(base)}`)).text();
-    const devUrls = runEntry(userScript(html));
+    const pageUrl = `${url}${encodeURI(base)}`;
+    const builtUrls = runEntry(userScript(textOf(built.get('index.html'))), pageUrl);
+    const html = await (await fetch(pageUrl)).text();
+    const devUrls = runEntry(userScript(html), pageUrl);
     // The script refers to each file by the same URL in dev as in the build.
     expect(devUrls).toEqual(builtUrls);
     for (const [i, name] of names.entries()) {
       const assetUrl = String(Reflect.get(Object(devUrls), `f${String(i)}`));
       const expected = new Uint8Array(32).fill(i + 1);
       // The build writes the file at the URL's path below the base, decoded.
-      const written = built.get(decodeURIComponent(assetUrl).slice(base.length));
+      const written = built.get(decodeURIComponent(new URL(assetUrl).pathname).slice(base.length));
       expect(written === undefined ? undefined : new Uint8Array(Buffer.from(written)), name).toEqual(expected);
       // As a browser requests it: characters a URL can't hold encoded, escapes kept.
       const answer = await send(new URL(assetUrl, url).href, 'GET');

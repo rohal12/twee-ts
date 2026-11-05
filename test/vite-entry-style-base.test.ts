@@ -82,4 +82,10 @@ describe('entry stylesheet URL values with a document base (#289)', () => {
       checkEntryStyleBase(html('../'), entry(`body { background: url(${'../'.repeat(depth)}image.png) }`));
     }).toThrow(/base.*relative.*stylesheet/i);
   });
+
+  it('keeps other opaque base schemes subject to URL resolution', () => {
+    expect(() => {
+      checkEntryStyleBase(html('vbscript:opaque'), entry('body { background: url(/image.png) }'));
+    }).toThrow(/base.*relative.*stylesheet/i);
+  });
 });

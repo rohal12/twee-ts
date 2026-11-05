@@ -173,9 +173,17 @@ export function checkEntryStyleBase(html: string, entry: EntryBundle | undefined
     const changesUrl = ['https://first.invalid/', 'http://second.invalid/', 'file:///'].some((origin) => {
       const page = new URL(pagePath, origin);
       const base = URL.parse(href, page);
-      // HTML ignores malformed URLs and these schemes, keeping the fallback document URL.
-      if (base === null || base.protocol === 'data:' || base.protocol === 'javascript:') return false;
-      return URL.parse(url, base)?.href !== URL.parse(url, page)?.href;
+      if (base === null) return false;
+      // This is HTML base interpretation, not URL sanitization. Only these two schemes are ignored by HTML;
+      // vbscript: and other schemes still supply a base, even when a relative asset cannot resolve against it.
+      switch (base.protocol) {
+        case 'data:':
+        case 'javascript:':
+          return false;
+        case 'vbscript:':
+        default:
+          return URL.parse(url, base)?.href !== URL.parse(url, page)?.href;
+      }
     });
     if (!changesUrl) continue;
     throw new Error(

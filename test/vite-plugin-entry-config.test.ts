@@ -128,7 +128,7 @@ const CASES: readonly ConfigCase[] = [
     files: { 'app/keep.png': new Uint8Array(64).fill(7) },
     config: () => ({ base: '/game/' }),
     path: '/game/',
-    expected: { base: '/game/', keep: '/game/keep.png' },
+    expected: { base: '/game/', keep: 'http://localhost/game/keep.png' },
   },
   {
     name: 'envPrefix and envDir',
@@ -491,7 +491,7 @@ describe('vite plugin entry: public assets (#327)', () => {
         plugins: [tweeTsPlugin(pluginOptions(dir))],
       });
       const html = await (await fetch(`${url}/game/`)).text();
-      expect(runEntry(userScript(html))).toEqual({ logo: '/game/logo.svg' });
+      expect(runEntry(userScript(html), `${url}/game/`)).toEqual({ logo: `${url}/game/logo.svg` });
       const asset = await fetch(`${url}/game/logo.svg`);
       expect(asset.status).toBe(200);
       expect(await asset.text()).toBe(LOGO);
