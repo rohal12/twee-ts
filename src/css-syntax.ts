@@ -98,6 +98,25 @@ function consumeEscape(css: string, i: number): { readonly text: string; readonl
   return { text: codePointName(code), end };
 }
 
+/** Decodes escapes in the contents of an already-tokenized CSS string or URL, including string continuations. */
+export function decodeCssEscapes(text: string): string {
+  let value = '';
+  for (let i = 0; i < text.length;) {
+    const ch = text.charAt(i);
+    if (ch !== '\\') {
+      value += ch === '\0' ? '�' : ch;
+      i += 1;
+    } else if (isNewline(text.charAt(i + 1))) {
+      i += text.startsWith('\r\n', i + 1) ? 3 : 2;
+    } else {
+      const escape = consumeEscape(text, i + 1);
+      value += escape.text;
+      i = escape.end;
+    }
+  }
+  return value;
+}
+
 /** An identifier sequence that starts at `i`: its value with the escapes decoded (cut at MAX_NAME), and where it ends. */
 function consumeIdentSequence(css: string, i: number): { readonly value: string; readonly end: number } {
   let value = '';

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Resolve output stream aliases with filesystem semantics, preserving regular destinations whose lexical spelling resembles a descriptor path and writing through symlink aliases of piped stdout (#219).
-- Anchor Vite entry asset and worker URLs to the story page even when its head has a base element; diagnose relative inline stylesheet URLs that cannot be resolved safely with that element (#289).
+- Anchor Vite entry asset and worker URLs to the story page even when its head has a base element, including imported asset strings with a root-relative Vite base; diagnose relative inline stylesheet URLs that cannot be resolved safely with that element, decoding CSS escapes and accounting for base origins and URL overrides (#289).
 - Escape filename control characters in Vite entry/source and unreadable-glob warnings, Rollup backslash-filename warnings, and build/dev-server output-collision errors (#458).
 
 - Share Rollup input validation across concurrent output-directory creations, bounding build work as module and asset counts grow while retaining late-input and custom-filesystem protection (#552).

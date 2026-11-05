@@ -621,7 +621,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
             true,
             entryFiles,
           );
-          checkEntryStyleBase(story.output, entry, config.base);
+          checkEntryStyleBase(story.output, entry);
         } catch (e) {
           return this.error(fatalError(e));
         }
