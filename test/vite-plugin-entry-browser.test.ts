@@ -94,9 +94,11 @@ type Branch = 'inside the build' | 'a build of its own' | 'the dev server';
 const BRANCHES: readonly Branch[] = ['inside the build', 'a build of its own', 'the dev server'];
 
 const SETUPS = [
-  { base: '/', outputFilename: 'index.html' },
-  { base: '/app/', outputFilename: 'index.html' },
-  { base: './', outputFilename: 'nested/story.html' },
+  { base: '/', outputFilename: 'index.html', head: '' },
+  { base: '/app/', outputFilename: 'index.html', head: '' },
+  { base: './', outputFilename: 'nested/story.html', head: '' },
+  { base: './', outputFilename: 'nested/story.html', head: '<base href="/elsewhere/">' },
+  { base: './', outputFilename: 'index.html', head: '<base href="/elsewhere/">' },
 ] as const;
 
 // A test builds the story and loads it in Chromium, waiting up to 15 s for the worker; the first of them also pays
@@ -105,19 +107,24 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
   'an entry’s worker in Chromium (#290)',
   { timeout: 60_000 },
   () => {
-    describe.each(SETUPS)('under base $base, as $outputFilename', ({ base, outputFilename }) => {
+    describe.each(SETUPS)('under base $base, as $outputFilename', ({ base, outputFilename, head }) => {
       it.each(BRANCHES)('loads and posts its message back: %s', async (branch) => {
-        const dir = makeProject(FILES);
+        const dir = makeProject({ ...FILES, 'head.html': head });
         const plugin = tweeTsPlugin({
           sources: [join(dir, 'story')],
           format: 'runner-1',
           entry: join(dir, 'entry.js'),
           outputFilename,
-          compileOptions: { formatPaths: [join(dir, 'formats')], useTweegoPath: false, noRemote: true },
+          compileOptions: {
+            formatPaths: [join(dir, 'formats')],
+            useTweegoPath: false,
+            noRemote: true,
+            headFile: join(dir, 'head.html'),
+          },
         });
         const common: InlineConfig = { root: dir, base, publicDir: false, plugins: [plugin], logLevel: 'silent' };
-        // A relative base deploys the story at the site root.
-        const deployedAt = base === './' ? '/' : base;
+        // Deploy relative-base builds below a mount folder; the dev server serves them at its root.
+        const deployedAt = base === './' ? (branch === 'the dev server' ? '/' : '/published/') : base;
         let origin: string;
         if (branch === 'the dev server') {
           origin = (await startServer({ ...common, server: { watch: null } })).url;

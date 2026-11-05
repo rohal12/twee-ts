@@ -8,6 +8,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { entryCollisionMessage } from '../src/plugins/vite-entry.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import type { TweeTsVitePluginOptions } from '../src/plugins/vite.js';
 import {} from './helpers/plugins.js';
@@ -153,6 +154,22 @@ describe('vite plugin hooks: configResolved', () => {
     expect(config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('is inside the story sources'));
   });
 
+  it.each(['\u001b]52;c;YQ==\u0007', '\u009b31m', '\r\n\t'])(
+    'escapes filename controls in its own warning: %j',
+    (controls) => {
+      const dir = makeProject({ 'story/start.tw': STORY });
+      const warnings: string[] = [];
+      const source = join(dir, `story-${controls}-雪`);
+      const config = resolvedConfig(dir) as { logger: { warn: (message: string) => void } };
+      config.logger.warn = (message) => warnings.push(message);
+      hooksOf({ sources: [source], entry: join(source, 'main.ts') }).configResolved(config);
+      expect(warnings).toHaveLength(1);
+      expect(warnings.join('')).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+      expect(warnings.join('')).toContain('雪');
+      expect(warnings.join('')).toContain('\\u');
+    },
+  );
+
   it('does not warn about an entry outside the sources, or without an entry', () => {
     const dir = makeProject({ 'story/start.tw': STORY, 'main.ts': '' });
     for (const options of [{ entry: join(dir, 'main.ts') }, {}]) {
@@ -267,6 +284,14 @@ describe('vite plugin hooks: generateBundle', () => {
     await expect(
       generate({ sources: [join(dir, 'story')], format: 'test-format-1', compileOptions: COMPILE }),
     ).rejects.toThrow(/Start/);
+  });
+
+  it('escapes terminal controls in a story-output collision error (#458)', async () => {
+    const filename = '雪\u009b31m.html';
+    await expect(
+      generate({ sources: ['story'], outputFilename: filename }, { [filename]: { type: 'asset', source: 'landing' } }),
+    ).rejects.toThrow('already writes a file named 雪\\u009b31m.html');
+    expect(entryCollisionMessage(filename)).toContain('emits 雪\\u009b31m.html');
   });
 
   it('fails when the bundle already holds a file of the story’s name', async () => {

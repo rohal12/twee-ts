@@ -222,6 +222,8 @@ describe('how a target is classified', () => {
 
   it("writes the process's own descriptors directly", () => {
     expect(ownDescriptor('/dev/stdout')).toBe(1);
+    expect(ownDescriptor('/dev/stdin')).toBe(0);
+    expect(ownDescriptor(`/proc/${process.pid}/fd/7`)).toBe(7);
     expect(ownDescriptor('/dev/stderr')).toBe(2);
     expect(ownDescriptor('/dev/fd/7')).toBe(7);
     expect(ownDescriptor('/proc/self/fd/4')).toBe(4);
@@ -238,6 +240,20 @@ describe('how a target is classified', () => {
       closeSync(fd);
     }
     expect(readFileSync(file, 'utf-8')).toBe('through the descriptor');
+  });
+
+  it.skipIf(!POSIX)('recognizes a descriptor reached through a directory alias without replacing its file', () => {
+    const target = join(dir, 'target');
+    const fd = openSync(target, 'w');
+    symlinkSync('/dev', join(dir, 'devices'));
+    const before = statSync(target).ino;
+    try {
+      writeFileAtomic(`${dir}/devices/fd/${fd}`, 'through the descriptor');
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(target, 'utf8')).toBe('through the descriptor');
+    expect(statSync(target).ino).toBe(before);
   });
 
   it('writes a Windows device name through, without replacing anything', () => {

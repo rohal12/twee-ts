@@ -24,7 +24,10 @@ import type { InlineSource } from '../types.js';
 import { fileOfId, toPosix } from './paths.js';
 import { moduleGlobScopes } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
+import { escapeTerminalControls } from '../diagnostic-text.js';
 import { isRecord } from '../util.js';
+import { hasDocumentBase } from '../html-structure.js';
+import { createCssTokenizer } from '../css-syntax.js';
 import { cssContexts, javaScriptContexts } from '../code-context.js';
 
 /** The plugin's name, which is also how the entry build tells it from the user's other plugins. */
@@ -54,7 +57,7 @@ export interface EntryBundle {
 
 /** The error for a file the entry emits under a name the build (or another story's entry) already writes. */
 export function entryCollisionMessage(fileName: string): string {
-  return `twee-ts: the entry emits ${fileName}, a file the build already writes; rename one of them.`;
+  return `twee-ts: the entry emits ${escapeTerminalControls(fileName)}, a file the build already writes; rename one of them.`;
 }
 
 /** The entry's script and stylesheet as inline sources of the story (none without an entry). */
@@ -129,13 +132,44 @@ const ONE_FILE = { cssCodeSplit: false, assetsInlineLimit: (): boolean => true }
  * as a classic script inside the story page, where `import.meta` does not exist (the bundler leaves `{}.url`, so
  * `new URL(asset, import.meta.url)` and Vite's worker URLs throw `Invalid URL`). The files the build writes
  * besides the story, such as an asset marked `?no-inline`, are found from the output folder the story is below,
- * so the base is the story page's URL, taken up one level for each folder of a nested `outputFilename`.
+ * so the base is document.URL (unaffected by a base element), taken up one level for each folder of a nested
+ * `outputFilename`.
  */
 function entryDefine(outputFilename: string): { readonly 'import.meta.url': string } {
   const depth = folderDepth(outputFilename);
-  const base =
-    depth === 0 ? 'document.baseURI' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.baseURI).href`;
+  const base = depth === 0 ? 'document.URL' : `new URL(${JSON.stringify('../'.repeat(depth))}, document.URL).href`;
   return { 'import.meta.url': base };
+}
+
+/**
+ * A relative URL in an inline stylesheet resolves against the document base, whose deployment location is
+ * unknown at build time. Refuse this combination rather than emit a URL outside the build. An absolute Vite
+ * base or renderBuiltUrl result makes it independent of the document base and needs no restriction.
+ */
+export function checkEntryStyleBase(html: string, entry: EntryBundle | undefined, base: string): void {
+  if ((base !== '' && base !== './') || entry?.style === undefined || entry.style === '') return;
+  const css = entry.style;
+  const next = createCssTokenizer(css);
+  let inUrl = false;
+  for (let token = next(); token.type !== 'eof'; token = next()) {
+    if (token.type === 'ws') continue;
+    let value: string | undefined;
+    if (token.type === 'url') {
+      const raw = css.slice(token.start, token.end);
+      value = raw.slice(raw.indexOf('(') + 1, raw.endsWith(')') ? -1 : undefined).trim();
+    } else if (inUrl && token.type === 'string') {
+      value = css.slice(token.start + 1, token.end - 1);
+    }
+    inUrl = token.type === 'function' && token.value === 'url';
+    if (value === undefined || /^(?:[a-z][a-z0-9+.-]*:|[/#])/i.test(value)) continue;
+    if (hasDocumentBase(html)) {
+      throw new Error(
+        'twee-ts: a document base element with relative entry stylesheet URLs is unsupported; ' +
+          'set Vite base to the deployment URL or return absolute CSS URLs from experimental.renderBuiltUrl.',
+      );
+    }
+    return;
+  }
 }
 
 /** How many folders deep `outputFilename` puts the story below the output folder. */
@@ -159,7 +193,7 @@ export function entryRenderBuiltUrl(
   user: RenderBuiltAssetUrl | undefined,
 ): RenderBuiltAssetUrl | undefined {
   const depth = folderDepth(outputFilename);
-  if ((base !== '' && base !== './') || depth === 0) return user;
+  if (base !== '' && base !== './') return user;
   const outputFolder = entryDefine(outputFilename)['import.meta.url'];
   return (filename, type) => {
     const own = user?.(filename, type);

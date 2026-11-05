@@ -419,6 +419,20 @@ describe('moduleGlobScopes', () => {
     expect(context.warn).not.toHaveBeenCalled();
   });
 
+  it('escapes terminal controls in an unreadable glob warning', async () => {
+    const warnings: string[] = [];
+    const context = { resolve: () => Promise.resolve(null), warn: (message: string) => warnings.push(message) };
+    await moduleGlobScopes(
+      context,
+      "import.meta.glob('./*.js', { base: dir })",
+      '/story/雪\u001b]52;c;YQ==\u0007.js',
+      '/story',
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings.join('')).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(warnings.join('')).toContain('雪\\u001b]52;c;YQ==\\u0007.js');
+  });
+
   it.skipIf(process.platform === 'win32')('warns about a call it cannot read, and keeps the others', async () => {
     const context = hookContext();
     const code = "type T = string;\n  import.meta.glob(./a/*.ts);\nimport.meta.glob('./w/*.ts');";

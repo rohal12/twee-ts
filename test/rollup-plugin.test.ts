@@ -194,6 +194,49 @@ describe('rollup plugin', () => {
     ]);
   });
 
+  it.skipIf(process.platform === 'win32')('escapes C1 controls in the backslash filename warning (#458)', () => {
+    const dir = makeProject(STORY);
+    const source = join(dir, 'story', '雪\\\u009b31m.tw');
+    writeFileSync(source, ':: Extra\nHello');
+    const warnings: string[] = [];
+    const added: string[] = [];
+    const plugin = tweeTsPlugin({ sources: [source], compileOptions: COMPILE });
+    plugin.buildStart.call({
+      addWatchFile: (id: string) => added.push(id),
+      warn: (message: string) => warnings.push(message),
+      meta: { watchMode: true },
+    });
+    expect(added).toContain(source);
+    expect(warnings).toHaveLength(1);
+    expect(warnings.join('')).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(warnings.join('')).toContain('雪');
+    expect(warnings.join('')).toContain('\\u009b');
+  });
+
+  it('escapes terminal controls in a story-output collision error (#458)', async () => {
+    const dir = makeProject(STORY);
+    const filename = '雪\u009b31m.html';
+    const bundle = await rollup({
+      input: join(dir, 'entry.js'),
+      plugins: [
+        {
+          name: 'emit-conflict',
+          buildStart() {
+            this.emitFile({ type: 'asset', fileName: filename, source: 'landing' });
+          },
+        },
+        tweeTsPlugin({ sources: [join(dir, 'story')], outputFilename: filename, compileOptions: COMPILE }),
+      ],
+    });
+    try {
+      await expect(bundle.generate({ dir: join(dir, 'dist') })).rejects.toThrow(
+        'already holds a file named 雪\\u009b31m.html',
+      );
+    } finally {
+      await bundle.close();
+    }
+  });
+
   it('registers nothing outside watch mode', () => {
     expect(watchFiles(tweeTsPlugin({ sources: ['story'] }), false)).toEqual([]);
   });

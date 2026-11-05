@@ -5,6 +5,7 @@
  */
 import { resolve, sep } from 'node:path';
 import * as fs from 'node:fs/promises';
+import { escapeTerminalControls } from '../diagnostic-text.js';
 import { outputPaths } from '../filesystem.js';
 import { recordOwnOutput } from '../atomic-write.js';
 import { checkStoryInputs, compileStory, fatalError } from './diagnostics.js';
@@ -171,7 +172,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       const unwatchable = sep === '/' ? targets.filter((target) => target.includes('\\')) : [];
       if (unwatchable.length > 0) {
         this.warn(
-          `[twee-ts] Rollup's watch mode cannot watch ${unwatchable.map((target) => JSON.stringify(target)).join(', ')} ` +
+          `[twee-ts] Rollup's watch mode cannot watch ${unwatchable.map((target) => escapeTerminalControls(JSON.stringify(target))).join(', ')} ` +
             'because the name contains a backslash; edits to it will not rebuild the story.',
         );
       }
@@ -200,7 +201,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
     ): Promise<void> {
       if (Object.hasOwn(bundle, outputFilename)) {
         return this.error(
-          `twee-ts: the bundle already holds a file named ${outputFilename}; set the plugin's outputFilename to another name.`,
+          `twee-ts: the bundle already holds a file named ${escapeTerminalControls(outputFilename)}; set the plugin's outputFilename to another name.`,
         );
       }
       // Where this output writes the story and the bundle. A source folder may hold

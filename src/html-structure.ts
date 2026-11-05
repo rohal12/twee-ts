@@ -280,6 +280,16 @@ export function attributeOf(element: HtmlElement, name: string): string | undefi
   return element.attrs.find((attr) => attr.name === name && attr.namespace === undefined)?.value;
 }
 
+/** Whether a live HTML base element supplies a document base URL (template contents do not). */
+export function hasDocumentBase(html: string): boolean {
+  return (
+    findElement(
+      parseHtml(html),
+      (element) => isHtmlElement(element, 'base') && attributeOf(element, 'href') !== undefined,
+    ) !== undefined
+  );
+}
+
 /** The text of an element as the DOM's `textContent` gives it: all its descendant text, outside template contents. */
 export function textContent(element: HtmlElement): string {
   let text = '';
