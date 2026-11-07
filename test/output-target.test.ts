@@ -234,14 +234,16 @@ describe('how a target is classified', () => {
   });
 
   it.skipIf(!POSIX)('writes /dev/fd/N to the open descriptor N', () => {
-    const file = join(dir, 'fd.txt');
-    const fd = openSync(file, 'w');
+    const fd = openSync(join(dir, 'fd.txt'), 'w+');
     try {
       writeFileAtomic(`/dev/fd/${fd}`, 'through the descriptor');
+      // Larger than the text, so anything written beyond it shows up too.
+      const bytes = Buffer.alloc(64);
+      const read = readSync(fd, bytes, 0, bytes.length, 0);
+      expect(bytes.toString('utf-8', 0, read)).toBe('through the descriptor');
     } finally {
       closeSync(fd);
     }
-    expect(readFileSync(file, 'utf-8')).toBe('through the descriptor');
   });
 
   it.skipIf(!POSIX)('recognizes a descriptor reached through a directory alias without replacing its file', () => {
