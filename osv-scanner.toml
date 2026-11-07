@@ -1,0 +1,11 @@
+# Read by OSV-Scanner, which OpenSSF Scorecard's Vulnerabilities check runs on this directory.
+#
+# Each entry stops being ignored after its date, and Scorecard reports the advisory again. When an entry is removed or
+# its date changes, change the matching entry in the dependency-review job of .github/workflows/dependencies.yml too.
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-02-07
+reason = """minimatch 10: fixed only in minimatch 11, which eslint, @eslint/config-array, \
+@typescript-eslint/typescript-estree and @stryker-mutator/core do not allow yet. Only those development tools use it, \
+on glob patterns from this repository's own configuration; dist/ does not contain it. Remove once they allow 11."""
