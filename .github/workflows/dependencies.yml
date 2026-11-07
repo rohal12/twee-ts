@@ -10,8 +10,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Dependabot's auto-merged pull requests are merged with a workflow token, and a push made with one starts no
-  # workflow: the daily run brings the dependency graph up to date after them.
+  # A commit is without a snapshot until its push's run has submitted one. When that run fails, the daily run brings the
+  # dependency graph up to date.
   schedule:
     - cron: '37 5 * * *'
 
