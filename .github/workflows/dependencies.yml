@@ -106,8 +106,18 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The action's allow list has no expiry, so this step leaves an advisory out of it after its date. The reason
+      # for each advisory is in osv-scanner.toml, which has the same advisories and dates for Scorecard.
+      - name: List the advisories allowed today
+        id: allowed
+        run: |
+          if [[ "$(date -u +%F)" < 2027-02-07 ]]; then
+            echo 'ghsas=GHSA-g3hv-75wg-m249' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
+          allow-ghsas: ${{ steps.allowed.outputs.ghsas }}
           fail-on-severity: moderate
           fail-on-scopes: runtime, development, unknown
           # Waits until GitHub has processed the snapshot `submit` sent
