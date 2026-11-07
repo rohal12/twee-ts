@@ -5,6 +5,8 @@ name: Dependencies
 # (scripts/dependency-snapshot.ts) and `submit` sends them to the dependency submission API, so Dependabot alerts
 # cover them. On a pull request, `dependency-review` then fails when the change adds a package version with a known
 # vulnerability of moderate severity or higher, in any scope: parse5, entities and acorn are bundled into dist/.
+# Dependency review compares the snapshots of the pull request's base and head commits. A base commit may have none
+# (see `schedule` below), and every package would then count as added, so a pull request submits both.
 on:
   push:
     branches: [main]
@@ -37,19 +39,37 @@ jobs:
         with:
           node-version: 24
 
+      - name: Check out the base commit
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-commit
+          persist-credentials: false
+
+      - name: List the packages in the base commit's pnpm-lock.yaml
+        if: github.event_name == 'pull_request'
+        env:
+          SNAPSHOT_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/snapshots"
+          pnpm --dir base-commit ls --lockfile-only --json --depth Infinity |
+            node scripts/dependency-snapshot.ts > "$RUNNER_TEMP/snapshots/base.json"
+
       # Reads the lockfile only: nothing is installed.
       - name: List the packages in pnpm-lock.yaml
         env:
           # A pull request's snapshot is of its head commit, which dependency review compares
           SNAPSHOT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          mkdir -p "$RUNNER_TEMP/snapshots"
           pnpm ls --lockfile-only --json --depth Infinity |
-            node scripts/dependency-snapshot.ts > "$RUNNER_TEMP/snapshot.json"
+            node scripts/dependency-snapshot.ts > "$RUNNER_TEMP/snapshots/head.json"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dependency-snapshot
-          path: ${{ runner.temp }}/snapshot.json
+          path: ${{ runner.temp }}/snapshots
           if-no-files-found: error
           retention-days: 1
 
@@ -60,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       # The dependency submission API needs it. The job checks out nothing and runs no repository code: it sends
-      # the snapshot the read-only job wrote.
+      # the snapshots the read-only job wrote.
       contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -68,10 +88,16 @@ jobs:
           name: dependency-snapshot
           path: ${{ runner.temp }}/snapshot
 
-      - name: Submit the snapshot
+      - name: Submit the snapshots
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$RUNNER_TEMP/snapshot/snapshot.json"
+        run: |
+          # The base commit's goes first, so that the head commit's is the latest for this ref. It carries the pull
+          # request's ref, not the base branch's, so it leaves the dependency graph of the default branch alone.
+          if [ -f "$RUNNER_TEMP/snapshot/base.json" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$RUNNER_TEMP/snapshot/base.json"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$RUNNER_TEMP/snapshot/head.json"
 
   dependency-review:
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
