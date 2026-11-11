@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Validate entry stylesheet URLs against the document base in Vite development, reporting unsupported combinations through the error overlay while retaining the last successful page and assets (#555).
 - Resolve output stream aliases with filesystem semantics, preserving regular destinations whose lexical spelling resembles a descriptor path and writing through symlink aliases of piped stdout (#219).
 - Anchor Vite entry asset and worker URLs to the story page even when its head has a base element, including imported asset strings with a root-relative Vite base; diagnose relative inline stylesheet URLs that cannot be resolved safely with that element, decoding CSS escapes and accounting for base origins and URL overrides (#289).
 - Escape filename control characters in Vite entry/source and unreadable-glob warnings, Rollup backslash-filename warnings, and build/dev-server output-collision errors (#458).

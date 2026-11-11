@@ -20,7 +20,7 @@ import { compileStory, fatalError } from './diagnostics.js';
 import type { ResolvedPluginOptions } from './options.js';
 import { canonicalPath, fileKey, isViteConfigTemp, keyWithin, toPosix } from './paths.js';
 import { escapeTerminalControls } from '../diagnostic-text.js';
-import { bundleEntry, entryCollisionMessage, entrySources, PLUGIN_NAME } from './vite-entry.js';
+import { bundleEntry, checkEntryStyleBase, entryCollisionMessage, entrySources, PLUGIN_NAME } from './vite-entry.js';
 import type { EntryBundle } from './vite-entry.js';
 import { readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
 import type { GlobScope, ScopeContents } from './vite-glob.js';
@@ -739,6 +739,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       // Input-only stories can release a retained target too, by retargeting a named input link.
       watchEntryFiles(entryWatchTargets());
       const story = await compileStory(options.compile(entrySources(entry)), outputs, cache);
+      checkEntryStyleBase(story.output, entry);
       for (const warning of story.warnings) config.logger.warn(`[twee-ts] ${warning}`);
       // Only a playable page can run the client; other outputs are served as compiled.
       html = outputMode === 'html' ? dev.injectClient(story.output, base) : story.output;
