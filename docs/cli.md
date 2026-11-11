@@ -6,6 +6,8 @@ twee-ts [options] <sources...>
 
 Sources can be files or directories. Directories are walked recursively for supported file types, in code-point order of their entries on every operating system, so which of two passages with the same name wins doesn't depend on the OS. Inside a source directory, a symbolic link to a file is read (Tweego skips it), but a link to a directory is not followed, as in Tweego, so a link back to a parent can't make the walk read the same files again and again. A directory named as a source is followed even when it is a link; name a linked directory as a source to include it. The same file reached by two paths (a link and its target, say) is read once.
 
+A file symlink keeps its own extension and basename for source and module loading, media passage names, and authored-output protection, including links outside the working directory whose targets are inside it. Output paths and symlink targets ending in a path separator require a directory and are refused as file destinations; these rejected writes leave existing links and files unchanged.
+
 The command line is checked before anything is built or written. These are usage errors: twee-ts prints `error: …` and a pointer to `--help`, and exits with status 2.
 
 - an unknown option, an option without its value or with an empty one (also `cache clear ""`, which never means "everything"), an option that takes no value given one (`-d=x`), and an option given twice (other than those marked repeatable)

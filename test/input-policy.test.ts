@@ -382,13 +382,13 @@ describe('the input policy applied', () => {
       }
     });
 
-    it('the same file named in two spellings is loaded once', async () => {
+    it('the same file named in two spellings is loaded once, naming the skipped alias (#563)', async () => {
       symlinkSync(story, join(dir, 'alias.tw'));
       const result = await compile({ ...options, sources: [story, join(dir, 'alias.tw')] });
       expect(result.stats.files).toHaveLength(1);
       expect(result.diagnostics).toContainEqual({
         level: 'warning',
-        message: expect.stringMatching(/minimal\.tw: Skipping duplicate/),
+        message: expect.stringMatching(/alias\.tw: Skipping duplicate \(the same file as .*minimal\.tw\)/),
       });
     });
   });

@@ -2,7 +2,17 @@
  * The compiler's public API, CLI and type declarations, as the build in dist/ provides them.
  * Matrix groups WRITE, TYPE, FORMAT, RESOLVE, INPUT, OUTPUT, CLI and ABORT (see cases.ts).
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, utimesSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect } from 'vitest';
 import { build } from 'vite';
@@ -47,6 +57,32 @@ defineContracts(
   {
     'new file': (root) => expectWritten(root, () => undefined),
     'existing file': (root) => expectWritten(root, (output) => write(output, 'previous output')),
+    'missing output with a trailing separator': async (root) => {
+      const output = join(root, 'missing');
+      await expect(compileToFile(jsonToFile(`${output}/`))).rejects.toThrow();
+      expect(existsSync(output)).toBe(false);
+    },
+    'dangling symlink output with a trailing separator': async (root) => {
+      const output = join(root, 'output');
+      symlinkSync('missing', output);
+      await expect(compileToFile(jsonToFile(`${output}/`))).rejects.toThrow();
+      expect(readlinkSync(output)).toBe('missing');
+      expect(existsSync(join(root, 'missing'))).toBe(false);
+    },
+    'symlink targets with trailing separators': async (root) => {
+      const target = join(root, 'missing');
+      for (const [name, linkTarget] of [
+        ['relative', 'missing/'],
+        ['absolute', `${target}/`],
+        ['chain', 'relative'],
+      ] as const) {
+        const output = join(root, name);
+        symlinkSync(linkTarget, output);
+        await expect(compileToFile(jsonToFile(output))).rejects.toThrow();
+        expect(readlinkSync(output)).toBe(linkTarget);
+        expect(existsSync(target)).toBe(false);
+      }
+    },
     'valid relative symlink': (root) =>
       expectWrittenThroughLink(root, (output, target) => {
         write(target, 'previous target');
@@ -273,164 +309,208 @@ async function expectResolved(root: string, kind: 'local' | 'url' | 'index', ava
   );
 }
 
-defineContracts('INPUT', {
-  'file and inline normalization': async (root) => {
-    const text = `﻿${story().replaceAll('\n', '\r\n')}`;
-    const file = write(join(root, 'story.tw'), text);
-    const fromFile = await compile({ sources: [file], outputMode: 'json' });
-    const fromInline = await compile({ sources: [inline(text)], outputMode: 'json' });
-    expect(fromFile.output).toBe(fromInline.output);
+defineContracts(
+  'INPUT',
+  {
+    'file and inline normalization': async (root) => {
+      const text = `﻿${story().replaceAll('\n', '\r\n')}`;
+      const file = write(join(root, 'story.tw'), text);
+      const fromFile = await compile({ sources: [file], outputMode: 'json' });
+      const fromInline = await compile({ sources: [inline(text)], outputMode: 'json' });
+      expect(fromFile.output).toBe(fromInline.output);
+    },
+    'mixed source precedence': async (root) => {
+      const file = write(join(root, 'story.tw'), story());
+      for (const [sources, expected] of [
+        [[file, inline(story('inline wins'))], 'inline wins'],
+        [[inline(story('inline loses')), file], 'Hello'],
+      ] as const) {
+        const plain = await compile({ sources, outputMode: 'json' });
+        const cached = await compileIncremental({ sources, outputMode: 'json' }, new Map());
+        expect(cached.output).toBe(plain.output);
+        expect(passageText(plain, 'Start')).toBe(expected);
+      }
+    },
+    'cold and warm cache parity': async (root) => {
+      const options: CompileOptions = { sources: [write(join(root, 'story.tw'), story())], outputMode: 'json' };
+      const cache = new Map<string, FileCacheEntry>();
+      const cold = await compileIncremental(options, cache);
+      const warm = await compileIncremental(options, cache, new Set());
+      expect(warm.output).toBe(cold.output);
+    },
+    'forced change with unchanged mtime': async (root) => {
+      const file = write(join(root, 'story.tw'), story());
+      const options: CompileOptions = { sources: [file], outputMode: 'json' };
+      const cache = new Map<string, FileCacheEntry>();
+      await compileIncremental(options, cache);
+      const stamp = statSync(file);
+      write(file, story('changed'));
+      utimesSync(file, stamp.atime, stamp.mtime);
+      expect(passageText(await compileIncremental(options, cache, new Set([file])), 'Start')).toBe('changed');
+    },
+    'parse-option invalidation': async (root) => {
+      const file = write(join(root, 'story.tw'), story('   padded   '));
+      const cache = new Map<string, FileCacheEntry>();
+      const trimmed = await compileIncremental({ sources: [file], outputMode: 'json', trim: true }, cache);
+      const untrimmed = await compileIncremental(
+        { sources: [file], outputMode: 'json', trim: false },
+        cache,
+        new Set(),
+      );
+      expect(passageText(trimmed, 'Start')).toBe('padded');
+      expect(passageText(untrimmed, 'Start')).toBe('   padded   ');
+    },
+    'generated-name collision': async (root) => {
+      const file = write(join(root, 'story.tw'), story());
+      const a = write(join(root, 'a', 'code.js'), 'globalThis.firstCode = 1;');
+      const b = write(join(root, 'b', 'code.js'), 'globalThis.secondCode = 2;');
+      const result = await compile({ sources: [file, a, b], outputMode: 'json' });
+      const scripts = result.story.passages.filter((p) => p.tags.includes('script'));
+      expect(new Set(scripts.map((p) => p.name)).size).toBe(2);
+      expect(result.output).toContain('firstCode');
+      expect(result.output).toContain('secondCode');
+    },
+    'external file symlinks preserve source types and media names': async (root) => {
+      const project = join(root, 'project');
+      write(join(project, 'source.txt'), story());
+      write(join(project, 'real.png'), 'image bytes');
+      mkdirSync(join(root, 'aliases'));
+      symlinkSync('../project/source.txt', join(root, 'aliases/story.tw'));
+      symlinkSync('../project/real.png', join(root, 'aliases/cover.png'));
+      for (const sources of [['../aliases/story.tw', '../aliases/cover.png'], ['../aliases']]) {
+        const result = await run(process.execPath, [CLI, '--no-config', '--json', ...sources], { cwd: project });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toBe('');
+        expect(JSON.parse(result.stdout)).toHaveProperty(
+          'passages',
+          expect.arrayContaining([
+            expect.objectContaining({ name: 'Start', text: 'Hello' }),
+            expect.objectContaining({ name: 'cover' }),
+          ]),
+        );
+      }
+    },
   },
-  'mixed source precedence': async (root) => {
-    const file = write(join(root, 'story.tw'), story());
-    for (const [sources, expected] of [
-      [[file, inline(story('inline wins'))], 'inline wins'],
-      [[inline(story('inline loses')), file], 'Hello'],
-    ] as const) {
-      const plain = await compile({ sources, outputMode: 'json' });
-      const cached = await compileIncremental({ sources, outputMode: 'json' }, new Map());
-      expect(cached.output).toBe(plain.output);
-      expect(passageText(plain, 'Start')).toBe(expected);
-    }
-  },
-  'cold and warm cache parity': async (root) => {
-    const options: CompileOptions = { sources: [write(join(root, 'story.tw'), story())], outputMode: 'json' };
-    const cache = new Map<string, FileCacheEntry>();
-    const cold = await compileIncremental(options, cache);
-    const warm = await compileIncremental(options, cache, new Set());
-    expect(warm.output).toBe(cold.output);
-  },
-  'forced change with unchanged mtime': async (root) => {
-    const file = write(join(root, 'story.tw'), story());
-    const options: CompileOptions = { sources: [file], outputMode: 'json' };
-    const cache = new Map<string, FileCacheEntry>();
-    await compileIncremental(options, cache);
-    const stamp = statSync(file);
-    write(file, story('changed'));
-    utimesSync(file, stamp.atime, stamp.mtime);
-    expect(passageText(await compileIncremental(options, cache, new Set([file])), 'Start')).toBe('changed');
-  },
-  'parse-option invalidation': async (root) => {
-    const file = write(join(root, 'story.tw'), story('   padded   '));
-    const cache = new Map<string, FileCacheEntry>();
-    const trimmed = await compileIncremental({ sources: [file], outputMode: 'json', trim: true }, cache);
-    const untrimmed = await compileIncremental({ sources: [file], outputMode: 'json', trim: false }, cache, new Set());
-    expect(passageText(trimmed, 'Start')).toBe('padded');
-    expect(passageText(untrimmed, 'Start')).toBe('   padded   ');
-  },
-  'generated-name collision': async (root) => {
-    const file = write(join(root, 'story.tw'), story());
-    const a = write(join(root, 'a', 'code.js'), 'globalThis.firstCode = 1;');
-    const b = write(join(root, 'b', 'code.js'), 'globalThis.secondCode = 2;');
-    const result = await compile({ sources: [file, a, b], outputMode: 'json' });
-    const scripts = result.story.passages.filter((p) => p.tags.includes('script'));
-    expect(new Set(scripts.map((p) => p.name)).size).toBe(2);
-    expect(result.output).toContain('firstCode');
-    expect(result.output).toContain('secondCode');
-  },
-});
+  { skip: (variant) => (variant.includes('symlink') ? noSymlinks : undefined) },
+);
 
-defineContracts('OUTPUT', {
-  'HTML metadata and text round trip': async (root) => {
-    const text = 'Unicode café & <literal> {{STORY_NAME}} $&';
-    const { formatId, options } = localFormat(root);
-    const result = await compile({
-      ...options,
-      formatId,
-      sources: [inline(story(text, { tags: 'fiction', zoom: 2 }))],
-    });
-    expectNoErrors(result);
-    const imported = decompileHTML(result.output).story;
-    expect(imported.ifid).toBe(IFID);
-    expect(imported.twine2.start).toBe('Start');
-    expect(imported.twine2.tags).toBe('fiction');
-    expect(imported.twine2.zoom).toBe(2);
-    expect(imported.passages.find((p) => p.name === 'Start')?.text).toBe(text);
-  },
-  'JSON start and debug overrides': async () => {
-    const result = await compile({
-      sources: [inline(story('Hello', {}, '\n:: Begin\nBegin here'))],
-      outputMode: 'json',
-      startPassage: 'Begin',
-      testMode: true,
-    });
-    expect(JSON.parse(result.output)).toMatchObject({ start: 'Begin' });
-    expect(result.story.twine2.options.get('debug')).toBe(true);
-  },
-  'private passage omitted': (root) => expectPrivatePassage(root, false),
-  'private start rejected': (root) => expectPrivatePassage(root, true),
-  'effective Twee metadata round trip': async () => {
-    const result = await compile({
-      sources: [inline(story('Hello', {}, '\n:: Begin\nBegin here'))],
-      outputMode: 'twee3',
-      startPassage: 'Begin',
-      testMode: true,
-    });
-    const back = await compile({ sources: [inline(result.output)], outputMode: 'json' });
-    expect(back.story.twine2.start).toBe('Begin');
-    expect(back.story.twine2.options.get('debug')).toBe(true);
-    expect(back.story.ifid).toBe(IFID);
-  },
-  'missing IFID reported': async () => {
-    // Twine 2 story data requires an IFID; Twee, JSON and Twine 1 output do not, as in Tweego (#370).
-    const result = await compile({ sources: [inline(':: Start\nHello')], outputMode: 'twine2-archive' });
-    expect(errorsOf(result).some((message) => message.includes('IFID'))).toBe(true);
-  },
-  'public directory-link copies excluded from overlapping Vite output': async (root) => {
-    const { formatId, options } = localFormat(root);
-    const source = join(root, 'story');
-    write(join(source, 'start.tw'), story());
-    const resource = 'export const PUBLIC_ONLY = 1;';
-    write(join(root, 'shared/vendor.js'), resource);
-    write(join(root, 'next/new.js'), 'export const PUBLIC_NEXT = 1;');
-    mkdirSync(join(root, 'public'));
-    const link = join(root, 'public/vendor');
-    symlinkSync(join(root, 'shared'), link, 'junction');
-    const plugin = tweeTsPlugin({ sources: [source], format: formatId, compileOptions: options });
-    for (let pass = 0; pass < 3; pass++) {
-      if (pass === 2) {
-        unlinkSync(link);
-        symlinkSync(join(root, 'next'), link, 'junction');
-      }
-      await build({
-        configFile: false,
-        root,
-        logLevel: 'silent',
-        build: { outDir: source, emptyOutDir: false },
-        plugins: [plugin],
+defineContracts(
+  'OUTPUT',
+  {
+    'external file symlink sources protect authored output bytes': async (root) => {
+      const project = join(root, 'project');
+      const source = write(join(project, 'source.txt'), story());
+      mkdirSync(join(root, 'aliases'));
+      symlinkSync('../project/source.txt', join(root, 'aliases/story.tw'));
+      const result = await run(process.execPath, [CLI, '--no-config', '--json', '-o', 'source.txt', '../aliases'], {
+        cwd: project,
       });
-      expect(readFileSync(join(source, 'vendor/vendor.js'), 'utf8')).toBe(resource);
-      const html = readFileSync(join(source, 'index.html'), 'utf8');
-      expect(html).not.toContain('PUBLIC_ONLY');
-      expect(html).not.toContain('PUBLIC_NEXT');
-      expect(decompileHTML(html).story.passages.find((p) => p.name === 'Start')?.text).toBe('Hello');
-    }
-  },
-  'Rollup markless story writes remain rebuildable': async (root) => {
-    for (const [outputMode, outputFilename] of [
-      ['twee1', 'compiled.tw'],
-      ['twee3', 'compiled.tw'],
-      ['twine1-archive', 'compiled.html'],
-    ] as const) {
-      const folder = join(root, outputMode);
-      const source = write(join(folder, 'start.tw'), story('FIRST_TEXT'));
-      const entry = write(join(root, 'entry.js'), 'export const value = 1;');
-      const plugin = rollupStoryPlugin({ sources: [folder], outputFilename, compileOptions: { outputMode } });
-      for (const text of ['FIRST_TEXT', 'SECOND_TEXT']) {
-        write(source, story(text));
-        const bundle = await rollup({ input: entry, plugins: [plugin], onLog: () => undefined });
-        try {
-          await bundle.write({ dir: folder, format: 'es' });
-        } finally {
-          await bundle.close();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('source');
+      expect(readFileSync(source, 'utf8')).toBe(story());
+    },
+    'HTML metadata and text round trip': async (root) => {
+      const text = 'Unicode café & <literal> {{STORY_NAME}} $&';
+      const { formatId, options } = localFormat(root);
+      const result = await compile({
+        ...options,
+        formatId,
+        sources: [inline(story(text, { tags: 'fiction', zoom: 2 }))],
+      });
+      expectNoErrors(result);
+      const imported = decompileHTML(result.output).story;
+      expect(imported.ifid).toBe(IFID);
+      expect(imported.twine2.start).toBe('Start');
+      expect(imported.twine2.tags).toBe('fiction');
+      expect(imported.twine2.zoom).toBe(2);
+      expect(imported.passages.find((p) => p.name === 'Start')?.text).toBe(text);
+    },
+    'JSON start and debug overrides': async () => {
+      const result = await compile({
+        sources: [inline(story('Hello', {}, '\n:: Begin\nBegin here'))],
+        outputMode: 'json',
+        startPassage: 'Begin',
+        testMode: true,
+      });
+      expect(JSON.parse(result.output)).toMatchObject({ start: 'Begin' });
+      expect(result.story.twine2.options.get('debug')).toBe(true);
+    },
+    'private passage omitted': (root) => expectPrivatePassage(root, false),
+    'private start rejected': (root) => expectPrivatePassage(root, true),
+    'effective Twee metadata round trip': async () => {
+      const result = await compile({
+        sources: [inline(story('Hello', {}, '\n:: Begin\nBegin here'))],
+        outputMode: 'twee3',
+        startPassage: 'Begin',
+        testMode: true,
+      });
+      const back = await compile({ sources: [inline(result.output)], outputMode: 'json' });
+      expect(back.story.twine2.start).toBe('Begin');
+      expect(back.story.twine2.options.get('debug')).toBe(true);
+      expect(back.story.ifid).toBe(IFID);
+    },
+    'missing IFID reported': async () => {
+      // Twine 2 story data requires an IFID; Twee, JSON and Twine 1 output do not, as in Tweego (#370).
+      const result = await compile({ sources: [inline(':: Start\nHello')], outputMode: 'twine2-archive' });
+      expect(errorsOf(result).some((message) => message.includes('IFID'))).toBe(true);
+    },
+    'public directory-link copies excluded from overlapping Vite output': async (root) => {
+      const { formatId, options } = localFormat(root);
+      const source = join(root, 'story');
+      write(join(source, 'start.tw'), story());
+      const resource = 'export const PUBLIC_ONLY = 1;';
+      write(join(root, 'shared/vendor.js'), resource);
+      write(join(root, 'next/new.js'), 'export const PUBLIC_NEXT = 1;');
+      mkdirSync(join(root, 'public'));
+      const link = join(root, 'public/vendor');
+      symlinkSync(join(root, 'shared'), link, 'junction');
+      const plugin = tweeTsPlugin({ sources: [source], format: formatId, compileOptions: options });
+      for (let pass = 0; pass < 3; pass++) {
+        if (pass === 2) {
+          unlinkSync(link);
+          symlinkSync(join(root, 'next'), link, 'junction');
         }
-        const compiled = readFileSync(join(folder, outputFilename), 'utf8');
-        expect(compiled).toContain(text);
-        expect(compiled.match(/(?:FIRST|SECOND)_TEXT/g)).toHaveLength(1);
+        await build({
+          configFile: false,
+          root,
+          logLevel: 'silent',
+          build: { outDir: source, emptyOutDir: false },
+          plugins: [plugin],
+        });
+        expect(readFileSync(join(source, 'vendor/vendor.js'), 'utf8')).toBe(resource);
+        const html = readFileSync(join(source, 'index.html'), 'utf8');
+        expect(html).not.toContain('PUBLIC_ONLY');
+        expect(html).not.toContain('PUBLIC_NEXT');
+        expect(decompileHTML(html).story.passages.find((p) => p.name === 'Start')?.text).toBe('Hello');
       }
-    }
+    },
+    'Rollup markless story writes remain rebuildable': async (root) => {
+      for (const [outputMode, outputFilename] of [
+        ['twee1', 'compiled.tw'],
+        ['twee3', 'compiled.tw'],
+        ['twine1-archive', 'compiled.html'],
+      ] as const) {
+        const folder = join(root, outputMode);
+        const source = write(join(folder, 'start.tw'), story('FIRST_TEXT'));
+        const entry = write(join(root, 'entry.js'), 'export const value = 1;');
+        const plugin = rollupStoryPlugin({ sources: [folder], outputFilename, compileOptions: { outputMode } });
+        for (const text of ['FIRST_TEXT', 'SECOND_TEXT']) {
+          write(source, story(text));
+          const bundle = await rollup({ input: entry, plugins: [plugin], onLog: () => undefined });
+          try {
+            await bundle.write({ dir: folder, format: 'es' });
+          } finally {
+            await bundle.close();
+          }
+          const compiled = readFileSync(join(folder, outputFilename), 'utf8');
+          expect(compiled).toContain(text);
+          expect(compiled.match(/(?:FIRST|SECOND)_TEXT/g)).toHaveLength(1);
+        }
+      }
+    },
   },
-});
+  { skip: (variant) => (variant.includes('external file symlink') ? noSymlinks : undefined) },
+);
 
 /** A Twine.private passage is not in the HTML; naming it as the start passage is an error. */
 async function expectPrivatePassage(root: string, asStart: boolean): Promise<void> {
