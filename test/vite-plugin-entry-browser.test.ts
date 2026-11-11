@@ -138,6 +138,61 @@ describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
   },
 );
 
+describe.runIf(browser !== undefined || process.env['CI'] !== undefined)(
+  'entry stylesheet base diagnostics with real SugarCube in Chromium (#555)',
+  { timeout: 60_000 },
+  () => {
+    it.each(['url("./image.svg?no-inline")', 'image-set("./image.svg?no-inline" 1x)'])(
+      'shows the startup error and loads the image after correcting the base: %s',
+      async (value) => {
+        if (browser === undefined) throw new Error('No Chromium could be launched: set CHROME_PATH.');
+        const dir = makeProject({
+          'story.tw': STORY,
+          'head.html': '<base href="https://elsewhere.invalid/">',
+          'entry.js': 'import "./style.css";',
+          'style.css': `body { background-image: ${value}; }`,
+          'image.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+        });
+        const { url } = await startServer({
+          root: dir,
+          publicDir: false,
+          server: { watch: null },
+          plugins: [
+            tweeTsPlugin({
+              sources: [join(dir, 'story.tw')],
+              entry: join(dir, 'entry.js'),
+              format: 'sugarcube-2',
+              compileOptions: {
+                formatPaths: [join(import.meta.dirname, 'fixtures', 'sugarcube-oracle')],
+                useTweegoPath: false,
+                noRemote: true,
+                headFile: join(dir, 'head.html'),
+              },
+            }),
+          ],
+        });
+        const page = await browser.newPage();
+        try {
+          await page.goto(`${url}/`);
+          await page.waitForSelector('vite-error-overlay .message-body', { timeout: 10_000 });
+          expect(await page.locator('vite-error-overlay .message-body').textContent()).toContain(
+            'a document base element with relative entry stylesheet URLs is unsupported',
+          );
+          const image = page.waitForResponse(`${url}/image.svg`);
+          writeFileSync(join(dir, 'head.html'), '<base href="/elsewhere/">');
+          await fetch(url);
+          expect((await image).status()).toBe(200);
+          await page.waitForSelector('#passages .passage');
+          expect(await page.locator('#passages .passage').textContent()).toContain('Hello from the story.');
+          expect(await page.locator('vite-error-overlay').count()).toBe(0);
+        } finally {
+          await page.close();
+        }
+      },
+    );
+  },
+);
+
 const sockets: WebSocket[] = [];
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.close();
