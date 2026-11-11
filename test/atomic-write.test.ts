@@ -375,3 +375,42 @@ describe('write errors name the output path given (#388)', () => {
     }).not.toThrow();
   });
 });
+
+describe('directory-required output paths (#219)', () => {
+  it.each(process.platform === 'win32' ? ['/', '\\', '//'] : ['/', '//'])(
+    'refuses a missing endpoint with trailing %s before writing',
+    (separator) => {
+      const path = join(dir, 'missing') + separator;
+      expect(() => {
+        checkWritable(path);
+      }).toThrow();
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow();
+      expect(readdirSync(dir)).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32').each(['supplied path', 'relative target', 'absolute target', 'chain'])(
+    'preserves dangling links when the %s has a trailing separator',
+    (variant) => {
+      const target = variant === 'absolute target' ? join(dir, 'missing') : 'missing';
+      const endpoint = join(dir, 'endpoint');
+      const linkTarget = variant === 'supplied path' ? target : `${target}/`;
+      symlinkSync(linkTarget, endpoint);
+      const output = variant === 'chain' ? join(dir, 'output') : endpoint;
+      if (variant === 'chain') symlinkSync('endpoint', output);
+      const path = variant === 'supplied path' ? `${output}/` : output;
+      const before = readdirSync(dir).sort();
+      expect(() => {
+        checkWritable(path);
+      }).toThrow();
+      expect(() => {
+        writeFileAtomic(path, 'new');
+      }).toThrow();
+      expect(fs.readlinkSync(endpoint)).toBe(linkTarget);
+      expect(fs.lstatSync(output).isSymbolicLink()).toBe(true);
+      expect(readdirSync(dir).sort()).toEqual(before);
+    },
+  );
+});

@@ -32,6 +32,9 @@ export const MATRIX = {
       'symlink target with an intermediate link followed by dot-dot',
       'regular destination with a stream-looking lexical spelling',
       'symlink alias of piped stdout',
+      'missing output with a trailing separator',
+      'dangling symlink output with a trailing separator',
+      'symlink targets with trailing separators',
     ],
   },
   TYPE: {
@@ -110,6 +113,7 @@ export const MATRIX = {
       'forced change with unchanged mtime',
       'parse-option invalidation',
       'generated-name collision',
+      'external file symlinks preserve source types and media names',
     ],
   },
   OUTPUT: {
@@ -124,6 +128,7 @@ export const MATRIX = {
       'missing IFID reported',
       'public directory-link copies excluded from overlapping Vite output',
       'Rollup markless story writes remain rebuildable',
+      'external file symlink sources protect authored output bytes',
     ],
   },
   CLI: {

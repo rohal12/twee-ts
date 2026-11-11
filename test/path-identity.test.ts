@@ -160,6 +160,21 @@ describe('canonical identity on the real file system', () => {
     expect(realAt(join(dir, 'real')).identify(join(dir, 'link')).display).toBe('.');
   });
 
+  it.skipIf(process.platform === 'win32').each(['source.txt', 'source.tw'])(
+    'keeps an external file link name when its target %s is inside the working directory (#563)',
+    (target) => {
+      mkdirSync(join(dir, 'cwd'));
+      mkdirSync(join(dir, 'aliases'));
+      writeFileSync(join(dir, 'cwd', target), '');
+      symlinkSync(join('..', 'cwd', target), join(dir, 'aliases', 'story.tw'));
+      const ids = realAt(join(dir, 'cwd'));
+      const id = ids.identify(join(dir, 'aliases', 'story.tw'));
+      expect(id.display).toBe(join('..', 'aliases', 'story.tw'));
+      expect(ids.sameFile(id.display, target)).toBe(true);
+      expect(ids.matchesExclude(id, ['../aliases/*.tw'])).toBe(true);
+    },
+  );
+
   it.skipIf(CASE_INSENSITIVE_TMP)('tells case variants apart on a case-sensitive volume', () => {
     writeFileSync(join(dir, 'a.tw'), '');
     writeFileSync(join(dir, 'A.tw'), '');
@@ -206,6 +221,28 @@ describe('canonical identity on the real file system', () => {
 });
 
 describe('case-insensitive volumes, probed per volume', () => {
+  it.each([
+    ['POSIX', posix, '/'],
+    ['Windows', win32, 'C:\\'],
+  ] as const)('preserves external file link names with %s paths (#563)', (_name, path, root) => {
+    const project = path.join(root, 'project');
+    const aliases = path.join(root, 'aliases');
+    const target = path.join(project, 'source.txt');
+    const link = path.join(aliases, 'story.tw');
+    const fs = new FakeIdentityFs(path)
+      .mount(root, 1, true)
+      .mkdir(project)
+      .mkdir(aliases)
+      .file(target)
+      .symlink(target, link)
+      .symlink(project, path.join(root, 'project-alias'));
+    const ids = createPathIdentifier({ path, fs, cwd: () => project });
+    const id = ids.identify(link);
+    expect(id.display).toBe(path.join('..', 'aliases', 'story.tw'));
+    expect(ids.sameFile(id.display, target)).toBe(true);
+    expect(ids.identify(path.join(root, 'project-alias')).display).toBe('.');
+  });
+
   it('folds case on an insensitive volume mounted on a case-sensitive one (Linux vfat, exFAT, casefold)', () => {
     const fs = new FakeIdentityFs(posix)
       .mount('/', 1, false)

@@ -22,8 +22,8 @@
  * - `display`: the form for messages and for exclude globs. It is the path relative to the working
  *   directory when the file is inside it, comparing the written paths first and the real paths
  *   second (so a working directory reached through a link, such as macOS's `/var` and
- *   `/private/var`, still gives a relative path; a link to a file keeps its own name there when
- *   its folder is inside, else it is shown by its target). A file outside the working directory keeps the
+ *   `/private/var`, still gives a relative path; a link to a file always keeps its own name).
+ *   A file outside the working directory keeps the
  *   lexical relative path (`../other/a.tw`), or an absolute path when no relative one exists (another
  *   Windows drive). It uses the platform's separators.
  * - `caseInsensitive`: whether the volume compares names without case.
@@ -339,9 +339,11 @@ export function createPathIdentifier(options: PathIdentifierOptions = {}): PathI
     const rel = flavour.relative(tidy(cwd()), absolute);
     if (isInsideRelative(rel, flavour)) return rel === '' ? '.' : rel;
     // Outside the working directory as written: try again between the real paths, first keeping the
-    // file's own name (a link to a file is reported by its name, not its target's), then the target.
+    // file's own name. Only a directory may fall back to its target (including an alias of cwd itself):
+    // loaders and output checks use display's extension and basename, so a file link must keep both.
     const located = flavour.join(resolvePath(flavour.dirname(absolute), 0).canonical, flavour.basename(absolute));
-    for (const candidate of [located, canonical]) {
+    const candidates = fs.lstat(canonical)?.isDirectory() === true ? [located, canonical] : [located];
+    for (const candidate of candidates) {
       const realRel = flavour.relative(canonicalCwd(), candidate);
       if (isInsideRelative(realRel, flavour)) return realRel === '' ? '.' : realRel;
     }

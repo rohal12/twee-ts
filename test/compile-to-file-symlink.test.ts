@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -38,6 +39,27 @@ function build(outFile: string): Promise<unknown> {
 }
 
 describe.skipIf(process.platform === 'win32')('compileToFile with a dangling output symlink', () => {
+  it.each(['plain', 'link path', 'relative target', 'absolute target', 'chain'])(
+    'rejects directory-required %s without creating another destination (#219)',
+    async (variant) => {
+      const target = join(dir, 'missing');
+      const endpoint = join(dir, 'endpoint');
+      const linkTarget =
+        variant === 'absolute target' ? `${target}/` : variant === 'link path' ? 'missing' : 'missing/';
+      if (variant !== 'plain') symlinkSync(linkTarget, endpoint);
+      if (variant === 'chain') symlinkSync('endpoint', join(dir, 'output'));
+      const output = variant === 'plain' ? `${target}/` : variant === 'chain' ? join(dir, 'output') : endpoint;
+      const outFile = variant === 'link path' ? `${output}/` : output;
+      const before = readdirSync(dir).sort();
+      await expect(build(outFile)).rejects.toThrow();
+      expect(existsSync(target)).toBe(false);
+      expect(readdirSync(dir).sort()).toEqual(before);
+      expect(variant === 'plain' ? undefined : readlinkSync(endpoint)).toBe(
+        variant === 'plain' ? undefined : linkTarget,
+      );
+    },
+  );
+
   it('creates the target of an absolute dangling link and keeps the link', async () => {
     const link = join(dir, 'output.json');
     const target = join(dir, 'served.json');

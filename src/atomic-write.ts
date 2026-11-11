@@ -347,6 +347,10 @@ const MAX_LINK_DEPTH = 40;
 function resolveWriteTarget(path: string, platform: NodeJS.Platform): string {
   let current = path;
   for (let depth = 0; depth <= MAX_LINK_DEPTH; depth++) {
+    // A trailing separator requires a directory, even on a missing endpoint or a dangling link target.
+    // dirname/basename and join would erase it and could replace the link or create a different pathname.
+    if (current.endsWith(sep) || (sep === '\\' && current.endsWith('/')))
+      throw codeError('EISDIR', 'the output path requires a folder');
     // A descriptor is an endpoint, even when procfs exposes it as a link to a synthetic socket/pipe name.
     // Match only resolved spellings: lexical normalization can erase a directory link before `..`.
     if (isStreamPath(current, platform)) return current;
