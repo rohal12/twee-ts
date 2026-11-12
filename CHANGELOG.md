@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Watch filesystem-resolved external sources, modules and head files in Vite development, automatically reloading after saves and following retargeted input links (#466).
 - Preserve external file symlink names for source and module loading, media passage names, and authored-output protection (#563).
 - Reject directory-required output paths and symlink targets with trailing separators, preserving dangling links and avoiding writes to a different pathname (#219).
 - Validate entry stylesheet URLs against the document base in Vite development, reporting unsupported combinations through the error overlay while retaining the last successful page and assets (#555).

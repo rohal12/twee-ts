@@ -24,7 +24,9 @@ import { bundleEntry, checkEntryStyleBase, entryCollisionMessage, entrySources, 
 import type { EntryBundle } from './vite-entry.js';
 import { readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
 import type { GlobScope, ScopeContents } from './vite-glob.js';
-import { missingImportFolders } from './watch-targets.js';
+import { linksOnTheWay, missingImportFolders } from './watch-targets.js';
+import { createLinkWatch } from './link-watch.js';
+import type { LinkWatch } from './link-watch.js';
 
 /** What the dev server needs from the plugin. */
 export interface DevStoryOptions {
@@ -362,7 +364,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const paths = storyPaths(options.outputFilename);
   const { inputs, excluded: excludedGlob } = options;
   const entryPath = options.entry;
-  // Files and folders are compared by identity key (see paths.ts); the inputs are watched as given.
+  // Files and folders are compared by identity key (see paths.ts).
   const root = fileKey(config.root);
   // A source folder may be a symbolic link that is retargeted while the server runs, so its identity is read
   // when it is needed, never kept from startup.
@@ -373,7 +375,28 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let outputs = dev.outputs(config);
   let output = outputPaths(outputs);
   const excluded = (file: string): boolean => excludedGlob(file) || output.isOutput(file, inputs);
-  server.watcher.add([...inputs]);
+  let inputLinks: LinkWatch | undefined;
+  let inputLinkSignalKey: string | undefined;
+  let inputLinkPaths: string[] = [];
+  // Chokidar normalizes dot segments lexically, so a path through `link/..` must reach the native watcher
+  // by its resolved spelling. Keep the links too: replacing one can select a different input. Re-register
+  // on rebuild so edits of the newly selected target are watched after a retarget.
+  const watchInputs = (): void => {
+    // A temporarily missing link is no longer found by traversal. Keep its location until it reappears,
+    // so a failed compile after removal does not lose the event that can recover it.
+    const links = [
+      ...new Set([...inputLinkPaths.filter((link) => !existsSync(link)), ...inputs.flatMap(linksOnTheWay)]),
+    ];
+    inputLinkPaths = links;
+    if (config.server.watch !== null && links.length > 0) inputLinks ??= createLinkWatch();
+    inputLinks?.watch(links);
+    inputLinkSignalKey = inputLinks === undefined ? undefined : fileKey(inputLinks.signal);
+    server.watcher.add([
+      ...new Set(inputs.map(canonicalPath)),
+      ...links,
+      ...(inputLinks === undefined ? [] : [canonicalPath(inputLinks.signal)]),
+    ]);
+  };
 
   const outputMode: OutputMode = options.compile().outputMode ?? 'html';
   let html = '';
@@ -452,6 +475,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     closed = true;
     clearTimeout(timer);
     pending.clear();
+    inputLinks?.close();
     return closeWatcher();
   };
 
@@ -728,6 +752,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       if (changed.size > 0 && unread.length === 0 && !regrouped) return;
       outputs = dev.outputs(config);
       output = outputPaths(outputs);
+      watchInputs();
       // Taken before the compile reads anything, so a file written during it
       // still counts as changed afterwards.
       compiledInputs = storyInputFiles(true);
@@ -785,11 +810,17 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // reacting to it would bundle again, and again.
     if (isViteConfigTemp(path)) return;
     const changed = fileKey(path);
+    // Chokidar follows links and can miss their replacement; the shared link watch reports that separately.
+    if (changed === inputLinkSignalKey) {
+      for (const input of inputs) noteChange(fileKey(input));
+      return;
+    }
     // A file or folder added to or removed from a glob's scope may change what the glob selects; anything
     // in a folder a plugin of the entry build watches, or that folder itself (also one that did not exist yet),
     // may change what the plugin reads.
     const isDir = event === 'addDir' || event === 'unlinkDir';
     const regrouped =
+      compiledInputNames !== namedInputs() ||
       (event !== 'change' && inGlobScope(path, isDir)) ||
       inWatchedFolder(path) ||
       (isDir && entryPath !== undefined && entryFiles.has(changed));
