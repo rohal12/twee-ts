@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Limit JavaScript parsing to 128 captures with the same name per regular-expression literal; formats exceeding that limit are rejected with a diagnostic to bound validation work (#571).
+
 ### Fixed
+
+- Collect disappearing or newly inaccessible named source/module lookups through the input diagnostic policy and continue discovery (#281).
+- Preserve executable hashbangs when combining scripts in Twine 2 HTML, archive and JSON output, without shifting source locations (#348).
+- Bound duplicate named-capture validation before Acorn comparisons and native RegExp construction, preserve link-reading recovery, and include parser failures in escaping warnings (#571).
 
 - Preserve directory requirements such as `output.tw/.` when rebasing config paths, preventing writes to a different destination (#465).
 - Reload Vite stories for discovered file links, following replacement and retargeting of linked sources and modules (#566).

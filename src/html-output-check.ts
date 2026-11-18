@@ -179,14 +179,15 @@ export function codeEscapeDiagnostics(kind: 'script' | 'style', code: CodeText):
       message:
         where(site.offset, JSON.stringify(site.sequence)) +
         ' outside a string, comment or regular expression literal; it is written with a backslash after the "<" ' +
-        `so that the HTML parser does not end the ${kind} element there, which changes the code.`,
+        `so that the HTML parser does not end the ${kind} element there, which changes the code.` +
+        (site.reason === undefined ? '' : ` JavaScript could not be read: ${site.reason}.`),
     });
   }
   return diagnostics;
 }
 
 /** The escape sites in `text` where the inserted backslash changes the code. */
-function changingEscapes(kind: 'script' | 'style', text: string): EscapeSite[] {
+function changingEscapes(kind: 'script' | 'style', text: string): (EscapeSite & { readonly reason?: string })[] {
   const sites = kind === 'script' ? scriptEscapeSites(text) : styleEscapeSites(text);
   if (sites.length === 0) return [];
   const ranges = sites.map((site) => ({ start: site.offset, end: site.offset + site.sequence.length, site }));
@@ -194,7 +195,9 @@ function changingEscapes(kind: 'script' | 'style', text: string): EscapeSite[] {
     return cssContexts(text, ranges).flatMap(({ range, context }) => (context.kind === 'code' ? [range.site] : []));
   }
   return javaScriptContexts(text, ranges).flatMap(({ range, context }) =>
-    escapeChangesCode(range.site, context) ? [range.site] : [],
+    escapeChangesCode(range.site, context)
+      ? [{ ...range.site, ...(context.kind === 'unparsable' ? { reason: context.reason } : {}) }]
+      : [],
   );
 }
 

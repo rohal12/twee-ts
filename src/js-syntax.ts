@@ -6,7 +6,7 @@
  * hashbang, at the latest ECMAScript version acorn knows.
  */
 import { Parser } from 'acorn';
-import type { AnyNode, Options, Program } from 'acorn';
+import type { AnyNode, Comment, Options, Program } from 'acorn';
 import { escapeLoneSurrogates, quotableCharacterAt } from './source-text.js';
 import { isRecord, pushAll } from './util.js';
 
@@ -50,6 +50,39 @@ class ScopeNames {
   }
 }
 
+/** The fields of Acorn 8's regexp validation state needed before its duplicate-name comparison loop. */
+interface RegExpBranch {
+  readonly parent: RegExpBranch | null;
+}
+
+interface RegExpState {
+  readonly start: number;
+  readonly pos: number;
+  readonly lastStringValue: string;
+  readonly groupNames: Readonly<Record<string, boolean | readonly RegExpBranch[] | undefined>>;
+  readonly branchID: RegExpBranch;
+}
+
+declare module 'acorn' {
+  interface Parser {
+    regexp_groupSpecifier(state: RegExpState): void;
+    regexp_eatGroupName(state: RegExpState): boolean;
+  }
+}
+
+/** Bound both Acorn's pairwise branch comparisons and the engine's later RegExp construction per name. */
+const MAX_SAME_NAME_CAPTURES = 128;
+const MAX_REGEXP_BRANCH_WORK = 1_000_000;
+
+function branchDepth(branch: RegExpBranch): number {
+  let depth = 0;
+  for (let current: RegExpBranch | null = branch; current !== null; current = current.parent) depth++;
+  return depth;
+}
+
+/** A lexically complete regexp token that cannot be validated within the work limit; raisedAt is its end. */
+export class JsRegExpLimitError extends JsSyntaxError {}
+
 /**
  * Acorn's parser, reporting syntax errors as {@link JsSyntaxError}. Acorn's own `raise` works out a
  * line and column for its message by reading the input from the start, which callers that recover
@@ -61,6 +94,9 @@ class ScopeNames {
  * same way.
  */
 export class AcornParser extends Parser {
+  private readingGroupSpecifier = false;
+  // Acorn makes a fresh group-name table per literal and per validation pass, which also resets this budget.
+  private readonly regexpBranchWork = new WeakMap<object, number>();
   /** Acorn's current scanning position, which its type declarations leave out. */
   declare pos: number;
 
@@ -69,6 +105,46 @@ export class AcornParser extends Parser {
 
   enterScope(flags: number): void {
     this.scopeStack.push({ flags, var: new ScopeNames(), lexical: new ScopeNames(), functions: new ScopeNames() });
+  }
+
+  override regexp_groupSpecifier(state: RegExpState): void {
+    this.readingGroupSpecifier = true;
+    try {
+      super.regexp_groupSpecifier(state);
+    } finally {
+      this.readingGroupSpecifier = false;
+    }
+  }
+
+  override regexp_eatGroupName(state: RegExpState): boolean {
+    const read = super.regexp_eatGroupName(state);
+    // Acorn also reads GroupName in backreferences: only declarations add comparison work. Let Acorn decode
+    // escaped names and reject invalid grammar; its per-pattern lists reset for each literal and reparse pass.
+    if (read && this.readingGroupSpecifier) {
+      const known = state.groupNames[state.lastStringValue];
+      if (known !== undefined && typeof known !== 'boolean') {
+        if (known.length >= MAX_SAME_NAME_CAPTURES) {
+          throw new JsRegExpLimitError(
+            `Regular expression exceeds the parser limit of ${MAX_SAME_NAME_CAPTURES} captures with the same name`,
+            state.start + state.pos,
+            this.pos,
+          );
+        }
+        // separatedFrom() walks two ancestor chains. Charge their full product before Acorn enters that loop,
+        // including comparisons across nested disjoint alternatives that a count of captures alone cannot bound.
+        const previousDepth = known.reduce((sum, branch) => sum + branchDepth(branch), 0);
+        const work = (this.regexpBranchWork.get(state.groupNames) ?? 0) + previousDepth * branchDepth(state.branchID);
+        if (work > MAX_REGEXP_BRANCH_WORK) {
+          throw new JsRegExpLimitError(
+            'Regular expression exceeds the parser validation work limit',
+            state.start + state.pos,
+            this.pos,
+          );
+        }
+        this.regexpBranchWork.set(state.groupNames, work);
+      }
+    }
+    return read;
   }
 
   raise(pos: number, message: string): never {
@@ -120,6 +196,20 @@ export function trySyntax<T>(read: () => T): SyntaxRead<T> {
 /** Parse `source` as a classic script. */
 export function parseScript(source: string, options: Readonly<Options> = SCRIPT_OPTIONS): SyntaxRead<Program> {
   return trySyntax(() => AcornParser.parse(source, options));
+}
+
+/**
+ * A source that can follow generated headers or another script. Acorn's constructor consumes a leading hashbang
+ * as a comment before reading any tokens. Replace just its two-character marker, keeping every source offset and
+ * line terminator intact; no other comment, string or template is read or changed.
+ */
+export function scriptForJoin(source: string): string {
+  const comments: Comment[] = [];
+  AcornParser.tokenizer(source, {
+    ...SCRIPT_OPTIONS,
+    onComment: comments,
+  });
+  return comments[0]?.start === 0 ? `//${source.slice(2)}` : source;
 }
 
 /** Whether a value from an acorn tree is a syntax node. */

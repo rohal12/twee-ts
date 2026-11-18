@@ -352,8 +352,11 @@ export function getFilenames(
       continue;
     }
     let stat: Stats;
+    let link = false;
     try {
       stat = statSync(pathname);
+      // An editor may remove the file or change access between these lookups. Both belong to the input policy.
+      if (stat.isFile()) link = lstatSync(pathname).isSymbolicLink();
     } catch (e) {
       const failure = failureOfError(e);
       if (failure === 'missing' && isSymbolicLink(pathname)) {
@@ -363,7 +366,7 @@ export function getFilenames(
     }
     if (stat.isFile()) {
       if (output.isFile(pathname)) outputSources.push(pathname);
-      else addFile(identify(pathname), 'named', lstatSync(pathname).isSymbolicLink());
+      else addFile(identify(pathname), 'named', link);
     } else if (stat.isDirectory()) {
       const located = identify(pathname).absolute;
       walkDir(located, 'named', located);

@@ -18,6 +18,7 @@ import type {
   FileCacheEntry,
 } from './types.js';
 import { ineffectiveImportDiagnostics, joinWithLineFeeds } from './css-imports.js';
+import { scriptForJoin } from './js-syntax.js';
 import type { StylesheetSource } from './css-imports.js';
 import { createStory, getStoryStats, snapshot } from './story.js';
 import {
@@ -917,7 +918,12 @@ function storyToJSON(story: Story, startName: string, diagnostics: Diagnostic[],
     creator: CREATOR_NAME,
     'creator-version': VERSION,
     style: style.text,
-    script: scripts.map((text, i) => (i < scripts.length - 1 ? terminateScript(text) : text)).join(''),
+    script: scripts
+      .map((text, i) => {
+        const source = scripts.length > 1 ? scriptForJoin(text) : text;
+        return i < scripts.length - 1 ? terminateScript(source) : source;
+      })
+      .join(''),
     passages: storyPassages,
   };
 
