@@ -35,6 +35,7 @@ export const MATRIX = {
       'missing output with a trailing separator',
       'dangling symlink output with a trailing separator',
       'symlink targets with trailing separators',
+      'config output with a terminal directory check',
     ],
   },
   TYPE: {

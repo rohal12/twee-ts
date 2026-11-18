@@ -72,6 +72,31 @@ describe.skipIf(process.platform === 'win32')('path construction boundaries (#46
     }
   });
 
+  it.each(['/.', '/./', '/'])('preserves directory requirements in every rebased field: %s (#465)', async (suffix) => {
+    const dir = makeProject({ 'story.tw': storyWith('AUTHORED'), 'keep.tw': 'KEEP' });
+    const path = `keep.tw${suffix}`;
+    const config = rebaseConfigPaths(
+      { sources: [path], modules: [path], headFile: path, formatPaths: [path], output: path },
+      join(dir, 'config.json'),
+    );
+    for (const field of [config.sources?.[0], config.modules?.[0], config.headFile, config.formatPaths?.[0]]) {
+      expect(() => readFileSync(field ?? '')).toThrow(/ENOTDIR/);
+    }
+    await expect(
+      compileToFile({ sources: [join(dir, 'story.tw')], outputMode: 'twee3', outFile: config.output ?? '' }),
+    ).rejects.toThrow();
+    expect(readFileSync(join(dir, 'keep.tw'), 'utf8')).toBe('KEEP');
+    const missing = rebaseConfigPaths({ output: `missing${suffix}` }, join(dir, 'config.json'));
+    await expect(
+      compileToFile({ sources: [join(dir, 'story.tw')], outputMode: 'twee3', outFile: missing.output ?? '' }),
+    ).rejects.toThrow();
+    expect(existsSync(join(dir, 'missing'))).toBe(false);
+    mkdirSync(join(dir, 'folder'));
+    writeFileSync(join(dir, 'folder/inside.txt'), 'INSIDE');
+    const folder = rebaseConfigPaths({ sources: [`folder${suffix}`] }, join(dir, 'config.json'));
+    expect(readFileSync(`${folder.sources?.[0] ?? ''}/inside.txt`, 'utf8')).toBe('INSIDE');
+  });
+
   it('keeps a missing intermediate directory in a rebased path', () => {
     const dir = fixture(true);
     const config = rebaseConfigPaths({ sources: ['missing/../a.tw'] }, join(dir, 'config.json'));

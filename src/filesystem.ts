@@ -15,7 +15,7 @@ import {
 import type { FSWatcher, Stats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isKnownFileType, normalizedFileExt } from './media-types.js';
-import { absolutePathSpelling, identify, isKeyInside, matchesExclude } from './path-identity.js';
+import { absolutePathSpelling, identify, isKeyInside, isSameOrInside, matchesExclude } from './path-identity.js';
 import type { PathIdentity } from './path-identity.js';
 import { failureOfError, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputDiscovery, InputFailure, InputRole } from './input-policy.js';
@@ -35,6 +35,46 @@ import type { JsonValue } from './json-decode.js';
 export function isExcluded(filename: string, exclude: readonly (string | ExcludeGlob)[]): boolean {
   if (exclude.length === 0) return false;
   return matchesExclude(identify(filename), exclude);
+}
+
+/**
+ * Membership of named module/head inputs, including discovered file links outside their folders. A watcher may
+ * report the authored alias or the real target. Reuse discovery while the named roots, listed folders and every
+ * discovered link are unchanged, so classifying many excluded sources does not walk the module folders per file.
+ */
+export function inputMembership(inputs: readonly string[]): (filename: string) => boolean {
+  const state = (path: string): string => {
+    const { key } = identify(path);
+    try {
+      const stat = statSync(path);
+      return `${key}:${stat.mode}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+    } catch {
+      return `${key}:missing`;
+    }
+  };
+  let observed = new Map<string, string>();
+  let members: ReadonlySet<string> | undefined;
+  return (filename) => {
+    if (inputs.length === 0) return false;
+    if (inputs.some((root) => isSameOrInside(filename, root) || isSameOrInside(dirname(filename), root))) return true;
+    if (members === undefined || [...observed].some(([path, before]) => state(path) !== before)) {
+      observed = new Map(inputs.map((path) => [path, state(path)]));
+      const found = getFilenames(
+        inputs,
+        undefined,
+        [],
+        'module',
+        (folder) => {
+          observed.set(folder, state(folder));
+        },
+        (link) => {
+          observed.set(link, state(link));
+        },
+      );
+      members = new Set(found.files.map((file) => file.key));
+    }
+    return members.has(identify(filename).key);
+  };
 }
 
 /**
@@ -230,6 +270,7 @@ function compareNames(a: string, b: string): number {
  *
  * `onFolder` is called with each folder the walk lists, just before it lists it, so a caller can tell later
  * whether what is in the folders walked changed since (the Vite dev server, which then needs no walk).
+ * `onLink` observes discovered links, including dangling links and links to folders, whose targets may change.
  */
 export function getFilenames(
   pathnames: readonly string[],
@@ -237,6 +278,7 @@ export function getFilenames(
   exclude: readonly (string | ExcludeGlob)[] = [],
   role: Extract<InputRole, 'source' | 'module'> = 'source',
   onFolder?: (folder: string) => void,
+  onLink?: (link: string) => void,
 ): FilenamesResult {
   const files: DiscoveredFile[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -272,6 +314,7 @@ export function getFilenames(
     try {
       stat = lstatSync(pathname);
       if (stat.isSymbolicLink()) {
+        onLink?.(pathname);
         link = true;
         // A link is judged by its own name first (#446), as a file is: a file type the role doesn't load and a file
         // `exclude` leaves out are skipped before the target is read, so no failure of the target can fail the build.

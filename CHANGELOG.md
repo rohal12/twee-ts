@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve directory requirements such as `output.tw/.` when rebasing config paths, preventing writes to a different destination (#465).
+- Reload Vite stories for discovered file links, following replacement and retargeting of linked sources and modules (#566).
+- Keep discovered module links exempt from source excludes in Vite request catch-up, Rollup watch and standalone watch (#567).
+
 - Watch filesystem-resolved external sources, modules and head files in Vite development, automatically reloading after saves and following retargeted input links (#466).
 - Preserve external file symlink names for source and module loading, media passage names, and authored-output protection (#563).
 - Reject directory-required output paths and symlink targets with trailing separators, preserving dangling links and avoiding writes to a different pathname (#219).

@@ -445,6 +445,35 @@ describe('watch with exclude', () => {
     expect(builds.errors).toEqual([]);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'rebuilds for excluded file links discovered in a module folder (#567)',
+    async () => {
+      const module = join(tmpDir, 'external.js');
+      mkdirSync(join(story, 'lib'));
+      writeFileSync(module, 'window.linkedModule = "FIRST";');
+      symlinkSync(module, join(story, 'lib/mod.js'));
+      const builds = buildQueue();
+      controller = await watch({
+        ...COMPILE,
+        sources: [story],
+        outFile,
+        modules: [join(story, 'lib')],
+        exclude: [inTmp('**/*.js')],
+        onBuild: builds.onBuild,
+        onError: builds.onError,
+      });
+      expect((await builds.next()).output).toContain('window.linkedModule = "FIRST";');
+      vi.useFakeTimers(FAKE_TIMERS);
+      writeFileSync(module, 'window.linkedModule = "SECOND_VERSION";');
+      emit(story, join('lib', 'mod.js'));
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      vi.advanceTimersByTime(500);
+      vi.useRealTimers();
+      expect((await builds.next()).output).toContain('window.linkedModule = "SECOND_VERSION";');
+      expect(builds.errors).toEqual([]);
+    },
+  );
+
   it('still rebuilds for a module that an exclude glob also matches', async () => {
     const module = join(story, 'lib', 'mod.js');
     mkdirSync(dirname(module));

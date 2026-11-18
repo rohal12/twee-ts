@@ -23,6 +23,7 @@ import {
   compile,
   compileIncremental,
   compileToFile,
+  loadConfigFile,
   decompileHTML,
   fetchDirectFormat,
   parseFormatJSON,
@@ -55,6 +56,16 @@ const noSymlinks = process.platform === 'win32' ? 'symbolic links are not portab
 defineContracts(
   'WRITE',
   {
+    'config output with a terminal directory check': async (root) => {
+      const config = write(join(root, 'config/twee-ts.config.json'), JSON.stringify({ output: 'keep.tw/.' }));
+      const output = write(join(root, 'config/keep.tw'), 'AUTHORED');
+      const loaded = loadConfigFile(config);
+      await expect(compileToFile(jsonToFile(loaded.output ?? ''))).rejects.toThrow();
+      expect(readFileSync(output, 'utf8')).toBe('AUTHORED');
+      write(config, JSON.stringify({ output: 'missing/.' }));
+      await expect(compileToFile(jsonToFile(loadConfigFile(config).output ?? ''))).rejects.toThrow();
+      expect(existsSync(join(root, 'config/missing'))).toBe(false);
+    },
     'new file': (root) => expectWritten(root, () => undefined),
     'existing file': (root) => expectWritten(root, (output) => write(output, 'previous output')),
     'missing output with a trailing separator': async (root) => {

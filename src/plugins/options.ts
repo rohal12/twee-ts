@@ -8,8 +8,8 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
 import { TweeTsError } from '../errors.js';
-import { isExcluded } from '../filesystem.js';
-import { absolutePathSpelling, identify, isSameOrInside } from '../path-identity.js';
+import { isExcluded, inputMembership } from '../filesystem.js';
+import { absolutePathSpelling, identify } from '../path-identity.js';
 import { toPosix } from './paths.js';
 import { parseVersion } from '../semver.js';
 import { isRecord } from '../util.js';
@@ -214,6 +214,7 @@ export function resolvePluginOptions(
   const compileOptions: Readonly<PluginCompileOptions> = { ...options.compileOptions };
   const { headFile, modules = [], exclude = [] } = compileOptions;
   const notExcludable = [...(headFile === undefined ? [] : [headFile]), ...modules].map(absolute);
+  const isModuleOrHead = inputMembership(notExcludable);
   return {
     sources: [...sources],
     format,
@@ -225,7 +226,7 @@ export function resolvePluginOptions(
     excluded: (file) =>
       exclude.length > 0 &&
       [file, ...spellingsUnderSources(file, sources)].some((spelling) => isExcluded(spelling, exclude)) &&
-      !notExcludable.some((path) => isSameOrInside(file, path)),
+      !isModuleOrHead(file),
     compile: (inline = []) => ({ ...compileOptions, sources: [...sources, ...inline], formatId: format }),
   };
 }
