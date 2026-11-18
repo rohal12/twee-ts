@@ -1,15 +1,16 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanUp, makeProject, storyWith, tempDir, writeFiles } from './helpers/plugins.js';
+import { tmpdir } from 'node:os';
+import { cleanUp, makeProject, storyWith, writeFiles } from './helpers/plugins.js';
 import { BUILD_TIMEOUT_MS, cliNodeArgs } from './helpers/package-build.js';
 import { removeDir } from './helpers/remove-dir.js';
 
 let built = '';
 let nodeArgs: readonly string[] = [];
 beforeAll(() => {
-  built = tempDir();
+  built = mkdtempSync(join(tmpdir(), 'twee-path-cli-build-'));
   nodeArgs = cliNodeArgs(built);
 }, BUILD_TIMEOUT_MS);
 afterEach(cleanUp);
@@ -18,7 +19,31 @@ afterAll(() => {
 });
 
 describe.skipIf(process.platform === 'win32')('CLI path boundaries (#465, #467)', () => {
-  // A build folder registered with cleanUp() cannot outlive a test, so these related CLI calls share one fixture.
+  it.each(['/.', '/./', '/'])('refuses directory-required config outputs from either cwd: %s (#465)', (suffix) => {
+    const dir = makeProject({ 'config/story.tw': storyWith('COMPILED') });
+    for (const endpoint of ['keep.tw', 'missing']) {
+      for (const [cwd, file] of [
+        [dir, 'config/twee-ts.config.json'],
+        [join(dir, 'config'), 'twee-ts.config.json'],
+      ] as const) {
+        writeFileSync(join(dir, 'config/keep.tw'), 'AUTHORED');
+        writeFileSync(
+          join(dir, 'config/twee-ts.config.json'),
+          JSON.stringify({
+            sources: ['story.tw'],
+            outputMode: 'twee3',
+            output: `${endpoint}${suffix}`,
+          }),
+        );
+        const result = spawnSync(process.execPath, [...nodeArgs, '--config', file], { cwd, encoding: 'utf8' });
+        expect(result.status).toBe(1);
+        expect(readFileSync(join(dir, 'config/keep.tw'), 'utf8')).toBe('AUTHORED');
+        expect(existsSync(join(dir, 'config/missing'))).toBe(false);
+      }
+    }
+  });
+
+  // Compare both working directories against the same authored files.
   it('agrees about config sources and format discovery from the config folder and its parent', () => {
     const dir = makeProject({
       'config/a.tw': storyWith('WRONG_STORY'),

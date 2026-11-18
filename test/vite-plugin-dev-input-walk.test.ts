@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { Plugin } from 'vite';
 import { decompileHTML } from '../src/html-parser.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
+import { resolvePluginOptions } from '../src/plugins/options.js';
 import { buildFiles, cleanUp, COMPILE, makeProject, startServer, STORY, textOf } from './helpers/plugins.js';
 
 const calls = vi.hoisted(() => ({ readdir: [] as string[], realpath: [] as string[] }));
@@ -177,6 +178,38 @@ describe('vite plugin dev: the request catch-up reuses its walk of the inputs (#
       const served = names(await (await fetch(url)).text());
       expect(served).toContain('Y');
       expect(served).not.toContain('X');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reuses module discovery across source exclusions and refreshes file-link membership (#567)',
+    () => {
+      const dir = makeProject({
+        'story/start.tw': STORY,
+        'story/excluded.png': 'x',
+        'shared/one.js': 'ONE',
+        'shared/two.js': 'TWO',
+      });
+      fs.mkdirSync(join(dir, 'modules'));
+      fs.symlinkSync('one.js', join(dir, 'shared/current.js'));
+      fs.symlinkSync('../shared/current.js', join(dir, 'modules/linked.js'));
+      fs.symlinkSync('../shared/missing.js', join(dir, 'modules/dangling.js'));
+      const options = resolvePluginOptions('vite', {
+        sources: [join(dir, 'story')],
+        compileOptions: { modules: [join(dir, 'modules')], exclude: [{ base: dir, glob: '**/*' }] },
+      });
+      calls.readdir.length = 0;
+      for (let n = 0; n < 20; n += 1) expect(options.excluded(join(dir, 'story/excluded.png'))).toBe(true);
+      expect(calls.readdir.filter((path) => path === join(dir, 'modules'))).toHaveLength(1);
+      expect(options.excluded(join(dir, 'shared/one.js'))).toBe(false);
+      fs.rmSync(join(dir, 'shared/current.js'));
+      fs.symlinkSync('two.js', join(dir, 'shared/current.js'));
+      expect(options.excluded(join(dir, 'shared/two.js'))).toBe(false);
+      expect(options.excluded(join(dir, 'shared/one.js'))).toBe(true);
+      fs.writeFileSync(join(dir, 'shared/missing.js'), 'RECOVERED');
+      expect(options.excluded(join(dir, 'shared/missing.js'))).toBe(false);
+      fs.rmSync(join(dir, 'modules/linked.js'));
+      expect(options.excluded(join(dir, 'shared/two.js'))).toBe(true);
     },
   );
 

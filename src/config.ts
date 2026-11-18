@@ -482,9 +482,9 @@ export function rebaseConfigPaths(config: TweeTsConfig, configPath: string): Twe
   const dir = folder.display;
   const rebase = (path: string): string => {
     if (path === '-' || isAbsolute(path)) return path;
-    // A parent step must reach the filesystem after any preceding link (or missing folder), not be erased by join.
+    // Dot steps must reach the filesystem: parent steps follow links, and a final dot requires a directory.
     const parts = path.split(sep === '\\' ? /[/\\]/ : '/');
-    return parts.includes('..') ? `${dir}${sep}${path}` : join(dir, path);
+    return parts.some((part) => part === '.' || part === '..') ? `${dir}${sep}${path}` : join(dir, path);
   };
   const { sources, exclude, output, modules, headFile, formatPaths } = config;
   return {

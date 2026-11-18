@@ -3,7 +3,7 @@
  * compile(), compileToFile(), watch().
  * Ported from tweego.go + config.go.
  */
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import type {
   CompileOptions,
   CompileToFileOptions,
@@ -23,6 +23,7 @@ import { createStory, getStoryStats, snapshot } from './story.js';
 import {
   getFilenames,
   isExcluded,
+  inputMembership,
   isLoadableType,
   isPreviousBuild,
   outputPaths,
@@ -56,7 +57,7 @@ import { checkInsertedText } from './html-output-check.js';
 import { startPassageDiagnostics, storyTitleDiagnostics } from './start-passage.js';
 import { clearIndexCache } from './remote-formats.js';
 import { checkWritable, isOwnOutput, writeFileAtomic } from './atomic-write.js';
-import { identify, isKeyInside } from './path-identity.js';
+import { identify } from './path-identity.js';
 import { duplicateInput, failureOfRead, inputProblem, problemDiagnostic } from './input-policy.js';
 import type { InputProblem } from './input-policy.js';
 import { MAX_STRING_LENGTH, pushAll, readUTF8 } from './util.js';
@@ -219,12 +220,8 @@ export function watchWithWriteFilter(
   // head file alone, so a module (or a file in a module folder) or the head file
   // still rebuilds when a glob matches it.
   const exclude = options.exclude ?? [];
-  const notExcludable = [...modulePaths, ...headPaths].map((p) => identify(p).key);
-  const ignore = (filename: string): boolean => {
-    if (!isExcluded(filename, exclude)) return false;
-    const { key } = identify(filename);
-    return !notExcludable.some((root) => isKeyInside(key, root, sep));
-  };
+  const notExcludable = inputMembership([...modulePaths, ...headPaths]);
+  const ignore = (filename: string): boolean => isExcluded(filename, exclude) && !notExcludable(filename);
 
   // One build at a time. Changes reported while a build is in flight wait in `queued` and go
   // into a single follow-up build once it finishes. Every finished build is delivered first:

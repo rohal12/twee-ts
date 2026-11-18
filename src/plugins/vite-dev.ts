@@ -368,7 +368,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const root = fileKey(config.root);
   // A source folder may be a symbolic link that is retargeted while the server runs, so its identity is read
   // when it is needed, never kept from startup.
-  const inputKeys = (): string[] => inputs.map(fileKey);
+  const inputKeys = (): string[] => [...inputs.map(fileKey), ...compiledInputs.keys()];
 
   // What a build writes, which `vite build` may have left inside a source folder:
   // the story, chunks and assets, and the copies of the public files.
@@ -384,15 +384,17 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const watchInputs = (): void => {
     // A temporarily missing link is no longer found by traversal. Keep its location until it reappears,
     // so a failed compile after removal does not lose the event that can recover it.
+    const discovered = inputWalk?.files.filter((file) => file.link).map((file) => file.path) ?? [];
+    const watchedInputs = [...inputs, ...discovered];
     const links = [
-      ...new Set([...inputLinkPaths.filter((link) => !existsSync(link)), ...inputs.flatMap(linksOnTheWay)]),
+      ...new Set([...inputLinkPaths.filter((link) => !existsSync(link)), ...watchedInputs.flatMap(linksOnTheWay)]),
     ];
     inputLinkPaths = links;
     if (config.server.watch !== null && links.length > 0) inputLinks ??= createLinkWatch();
     inputLinks?.watch(links);
     inputLinkSignalKey = inputLinks === undefined ? undefined : fileKey(inputLinks.signal);
     server.watcher.add([
-      ...new Set(inputs.map(canonicalPath)),
+      ...new Set(watchedInputs.map(canonicalPath)),
       ...links,
       ...(inputLinks === undefined ? [] : [canonicalPath(inputLinks.signal)]),
     ]);
@@ -752,11 +754,11 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       if (changed.size > 0 && unread.length === 0 && !regrouped) return;
       outputs = dev.outputs(config);
       output = outputPaths(outputs);
-      watchInputs();
       // Taken before the compile reads anything, so a file written during it
       // still counts as changed afterwards.
       compiledInputs = storyInputFiles(true);
       compiledInputNames = inputWalk?.named;
+      watchInputs();
       // The compile cache trusts modification times, which a quick save may leave
       // unchanged (coarse file-system timestamps); forget the files that changed.
       for (const key of [...cache.keys()]) if (changed.has(fileKey(key))) cache.delete(key);
@@ -825,7 +827,16 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       inWatchedFolder(path) ||
       (isDir && entryPath !== undefined && entryFiles.has(changed));
     if (event !== 'add' && event !== 'change' && event !== 'unlink' && !regrouped) return;
-    if (!regrouped && (!keyWithin(changed, inputKeys()) || excluded(path)) && !touchesEntry(changed) && !linkMoved()) {
+    const withinInputs = keyWithin(changed, inputKeys()) || keyWithin(fileKey(dirname(path)), inputKeys());
+    // A new link belongs to its authored parent folder; its target may resolve outside every named root.
+    // The walk already applied source and output exclusions, so its membership accepts alias and real-path events.
+    if (
+      !regrouped &&
+      !compiledInputs.has(changed) &&
+      (!withinInputs || excluded(path)) &&
+      !touchesEntry(changed) &&
+      !linkMoved()
+    ) {
       return;
     }
     noteChange(changed);

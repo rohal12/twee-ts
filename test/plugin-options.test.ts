@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fc from 'fast-check';
 import { posix, win32 } from 'node:path';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rollup } from 'rollup';
 import { TweeTsError } from '../src/compiler.js';
@@ -159,6 +159,28 @@ describe('plugin options: one meaning for both plugins (D11)', () => {
       });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps discovered module links exempt through aliases and real paths (#567)',
+    () => {
+      const dir = makeProject({ 'story/start.tw': STORY, 'shared/one.js': 'ONE', 'shared/two.js': 'TWO' });
+      mkdirSync(join(dir, 'modules/deep'), { recursive: true });
+      symlinkSync('../../shared/one.js', join(dir, 'modules/deep/mod.js'));
+      const resolved = resolvePluginOptions('vite', {
+        sources: [join(dir, 'story')],
+        compileOptions: { modules: [join(dir, 'modules')], exclude: [{ base: dir, glob: '**/*.js' }] },
+      });
+      expect(resolved.excluded(join(dir, 'modules/deep/mod.js'))).toBe(false);
+      expect(resolved.excluded(join(dir, 'shared/one.js'))).toBe(false);
+      expect(resolved.excluded(join(dir, 'shared/two.js'))).toBe(true);
+      rmSync(join(dir, 'modules/deep/mod.js'));
+      symlinkSync('../../shared/two.js', join(dir, 'modules/deep/mod.js'));
+      expect(resolved.excluded(join(dir, 'shared/two.js'))).toBe(false);
+      expect(resolved.excluded(join(dir, 'shared/one.js'))).toBe(true);
+      writeFileSync(join(dir, 'modules/deep/plain.js'), 'PLAIN');
+      expect(resolved.excluded(join(dir, 'modules/deep/plain.js'))).toBe(false);
+    },
+  );
 
   it('leaves the head file and the modules out of exclude in both plugins', () => {
     const resolved = resolvePluginOptions('rollup', {
