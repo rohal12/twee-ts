@@ -53,6 +53,7 @@ import {
   parseScript,
   trySyntax,
 } from './js-syntax.js';
+import type { SyntaxRead } from './js-syntax.js';
 import { parseVersion } from './semver.js';
 
 /** The name given to a format.js that names no format. */
@@ -251,20 +252,19 @@ function describeNode(node: AnyNode): string {
  * The object literal that is all of `source`, if it is one: a format.js written as bare JSON or as
  * an object literal, which Tweego reads too.
  */
-function wholeFileObject(source: string, program: Program | undefined): ObjectExpression | undefined {
+function wholeFileObject(source: string, program: Program | undefined): SyntaxRead<ObjectExpression | undefined> {
   // In parentheses, the object is a script of one expression statement.
   const [statement, ...others] = program?.body ?? [];
   if (statement?.type === 'ExpressionStatement' && others.length === 0) {
-    return statement.expression.type === 'ObjectExpression' ? statement.expression : undefined;
+    return { ok: true, value: statement.expression.type === 'ObjectExpression' ? statement.expression : undefined };
   }
   // Bare, it is no valid script ({a: 1, b: 2}) or a labelled block ({a: 1}): read it as an expression.
-  const read = trySyntax(() => {
+  return trySyntax(() => {
     const node = AcornParser.parseExpressionAt(source, 0, SCRIPT_OPTIONS);
     // Only comments and white space may follow.
     const after = AcornParser.tokenizer(source.slice(node.end), SCRIPT_OPTIONS).getToken();
     return node.type === 'ObjectExpression' && after.type === tokTypes.eof ? node : undefined;
   });
-  return read.ok ? read.value : undefined;
 }
 
 /** The format object of a parsed file, or why there is none. */
@@ -276,7 +276,8 @@ function locateFormatObject(
   const calls = findStoryFormatCalls(program);
   const [call, ...others] = calls;
   if (call === undefined) {
-    const node = wholeFileObject(source, program);
+    const read = wholeFileObject(source, program);
+    const node = read.ok ? read.value : undefined;
     return node === undefined
       ? { ok: false, reason: 'Could not find a storyFormat({…}) call in the story format file.' }
       : { ok: true, node };
@@ -316,9 +317,12 @@ export function readFormatObject(source: string): FormatObjectRead {
     node = located.node;
   } else {
     // A file that is one object literal with several properties is not a valid script.
-    node = wholeFileObject(source, undefined);
+    const expression = wholeFileObject(source, undefined);
+    node = expression.ok ? expression.value : undefined;
     if (node === undefined) {
-      const { error } = parsed;
+      // Bare object formats fail the Script goal before their properties are read. Keep a resource-limit failure
+      // from the Expression goal instead of hiding it behind that expected Script syntax error.
+      const error = !expression.ok && expression.error instanceof JsRegExpLimitError ? expression.error : parsed.error;
       return {
         ok: false,
         reason: error.tooDeep

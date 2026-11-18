@@ -114,15 +114,16 @@ describe('regular-expression controls and public paths (#571)', () => {
     }
   });
 
-  it('reports format decoding limits explicitly', async () => {
-    const measured = await branchWork(() =>
-      decodeFormatJSON(
-        `const r=/${pattern(4000)}/;storyFormat({name:"Probe",version:"1.0.0",source:"{{STORY_DATA}}"});`,
-      ),
-    );
-    expect(measured.value).toEqual({ ok: false, reason: expect.stringContaining(MESSAGE) });
-    expect(measured.work).toBeLessThan(17000);
-  });
+  it.each(['call', 'bare', 'parenthesized'] as const)(
+    'reports %s format decoding limits explicitly',
+    async (wrapper) => {
+      const object = `{name:"Probe",version:"1.0.0",source:"{{STORY_DATA}}",setup(){const r=/${pattern(4000)}/;}}`;
+      const source = wrapper === 'call' ? `storyFormat(${object});` : wrapper === 'bare' ? object : `(${object})`;
+      const measured = await branchWork(() => decodeFormatJSON(source));
+      expect(measured.value).toEqual({ ok: false, reason: expect.stringContaining(MESSAGE) });
+      expect(measured.work).toBeLessThan(33000);
+    },
+  );
 
   it('bounds compilation, inspection and recovery while retaining later links', async () => {
     const measured = await branchWork(async () => {
