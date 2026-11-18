@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { getLineInfo } from 'acorn';
 import { LINE_TERMINATORS, describePosition, isLineTerminator, lineColumnFinder, lineEnd } from '../src/js-chars.js';
-import { AcornParser, JsSyntaxError, SCRIPT_OPTIONS, parseScript, trySyntax } from '../src/js-syntax.js';
+import { AcornParser, JsSyntaxError, SCRIPT_OPTIONS, parseScript, scriptForJoin, trySyntax } from '../src/js-syntax.js';
 
 describe('line terminators', () => {
   it('are exactly the four ECMAScript ones', () => {
@@ -91,5 +91,19 @@ describe('acorn syntax errors', () => {
         throw new TypeError('not a syntax error');
       }),
     ).toThrow(TypeError);
+  });
+});
+
+describe('hashbangs in joined scripts', () => {
+  it.each(['', '//#!keep', '/*#!keep*/', '"#!keep"', '`#!/keep`', ' #!invalid'])('keeps %j unchanged', (source) => {
+    expect(scriptForJoin(source)).toBe(source);
+  });
+
+  it.each(['', '\n', '\r', '\r\n', '\u2028', '\u2029'])('keeps source offsets with %j line endings', (newline) => {
+    const source = `#!/usr/bin/env node${newline}${newline === '' ? '' : 'void 0;'}`;
+    const transformed = scriptForJoin(source);
+    expect(transformed).toBe(`//${source.slice(2)}`);
+    expect(transformed.length).toBe(source.length);
+    expect(parseScript(transformed)).toEqual(parseScript(source));
   });
 });

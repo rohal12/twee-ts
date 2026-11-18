@@ -45,7 +45,14 @@ import { tokTypes } from 'acorn';
 import type { FormatDecodeResult, Twine2FormatJSON } from './types.js';
 import { describePosition, lineColumnFinder } from './js-chars.js';
 import type { LineColumn } from './js-chars.js';
-import { AcornParser, SCRIPT_OPTIONS, javaScriptNodes, parseScript, trySyntax } from './js-syntax.js';
+import {
+  AcornParser,
+  JsRegExpLimitError,
+  SCRIPT_OPTIONS,
+  javaScriptNodes,
+  parseScript,
+  trySyntax,
+} from './js-syntax.js';
 import { parseVersion } from './semver.js';
 
 /** The name given to a format.js that names no format. */
@@ -316,7 +323,9 @@ export function readFormatObject(source: string): FormatObjectRead {
         ok: false,
         reason: error.tooDeep
           ? `The story format file nests too deeply to read (the JavaScript parser ran out of stack space) at ${reader.position(error.pos)}.`
-          : `The story format file is not valid JavaScript: ${error.message} at ${reader.position(error.pos)}.`,
+          : error instanceof JsRegExpLimitError
+            ? `The story format file exceeds JavaScript parser limits: ${error.message} at ${reader.position(error.pos)}.`
+            : `The story format file is not valid JavaScript: ${error.message} at ${reader.position(error.pos)}.`,
       };
     }
   }

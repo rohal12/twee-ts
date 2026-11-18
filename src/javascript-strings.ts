@@ -10,7 +10,7 @@ import { tokTypes } from 'acorn';
 import type { Options, Token, TokenType } from 'acorn';
 import { lineEnd } from './js-chars.js';
 import { isRecord } from './util.js';
-import { AcornParser, SCRIPT_OPTIONS, parseScript, trySyntax } from './js-syntax.js';
+import { AcornParser, JsRegExpLimitError, SCRIPT_OPTIONS, parseScript, trySyntax } from './js-syntax.js';
 import type { JsSyntaxError } from './js-syntax.js';
 
 /**
@@ -248,6 +248,8 @@ function tokenRuns(source: string, options: Readonly<Options>): TokenRun[] {
  */
 function resumeAfter(source: string, stop: JsSyntaxError): number | undefined {
   const { message } = stop;
+  // The regexp was scanned completely before validation stopped: resume after it, even on the same line.
+  if (stop instanceof JsRegExpLimitError) return stop.raisedAt < source.length ? stop.raisedAt : undefined;
   if (message.startsWith('Unterminated comment') || message.startsWith('Unterminated template')) return undefined;
   const next = message.startsWith('Unexpected character')
     ? stop.pos + (isSurrogatePair(source, stop.pos) ? 2 : 1)

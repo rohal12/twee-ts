@@ -25,6 +25,7 @@ import type { CodePart, CodeText } from './html-output-check.js';
 import { ineffectiveImportDiagnostics } from './css-imports.js';
 import { VERSION } from './version.js';
 import { pushAll } from './util.js';
+import { scriptForJoin } from './js-syntax.js';
 
 const CREATOR_NAME = 'Twee-ts';
 
@@ -202,7 +203,7 @@ function joinCode(passages: readonly ReadonlyPassage[], kind: 'script' | 'styles
   const header = (p: ReadonlyPassage, n: number): string =>
     `/* twine-user-${kind} #${n}: "${commentSanitize(p.name)}" */\n`;
   const firstHeader = header(first, 1);
-  const chunks = [firstHeader, first.text];
+  const chunks = [firstHeader, kind === 'script' ? scriptForJoin(first.text) : first.text];
   let length = firstHeader.length;
   const parts: [CodePart, ...CodePart[]] = [{ label: label(first), start: length }];
   length += first.text.length;
@@ -212,7 +213,7 @@ function joinCode(passages: readonly ReadonlyPassage[], kind: 'script' | 'styles
     // concatenation: V8 would flatten that rope on every endsWith(), copying every earlier passage again.
     const boundary = `${previous === '' || previous.endsWith('\n') ? '' : '\n'}${kind === 'script' ? ';\n' : ''}`;
     const nextHeader = header(p, i + 2);
-    chunks.push(boundary, nextHeader, p.text);
+    chunks.push(boundary, nextHeader, kind === 'script' ? scriptForJoin(p.text) : p.text);
     length += boundary.length + nextHeader.length;
     parts.push({ label: label(p), start: length });
     length += p.text.length;
