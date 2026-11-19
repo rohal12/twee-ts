@@ -97,21 +97,43 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
           server: watching ? {} : { watch: null },
         });
         const sent = vi.spyOn(server.ws, 'send');
-        const waitForReload = async (): Promise<void> => {
+        const waitForReload = async (stage: string): Promise<void> => {
           await vi.waitFor(() => {
-            expect(sent).toHaveBeenCalledWith(expect.objectContaining({ type: 'full-reload' }));
+            expect(sent, stage).toHaveBeenCalledWith(expect.objectContaining({ type: 'full-reload' }));
           }, settled);
+        };
+        const primeTargetWatch = async (): Promise<void> => {
+          // startServer waits for the root's files, not this external target. In particular, macOS
+          // can list an added watch before FSEvents reports its changes. Observe a real target event
+          // before the one-shot removal, just as the native-watch cases above establish readiness.
+          let changed = false;
+          const onChange = (path: string): void => {
+            if (path === f.target) changed = true;
+          };
+          server.watcher.on('change', onChange);
+          sent.mockClear();
+          try {
+            await vi.waitFor(() => {
+              writeFileSync(f.target, f.content);
+              expect(changed, 'external target watcher readiness').toBe(true);
+            }, settled);
+            await waitForReload('build after the readiness probe');
+          } finally {
+            server.watcher.off('change', onChange);
+          }
+          sent.mockClear();
         };
         expect((await (await fetch(url)).text()).includes('RECOVERED_INPUT')).toBe(!initiallyMissing);
         if (!initiallyMissing) {
+          if (watching) await primeTargetWatch();
           f.remove();
-          if (watching) await waitForReload();
+          if (watching) await waitForReload('build after removing the target, hop or folder');
         }
         expect(await (await fetch(url)).text()).not.toContain('RECOVERED_INPUT');
         // No request may repair the watcher before it reports recovery itself.
         sent.mockClear();
         f.restore();
-        if (watching) await waitForReload();
+        if (watching) await waitForReload('automatic recovery after restoring the target, hop or folder');
         expect(await (await fetch(url)).text()).toContain('RECOVERED_INPUT');
       },
     );
