@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve encoded queries and SVG fragments in Vite entry asset URLs and avoid double-encoding percent signs in relative CSS public-asset URLs (#574).
+- Retain native recovery watches for discovered file links while their external targets or intermediate hops are missing (#575).
+- Refresh Vite input discovery when dangling file links become readable, including request catch-up with watching disabled, and watch omitted targets for automatic recovery (#576).
+
 - Recognize SugarCube `data-passage` links on audio elements in inspect and lint while retaining media-passage exclusions for image, source, track and video elements (#293).
 - Encode Vite glob inventories unambiguously so newline-bearing filenames cannot conceal membership changes during request catch-up with watching disabled (#341).
 

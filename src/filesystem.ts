@@ -956,10 +956,10 @@ export function watchFilesystem(
         const root = roots[i];
         if (root?.tracked !== true) continue;
         if (wanted.has(root.abs)) wanted.delete(root.abs);
-        else if (lstatIfReadable(root.abs) !== undefined) {
-          // Still there but no longer an input (excluded, say): stop watching it. One that went away is
-          // still waited for: Node's recursive watch on Linux may not report a link created again in its
-          // place.
+        else if (pathKind(root.abs).kind !== 'missing') {
+          // Still readable but no longer an input (excluded, say): stop watching it. Wait for a missing
+          // alias or target, including an existing link whose target or intermediate hop went away.
+          // The source folder's recursive watch cannot report restoration of an external target.
           for (const w of root.watchers) w.close();
           watchesChanged();
           roots.splice(i, 1);
