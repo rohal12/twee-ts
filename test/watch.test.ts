@@ -1572,6 +1572,36 @@ describe('watchFilesystem events and timing (#247)', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32').each(['target', 'hop', 'alias'] as const)(
+    'retains tracked recovery anchors for a missing %s and closes them on cancellation (#575)',
+    (missing) => {
+      const outside = join(root, 'outside');
+      mkdirSync(outside);
+      const target = join(outside, 'target.tw');
+      const hop = join(outside, 'hop.tw');
+      const alias = join(story, 'alias.tw');
+      writeFileSync(target, ':: Linked\nFIRST');
+      symlinkSync(target, hop);
+      symlinkSync(hop, alias);
+      const h = start([story]);
+      h.track([{ path: rel(alias), link: true }]);
+      const removed = missing === 'target' ? target : missing === 'hop' ? hop : alias;
+      rmSync(removed);
+      emit(dirname(removed), removed.slice(dirname(removed).length + 1));
+      vi.advanceTimersByTime(500);
+      h.track([]); // Discovery omitted the link while its target was unreachable.
+      expect(liveWatchers(outside).length).toBeGreaterThan(0);
+      builds.length = 0;
+      if (missing === 'target') writeFileSync(target, ':: Linked\nRESTORED');
+      else symlinkSync(missing === 'hop' ? target : hop, removed);
+      emit(dirname(removed), removed.slice(dirname(removed).length + 1));
+      vi.advanceTimersByTime(500);
+      expect(builds.length).toBeGreaterThan(0);
+      h.close();
+      expect(liveWatchers(outside)).toEqual([]);
+    },
+  );
+
   it('ignores an event for the output file', () => {
     start([root]);
     emit(root, 'out.html');

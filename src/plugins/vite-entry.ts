@@ -223,12 +223,14 @@ export function entryRenderBuiltUrl(
   return (filename, type) => {
     const own = user?.(filename, type);
     if (own !== undefined) return own;
-    // As Vite writes a file name into a URL.
-    const path = filename.replaceAll('%', '%25');
     if (type.hostType === 'js' && type.hostId === ENTRY_SCRIPT_NAME) {
+      // Vite passes a raw path with an already encoded query/fragment. A runtime replacement bypasses
+      // Vite's encoding: escape literal percent signs in the path only, as its own URL runtimes do.
+      const path = filename.replace(/^[^?#]*/, (pathname) => pathname.replaceAll('%', '%25'));
       return { runtime: `new URL(${JSON.stringify(relative ? path : `${base}${path}`)}, ${outputFolder}).href` };
     }
-    return type.hostType === 'css' && relative ? `${'../'.repeat(depth)}${path}` : undefined;
+    // String replacements go through Vite's path encoding after this callback returns.
+    return type.hostType === 'css' && relative ? `${'../'.repeat(depth)}${filename}` : undefined;
   };
 }
 
