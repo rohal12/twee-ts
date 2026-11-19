@@ -536,10 +536,35 @@ defineContracts(
     'build watch aliased question-mark glob gains a file': expectBuildWatchFollowsAliasedGlob,
     'build watch separate entry aliased question-mark glob gains a file': (root) =>
       expectBuildWatchFollowsAliasedGlob(root, true),
+    'dev keys-only glob replaces a newline-bearing name': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.keys(import.meta.glob('./widgets/*.txt'))", ['a.txt\nf:b.txt']),
+        () => {
+          unlinkSync(widget(root, 'a.txt\nf:b.txt'));
+          write(widget(root, 'a.txt'), 'A');
+          write(widget(root, 'b.txt'), 'B');
+        },
+        ['./widgets/a.txt\nf:b.txt'],
+        ['./widgets/a.txt', './widgets/b.txt'],
+      ),
+    'dev keys-only glob restores a newline-bearing name': (root) =>
+      expectDevFollows(
+        root,
+        globProject(root, "Object.keys(import.meta.glob('./widgets/*.txt'))", ['a.txt', 'b.txt']),
+        () => {
+          unlinkSync(widget(root, 'a.txt'));
+          unlinkSync(widget(root, 'b.txt'));
+          write(widget(root, 'a.txt\nf:b.txt'), 'combined');
+        },
+        ['./widgets/a.txt', './widgets/b.txt'],
+        ['./widgets/a.txt\nf:b.txt'],
+      ),
   },
   // The watcher of Vite 8.0 and 8.1 reports no change inside a folder the build registers.
   {
     skip: (variant) => {
+      if (variant.includes('newline-bearing') && process.platform === 'win32') return 'POSIX filenames only';
       if (variant.startsWith('build watch') && variant.endsWith('link retargeted') && process.platform !== 'linux') {
         // The bundler's watcher on macOS reports no replacement of a link (docs/plugins.md, Build watch).
         return 'Linux only';

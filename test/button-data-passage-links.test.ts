@@ -111,6 +111,36 @@ describe('reading start tags stays linear in the size of the text', () => {
 });
 
 describe('inspect and lint see <<button>> and data-passage links (#293)', () => {
+  it.each([
+    ['audio', true],
+    ['AUDIO', true],
+    ['span', true],
+    ['img', false],
+    ['source', false],
+    ['track', false],
+    ['video', false],
+  ] as const)('handles data-passage on %s as SugarCube does', async (tag, isLink) => {
+    const content = `:: StoryTitle
+Media links
+:: StoryData
+{"ifid":"${IFID}"}
+:: Start
+<${tag} data-passage="Hall"></${tag}> <${tag} data-passage="Missing"></${tag}>
+:: Hall
+Destination
+`;
+    const builder = new StoryBuilder();
+    for (const passage of parseTwee(content).passages) builder.add(passage, []);
+    const inspected = storyInspect(builder.build());
+    const linted = await lint({ sources: [{ filename: 'story.tw', content }] });
+    expect(inspected.links.get('Start')).toEqual(isLink ? ['Hall', 'Missing'] : []);
+    for (const result of [inspected, linted]) {
+      expect(result.brokenLinks).toEqual(isLink ? [{ from: 'Start', to: 'Missing' }] : []);
+      expect(result.orphans).toEqual(isLink ? [] : ['Hall']);
+      expect(result.deadEnds.includes('Start')).toBe(!isLink);
+    }
+  });
+
   const source = [
     ':: StoryData',
     `{"ifid":"${IFID}"}`,

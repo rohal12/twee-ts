@@ -186,6 +186,9 @@ export const MATRIX = {
       'dev watcher aliased question-mark glob gains a file',
       'build watch aliased question-mark glob gains a file',
       'build watch separate entry aliased question-mark glob gains a file',
+      // Revision 13: inventory encodings distinguish filenames from record delimiters (#341).
+      'dev keys-only glob replaces a newline-bearing name',
+      'dev keys-only glob restores a newline-bearing name',
     ],
   },
 } as const satisfies Record<string, CaseGroup>;

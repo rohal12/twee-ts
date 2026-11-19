@@ -777,7 +777,7 @@ function startsOwnElement(text: string, start: number): boolean {
   return OTHER_TAG_OPENER_RE.test(text);
 }
 /** The `htmlTag` parser's `mediaTags`: a `data-passage` on them names a media passage, not a link. */
-const MEDIA_TAGS: ReadonlySet<string> = new Set(['audio', 'img', 'source', 'track', 'video']);
+const MEDIA_TAGS: ReadonlySet<string> = new Set(['img', 'source', 'track', 'video']);
 /** The `htmlTag` parser's `voidTags`, which need no end tag. */
 const VOID_TAGS: ReadonlySet<string> = new Set([
   'area',

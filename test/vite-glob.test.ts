@@ -4,7 +4,7 @@
  * glob matches lies in its scope.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { symlinkSync, writeFileSync } from 'node:fs';
+import { symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { build } from 'vite';
 import type { Plugin } from 'vite';
@@ -204,7 +204,29 @@ describe('scopeId', () => {
   });
 });
 
+/** Decode the internal inventory for assertions about its records. */
+const scopeRecords = (selected: GlobScope): readonly (readonly [string, string, string?])[] =>
+  JSON.parse(scopeListing(selected)) as readonly (readonly [string, string, string?])[];
+
 describe('scopeListing and scopeAdmits', () => {
+  it.skipIf(process.platform === 'win32').each([[['a.js', 'b.js']], [['a.js', 'b.js', 'c.js']], [['a".js', 'b\\.js']]])(
+    'distinguishes newline-bearing names from multiple files: %j',
+    (names) => {
+      const combined = names.join('\nf:');
+      const dir = makeProject({ [`w/${combined}`]: '' });
+      const selected = scope(toPosix(join(dir, 'w')), { suffix: '.js' });
+      const before = scopeListing(selected);
+      unlinkSync(join(dir, 'w', combined));
+      for (const name of names) writeFileSync(join(dir, 'w', name), '');
+      const after = scopeListing(selected);
+      expect(after).not.toBe(before);
+      for (const name of names) unlinkSync(join(dir, 'w', name));
+      writeFileSync(join(dir, 'w', combined), '');
+      expect(scopeListing(selected)).not.toBe(after);
+      expect(scopeListing(selected)).toBe(before);
+    },
+  );
+
   const tree = (): string =>
     makeProject({
       'w/a.js': '',
@@ -219,32 +241,35 @@ describe('scopeListing and scopeAdmits', () => {
 
   it('lists the files a shallow scope may match', () => {
     const dir = toPosix(tree());
-    expect(scopeListing(scope(`${dir}/w`, { suffix: '.js' })).split('\n')).toEqual(['f:C.JS', 'f:a.js']);
+    expect(scopeRecords(scope(`${dir}/w`, { suffix: '.js' }))).toEqual([
+      ['f', 'C.JS'],
+      ['f', 'a.js'],
+    ]);
   });
 
   it('lists the folders of a deep scope, but node_modules and dot folders', () => {
     const dir = toPosix(tree());
-    expect(scopeListing(scope(`${dir}/w`, { deep: true, suffix: '.js' })).split('\n')).toEqual([
-      'f:C.JS',
-      'f:a.js',
-      'd:sub',
-      'f:sub/d.js',
+    expect(scopeRecords(scope(`${dir}/w`, { deep: true, suffix: '.js' }))).toEqual([
+      ['f', 'C.JS'],
+      ['f', 'a.js'],
+      ['d', 'sub'],
+      ['f', 'sub/d.js'],
     ]);
   });
 
   it('lists everything for an exhaustive scope, but Vite’s temporary config copies', () => {
     const dir = toPosix(tree());
-    expect(scopeListing(scope(`${dir}/w`, { deep: true, dot: true, exhaustive: true })).split('\n')).toEqual([
-      'd:.dot',
-      'f:.dot/f.js',
-      'f:.hidden.js',
-      'f:C.JS',
-      'f:a.js',
-      'f:b.ts',
-      'd:node_modules',
-      'f:node_modules/m.js',
-      'd:sub',
-      'f:sub/d.js',
+    expect(scopeRecords(scope(`${dir}/w`, { deep: true, dot: true, exhaustive: true }))).toEqual([
+      ['d', '.dot'],
+      ['f', '.dot/f.js'],
+      ['f', '.hidden.js'],
+      ['f', 'C.JS'],
+      ['f', 'a.js'],
+      ['f', 'b.ts'],
+      ['d', 'node_modules'],
+      ['f', 'node_modules/m.js'],
+      ['d', 'sub'],
+      ['f', 'sub/d.js'],
     ]);
   });
 
@@ -253,15 +278,15 @@ describe('scopeListing and scopeAdmits', () => {
     const outside = toPosix(makeProject({ 'e.js': '', 'deeper/g.js': '' }));
     symlinkSync(outside, join(dir, 'w/linked'), 'junction');
     const read = readScope(scope(`${dir}/w`, { deep: true, suffix: '.js' }));
-    expect(read.listing.split('\n')).toEqual([
-      'f:C.JS',
-      'f:a.js',
-      `l:linked>${canonicalPath(outside)}`,
-      'd:linked/deeper',
-      'f:linked/deeper/g.js',
-      'f:linked/e.js',
-      'd:sub',
-      'f:sub/d.js',
+    expect(JSON.parse(read.listing) as unknown).toEqual([
+      ['f', 'C.JS'],
+      ['f', 'a.js'],
+      ['l', 'linked', canonicalPath(outside)],
+      ['d', 'linked/deeper'],
+      ['f', 'linked/deeper/g.js'],
+      ['f', 'linked/e.js'],
+      ['d', 'sub'],
+      ['f', 'sub/d.js'],
     ]);
     expect(read.linked).toEqual([canonicalPath(outside)]);
   });
@@ -271,15 +296,15 @@ describe('scopeListing and scopeAdmits', () => {
     symlinkSync(join(dir, 'w'), join(dir, 'w/sub/up'), 'junction');
     symlinkSync(join(dir, 'w/sub'), join(dir, 'w/again'), 'junction');
     const read = readScope(scope(`${dir}/w`, { deep: true, suffix: '.js' }));
-    expect(read.listing.split('\n')).toEqual([
-      'f:C.JS',
-      'f:a.js',
-      `l:again>${canonicalPath(join(dir, 'w/sub'))}`,
-      'f:again/d.js',
-      `l:again/up>${canonicalPath(join(dir, 'w'))}`,
-      'd:sub',
-      'f:sub/d.js',
-      `l:sub/up>${canonicalPath(join(dir, 'w'))}`,
+    expect(JSON.parse(read.listing) as unknown).toEqual([
+      ['f', 'C.JS'],
+      ['f', 'a.js'],
+      ['l', 'again', canonicalPath(join(dir, 'w/sub'))],
+      ['f', 'again/d.js'],
+      ['l', 'again/up', canonicalPath(join(dir, 'w'))],
+      ['d', 'sub'],
+      ['f', 'sub/d.js'],
+      ['l', 'sub/up', canonicalPath(join(dir, 'w'))],
     ]);
     expect(read.linked).toEqual([canonicalPath(join(dir, 'w/sub'))]);
   });
@@ -292,11 +317,11 @@ describe('scopeListing and scopeAdmits', () => {
       symlinkSync(join(dir, 'w/a.js'), join(dir, 'w/file-link.js'));
       symlinkSync(join(dir, 'w/none'), join(dir, 'w/dangling.js'));
       symlinkSync(join(dir, 'w/sub'), join(dir, 'w/folder-link.js'), 'junction');
-      expect(scopeListing(scope(`${dir}/w`, { suffix: '.js' })).split('\n')).toEqual([
-        'f:C.JS',
-        'f:a.js',
-        'f:dangling.js',
-        'f:file-link.js',
+      expect(scopeRecords(scope(`${dir}/w`, { suffix: '.js' }))).toEqual([
+        ['f', 'C.JS'],
+        ['f', 'a.js'],
+        ['f', 'dangling.js'],
+        ['f', 'file-link.js'],
       ]);
       expect(readScope(scope(`${dir}/w`, { suffix: '.js' })).linked).toEqual([]);
     },
@@ -320,7 +345,7 @@ describe('scopeListing and scopeAdmits', () => {
   it('lists a missing folder as missing, and an empty one as empty', () => {
     const dir = toPosix(makeProject({ 'empty/.keep': '' }));
     expect(scopeListing(scope(`${dir}/none`))).toBe('\0missing');
-    expect(scopeListing(scope(`${dir}/empty`))).toBe('');
+    expect(scopeListing(scope(`${dir}/empty`))).toBe('[]');
   });
 
   it.each([
@@ -573,9 +598,7 @@ describe('scopes against Vite’s import-glob', () => {
       expect(holding, `${relative(root, file)} is in no scope`).not.toEqual([]);
       // Vite names a file reached through a link by its real path, which the listing spells through the link.
       const listed = holding.some((s) =>
-        scopeListing(s)
-          .split('\n')
-          .some((line) => line.startsWith('f:') && fileKey(join(s.dir, line.slice(2))) === fileKey(file)),
+        scopeRecords(s).some(([kind, path]) => kind === 'f' && fileKey(join(s.dir, path)) === fileKey(file)),
       );
       expect(listed, `${relative(root, file)} is listed in no scope`).toBe(true);
     }
