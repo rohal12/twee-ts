@@ -598,13 +598,14 @@ Without a `target`, `storyInspect` describes the source passages and treats a li
 | `<<link [[Go\|Hall]]>><</link>>`         | `Hall`   | Link markup as the first argument names the passage                                                             |
 | `<a data-passage="Hall">Go</a>`          | `Hall`   | Any element with a `data-passage` attribute, `<button>` and `<span>` too                                        |
 | `<area data-passage="Hall">`             | `Hall`   | A void element needs no end tag                                                                                 |
+| `<audio data-passage="Hall"></audio>`    | `Hall`   | SugarCube makes this a clickable passage link                                                                   |
 | `<<set _go to '<<goto "Hall">>'>>`       | `Hall`   | Links and calls inside the strings of macro arguments, `<<script>>` bodies and `<script>` elements are read too |
 | `/* [[Hall]] */`                         | nothing  | Comments (`/* … */`, `/% … %/`, `<!-- … -->`) are skipped                                                       |
 | `<<link "Go" $next>><</link>>`           | nothing  | A passage named by a variable or an expression is known only in play                                            |
 | `<a data-passage="Hall">Go`              | nothing  | An element other than a void one needs its end tag, or SugarCube reports an error                               |
 | `<a data-passage="Hall" href="#">Go</a>` | nothing  | `data-passage` with `href` is an error in SugarCube                                                             |
 | `<a @data-passage="$next">Go</a>`        | nothing  | An attribute directive sets the passage in play                                                                 |
-| `<img data-passage="Hall">`              | nothing  | On `img`, `audio`, `video`, `source` and `track`, `data-passage` names a media passage                          |
+| `<img data-passage="Hall">`              | nothing  | On `img`, `video`, `source` and `track`, `data-passage` names a media passage                                   |
 | `<span title="[[Hall]]">x</span>`        | nothing  | The text of a start tag is not markup                                                                           |
 | `<<include "Hall">>`                     | nothing  | Shows the passage without a link, so Hall is still an orphan unless something else links to it                  |
 

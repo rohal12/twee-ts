@@ -375,7 +375,7 @@ function linkedFolder(path: string): string | undefined {
  * does not exist (yet) lists as missing.
  */
 export function readScope(scope: GlobScope): ScopeContents {
-  const entries: string[] = [];
+  const entries: string[][] = [];
   const linked = new Set<string>();
   const visited = new Set<string>();
   const list = (dir: string, prefix: string): boolean => {
@@ -391,7 +391,7 @@ export function readScope(scope: GlobScope): ScopeContents {
       const target = entry.isSymbolicLink() ? linkedFolder(join(dir, entry.name)) : undefined;
       const isDir = entry.isDirectory() || target !== undefined;
       if (!admits(scope, entry.name, isDir)) continue;
-      entries.push(target === undefined ? `${isDir ? 'd' : 'f'}:${path}` : `l:${path}>${target}`);
+      entries.push(target === undefined ? [isDir ? 'd' : 'f', path] : ['l', path, target]);
       if (target !== undefined) {
         if (visited.has(fileKey(target))) continue;
         linked.add(target);
@@ -400,7 +400,8 @@ export function readScope(scope: GlobScope): ScopeContents {
     }
     return true;
   };
-  const listing = list(scope.dir, '') ? entries.join('\n') : '\0missing';
+  // Both record boundaries and link path/target boundaries must survive any filename characters.
+  const listing = list(scope.dir, '') ? JSON.stringify(entries) : '\0missing';
   return { listing, linked: [...linked] };
 }
 

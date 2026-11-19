@@ -142,6 +142,25 @@ const write = (file: string, content: string): void => {
   writeFileSync(file, content);
 };
 
+it.skipIf(process.platform === 'win32')(
+  'catches up keys-only glob membership with newline-bearing names (#341)',
+  async () => {
+    const combined = 'a.txt\nf:b.txt';
+    const root = globProject("Object.keys(import.meta.glob('./widgets/*.txt'))", { [combined]: 'combined' });
+    const read = await serve(root, false);
+    expect(await read()).toEqual([`./widgets/${combined}`]);
+    unlinkSync(join(root, 'app/widgets', combined));
+    write(join(root, 'app/widgets/a.txt'), 'A');
+    write(join(root, 'app/widgets/b.txt'), 'B');
+    expect(await read()).toEqual(['./widgets/a.txt', './widgets/b.txt']);
+    unlinkSync(join(root, 'app/widgets/a.txt'));
+    unlinkSync(join(root, 'app/widgets/b.txt'));
+    write(join(root, 'app/widgets', combined), 'combined');
+    expect(await read()).toEqual([`./widgets/${combined}`]);
+  },
+  30_000,
+);
+
 describe.each([
   ['with a watcher', true],
   ['with no watcher', false],

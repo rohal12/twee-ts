@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recognize SugarCube `data-passage` links on audio elements in inspect and lint while retaining media-passage exclusions for image, source, track and video elements (#293).
+- Encode Vite glob inventories unambiguously so newline-bearing filenames cannot conceal membership changes during request catch-up with watching disabled (#341).
+
 - Collect disappearing or newly inaccessible named source/module lookups through the input diagnostic policy and continue discovery (#281).
 - Preserve executable hashbangs when combining scripts in Twine 2 HTML, archive and JSON output, without shifting source locations (#348).
 - Bound duplicate named-capture validation before Acorn comparisons and native RegExp construction, preserve link-reading recovery, and include parser failures in escaping warnings (#571).
