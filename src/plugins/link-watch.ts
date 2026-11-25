@@ -5,7 +5,7 @@
  * recursively, so what the build writes below it is not reported), and a change of any link starts a build the way an
  * edit of a registered file does: by touching a file the plugin has registered with the bundler.
  */
-import { mkdtempSync, readlinkSync, rmSync, utimesSync, watch, writeFileSync } from 'node:fs';
+import { mkdtempSync, readlinkSync, rmSync, statSync, utimesSync, watch, writeFileSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -49,7 +49,7 @@ export function createLinkWatch(): LinkWatch | undefined {
   }
   const signalFolder = folder;
   let touches = 0;
-  const watchers: FSWatcher[] = [];
+  const watchers = new Map<string, { readonly id: string; readonly watcher: FSWatcher }>();
   let timer: NodeJS.Timeout | undefined;
   let known = new Map<string, string | undefined>();
 
@@ -77,7 +77,8 @@ export function createLinkWatch(): LinkWatch | undefined {
     timer = setTimeout(check, SETTLE_MS);
   };
   const stopWatching = (): void => {
-    for (const watcher of watchers.splice(0)) watcher.close();
+    for (const { watcher } of watchers.values()) watcher.close();
+    watchers.clear();
     clearTimeout(timer);
     timer = undefined;
   };
@@ -89,16 +90,38 @@ export function createLinkWatch(): LinkWatch | undefined {
   return {
     signal,
     watch(links) {
-      stopWatching();
+      clearTimeout(timer);
+      timer = undefined;
       known = new Map(links.map((link) => [link, destination(link)]));
-      for (const parent of new Set(links.map((link) => dirname(link)))) {
+      const parents = new Set(links.map((link) => dirname(link)));
+      for (const [parent, { watcher }] of watchers) {
+        if (parents.has(parent)) continue;
+        watcher.close();
+        watchers.delete(parent);
+      }
+      for (const parent of parents) {
         try {
+          const stat = statSync(parent);
+          const id = `${stat.dev}:${stat.ino}`;
+          const held = watchers.get(parent);
+          // Reopening healthy watches restarts macOS's shared stream after every build. Keep them,
+          // but reopen a replaced parent and retry registrations that previously failed.
+          if (held?.id === id) continue;
+          held?.watcher.close();
+          watchers.delete(parent);
           const watcher = watch(parent, schedule);
+          watchers.set(parent, { id, watcher });
           // A folder that goes away, or a limit of the system: the links in it are read again.
-          watcher.on('error', schedule);
-          watchers.push(watcher);
+          watcher.on('error', () => {
+            if (watchers.get(parent)?.watcher !== watcher) return;
+            watcher.close();
+            watchers.delete(parent);
+            schedule();
+          });
         } catch {
           // The folder can't be watched; the links in it are read again with the next build.
+          watchers.get(parent)?.watcher.close();
+          watchers.delete(parent);
         }
       }
     },

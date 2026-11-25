@@ -8,12 +8,18 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import type { Plugin } from 'vite';
+import { createLogger } from 'vite';
 import { decompileHTML } from '../src/html-parser.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { resolvePluginOptions } from '../src/plugins/options.js';
 import { buildFiles, cleanUp, COMPILE, makeProject, startServer, STORY, textOf } from './helpers/plugins.js';
 
-const calls = vi.hoisted(() => ({ readdir: [] as string[], realpath: [] as string[] }));
+const calls = vi.hoisted(() => ({
+  readdir: [] as string[],
+  realpath: [] as string[],
+  watch: [] as string[],
+  failWatch: undefined as string | undefined,
+}));
 
 vi.mock('node:fs', async (importOriginal) => {
   const real = await importOriginal<typeof fs>();
@@ -27,10 +33,18 @@ vi.mock('node:fs', async (importOriginal) => {
     calls.readdir.push(String(args[0]));
     return real.readdirSync(...args);
   };
-  return { ...real, default: { ...real, readdirSync, realpathSync }, readdirSync, realpathSync };
+  const watch = (...args: Parameters<typeof real.watch>): ReturnType<typeof real.watch> => {
+    calls.watch.push(String(args[0]));
+    if (String(args[0]) === calls.failWatch) throw new Error('Watch unavailable');
+    return real.watch(...args);
+  };
+  return { ...real, default: { ...real, readdirSync, realpathSync, watch }, readdirSync, realpathSync, watch };
 });
 
-afterEach(cleanUp);
+afterEach(async () => {
+  await cleanUp();
+  calls.failWatch = undefined;
+});
 
 const passage = (name: string): string => `:: ${name}\n${name} text.\n`;
 
@@ -229,4 +243,81 @@ describe('vite plugin dev: the request catch-up reuses its walk of the inputs (#
     expect(names(await (await fetch(url)).text())).toContain('Late');
     expect(calls.readdir.filter((path) => path.startsWith(story)).length).toBeGreaterThan(0);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'reuses a walk with omitted link candidates and preserves exclusions (#576)',
+    async () => {
+      const dir = project();
+      const story = join(dir, 'story');
+      fs.mkdirSync(join(dir, 'external'));
+      fs.symlinkSync('../external/missing', join(story, 'candidate.tw'));
+      fs.symlinkSync('../external/excluded', join(story, 'excluded.tw'));
+      fs.mkdirSync(join(dir, 'dist/external'), { recursive: true });
+      fs.symlinkSync('../dist/external/output', join(story, 'output.tw'));
+      fs.symlinkSync('../external/folder', join(story, 'directory.tw'));
+      fs.symlinkSync('../external/unknown', join(story, 'notes.txt'));
+      fs.mkdirSync(join(dir, 'external/folder'));
+      fs.writeFileSync(join(dir, 'external/folder/hidden.tw'), passage('Hidden'));
+      const { url } = await startServer({
+        root: dir,
+        server: { watch: null },
+        plugins: [
+          tweeTsPlugin({
+            sources: [story],
+            outputFilename: 'external/output',
+            format: 'test-format-1',
+            compileOptions: { ...COMPILE, exclude: [{ base: story, glob: 'excluded.tw' }] },
+          }),
+        ],
+      });
+      const page = `${url}/external/output`;
+      const before = names(await (await fetch(page)).text());
+      calls.readdir.length = 0;
+      await fetch(page);
+      await fetch(page);
+      expect(calls.readdir.filter((path) => path.startsWith(story))).toEqual([]);
+      fs.writeFileSync(join(dir, 'external/excluded'), passage('Excluded'));
+      fs.writeFileSync(join(dir, 'dist/external/output'), passage('Output'));
+      fs.writeFileSync(join(dir, 'external/unknown'), passage('Unknown'));
+      expect(names(await (await fetch(page)).text())).toEqual(before);
+      fs.writeFileSync(join(dir, 'external/missing'), passage('Recovered'));
+      expect(names(await (await fetch(page)).text())).toEqual([...before, 'Recovered'].sort());
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'watches external target parents and retains native link watches across rebuilds (#576)',
+    async () => {
+      const dir = project();
+      const external = makeProject({ target: passage('Linked') });
+      fs.symlinkSync(join(external, 'target'), join(dir, 'story/linked.tw'));
+      const { url } = await startServer({ root: dir, plugins: plugin(dir) });
+      expect(names(await (await fetch(url)).text())).toContain('Linked');
+      expect(calls.watch).toContain(join(dir, 'story'));
+      expect(calls.watch).toContain(external);
+      calls.watch.length = 0;
+      fs.writeFileSync(join(dir, 'story/start.tw'), STORY + '\nChanged.');
+      expect(await (await fetch(url)).text()).toContain('Changed.');
+      // Replacing these watches resets the shared macOS event stream just after each build.
+      expect(calls.watch.filter((path) => path === join(dir, 'story'))).toEqual([]);
+      fs.writeFileSync(join(external, 'target'), passage('ChangedLinked'));
+      expect(names(await (await fetch(url)).text())).toContain('ChangedLinked');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reports unavailable recovery watches and still catches up on request (#576)',
+    async () => {
+      const dir = project();
+      const external = makeProject({});
+      fs.symlinkSync(join(external, 'target'), join(dir, 'story/candidate.tw'));
+      calls.failWatch = external;
+      const logger = createLogger('silent');
+      const warn = vi.spyOn(logger, 'warn');
+      const { url } = await startServer({ root: dir, plugins: plugin(dir), customLogger: logger });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Watch unavailable'));
+      fs.writeFileSync(join(external, 'target'), passage('Recovered'));
+      expect(names(await (await fetch(url)).text())).toContain('Recovered');
+    },
+  );
 });

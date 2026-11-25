@@ -10,10 +10,10 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { Connect, ErrorPayload, ResolvedConfig, ViteDevServer } from 'vite';
 import type { FileCacheEntry, OutputMode } from '../types.js';
-import { getFilenames, outputPaths } from '../filesystem.js';
+import { getFilenames, isLoadableType, outputPaths, watchFilesystem } from '../filesystem.js';
 import { identify } from '../path-identity.js';
 import { sha256Hex } from '../format-cache.js';
-import type { BuildOutputs } from '../filesystem.js';
+import type { BuildOutputs, WatchHandle } from '../filesystem.js';
 import { mediaTypeFromFilename, normalizedFileExt } from '../media-types.js';
 import { viteWaitingPage } from '../html-structure.js';
 import { compileStory, fatalError } from './diagnostics.js';
@@ -283,12 +283,13 @@ function filesChanged(before: ReadonlyMap<string, string>, after: ReadonlyMap<st
 
 /**
  * A walk of the story's inputs (see storyInputFiles): its files, and what it depended on: the outputs it left out,
- * what each named input was, and the state (see fileState) of each folder it listed, just before it listed it.
+ * what each named input was, and the state (see fileState) of each listed folder and discovered link candidate.
  */
 interface InputWalk {
   readonly outputs: BuildOutputs;
   readonly named: string;
   readonly folders: ReadonlyMap<string, string | undefined>;
+  readonly links: ReadonlyMap<string, string | undefined>;
   readonly files: readonly { readonly key: string; readonly path: string; readonly link: boolean }[];
 }
 
@@ -378,13 +379,43 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   let inputLinks: LinkWatch | undefined;
   let inputLinkSignalKey: string | undefined;
   let inputLinkPaths: string[] = [];
+  let inputRecovery: WatchHandle | undefined;
+  let recoveryPaths: readonly string[] = [];
   // Chokidar normalizes dot segments lexically, so a path through `link/..` must reach the native watcher
   // by its resolved spelling. Keep the links too: replacing one can select a different input. Re-register
   // on rebuild so edits of the newly selected target are watched after a retarget.
   const watchInputs = (): void => {
+    // Chokidar can lose an external file's parent folder without reporting any event on macOS. Watch
+    // readable links and omitted candidates natively from the start: the anchors follow every hop,
+    // the final parent folder and its restoration, including while discovery leaves the file out.
+    const discovered = inputWalk?.files.filter((file) => file.link).map((file) => file.path) ?? [];
+    const loaded = new Set(discovered);
+    const recovery = [...(inputWalk?.links ?? [])]
+      .filter(([path, state]) => state === undefined || loaded.has(path))
+      .map(([path]) => path);
+    if (config.server.watch !== null && JSON.stringify(recovery) !== JSON.stringify(recoveryPaths)) {
+      inputRecovery?.close();
+      inputRecovery = undefined;
+      recoveryPaths = recovery;
+      if (recovery.length > 0) {
+        let started = false;
+        inputRecovery = watchFilesystem(
+          recovery,
+          resolve(config.root, config.build.outDir, options.outputFilename),
+          () => {
+            if (started) for (const input of inputs) noteChange(fileKey(input));
+          },
+          excluded,
+          (error) => {
+            config.logger.warn(`[twee-ts] ${escapeTerminalControls(error.message)}`);
+          },
+          { debounceMs: DEBOUNCE_MS },
+        );
+        started = true; // The watcher's initial callback is not a change to the inputs.
+      }
+    }
     // A temporarily missing link is no longer found by traversal. Keep its location until it reappears,
     // so a failed compile after removal does not lose the event that can recover it.
-    const discovered = inputWalk?.files.filter((file) => file.link).map((file) => file.path) ?? [];
     const watchedInputs = [...inputs, ...discovered];
     const links = [
       ...new Set([...inputLinkPaths.filter((link) => !existsSync(link)), ...watchedInputs.flatMap(linksOnTheWay)]),
@@ -478,6 +509,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     clearTimeout(timer);
     pending.clear();
     inputLinks?.close();
+    inputRecovery?.close();
     return closeWatcher();
   };
 
@@ -504,15 +536,25 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   const walkInputs = (): InputWalk => {
     const named = namedInputs();
     const folders = new Map<string, string | undefined>();
-    const found = getFilenames(inputs, outputs, [], 'source', (folder) => folders.set(folder, fileState(folder)));
+    const links = new Map<string, string | undefined>();
+    const found = getFilenames(
+      inputs,
+      outputs,
+      [],
+      'source',
+      (folder) => folders.set(folder, fileState(folder)),
+      (link) => {
+        if (isLoadableType(link, 'source') && !excluded(link)) links.set(link, fileState(link));
+      },
+    );
     const files = found.files
       .filter((file) => !excludedGlob(file.path))
       .map((file) => ({ key: file.key, path: identify(file.path).absolute, link: file.link === true }));
-    return { outputs, named, folders, files };
+    return { outputs, named, folders, links, files };
   };
 
   // The state of each input file of the story, by key. Unless `walk` asks for a new walk of the inputs, the files
-  // of the last one are taken while no folder it listed, no named input and no output changed since (#371): a
+  // of the last one are taken while no listed folder, discovered link candidate, named input or output changed (#371): a
   // request with nothing changed then costs one look at each folder and file, and identifies no file (but one
   // reached through a link, whose target may have moved).
   const storyInputFiles = (walk: boolean): Map<string, string> => {
@@ -522,7 +564,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
       !walk &&
       last.outputs === outputs &&
       last.named === namedInputs() &&
-      [...last.folders].every(([folder, state]) => fileState(folder) === state);
+      [...last.folders, ...last.links].every(([path, state]) => fileState(path) === state);
     const used = current ? last : walkInputs();
     inputWalk = used;
     const states = new Map<string, string>();
@@ -821,7 +863,15 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // in a folder a plugin of the entry build watches, or that folder itself (also one that did not exist yet),
     // may change what the plugin reads.
     const isDir = event === 'addDir' || event === 'unlinkDir';
+    // A watcher can report only the folder disappearing, without unlink events for its registered
+    // files. Discovered link targets may lie outside every named root, including omitted candidates.
+    const inputFolder =
+      isDir &&
+      [...compiledInputs.keys(), ...[...(inputWalk?.links.keys() ?? [])].map(fileKey)].some((input) =>
+        keyWithin(input, [changed]),
+      );
     const regrouped =
+      inputFolder ||
       compiledInputNames !== namedInputs() ||
       (event !== 'change' && inGlobScope(path, isDir)) ||
       inWatchedFolder(path) ||
