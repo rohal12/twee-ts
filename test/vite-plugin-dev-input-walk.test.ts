@@ -17,6 +17,7 @@ import { buildFiles, cleanUp, COMPILE, makeProject, startServer, STORY, textOf }
 const calls = vi.hoisted(() => ({
   readdir: [] as string[],
   realpath: [] as string[],
+  watch: [] as string[],
   failWatch: undefined as string | undefined,
 }));
 
@@ -33,6 +34,7 @@ vi.mock('node:fs', async (importOriginal) => {
     return real.readdirSync(...args);
   };
   const watch = (...args: Parameters<typeof real.watch>): ReturnType<typeof real.watch> => {
+    calls.watch.push(String(args[0]));
     if (String(args[0]) === calls.failWatch) throw new Error('Watch unavailable');
     return real.watch(...args);
   };
@@ -280,6 +282,25 @@ describe('vite plugin dev: the request catch-up reuses its walk of the inputs (#
       expect(names(await (await fetch(page)).text())).toEqual(before);
       fs.writeFileSync(join(dir, 'external/missing'), passage('Recovered'));
       expect(names(await (await fetch(page)).text())).toEqual([...before, 'Recovered'].sort());
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'retains native link watches across rebuilds with unchanged links (#576)',
+    async () => {
+      const dir = project();
+      const external = makeProject({ target: passage('Linked') });
+      fs.symlinkSync(join(external, 'target'), join(dir, 'story/linked.tw'));
+      const { url } = await startServer({ root: dir, plugins: plugin(dir) });
+      expect(names(await (await fetch(url)).text())).toContain('Linked');
+      expect(calls.watch).toContain(join(dir, 'story'));
+      calls.watch.length = 0;
+      fs.writeFileSync(join(dir, 'story/start.tw'), STORY + '\nChanged.');
+      expect(await (await fetch(url)).text()).toContain('Changed.');
+      // Replacing these watches resets the shared macOS event stream just after each build.
+      expect(calls.watch.filter((path) => path === join(dir, 'story'))).toEqual([]);
+      fs.writeFileSync(join(external, 'target'), passage('ChangedLinked'));
+      expect(names(await (await fetch(url)).text())).toContain('ChangedLinked');
     },
   );
 

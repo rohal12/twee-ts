@@ -114,10 +114,12 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
           sent.mockClear();
           try {
             await vi.waitFor(() => {
-              writeFileSync(f.target, f.content);
+              if (!changed) writeFileSync(f.target, f.content);
               expect(changed, 'external target watcher readiness').toBe(true);
             }, settled);
             await waitForReload('build after the readiness probe');
+            // Drain the probe's queued compile/debounce before the removal-stage reload assertion.
+            await fetch(url);
           } finally {
             server.watcher.off('change', onChange);
           }
