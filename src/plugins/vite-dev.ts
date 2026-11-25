@@ -859,7 +859,15 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     // in a folder a plugin of the entry build watches, or that folder itself (also one that did not exist yet),
     // may change what the plugin reads.
     const isDir = event === 'addDir' || event === 'unlinkDir';
+    // A watcher can report only the folder disappearing, without unlink events for its registered
+    // files. Discovered link targets may lie outside every named root, including omitted candidates.
+    const inputFolder =
+      isDir &&
+      [...compiledInputs.keys(), ...[...(inputWalk?.links.keys() ?? [])].map(fileKey)].some((input) =>
+        keyWithin(input, [changed]),
+      );
     const regrouped =
+      inputFolder ||
       compiledInputNames !== namedInputs() ||
       (event !== 'change' && inGlobScope(path, isDir)) ||
       inWatchedFolder(path) ||

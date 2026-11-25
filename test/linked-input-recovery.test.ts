@@ -1,7 +1,7 @@
 /** Discovered file links recover without an unrelated save (#575, #576). */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { watch } from '../src/compiler.js';
 import type { CompileResult } from '../src/types.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
@@ -43,6 +43,38 @@ function fixture(role: 'source' | 'module', missing: 'target' | 'hop' | 'folder'
 }
 
 describe.skipIf(process.platform === 'win32')('discovered link recovery', { timeout: 30_000 }, () => {
+  it.each(['source', 'module'] as const)('handles folder-only events for an external discovered %s', async (role) => {
+    const f = fixture(role, 'folder');
+    const { server, url } = await startServer({
+      root: f.dir,
+      server: { watch: null },
+      plugins: [
+        tweeTsPlugin({ sources: [join(f.dir, 'story')], format: 'test-format-1', compileOptions: f.compileOptions }),
+      ],
+    });
+    expect(await (await fetch(url)).text()).toContain('RECOVERED_INPUT');
+    const sent = vi.spyOn(server.ws, 'send');
+    f.remove();
+    // Some watchers report the removed folder without a separate unlink for its registered file.
+    server.watcher.emit('all', 'unlinkDir', dirname(f.target));
+    await vi.waitFor(() => {
+      expect(sent).toHaveBeenCalledWith(expect.objectContaining({ type: 'full-reload' }));
+    }, settled);
+    expect(await (await fetch(url)).text()).not.toContain('RECOVERED_INPUT');
+    sent.mockClear();
+    f.restore();
+    server.watcher.emit('all', 'addDir', dirname(f.target));
+    await vi.waitFor(() => {
+      expect(sent).toHaveBeenCalledWith(expect.objectContaining({ type: 'full-reload' }));
+    }, settled);
+    expect(await (await fetch(url)).text()).toContain('RECOVERED_INPUT');
+    sent.mockClear();
+    // A folder outside the admitted inputs must not cause a build, including via request catch-up.
+    server.watcher.emit('all', 'unlinkDir', tempDir());
+    expect(await (await fetch(url)).text()).toContain('RECOVERED_INPUT');
+    expect(sent).not.toHaveBeenCalled();
+  });
+
   it.each(CASES)('native watch restores a $role after its $missing disappears (#575)', async ({ role, missing }) => {
     const f = fixture(role, missing);
     const builds: CompileResult[] = [];
@@ -97,9 +129,15 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
           server: watching ? {} : { watch: null },
         });
         const sent = vi.spyOn(server.ws, 'send');
+        const events: string[] = [];
+        server.watcher.on('all', (event, path) => {
+          events.push(`${event}: ${path}`);
+        });
         const waitForReload = async (stage: string): Promise<void> => {
           await vi.waitFor(() => {
-            expect(sent, stage).toHaveBeenCalledWith(expect.objectContaining({ type: 'full-reload' }));
+            expect(sent, `${stage}\nWatcher events:\n${events.join('\n')}`).toHaveBeenCalledWith(
+              expect.objectContaining({ type: 'full-reload' }),
+            );
           }, settled);
         };
         const primeTargetWatch = async (): Promise<void> => {
@@ -124,6 +162,7 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
             server.watcher.off('change', onChange);
           }
           sent.mockClear();
+          events.length = 0;
         };
         expect((await (await fetch(url)).text()).includes('RECOVERED_INPUT')).toBe(!initiallyMissing);
         if (!initiallyMissing) {
@@ -134,6 +173,7 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
         expect(await (await fetch(url)).text()).not.toContain('RECOVERED_INPUT');
         // No request may repair the watcher before it reports recovery itself.
         sent.mockClear();
+        events.length = 0;
         f.restore();
         if (watching) await waitForReload('automatic recovery after restoring the target, hop or folder');
         expect(await (await fetch(url)).text()).toContain('RECOVERED_INPUT');
