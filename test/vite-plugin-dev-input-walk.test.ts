@@ -286,7 +286,7 @@ describe('vite plugin dev: the request catch-up reuses its walk of the inputs (#
   );
 
   it.skipIf(process.platform === 'win32')(
-    'retains native link watches across rebuilds with unchanged links (#576)',
+    'watches external target parents and retains native link watches across rebuilds (#576)',
     async () => {
       const dir = project();
       const external = makeProject({ target: passage('Linked') });
@@ -294,6 +294,7 @@ describe('vite plugin dev: the request catch-up reuses its walk of the inputs (#
       const { url } = await startServer({ root: dir, plugins: plugin(dir) });
       expect(names(await (await fetch(url)).text())).toContain('Linked');
       expect(calls.watch).toContain(join(dir, 'story'));
+      expect(calls.watch).toContain(external);
       calls.watch.length = 0;
       fs.writeFileSync(join(dir, 'story/start.tw'), STORY + '\nChanged.');
       expect(await (await fetch(url)).text()).toContain('Changed.');

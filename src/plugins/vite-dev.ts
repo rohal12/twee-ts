@@ -385,17 +385,22 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   // by its resolved spelling. Keep the links too: replacing one can select a different input. Re-register
   // on rebuild so edits of the newly selected target are watched after a retarget.
   const watchInputs = (): void => {
-    // Chokidar follows readable links but cannot recover targets it has never seen. The native watcher
-    // already follows every hop and waits through missing parent folders; use it for omitted candidates.
-    const missing = [...(inputWalk?.links ?? [])].filter(([, state]) => state === undefined).map(([path]) => path);
-    if (config.server.watch !== null && JSON.stringify(missing) !== JSON.stringify(recoveryPaths)) {
+    // Chokidar can lose an external file's parent folder without reporting any event on macOS. Watch
+    // readable links and omitted candidates natively from the start: the anchors follow every hop,
+    // the final parent folder and its restoration, including while discovery leaves the file out.
+    const discovered = inputWalk?.files.filter((file) => file.link).map((file) => file.path) ?? [];
+    const loaded = new Set(discovered);
+    const recovery = [...(inputWalk?.links ?? [])]
+      .filter(([path, state]) => state === undefined || loaded.has(path))
+      .map(([path]) => path);
+    if (config.server.watch !== null && JSON.stringify(recovery) !== JSON.stringify(recoveryPaths)) {
       inputRecovery?.close();
       inputRecovery = undefined;
-      recoveryPaths = missing;
-      if (missing.length > 0) {
+      recoveryPaths = recovery;
+      if (recovery.length > 0) {
         let started = false;
         inputRecovery = watchFilesystem(
-          missing,
+          recovery,
           resolve(config.root, config.build.outDir, options.outputFilename),
           () => {
             if (started) for (const input of inputs) noteChange(fileKey(input));
@@ -411,7 +416,6 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
     }
     // A temporarily missing link is no longer found by traversal. Keep its location until it reappears,
     // so a failed compile after removal does not lose the event that can recover it.
-    const discovered = inputWalk?.files.filter((file) => file.link).map((file) => file.path) ?? [];
     const watchedInputs = [...inputs, ...discovered];
     const links = [
       ...new Set([...inputLinkPaths.filter((link) => !existsSync(link)), ...watchedInputs.flatMap(linksOnTheWay)]),
