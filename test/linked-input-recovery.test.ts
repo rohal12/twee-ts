@@ -146,6 +146,8 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
     const controller = await watch({
       ...f.compileOptions,
       sources: [join(f.dir, 'story')],
+      // These fixtures are outside cwd: an absolute glob isolates the module from source discovery.
+      exclude: role === 'module' ? [join(f.dir, '**', '*.js')] : [],
       formatId: 'test-format-1',
       outFile: join(f.dir, 'out.html'),
       onBuild: (result) => builds.push(result),
