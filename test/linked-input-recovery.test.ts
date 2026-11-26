@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { watch } from '../src/compiler.js';
+import { getFilenames } from '../src/filesystem.js';
 import type { CompileResult } from '../src/types.js';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
 import { cleanUp, COMPILE, makeProject, startServer, STORY, tempDir } from './helpers/plugins.js';
@@ -101,6 +102,60 @@ describe.skipIf(process.platform === 'win32')('discovered link recovery', { time
       await vi.waitFor(() => {
         expect(builds.at(-1)?.output).not.toContain('RECOVERED_INPUT');
       }, settled);
+      f.restore();
+      await vi.waitFor(() => {
+        expect(builds.at(-1)?.output).toContain('RECOVERED_INPUT');
+      }, settled);
+      expect(errors).toEqual([]);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it.each(['source', 'module'] as const)('only registers eligible missing %s candidates (#580)', (role) => {
+    const dir = tempDir();
+    const missing = join(tempDir(), 'missing');
+    const folder = tempDir();
+    const names = ['alias.tw', 'alias.js', 'excluded.js', 'unknown.txt', 'folder.js', 'output.js'];
+    for (const name of names) {
+      const target = name === 'folder.js' ? folder : name === 'output.js' ? `${missing}-output` : missing;
+      symlinkSync(target, join(dir, name));
+    }
+    const recover: string[] = [];
+    const found = getFilenames(
+      [dir],
+      join(dir, 'output.js'),
+      [join(dir, 'excluded.js')],
+      role,
+      undefined,
+      undefined,
+      (path) => recover.push(path),
+    );
+    expect(found.files).toEqual([]);
+    expect(found.diagnostics).toEqual([]);
+    expect(recover.sort()).toEqual(
+      (role === 'source' ? ['alias.js', 'alias.tw'] : ['alias.js']).map((name) => join(dir, name)),
+    );
+  });
+
+  it.each(CASES)('native watch finds an initially missing $role $missing (#580)', async ({ role, missing }) => {
+    const f = fixture(role, missing);
+    f.remove();
+    const builds: CompileResult[] = [];
+    const errors: Error[] = [];
+    const controller = await watch({
+      ...f.compileOptions,
+      sources: [join(f.dir, 'story')],
+      formatId: 'test-format-1',
+      outFile: join(f.dir, 'out.html'),
+      onBuild: (result) => builds.push(result),
+      onError: (error) => errors.push(error),
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(builds.length).toBeGreaterThan(0);
+      }, settled);
+      expect(builds.at(-1)?.output).not.toContain('RECOVERED_INPUT');
       f.restore();
       await vi.waitFor(() => {
         expect(builds.at(-1)?.output).toContain('RECOVERED_INPUT');

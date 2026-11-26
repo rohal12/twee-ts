@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound braced Unicode escape parsing at the shared JavaScript scanner, retaining tagged-template recovery and valid escapes (#579).
+- Watch initially dangling discovered source and module links so external targets, intermediate hops and missing parents recover automatically (#580).
+- Reserve HTML-decoded characters when choosing template markers, preventing encoded decoys from changing placeholder escaping contexts (#581).
+
 - Preserve encoded queries and SVG fragments in Vite entry asset URLs and avoid double-encoding percent signs in relative CSS public-asset URLs (#574).
 - Retain native recovery watches for discovered file links while their external targets or intermediate hops are missing (#575).
 - Refresh Vite input discovery when dangling file links become readable, including request catch-up with watching disabled, and watch omitted targets for automatic recovery (#576).

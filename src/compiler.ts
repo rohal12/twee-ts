@@ -262,6 +262,7 @@ export function watchWithWriteFilter(
       let request: WatchBuildRequest | undefined = first;
       while (request !== undefined) {
         let found: readonly DiscoveredFile[] = [];
+        const missingLinks: { path: string; link: true }[] = [];
         const outcome = await buildOutput(buildOptions, {
           cache,
           changedFiles: request.changedFiles,
@@ -270,12 +271,13 @@ export function watchWithWriteFilter(
           onDiscovered: (files) => {
             found = files;
           },
+          onMissingLink: (path) => missingLinks.push({ path, link: true }),
         }).then(
           (result): WatchBuildOutcome => ({ ok: true, result }),
           (e: unknown): WatchBuildOutcome => ({ ok: false, error: toError(e) }),
         );
         if (controller.signal.aborted) return;
-        handle.track(found);
+        handle.track([...found, ...missingLinks]);
         deliver(outcome);
         request = queued;
         queued = undefined;
@@ -625,13 +627,29 @@ async function runBuild(options: CompileOptions, context: BuildContext): Promise
 
   const walked = groups.map((group) => {
     if (group.kind === 'inline') return group;
-    const found = getFilenames(group.paths, written, options.exclude);
+    const found = getFilenames(
+      group.paths,
+      written,
+      options.exclude,
+      'source',
+      undefined,
+      undefined,
+      context.onMissingLink,
+    );
     pushAll(diagnostics, found.diagnostics);
     if (guardsFolders) checkSkippedOutputs(found.skippedOutputs, 'source', diagnostics, guarded);
     return { kind: 'files' as const, files: found.files };
   });
   // Modules are read for HTML output only, but checked in every mode.
-  const modules = getFilenames(options.modules ?? [], written, [], 'module');
+  const modules = getFilenames(
+    options.modules ?? [],
+    written,
+    [],
+    'module',
+    undefined,
+    undefined,
+    context.onMissingLink,
+  );
   if (guardsFolders) checkSkippedOutputs(modules.skippedOutputs, 'module', diagnostics, guarded);
   // Once the output is known to be no input, and before the work: a target that can't be written fails now.
   if (context.writesOutput === true && typeof outputs === 'string') checkWritable(outputs);
@@ -801,6 +819,8 @@ interface BuildContext {
   readonly extraInputs?: readonly ExtraInput[];
   /** Receives every source and module file the build found, before any is read (for the watcher). */
   readonly onDiscovered?: (files: readonly DiscoveredFile[]) => void;
+  /** Receives eligible discovered links even before their targets exist (for native recovery watches). */
+  readonly onMissingLink?: (path: string) => void;
   /** Read the modules and head file as HTML output does, whatever the output mode (for lint). */
   readonly checkHead?: boolean;
   /** Check the Twine 2 IFID prerequisite even in the JSON build lint inspects. */

@@ -37,6 +37,13 @@ const HTML_NS = htmlSpec.NS.HTML;
 class IndexedAttributeTokenizer extends Tokenizer {
   private attributeToken: Token.Token | null = null;
   private readonly attributeNames = new Set<string>();
+  /** Decoded private-use characters, including values of duplicate attributes the tree discards. */
+  readonly referencedPrivateUse = new Set<number>();
+
+  protected override _flushCodePointConsumedAsCharacterReference(cp: number): void {
+    if (cp >= 0xe000 && cp <= 0xf8ff) this.referencedPrivateUse.add(cp);
+    super._flushCodePointConsumedAsCharacterReference(cp);
+  }
 
   protected override _leaveAttrName(): void {
     const token = this.currentToken;
@@ -66,6 +73,8 @@ class IndexedAttributeTokenizer extends Tokenizer {
 
 /** Install the indexed tokenizer before either document input or fragment-context initialization is read. */
 class HtmlParser extends Parser<DefaultTreeAdapterMap> {
+  declare tokenizer: IndexedAttributeTokenizer;
+
   constructor(
     options?: ParserOptions<DefaultTreeAdapterMap>,
     document?: HtmlDocument,
@@ -204,11 +213,18 @@ function depthLimitedTreeAdapter(): typeof defaultTreeAdapter {
  * `TweeTsError` when elements nest more than `MAX_HTML_DEPTH` deep (an `HtmlNestingError`).
  */
 export function parseHtml(html: string, locations = true): HtmlDocument {
-  return HtmlParser.parse(html, {
+  return readHtml(html, locations).document;
+}
+
+/** Retain tokenizer evidence as well as the document tree. */
+function readHtml(html: string, locations: boolean): HtmlParser {
+  const parser = new HtmlParser({
     sourceCodeLocationInfo: locations,
     scriptingEnabled: true,
     treeAdapter: depthLimitedTreeAdapter(),
   });
+  parser.tokenizer.write(html, true);
+  return parser;
 }
 
 /** Parse `html` as the content of a `div` element, as `parseHtml()` reads a document. */
@@ -754,9 +770,11 @@ export function analyzeTemplate(html: string, occurrences: readonly PlaceholderO
   return { marked, doc, sites: resolveCodeContexts(html, occurrences, sites, found) };
 }
 
-/** Markers for `occurrences`: a unique first character, then a filler, from private-use characters not in `html`. */
+/** Markers use a unique first character and filler absent from both literal and HTML-decoded content. */
 function makeMarkers(html: string, occurrences: readonly PlaceholderOccurrence[]): string[] {
-  const used = new Set<number>();
+  // Reserve references at tokenization, before the tree drops duplicate attributes or ignored elements.
+  // Replacing repeated placeholder names with distinct markers can make such attributes visible in that parse.
+  const used = readHtml(html, false).tokenizer.referencedPrivateUse;
   for (const match of html.matchAll(/[\uE000-\uF8FF]/g)) used.add(match[0].charCodeAt(0));
   const free: string[] = [];
   for (let code = 0xe000; code <= 0xf8ff && free.length <= occurrences.length; code++) {
