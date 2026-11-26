@@ -271,6 +271,7 @@ function compareNames(a: string, b: string): number {
  * `onFolder` is called with each folder the walk lists, just before it lists it, so a caller can tell later
  * whether what is in the folders walked changed since (the Vite dev server, which then needs no walk).
  * `onLink` observes discovered links, including dangling links and links to folders, whose targets may change.
+ * `onMissingLink` observes loadable, non-excluded file candidates whose target is absent, for native recovery.
  */
 export function getFilenames(
   pathnames: readonly string[],
@@ -279,6 +280,7 @@ export function getFilenames(
   role: Extract<InputRole, 'source' | 'module'> = 'source',
   onFolder?: (folder: string) => void,
   onLink?: (link: string) => void,
+  onMissingLink?: (link: string) => void,
 ): FilenamesResult {
   const files: DiscoveredFile[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -321,6 +323,7 @@ export function getFilenames(
         if (!isLoadableType(pathname, role) || matchesExclude(identify(pathname), exclude)) return;
         const target = statLinkTarget(pathname);
         if (target === undefined) {
+          if (!output.isFile(pathname)) onMissingLink?.(pathname);
           problem('found', 'dangling-link', pathname, readLinkText(pathname));
           return;
         }

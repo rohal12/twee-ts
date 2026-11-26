@@ -65,6 +65,9 @@ interface RegExpState {
 
 declare module 'acorn' {
   interface Parser {
+    readCodePoint(): number;
+    readInt(radix: number, length: number | null): number | null;
+    invalidStringToken(position: number, message: string): never;
     regexp_groupSpecifier(state: RegExpState): void;
     regexp_eatGroupName(state: RegExpState): boolean;
   }
@@ -102,6 +105,24 @@ export class AcornParser extends Parser {
 
   /** Acorn's internal scope shape; its constructor calls enterScope before reading any bindings. */
   declare scopeStack: { flags: number; var: ScopeNames; lexical: ScopeNames; functions: ScopeNames }[];
+
+  override readCodePoint(): number {
+    if (
+      this.input.charCodeAt(this.pos) !== 123 ||
+      (typeof this.options.ecmaVersion === 'number' && this.options.ecmaVersion < 6)
+    )
+      return super.readCodePoint();
+    const start = ++this.pos;
+    // Acorn searches the whole suffix for `}` first, even for invalid cooked escapes in legal tagged templates.
+    // Its integer reader stops at the first non-hex character; null means unlimited digits without separators.
+    const code = this.readInt(16, null);
+    if (code === null || this.input.charCodeAt(this.pos) !== 125) {
+      this.invalidStringToken(start, 'Bad character escape sequence');
+    }
+    this.pos++;
+    if (code > 0x10ffff) this.invalidStringToken(start, 'Code point out of bounds');
+    return code;
+  }
 
   enterScope(flags: number): void {
     this.scopeStack.push({ flags, var: new ScopeNames(), lexical: new ScopeNames(), functions: new ScopeNames() });
