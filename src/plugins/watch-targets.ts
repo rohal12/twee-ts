@@ -154,7 +154,11 @@ export function importWatchTargets(authored: Iterable<string>, outputs: OutputPa
     missing.push(spelling);
   }
   for (const folder of missingImportFolders(missing)) {
-    if (!outputs.holds(realPathOf(folder))) targets.add(toPosix(folder));
+    const real = realPathOf(folder);
+    if (outputs.holds(real)) continue;
+    targets.add(toPosix(folder));
+    // Native watchers on macOS report physical paths, including recovery folders reached through a link.
+    targets.add(toPosix(real));
   }
   return [...targets];
 }

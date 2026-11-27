@@ -13,7 +13,13 @@ import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
-import { linksOnTheWay, missingImportFolders, readableFolder, watchTargets } from '../src/plugins/watch-targets.js';
+import {
+  importWatchTargets,
+  linksOnTheWay,
+  missingImportFolders,
+  readableFolder,
+  watchTargets,
+} from '../src/plugins/watch-targets.js';
 import {
   trackBuildWatch,
   cleanUp,
@@ -317,6 +323,16 @@ describe('vite build --watch', { timeout: 30_000 }, () => {
 });
 
 describe('missingImportFolders', () => {
+  it('registers a missing import through a directory link at its physical folder too (#583)', () => {
+    const root = tempDir();
+    const real = tempDir();
+    const link = join(root, 'linked');
+    symlinkSync(real, link, 'junction');
+    expect(importWatchTargets([join(link, 'missing.js')], NO_OUTPUTS).sort()).toEqual(
+      [toPosix(link), toPosix(real)].sort(),
+    );
+  });
+
   it('gives the nearest folder that exists for a path that reaches nothing, and none for one that exists', () => {
     const dir = tempDir();
     mkdirSync(join(dir, 'app'));

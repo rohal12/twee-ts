@@ -330,7 +330,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       recovery.folders.add(canonicalPath(folder));
     }
     recovery.watch.watch([...recovery.folders]);
-    context.addWatchFile(recovery.watch.signal);
+    context.addWatchFile(canonicalPath(recovery.watch.signal));
   };
 
   /**
@@ -524,7 +524,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         const recovery = importAccess.get(importOwnerOf(this));
         recovery?.folders.clear();
         recovery?.watch.watch([]);
-        if (recovery !== undefined) this.addWatchFile(recovery.watch.signal);
+        if (recovery !== undefined) this.addWatchFile(canonicalPath(recovery.watch.signal));
         const outputs = outputPaths(allOutputs(config), 'snapshot');
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
         for (const target of watchTargets(resolved.inputs, resolved.excluded, outputs, 'real')) {
