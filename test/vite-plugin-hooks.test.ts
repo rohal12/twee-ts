@@ -25,7 +25,7 @@ const SERVE = { command: 'serve', mode: 'development' };
 interface BuildContext {
   addWatchFile(id: string): void;
   meta: { watchMode: boolean };
-  environment: { config: unknown };
+  environment: { config: unknown; getTopLevelConfig(): unknown };
 }
 
 interface BundleContext {
@@ -187,7 +187,7 @@ describe('vite plugin hooks: buildStart', () => {
     await hooks.buildStart.call({
       addWatchFile: (id) => added.push(id),
       meta: { watchMode },
-      environment: { config },
+      environment: { config, getTopLevelConfig: () => config },
     });
     return added;
   }
