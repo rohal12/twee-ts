@@ -1572,6 +1572,75 @@ describe('watchFilesystem events and timing (#247)', () => {
     },
   );
 
+  describe.skipIf(process.platform === 'win32')('tracked path retention (#586)', () => {
+    for (const within of [true, false]) {
+      for (const absolute of [true, false]) {
+        for (const missing of [true, false]) {
+          it.each(['tw', 'js'])(
+            `reuses %s link watches: within cwd=${String(within)}, absolute=${String(absolute)}, missing=${String(missing)}`,
+            (extension) => {
+              const outside = join(root, 'outside');
+              const working = join(root, 'working');
+              mkdirSync(outside);
+              mkdirSync(working);
+              const target = join(outside, `target.${extension}`);
+              const alias = join(story, `alias.${extension}`);
+              if (!missing) writeFileSync(target, 'content');
+              symlinkSync(target, alias);
+              const cwd = vi.spyOn(process, 'cwd').mockReturnValue(within ? root : working);
+              try {
+                const h = start([story]);
+                const files = [{ path: absolute ? alias : rel(alias), link: true }];
+                h.track(files);
+                const registered = [...fake.watchers];
+                for (let i = 0; i < 3; i++) h.track(files);
+                expect(fake.watchers).toEqual(registered);
+                expect(registered.every((watcher) => !watcher.closed)).toBe(true);
+                h.close();
+                expect(registered.every((watcher) => watcher.closed)).toBe(true);
+              } finally {
+                cwd.mockRestore();
+              }
+            },
+          );
+        }
+      }
+    }
+
+    it('retains unlinked tracked files outside named roots', () => {
+      const target = join(root, 'external.tw');
+      writeFileSync(target, ':: External\ncontent');
+      const h = start([story]);
+      const files = [{ path: rel(target) }];
+      h.track(files);
+      const registered = [...fake.watchers];
+      h.track(files);
+      expect(fake.watchers).toEqual(registered);
+      expect(registered.every((watcher) => !watcher.closed)).toBe(true);
+    });
+
+    it('keeps distinct paths whose parent steps follow a symbolic link', () => {
+      mkdirSync(join(root, 'real', 'deep'), { recursive: true });
+      symlinkSync(join(root, 'real', 'deep'), join(story, 'pivot'));
+      writeFileSync(join(root, 'real', 'a.tw'), ':: Real\ncontent');
+      const h = start([story]);
+      const files = [
+        { path: `${story}/pivot/../a.tw`, link: true },
+        { path: join(story, 'a.tw'), link: true },
+      ];
+      h.track(files);
+      const registered = [...fake.watchers];
+      const realWatches = fake.watchers.filter((w) => w.identity === fake.identityOf(join(root, 'real')));
+      expect(realWatches).toHaveLength(1);
+      h.track(files);
+      expect(fake.watchers).toEqual(registered);
+      builds.length = 0;
+      realWatches[0]?.listener('change', 'a.tw');
+      vi.advanceTimersByTime(500);
+      expect(builds).toEqual([new Set([rel(join(root, 'real', 'a.tw'))])]);
+    });
+  });
+
   it.skipIf(process.platform === 'win32').each(['target', 'hop', 'alias'] as const)(
     'retains tracked recovery anchors for a missing %s and closes them on cancellation (#575)',
     (missing) => {
