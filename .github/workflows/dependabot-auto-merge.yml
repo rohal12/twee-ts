@@ -4,6 +4,12 @@ name: Dependabot auto-merge
 # (.github/dependabot.yml), so they merge once everything the main ruleset requires has passed, code scanning
 # included. Major updates, and the release action (which is never grouped: a merge commit that names it requests a
 # release), stay for a person.
+#
+# The merge needs AUTO_MERGE_TOKEN, a Dependabot secret: a merge turned on with this run's own token starts no workflow,
+# which would leave the commit on main without CI. It is a fine-grained personal access token for this repository alone,
+# with read and write access to contents, pull requests and workflows (Dependabot's updates of the GitHub Actions change
+# workflow files). Only the step below gets it, and this job checks out nothing. When it is missing or has expired, that
+# step fails and the pull request waits for a person.
 on:
   pull_request:
     branches: [main]
@@ -17,8 +23,7 @@ jobs:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # merge the pull request
-      pull-requests: write # turn on auto-merge
+      pull-requests: read # fetch-metadata reads the pull request's commits
     steps:
       - id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
@@ -31,6 +36,6 @@ jobs:
           steps.metadata.outputs.update-type == 'version-update:semver-patch') &&
           !contains(steps.metadata.outputs.dependency-names, 'tobua/')
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
