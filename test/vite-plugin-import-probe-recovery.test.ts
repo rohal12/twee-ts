@@ -1,6 +1,6 @@
 /** A failed filesystem probe must not discard an import's recovery observations (#583). */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { build, createLogger } from 'vite';
 import { tweeTsPlugin } from '../src/plugins/vite.js';
@@ -28,7 +28,7 @@ const FAILURES = [
 ] as const;
 
 /** An external entry, so root watching cannot conceal a lost dependency observation. */
-function project(fault: 'loop' | 'permission', linked = false) {
+function project(fault: 'loop' | 'permission', linked = false, workers = 0) {
   const root = makeProject({ 'story.tw': STORY, 'outer.js': 'globalThis.outer = 1;' });
   const app = makeProject({
     'main.js': 'import { value } from "./restricted/dep.js"; globalThis.probe = value;',
@@ -38,11 +38,17 @@ function project(fault: 'loop' | 'permission', linked = false) {
   const folder = join(dependency, 'restricted');
   if (linked) symlinkSync(folder, join(app, 'restricted'), 'junction');
   const dep = join(folder, 'dep.js');
+  let entryName = 'main.js';
+  for (let depth = 1; depth <= workers; depth += 1) {
+    const name = `worker-entry-${String(depth)}.js`;
+    writeFileSync(join(app, name), `new Worker(new URL('./${entryName}', import.meta.url), { type: 'module' });`);
+    entryName = name;
+  }
   restricted.push(folder);
   return {
     root,
     dep,
-    entry: join(app, 'main.js'),
+    entry: join(app, entryName),
     breakImport: () => {
       if (fault === 'permission') chmodSync(folder, 0);
       else {
@@ -109,10 +115,14 @@ describe.each(FAILURES)(
 
     it
       .skipIf(skip || !buildWatchSeesFolders)
-      .each([false, true].flatMap((separate) => [false, true].map((linked) => ({ separate, linked }))))(
-      'recovers in build watch (separate: $separate, linked: $linked)',
-      async ({ separate, linked }) => {
-        const { root, entry, dep, breakImport, repair, recovered } = project(fault, linked);
+      .each(
+        [false, true].flatMap((separate) =>
+          [false, true].flatMap((linked) => [0, 1, 2].map((workers) => ({ separate, linked, workers }))),
+        ),
+      )(
+      'recovers in build watch (separate: $separate, linked: $linked, workers: $workers)',
+      async ({ separate, linked, workers }) => {
+        const { root, entry, dep, breakImport, repair, recovered } = project(fault, linked, workers);
         breakImport();
         expect(() => statSync(dep)).toThrow(expect.objectContaining({ code }));
         const logger = createLogger('silent');
@@ -141,6 +151,7 @@ describe.each(FAILURES)(
         watcher.on('event', (event) => events.push(event.code));
         await vi.waitFor(() => {
           expect(events).toContain('ERROR');
+          expect(events.at(-1)).toBe('END');
         }, SETTLED);
         expect(errors.mock.calls.map(([message]) => message).join('\n')).toContain('dep.js');
         repair();
@@ -151,7 +162,11 @@ describe.each(FAILURES)(
           } catch {
             throw new Error(`No story; events: ${JSON.stringify(events)}`);
           }
-          expect(story).toContain(recovered);
+          const assets = join(root, 'out/assets');
+          const scripts =
+            workers === 0 ? [] : readdirSync(assets).map((name) => readFileSync(join(assets, name), 'utf8'));
+          expect(story).toContain('Hello from the story.');
+          expect([story, ...scripts].join('\n')).toContain(recovered);
         }, SETTLED);
       },
     );

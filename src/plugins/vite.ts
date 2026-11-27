@@ -288,12 +288,20 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // readable parents and signal a normal file change when access returns, as for retargeted input links.
   const importAccess = new Map<ResolvedConfig, { readonly watch: LinkWatch; readonly folders: Set<string> }>();
   const importOwners = new WeakMap<object, ResolvedConfig>();
+  const importBuildContexts = new WeakMap<ResolvedConfig, WatchHookContext>();
   const importOwnerOf = (context: WatchHookContext): ResolvedConfig => {
     const config = context.environment.getTopLevelConfig();
     // Vite's nested worker configurations refer to the outer build as mainConfig. Only accept owners this
     // plugin actually resolved, keeping worker recovery under its build's lifetime without retaining workers.
     const main: unknown = Reflect.get(config, 'mainConfig');
     return (typeof main === 'object' && main !== null ? importOwners.get(main) : undefined) ?? config;
+  };
+  const addImportWatchFile = (context: WatchHookContext, id: string): void => {
+    context.addWatchFile(id);
+    // Vite passes a worker's watch files to its owner only after the worker builds successfully. Register
+    // recovery targets with the outer build too, so an initially failed worker can restart that build.
+    const owner = importBuildContexts.get(importOwnerOf(context));
+    if (owner !== undefined && owner.environment !== context.environment) owner.addWatchFile(id);
   };
   // Each file (by real path) an import has reached in the builds of `vite build --watch`, by the import as written:
   // its importer and its source. Not by the path it reaches the file through, which a retarget may change too (a
@@ -330,7 +338,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       recovery.folders.add(canonicalPath(folder));
     }
     recovery.watch.watch([...recovery.folders]);
-    context.addWatchFile(canonicalPath(recovery.watch.signal));
+    addImportWatchFile(context, canonicalPath(recovery.watch.signal));
   };
 
   /**
@@ -342,7 +350,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     const config = configOf(context);
     const { spellings, kept } = await importSpellings(context, source, importer, config.root);
     const outputs = outputsOf(config);
-    for (const target of importWatchTargets(spellings, outputs)) context.addWatchFile(target);
+    for (const target of importWatchTargets(spellings, outputs)) addImportWatchFile(context, target);
     watchImportAccess(context, spellings, outputs);
     return kept;
   };
@@ -521,6 +529,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       watchOutputs = new WeakMap();
       forgetKeptResolver(config);
       if (this.meta.watchMode) {
+        importBuildContexts.set(importOwnerOf(this), this);
         const recovery = importAccess.get(importOwnerOf(this));
         recovery?.folders.clear();
         recovery?.watch.watch([]);
@@ -687,6 +696,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const owner = importOwnerOf(this);
       importAccess.get(owner)?.watch.close();
       importAccess.delete(owner);
+      importBuildContexts.delete(owner);
     },
 
     async configureServer(server) {
