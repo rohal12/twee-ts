@@ -58,7 +58,9 @@ import {
 import type { BundleItem, EntryBundle, ImportHookContext } from './vite-entry.js';
 import { moduleGlobScopes, readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
-import { importWatchTargets, watchTargets } from './watch-targets.js';
+import { importWatchTargets, missingImportFolders, readableFolder, watchTargets } from './watch-targets.js';
+import { createLinkWatch } from './link-watch.js';
+import type { LinkWatch } from './link-watch.js';
 import { isRecord } from '../util.js';
 
 export type { PluginCompileOptions } from './options.js';
@@ -220,7 +222,7 @@ function claimingPlugin(plugin: Plugin, claim: (key: string) => void): Plugin {
 
 /** The part of a build hook's context that registering watch targets uses. */
 type WatchHookContext = ImportHookContext & {
-  readonly environment: { readonly config: ResolvedConfig };
+  readonly environment: { readonly config: ResolvedConfig; getTopLevelConfig(): ResolvedConfig };
   addWatchFile(id: string): void;
 };
 
@@ -282,6 +284,25 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // What builds with each config write, as `vite build --watch` leaves them out of its watch targets; taken once per
   // build (see buildStart), and once per nested worker build, whose config is its own.
   let watchOutputs = new WeakMap<ResolvedConfig, OutputPaths>();
+  // Native build watchers can ignore permission-only changes. Observe inaccessible import folders from their
+  // readable parents and signal a normal file change when access returns, as for retargeted input links.
+  const importAccess = new Map<ResolvedConfig, { readonly watch: LinkWatch; readonly folders: Set<string> }>();
+  const importOwners = new WeakMap<object, ResolvedConfig>();
+  const importBuildContexts = new WeakMap<ResolvedConfig, WatchHookContext>();
+  const importOwnerOf = (context: WatchHookContext): ResolvedConfig => {
+    const config = context.environment.getTopLevelConfig();
+    // Vite's nested worker configurations refer to the outer build as mainConfig. Only accept owners this
+    // plugin actually resolved, keeping worker recovery under its build's lifetime without retaining workers.
+    const main: unknown = Reflect.get(config, 'mainConfig');
+    return (typeof main === 'object' && main !== null ? importOwners.get(main) : undefined) ?? config;
+  };
+  const addImportWatchFile = (context: WatchHookContext, id: string): void => {
+    context.addWatchFile(id);
+    // Vite passes a worker's watch files to its owner only after the worker builds successfully. Register
+    // recovery targets with the outer build too, so an initially failed worker can restart that build.
+    const owner = importBuildContexts.get(importOwnerOf(context));
+    if (owner !== undefined && owner.environment !== context.environment) owner.addWatchFile(id);
+  };
   // Each file (by real path) an import has reached in the builds of `vite build --watch`, by the import as written:
   // its importer and its source. Not by the path it reaches the file through, which a retarget may change too (a
   // package's `exports`, a folder's index of another extension).
@@ -297,6 +318,29 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     return outputs;
   };
 
+  const watchImportAccess = (context: WatchHookContext, authored: Iterable<string>, outputs: OutputPaths): void => {
+    const config = importOwnerOf(context);
+    const folders = missingImportFolders(authored).filter(
+      (folder) => !readableFolder(folder) && !outputs.holds(folder),
+    );
+    let recovery = importAccess.get(config);
+    if (recovery === undefined && folders.length > 0) {
+      const watch = createLinkWatch(readableFolder);
+      if (watch !== undefined) {
+        recovery = { watch, folders: new Set() };
+        importAccess.set(config, recovery);
+      }
+    }
+    if (recovery === undefined) return;
+    for (const folder of folders) {
+      recovery.folders.add(folder);
+      // Observe a linked folder's physical parent too: chmod of its target emits no event beside the link.
+      recovery.folders.add(canonicalPath(folder));
+    }
+    recovery.watch.watch([...recovery.folders]);
+    addImportWatchFile(context, canonicalPath(recovery.watch.signal));
+  };
+
   /**
    * `vite build --watch` with the entry bundled inside the build: the bundler watches each module by its real path,
    * so the links an import of the entry's graph goes through (or the folder where an import that reaches nothing
@@ -305,7 +349,9 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   const registerImport = async (context: WatchHookContext, source: string, importer: string | undefined) => {
     const config = configOf(context);
     const { spellings, kept } = await importSpellings(context, source, importer, config.root);
-    for (const target of importWatchTargets(spellings, outputsOf(config))) context.addWatchFile(target);
+    const outputs = outputsOf(config);
+    for (const target of importWatchTargets(spellings, outputs)) addImportWatchFile(context, target);
+    watchImportAccess(context, spellings, outputs);
     return kept;
   };
 
@@ -411,6 +457,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
     },
 
     configResolved(config) {
+      importOwners.set(config, config);
       if (config.command === 'build') {
         const recorder = recordWatchFiles(undefined, config.root, {}, (environmentConfig) => {
           if (isStoryBuild(environmentConfig)) {
@@ -482,6 +529,11 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       watchOutputs = new WeakMap();
       forgetKeptResolver(config);
       if (this.meta.watchMode) {
+        importBuildContexts.set(importOwnerOf(this), this);
+        const recovery = importAccess.get(importOwnerOf(this));
+        recovery?.folders.clear();
+        recovery?.watch.watch([]);
+        if (recovery !== undefined) this.addWatchFile(canonicalPath(recovery.watch.signal));
         const outputs = outputPaths(allOutputs(config), 'snapshot');
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
         for (const target of watchTargets(resolved.inputs, resolved.excluded, outputs, 'real')) {
@@ -499,6 +551,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         for (const file of watched) this.addWatchFile(canonicalPath(file));
         const outputs = outputPaths(allOutputs(config), 'snapshot');
         for (const target of importWatchTargets(authored, outputs)) this.addWatchFile(target);
+        watchImportAccess(this, authored, outputs);
         for (const target of globWatchTargets(globs, outputs)) this.addWatchFile(target);
       };
       watched.add(entryPath);
@@ -637,6 +690,13 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       // Vite writes the asset itself, so record its bytes only after the write. This also recognises markless
       // output modes and HTML with arbitrary filenames on subsequent builds, without trusting edited files.
       if (story?.type === 'asset' && path !== undefined) recordOwnOutput(path, story.source);
+    },
+
+    closeWatcher() {
+      const owner = importOwnerOf(this);
+      importAccess.get(owner)?.watch.close();
+      importAccess.delete(owner);
+      importBuildContexts.delete(owner);
     },
 
     async configureServer(server) {

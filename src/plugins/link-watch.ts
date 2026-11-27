@@ -32,11 +32,14 @@ function destination(link: string): string | undefined {
 }
 
 /**
- * A watch of links that touches its signal file when one of them leads elsewhere, or appears or disappears. The watch
- * is a refinement of the build watch: without a temporary folder to write the signal file in (a missing or read-only
+ * A watch of links that touches its signal file when one of them leads elsewhere, or appears or disappears.
+ * A caller may supply another scalar state reader to observe recovery such as restored folder permissions.
+ * The watch is a refinement of the build watch: without a temporary folder to write the signal file in (a missing or read-only
  * TMPDIR), there is none, and a retargeted link is read with the next build something else starts.
  */
-export function createLinkWatch(): LinkWatch | undefined {
+export function createLinkWatch(
+  readState: (path: string) => string | boolean | undefined = destination,
+): LinkWatch | undefined {
   let folder: string | undefined;
   let signal: string;
   try {
@@ -51,7 +54,7 @@ export function createLinkWatch(): LinkWatch | undefined {
   let touches = 0;
   const watchers = new Map<string, { readonly id: string; readonly watcher: FSWatcher }>();
   let timer: NodeJS.Timeout | undefined;
-  let known = new Map<string, string | undefined>();
+  let known = new Map<string, string | boolean | undefined>();
 
   const touch = (): void => {
     touches += 1;
@@ -66,9 +69,9 @@ export function createLinkWatch(): LinkWatch | undefined {
   };
   const check = (): void => {
     timer = undefined;
-    const changed = [...known].filter(([link, was]) => destination(link) !== was);
+    const changed = [...known].filter(([link, was]) => readState(link) !== was);
     if (changed.length === 0) return;
-    known = new Map([...known.keys()].map((link) => [link, destination(link)]));
+    known = new Map([...known.keys()].map((link) => [link, readState(link)]));
     touch();
   };
   /** Reads the links again once the events that come together have come. */
@@ -92,7 +95,7 @@ export function createLinkWatch(): LinkWatch | undefined {
     watch(links) {
       clearTimeout(timer);
       timer = undefined;
-      known = new Map(links.map((link) => [link, destination(link)]));
+      known = new Map(links.map((link) => [link, readState(link)]));
       const parents = new Set(links.map((link) => dirname(link)));
       for (const [parent, { watcher }] of watchers) {
         if (parents.has(parent)) continue;
