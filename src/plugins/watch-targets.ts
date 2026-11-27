@@ -5,7 +5,7 @@
  * watch a registered folder recursively; earlier ones see only the folder's own
  * entries. So every path is registered on its own as well.
  */
-import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { absolutePathSpelling } from '../path-identity.js';
 import { realPathOf, walkedEntry } from '../filesystem.js';
@@ -174,6 +174,16 @@ export function missingImportFolders(authored: Iterable<string>): string[] {
     if (existsSync(folder) && dirname(folder) !== folder) folders.add(folder);
   }
   return [...folders];
+}
+
+/** A folder a watcher can open: existence alone also admits inaccessible recovery targets (#583). */
+export function readableFolder(path: string): boolean {
+  try {
+    accessSync(path, constants.R_OK | constants.X_OK);
+    return statSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false; // Its parent must observe creation or restored permissions instead.
+  }
 }
 
 /**

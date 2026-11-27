@@ -13,7 +13,7 @@ import { sep } from 'node:path';
 import { toPosix } from '../src/plugins/paths.js';
 import { tweeTsPlugin as rollupPlugin } from '../src/plugins/rollup.js';
 import { tweeTsPlugin as vitePlugin } from '../src/plugins/vite.js';
-import { linksOnTheWay, missingImportFolders, watchTargets } from '../src/plugins/watch-targets.js';
+import { linksOnTheWay, missingImportFolders, readableFolder, watchTargets } from '../src/plugins/watch-targets.js';
 import {
   trackBuildWatch,
   cleanUp,
@@ -330,6 +330,22 @@ describe('missingImportFolders', () => {
     const missing = join(realpathSync('/'), 'twee-ts-no-such-folder', 'x.js');
     expect(missingImportFolders([missing])).toEqual([]);
   });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0).each([0, 0o100, 0o400])(
+    'recognizes inaccessible recovery folders with mode %i (#583)',
+    (mode) => {
+      const dir = makeProject({ 'locked/deep/existing.js': '' });
+      const locked = join(dir, 'locked');
+      try {
+        chmodSync(locked, mode);
+        expect(missingImportFolders([join(locked, 'missing.js')])).toEqual([locked]);
+        expect(readableFolder(locked)).toBe(false);
+        expect(readableFolder(dir)).toBe(true);
+      } finally {
+        chmodSync(locked, 0o700);
+      }
+    },
+  );
 });
 
 describe.skipIf(process.platform === 'win32')('linksOnTheWay', () => {

@@ -706,7 +706,15 @@ function recordingPlugin(
   return overrides.size === 0 ? plugin : pluginWith(plugin, overrides);
 }
 
-const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+const isFile = (path: string): boolean => {
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+  } catch {
+    // This is only a resolver shortcut. Keep the authored path even when probing it fails, so repairing an
+    // inaccessible or looping import can trigger another build. The bundler diagnoses the import itself.
+    return false;
+  }
+};
 
 /** A resolver Vite makes for plugins (see keptPath). */
 type IdResolver = ReturnType<typeof createIdResolver>;

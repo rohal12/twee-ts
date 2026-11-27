@@ -432,7 +432,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
   };
 
   const outputMode: OutputMode = options.compile().outputMode ?? 'html';
-  let html = '';
+  let html: string | undefined;
   let lastError: ErrorPayload['err'] | undefined;
   let entry: EntryBundle | undefined; // last good bundle
   // The assets of the bundle the page in `html` was compiled with (#360). A later bundle can succeed while the
@@ -992,7 +992,7 @@ export async function setUpDevStory(server: ViteDevServer, dev: DevStoryOptions)
           fail(res, storyCollisionMessage(path));
           return;
         }
-        if (html) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
+        if (html !== undefined) send(req, res, OUTPUT_MEDIA_TYPES[outputMode], html);
         else send(req, res, 'text/html; charset=utf-8', waitingPage(base));
         return;
       }

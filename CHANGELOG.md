@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain authored Vite entry import paths when filesystem probing fails, allowing repaired looping or inaccessible imports to rebuild (#583).
+- Serve successful empty Twee exports as empty plain text in Vite development, retaining them after later compile errors (#584).
+
 - Bound braced Unicode escape parsing at the shared JavaScript scanner, retaining tagged-template recovery and valid escapes (#579).
 - Watch initially dangling discovered source and module links so external targets, intermediate hops and missing parents recover automatically (#580).
 - Reserve HTML-decoded characters when choosing template markers, preventing encoded decoys from changing placeholder escaping contexts (#581).
