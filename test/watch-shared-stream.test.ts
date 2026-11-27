@@ -21,7 +21,7 @@ import {
 import type { FSWatcher, WatchListener } from 'node:fs';
 import type * as NodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { compile, watchWithWriteFilter } from '../src/compiler.js';
 import type { CompileOptions, CompileResult, InlineSource } from '../src/types.js';
 
@@ -87,6 +87,61 @@ afterEach(() => {
 const readOut = (): string => (existsSync(outFile) ? readFileSync(outFile, 'utf-8') : '');
 
 describe.skipIf(!LINKS)('watch with one event stream that starting or closing a watch replaces (#436)', () => {
+  for (const absolute of [true, false]) {
+    it.each(['source', 'module'] as const)(
+      `settles with an external %s link and absolute inputs=${String(absolute)} (#586)`,
+      async (role) => {
+        const extension = role === 'source' ? 'tw' : 'js';
+        const target = join(outside, `target.${extension}`);
+        writeFileSync(target, role === 'source' ? passage('linked', 'FIRST') : 'window.linked = "FIRST";');
+        symlinkSync(target, join(src, `alias.${extension}`));
+        const input = absolute ? src : relative(process.cwd(), src);
+        const options: CompileOptions = {
+          sources: [STORY_DATA, ...(role === 'source' ? [input] : [])],
+          modules: role === 'module' ? [input] : [],
+          formatId: 'test-format-1',
+          formatPaths: [join(__dirname, 'fixtures', 'storyformats')],
+          useTweegoPath: false,
+          noRemote: true,
+        };
+        const builds: CompileResult[] = [];
+        const errors: Error[] = [];
+        const controller = watchWithWriteFilter(
+          { ...options, outFile, onBuild: (r) => builds.push(r), onError: (e) => errors.push(e) },
+          () => true,
+          { timing: { debounceMs: 30, maxWaitMs: 120 }, stream: { shared: true } },
+        );
+        const settles = async (): Promise<void> => {
+          await vi.waitFor(
+            () => {
+              // The stream has recovered and its recovery build has had time to finish. A rebuild loop
+              // keeps replacing the stream and can never reach this state, even when output is correct.
+              expect(Date.now()).toBeGreaterThan(stream.replacedUntil + 250);
+              expect(builds.length).toBeGreaterThanOrEqual(2);
+            },
+            { timeout: 5000 },
+          );
+          expect(readOut()).toBe((await compile(options)).output);
+        };
+        try {
+          await settles();
+          writeFileSync(target, role === 'source' ? passage('linked', 'SECOND') : 'window.linked = "SECOND";');
+          await vi.waitFor(
+            () => {
+              expect(readOut()).toContain('SECOND');
+            },
+            { timeout: 5000 },
+          );
+          await settles();
+          expect(errors).toEqual([]);
+        } finally {
+          controller.abort();
+        }
+      },
+      15_000,
+    );
+  }
+
   it('equals a fresh compile after the macOS counterexample of run 38136948300', { timeout: 60_000 }, async () => {
     writeFileSync(join(src, 'a.tw'), passage('a.tw', 'zero'));
     mkdirSync(join(src, 'd1'));

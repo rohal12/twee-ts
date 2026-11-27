@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reuse tracked watches for external source and module paths, preventing idle macOS rebuild loops and duplicate missing-link recovery watches while preserving symbolic-link parent steps (#586).
 - Retain authored Vite entry import paths when filesystem probing fails, allowing repaired looping or inaccessible imports to rebuild, including initially failed workers (#583).
 - Serve successful empty Twee exports as empty plain text in Vite development, retaining them after later compile errors (#584).
 

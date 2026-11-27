@@ -953,7 +953,11 @@ export function watchFilesystem(
       const wanted = new Map<string, string>();
       lastInputs = new Set(files.map((file) => file.path));
       for (const file of files) {
-        if (file.link === true || !covered(identify(file.path).key)) wanted.set(resolve(file.path), file.path);
+        // Match makeRoot's spelling: normalising parent steps can both miss retained roots and merge
+        // distinct paths when a preceding component is a symbolic link.
+        if (file.link === true || !covered(identify(file.path).key)) {
+          wanted.set(absolutePathSpelling(file.path), file.path);
+        }
       }
       for (let i = roots.length - 1; i >= 0; i--) {
         const root = roots[i];

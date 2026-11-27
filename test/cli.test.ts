@@ -17,7 +17,7 @@ import {
 import { createServer } from 'node:net';
 import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { seedIndexDownload, seedUrlDownload, withCacheHome } from './helpers/format-cache.js';
 import { BUILD_TIMEOUT_MS, cliNodeArgs } from './helpers/package-build.js';
@@ -467,6 +467,72 @@ describe('CLI exit status', () => {
       cli.child.kill();
     }
   }, 30_000);
+
+  for (const absolute of [true, false]) {
+    it.skipIf(process.platform === 'win32').each(['source', 'module'] as const)(
+      `settles when watching an external %s link with absolute inputs=${String(absolute)} (#586)`,
+      async (role) => {
+        const working = join(dir, 'working');
+        const sources = join(dir, 'sources');
+        mkdirSync(working);
+        mkdirSync(sources);
+        const extension = role === 'source' ? 'tw' : 'js';
+        const target = join(
+          dir,
+          write(`target.${extension}`, role === 'source' ? VALID_STORY : 'window.linked = "FIRST";'),
+        );
+        symlinkSync(target, join(sources, `alias.${extension}`));
+        const input = absolute ? sources : relative(working, sources);
+        const inputs = role === 'source' ? [input] : [join(dir, write('story.tw', VALID_STORY)), '--module', input];
+        const out = join(dir, 'out.html');
+        const config = write(
+          'watch.config.json',
+          JSON.stringify({
+            formatPaths: [join(__dirname, 'fixtures', 'storyformats')],
+            useTweegoPath: false,
+          }),
+        );
+        const cli = startCli(working, [
+          '--config',
+          join(dir, config),
+          '--no-remote',
+          '-f',
+          'test-format-1',
+          '-w',
+          ...inputs,
+          '-o',
+          out,
+        ]);
+        try {
+          await waitFor(() => countOf(cli.stderr(), 'Built:') > 0 || cli.child.exitCode !== null, 'the first build');
+          expect(cli.child.exitCode, cli.stderr()).toBeNull();
+          // The production macOS stream recovery must settle too. Reset the quiet period whenever a build
+          // arrives; a loop cannot pass merely because its output already equals a fresh compile.
+          let previous = cli.stderr();
+          let quietSince = Date.now();
+          await waitFor(() => {
+            const current = cli.stderr();
+            if (current !== previous) {
+              previous = current;
+              quietSince = Date.now();
+            }
+            return Date.now() - quietSince > 2000;
+          }, 'watch mode to settle');
+          expect(cli.child.exitCode).toBeNull();
+          expect(cli.stderr()).not.toContain('Build failed:');
+          writeFileSync(
+            target,
+            role === 'source' ? VALID_STORY.replace('Hello.', 'SECOND') : 'window.linked = "SECOND";',
+          );
+          await waitFor(() => readFileSync(out, 'utf-8').includes('SECOND'), 'the external target edit');
+          expect(readFileSync(out, 'utf-8')).toContain('SECOND');
+        } finally {
+          cli.child.kill();
+        }
+      },
+      30_000,
+    );
+  }
 
   // A folder its owner can't read; root reads it anyway, and Windows has no such mode bits.
   const canMakeUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0;
