@@ -8,7 +8,7 @@
 import { accessSync, constants, existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { absolutePathSpelling } from '../path-identity.js';
-import { realPathOf, walkedEntry } from '../filesystem.js';
+import { isLoadableType, realPathOf, walkedEntry } from '../filesystem.js';
 import type { OutputPaths } from '../filesystem.js';
 import { toPosix } from './paths.js';
 
@@ -38,6 +38,8 @@ export interface WatchPlan {
    * that follows links watches the end of a chain, and does not report that a link was pointed elsewhere.
    */
   readonly links: string[];
+  /** Target-side paths whose changes must signal a rebuild, watched from readable parents. */
+  readonly recovery: string[];
   /**
    * With `given` spelling, the real path of each target (platform paths). A watcher that follows links keeps watching
    * what a target led to when it was registered, also after a link on the way leads elsewhere, so a target whose real
@@ -60,7 +62,8 @@ export interface WatchPlan {
  * or editing an excluded file starts no build. A file added straight to such a folder is read at the next build
  * something else starts. An input that can't be read is registered as it is
  * (unless it is an output folder), so its creation may start a build; below an
- * input, what can't be read is left out, as source discovery leaves it out.
+ * input, what can't be read is left out, as source discovery leaves it out. watchPlan also keeps native recovery
+ * anchors for eligible file links, including those whose targets are not yet readable.
  */
 export function watchTargets(
   inputs: readonly string[],
@@ -77,8 +80,25 @@ export function watchPlan(
   skip: (file: string) => boolean,
   outputs: OutputPaths,
   spelling: TargetSpelling,
+  recoverable: (path: string) => boolean = (path) => isLoadableType(path, 'source'),
 ): WatchPlan {
   const links = new Set<string>();
+  const recovery = new Set<string>();
+  const recover = (path: string, isRoot: boolean): void => {
+    if ((!isRoot && !isLink(path)) || skip(path) || !recoverable(path) || isLoop(path)) return;
+    const hops = linksOnTheWay(path);
+    if (hops.length === 0) return;
+    const real = realPathOf(path);
+    if (outputs.isFile(real) || outputs.isDir(real)) return;
+    // The physical target, and each hop, can disappear independently. When its parent is missing, observe the
+    // first missing name below a readable ancestor; that name's creation starts a build and moves the anchor down.
+    for (const target of [real, ...hops]) {
+      let anchor = target;
+      while (!readableFolder(dirname(anchor)) && dirname(anchor) !== anchor) anchor = dirname(anchor);
+      if (dirname(anchor) !== anchor) recovery.add(anchor);
+    }
+    for (const hop of hops) links.add(hop);
+  };
   /** Every link on the way to `path`, noted; those registered by real path are the ones that lead to no output. */
   const hopsOf = (path: string): string[] => {
     const hops = linksOnTheWay(path);
@@ -96,7 +116,7 @@ export function watchPlan(
     if (spelling === 'real') return [toPosix(real), ...(isRoot || isLink(path) ? hopsOf(path) : [])];
     // A link found while walking a folder, to a file the build reads, is among the links the inputs are reached
     // through, each hop of its chain: pointing one elsewhere changes the story (#443). Links source discovery leaves
-    // out (to a folder, to a file the build writes, to nothing) never get here, and are not watched (#160).
+    // out (to a folder or a file the build writes) never get here. Missing file links use recovery anchors instead.
     if (!isRoot && isLink(path)) for (const hop of linksOnTheWay(path)) links.add(hop);
     // Rollup's watcher fails with an error nobody handles for a path that is a loop of links.
     if (isLoop(path)) return [];
@@ -111,10 +131,12 @@ export function watchPlan(
       entry = isRoot ? { stat: statSync(path), real } : walkedEntry(path, real);
       if (entry === undefined || outputs.isFile(entry.real)) return NOTHING;
       if (!entry.stat.isDirectory()) {
+        recover(path, isRoot);
         return skip(path) ? NOTHING : { targets: spell(path, entry.real, isRoot), whole: true };
       }
       names = readdirSync(path);
     } catch {
+      recover(path, isRoot);
       return isRoot && !outputs.isDir(real) ? { targets: spell(path, real, isRoot), whole: true } : NOTHING;
     }
     const folder = entry.real;
@@ -130,7 +152,7 @@ export function watchPlan(
       ...walk(input, realPathOf(input), true).targets,
     ];
   });
-  return { targets: [...new Set(targets)], links: [...links], reals };
+  return { targets: [...new Set(targets)], links: [...links], recovery: [...recovery], reals };
 }
 
 /**

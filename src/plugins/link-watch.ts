@@ -3,12 +3,14 @@
  * bundler's own watcher can't. Rollup's watcher (chokidar) follows a registered link and watches the file it leads to,
  * so replacing the link, or a hop of a chain of links, raises nothing. The link's folder is watched here instead (not
  * recursively, so what the build writes below it is not reported), and a change of any link starts a build the way an
- * edit of a registered file does: by touching a file the plugin has registered with the bundler.
+ * edit of a registered file does: by touching a file the plugin has registered with the bundler. Recovery anchors
+ * also observe the targets from existing parents, before the first successful read and after target replacement.
  */
 import { mkdtempSync, readlinkSync, rmSync, statSync, utimesSync, watch, writeFileSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { onStreamRunning, streamReplaced } from '../folder-stream.js';
 
 /** How long a burst of file system events settles before the links are read again (a link is replaced in two steps). */
 const SETTLE_MS = 30;
@@ -16,8 +18,8 @@ const SETTLE_MS = 30;
 export interface LinkWatch {
   /** The file to register with the bundler's watcher: written when a link changed, with the number of changes so far. */
   readonly signal: string;
-  /** Watches `links` (platform paths) from now on, instead of the links watched before. */
-  watch(links: readonly string[]): void;
+  /** Watches link states and recovery-path changes (platform paths) from readable parents. */
+  watch(links: readonly string[], recovery?: readonly string[]): void;
   /** Stops watching and removes the signal file. */
   close(): void;
 }
@@ -28,6 +30,16 @@ function destination(link: string): string | undefined {
     return readlinkSync(link);
   } catch {
     return undefined;
+  }
+}
+
+/** File changes remain observable after a bundler loses its watch of a removed/recreated target folder. */
+function recoveryState(path: string): string | boolean {
+  try {
+    const stat = statSync(path);
+    return stat.isFile() ? `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}` : true;
+  } catch {
+    return false;
   }
 }
 
@@ -55,6 +67,9 @@ export function createLinkWatch(
   const watchers = new Map<string, { readonly id: string; readonly watcher: FSWatcher }>();
   let timer: NodeJS.Timeout | undefined;
   let known = new Map<string, string | boolean | undefined>();
+  let recoveryPaths = new Set<string>();
+  const state = (path: string): string | boolean | undefined =>
+    recoveryPaths.has(path) ? JSON.stringify([readState(path), recoveryState(path)]) : readState(path);
 
   const touch = (): void => {
     touches += 1;
@@ -69,9 +84,9 @@ export function createLinkWatch(
   };
   const check = (): void => {
     timer = undefined;
-    const changed = [...known].filter(([link, was]) => readState(link) !== was);
+    const changed = [...known].filter(([link, was]) => state(link) !== was);
     if (changed.length === 0) return;
-    known = new Map([...known.keys()].map((link) => [link, readState(link)]));
+    known = new Map([...known.keys()].map((link) => [link, state(link)]));
     touch();
   };
   /** Reads the links again once the events that come together have come. */
@@ -79,8 +94,16 @@ export function createLinkWatch(
     clearTimeout(timer);
     timer = setTimeout(check, SETTLE_MS);
   };
+  // Registering a recovery parent restarts macOS's shared stream. Recheck once it runs so target creation or
+  // edits during that gap are recovered too, without opening healthy parents again on every build.
+  const stopStream = process.platform === 'darwin' ? onStreamRunning(schedule) : undefined;
+  const closeWatch = (watcher: FSWatcher | undefined): void => {
+    if (watcher === undefined) return;
+    watcher.close();
+    streamReplaced();
+  };
   const stopWatching = (): void => {
-    for (const { watcher } of watchers.values()) watcher.close();
+    for (const { watcher } of watchers.values()) closeWatch(watcher);
     watchers.clear();
     clearTimeout(timer);
     timer = undefined;
@@ -92,14 +115,15 @@ export function createLinkWatch(
 
   return {
     signal,
-    watch(links) {
+    watch(links, recovery = []) {
       clearTimeout(timer);
       timer = undefined;
-      known = new Map(links.map((link) => [link, readState(link)]));
-      const parents = new Set(links.map((link) => dirname(link)));
+      recoveryPaths = new Set(recovery);
+      known = new Map([...links, ...recovery].map((link) => [link, state(link)]));
+      const parents = new Set([...known.keys()].map((link) => dirname(link)));
       for (const [parent, { watcher }] of watchers) {
         if (parents.has(parent)) continue;
-        watcher.close();
+        closeWatch(watcher);
         watchers.delete(parent);
       }
       for (const parent of parents) {
@@ -110,26 +134,28 @@ export function createLinkWatch(
           // Reopening healthy watches restarts macOS's shared stream after every build. Keep them,
           // but reopen a replaced parent and retry registrations that previously failed.
           if (held?.id === id) continue;
-          held?.watcher.close();
+          closeWatch(held?.watcher);
           watchers.delete(parent);
           const watcher = watch(parent, schedule);
+          streamReplaced();
           watchers.set(parent, { id, watcher });
           // A folder that goes away, or a limit of the system: the links in it are read again.
           watcher.on('error', () => {
             if (watchers.get(parent)?.watcher !== watcher) return;
-            watcher.close();
+            closeWatch(watcher);
             watchers.delete(parent);
             schedule();
           });
         } catch {
           // The folder can't be watched; the links in it are read again with the next build.
-          watchers.get(parent)?.watcher.close();
+          closeWatch(watchers.get(parent)?.watcher);
           watchers.delete(parent);
         }
       }
     },
     close() {
       stopWatching();
+      stopStream?.();
       process.removeListener('exit', onExit);
       onExit();
     },

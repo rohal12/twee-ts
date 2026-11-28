@@ -58,7 +58,7 @@ import {
 import type { BundleItem, EntryBundle, ImportHookContext } from './vite-entry.js';
 import { moduleGlobScopes, readScope, scopeAdmits, scopeId, scopeWatchTargets } from './vite-glob.js';
 import type { GlobScope } from './vite-glob.js';
-import { importWatchTargets, missingImportFolders, readableFolder, watchTargets } from './watch-targets.js';
+import { importWatchTargets, missingImportFolders, readableFolder, watchPlan } from './watch-targets.js';
 import { createLinkWatch } from './link-watch.js';
 import type { LinkWatch } from './link-watch.js';
 import { isRecord } from '../util.js';
@@ -287,6 +287,7 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
   // Native build watchers can ignore permission-only changes. Observe inaccessible import folders from their
   // readable parents and signal a normal file change when access returns, as for retargeted input links.
   const importAccess = new Map<ResolvedConfig, { readonly watch: LinkWatch; readonly folders: Set<string> }>();
+  const storyLinks = new Map<ResolvedConfig, LinkWatch>();
   const importOwners = new WeakMap<object, ResolvedConfig>();
   const importBuildContexts = new WeakMap<ResolvedConfig, WatchHookContext>();
   const importOwnerOf = (context: WatchHookContext): ResolvedConfig => {
@@ -536,8 +537,19 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
         if (recovery !== undefined) this.addWatchFile(canonicalPath(recovery.watch.signal));
         const outputs = outputPaths(allOutputs(config), 'snapshot');
         // By real path: the bundler's watcher reports real paths (macOS FSEvents reports nothing else).
-        for (const target of watchTargets(resolved.inputs, resolved.excluded, outputs, 'real')) {
+        const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'real', resolved.recoverable);
+        for (const target of plan.targets) {
           this.addWatchFile(target);
+        }
+        const owner = importOwnerOf(this);
+        let links = storyLinks.get(owner);
+        if (links === undefined && plan.recovery.length > 0) {
+          links = createLinkWatch();
+          if (links !== undefined) storyLinks.set(owner, links);
+        }
+        if (links !== undefined) {
+          links.watch(plan.links, plan.recovery);
+          this.addWatchFile(canonicalPath(links.signal));
         }
       }
       if (entryPath === undefined || bundlesEntryInside(config)) return;
@@ -696,6 +708,8 @@ export function tweeTsPlugin(options: TweeTsVitePluginOptions): Plugin {
       const owner = importOwnerOf(this);
       importAccess.get(owner)?.watch.close();
       importAccess.delete(owner);
+      storyLinks.get(owner)?.close();
+      storyLinks.delete(owner);
       importBuildContexts.delete(owner);
     },
 
