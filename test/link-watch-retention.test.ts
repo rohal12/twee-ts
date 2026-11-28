@@ -31,6 +31,13 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
+// The shared-stream probe owns separate fs.watch registrations. Its integration is covered by the recovery
+// matrix and watch-shared-stream tests; these counts measure only the link watch's retained parents.
+vi.mock('../src/folder-stream.js', () => ({
+  onStreamRunning: vi.fn(() => vi.fn()),
+  streamReplaced: vi.fn(),
+}));
+
 let handle: LinkWatch | undefined;
 afterEach(async () => {
   handle?.close();
@@ -41,7 +48,14 @@ afterEach(async () => {
 });
 
 function start(): LinkWatch {
-  handle = createLinkWatch();
+  // Exercise the shared-stream subscription on every OS, so probe isolation cannot regress only on macOS.
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  try {
+    handle = createLinkWatch();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform });
+  }
   if (handle === undefined) throw new Error('The link watch could not be created');
   return handle;
 }

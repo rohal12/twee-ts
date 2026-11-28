@@ -143,7 +143,7 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
       if (!this.meta.watchMode) return;
       const outputs = outputPaths(record.outputs(), 'snapshot');
       // In the platform's own form, as Rollup reports its module ids.
-      const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'given');
+      const plan = watchPlan(resolved.inputs, resolved.excluded, outputs, 'given', resolved.recoverable);
       const targets = plan.targets.map((target) => identify(target).absolute);
       for (const target of targets) this.addWatchFile(target);
       // Rollup's watcher keeps watching what a path led to when it was registered, so a path that leads elsewhere now
@@ -163,10 +163,11 @@ export function tweeTsPlugin(options: TweeTsRollupPluginOptions) {
               'a link pointed at another target is read with the next build something else starts.',
           );
         } else {
-          linkWatch.watch(plan.links);
+          linkWatch.watch(plan.links, plan.recovery);
           this.addWatchFile(linkWatch.signal);
         }
       }
+      if (plan.links.length === 0) linkWatch?.watch([]);
       // Rollup's file watcher (chokidar) reads every backslash as a separator, also on POSIX, where it is a
       // filename character: such a file is read by each build, but an edit to it starts none.
       const unwatchable = sep === '/' ? targets.filter((target) => target.includes('\\')) : [];

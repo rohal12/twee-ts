@@ -8,7 +8,7 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import type { CompileOptions, InlineSource } from '../types.js';
 import { TweeTsError } from '../errors.js';
-import { isExcluded, inputMembership } from '../filesystem.js';
+import { isExcluded, isLoadableType, inputMembership } from '../filesystem.js';
 import { absolutePathSpelling, identify } from '../path-identity.js';
 import { toPosix } from './paths.js';
 import { parseVersion } from '../semver.js';
@@ -76,6 +76,8 @@ export interface ResolvedPluginOptions {
   readonly inputs: readonly string[];
   /** Whether `compileOptions.exclude` leaves a file (absolute, forward slashes) out of the story. */
   readonly excluded: (file: string) => boolean;
+  /** Whether the input's authored name is eligible for missing-link recovery in its role. */
+  readonly recoverable: (file: string) => boolean;
   /** The compile options of one build, with `inline` sources after the user's. */
   readonly compile: (inline?: readonly InlineSource[]) => CompileOptions;
 }
@@ -215,6 +217,8 @@ export function resolvePluginOptions(
   const { headFile, modules = [], exclude = [] } = compileOptions;
   const notExcludable = [...(headFile === undefined ? [] : [headFile]), ...modules].map(absolute);
   const isModuleOrHead = inputMembership(notExcludable);
+  const isModule = inputMembership(modules.map(absolute));
+  const isSource = inputMembership(sources.map(absolute));
   return {
     sources: [...sources],
     format,
@@ -227,6 +231,10 @@ export function resolvePluginOptions(
       exclude.length > 0 &&
       [file, ...spellingsUnderSources(file, sources)].some((spelling) => isExcluded(spelling, exclude)) &&
       !isModuleOrHead(file),
+    recoverable: (file) =>
+      (headFile !== undefined && identify(file).key === identify(headFile).key) ||
+      (isModule(file) && isLoadableType(file, 'module')) ||
+      (isSource(file) && isLoadableType(file, 'source')),
     compile: (inline = []) => ({ ...compileOptions, sources: [...sources, ...inline], formatId: format }),
   };
 }
